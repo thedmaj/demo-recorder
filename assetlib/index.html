@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1440" />
+  <title>Plaid Link — Core Credentials Flow</title>
+  <link rel="stylesheet" href="plaid-link.css" />
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     DEMO PAGE SHELL  (1440×900, Plaid dark background)
+     ══════════════════════════════════════════════════════════ -->
+<div class="plaid-demo-page">
+
+  <!-- ─── LEFT PANEL: Link Events ─────────────────────────── -->
+  <div id="link-events-panel" data-testid="link-events-panel" class="side-panel">
+    <div class="side-panel-header">Link Events</div>
+    <div class="side-panel-body"></div>
+  </div>
+
+  <!-- ─── STEP 1: Consent ─────────────────────────────────── -->
+  <div data-testid="step-consent" class="step">
+    <div class="link-modal" data-testid="link-modal-consent">
+      <!-- Header: no back, just close -->
+      <div class="link-header">
+        <button class="btn-close" data-testid="btn-close-consent" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="link-body">
+        <!-- Partner logos -->
+        <div class="link-logos">
+          <div class="link-logo-partner" style="background:#00A67E;font-size:12px;font-weight:700;color:#fff">W</div>
+          <div class="link-logo-partner" style="margin-left:-10px;">
+            <!-- Plaid waffle icon -->
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+              <rect width="28" height="28" rx="14" fill="#1a1a1a"/>
+              <g fill="#fff" opacity="0.9">
+                <rect x="6" y="6" width="6" height="6" rx="1"/>
+                <rect x="14" y="6" width="6" height="6" rx="1"/>
+                <rect x="6" y="14" width="6" height="6" rx="1"/>
+                <rect x="14" y="14" width="6" height="6" rx="1"/>
+              </g>
+            </svg>
+          </div>
+        </div>
+        <h1 class="link-title" style="margin-top:20px;">
+          <span class="brand">WonderWallet uses </span><strong>Plaid</strong><span class="brand"> to connect your accounts</span>
+        </h1>
+        <div class="link-features" style="margin-top:20px;">
+          <div class="link-feature-row">
+            <div class="link-feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="13 2 13 9 20 9"/><path d="M6 18H4a2 2 0 01-2-2V5a2 2 0 012-2h10l4 4v5"/><rect x="8" y="12" width="13" height="10" rx="2"/></svg>
+            </div>
+            <div class="link-feature-text">
+              <strong>Connect in seconds</strong>
+              <span>8000+ apps trust Plaid to quickly connect to financial institutions</span>
+            </div>
+          </div>
+          <div class="link-feature-row">
+            <div class="link-feature-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <div class="link-feature-text">
+              <strong>Keep your data safe</strong>
+              <span>Plaid uses best-in-class encryption to help protect your data</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="link-footer">
+        <p class="link-legal">By continuing, you agree to Plaid's <a href="#" data-testid="link-privacy-policy">Privacy Policy</a> and to receiving updates on plaid.com</p>
+        <button class="btn-primary" data-testid="btn-consent-continue"
+          onclick="window.goToStep('institution-search')">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── STEP 2: Institution Search ──────────────────────── -->
+  <div data-testid="step-institution-search" class="step">
+    <div class="link-modal" data-testid="link-modal-institution-search">
+      <div class="link-header">
+        <button class="btn-back" data-testid="btn-back-institution" onclick="window.goToStep('consent')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="plaid-logo">
+          <svg width="22" height="22" viewBox="0 0 22 22">
+            <rect width="22" height="22" rx="4" fill="#1a1a1a"/>
+            <g fill="#fff">
+              <rect x="4" y="4" width="6" height="6" rx="1"/>
+              <rect x="12" y="4" width="6" height="6" rx="1"/>
+              <rect x="4" y="12" width="6" height="6" rx="1"/>
+              <rect x="12" y="12" width="6" height="6" rx="1"/>
+            </g>
+          </svg>
+          <span>PLAID</span>
+        </div>
+        <button class="btn-close" data-testid="btn-close-institution" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="link-body">
+        <h1 class="link-title" style="text-align:left;margin-bottom:16px;">Select your institution</h1>
+        <div class="link-search" data-testid="institution-search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" data-testid="institution-search-input" placeholder="Search for 11,000+ institutions"
+            oninput="window.filterInstitutions(this.value)" />
+        </div>
+        <div class="institution-grid" data-testid="institution-grid">
+          <button class="institution-tile" data-testid="institution-gingham" onclick="window.selectInstitution('Gingham Bank','ins_109508')">
+            <div class="institution-logo" style="background:#2563eb;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="14" fill="#2563eb"/><g fill="#fff"><rect x="8" y="11" width="12" height="2" rx="1"/><rect x="6" y="15" width="16" height="2" rx="1"/><rect x="9" y="8" width="10" height="2" rx="1"/></g></svg>
+            </div>
+            <span class="institution-name">Gingham Bank</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-herringbone" onclick="window.selectInstitution('Herringbone Treasury','ins_109509')">
+            <div class="institution-logo" style="background:#991b1b;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#991b1b"/><text x="14" y="19" text-anchor="middle" font-size="10" font-weight="800" fill="#fff">HT</text></svg>
+            </div>
+            <span class="institution-name">Herringbone Treasury</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-brocade" onclick="window.selectInstitution('Brocade','ins_109510')">
+            <div class="institution-logo" style="background:#065f46;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#065f46"/><g stroke="#fff" stroke-width="2" fill="none"><path d="M8 14h12M14 8v12"/><circle cx="14" cy="14" r="5"/></g></svg>
+            </div>
+            <span class="institution-name">Brocade</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-ikat" onclick="window.selectInstitution('IKAT','ins_109511')">
+            <div class="institution-logo" style="background:#7c3aed;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#7c3aed"/><text x="14" y="19" text-anchor="middle" font-size="9" font-weight="800" fill="#fff">IKAT</text></svg>
+            </div>
+            <span class="institution-name">IKAT</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-tc" onclick="window.selectInstitution('T&amp;C Bank','ins_109512')">
+            <div class="institution-logo" style="background:#dc2626;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="14" fill="#dc2626"/><text x="14" y="19" text-anchor="middle" font-size="8" font-weight="700" fill="#fff">T&amp;C</text></svg>
+            </div>
+            <span class="institution-name">T&amp;C Bank</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-jacquard" onclick="window.selectInstitution('Jacquard Credit Union','ins_109513')">
+            <div class="institution-logo" style="background:#0369a1;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#0369a1"/><circle cx="14" cy="14" r="7" stroke="#fff" stroke-width="2" fill="none"/><circle cx="14" cy="14" r="3" fill="#fff"/></g></svg>
+            </div>
+            <span class="institution-name">Jacquard Credit Union</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-cb" onclick="window.selectInstitution('CB+ Financial','ins_109514')">
+            <div class="institution-logo" style="background:#854d0e;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#854d0e"/><text x="14" y="19" text-anchor="middle" font-size="9" font-weight="800" fill="#fff">CB+</text></svg>
+            </div>
+            <span class="institution-name">CB+ Financial</span>
+          </button>
+          <button class="institution-tile" data-testid="institution-leno" onclick="window.selectInstitution('LenoBank','ins_109515')">
+            <div class="institution-logo" style="background:#15803d;">
+              <svg width="28" height="28" viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#15803d"/><text x="14" y="19" text-anchor="middle" font-size="8" font-weight="700" fill="#fff">LENO</text></svg>
+            </div>
+            <span class="institution-name">LenoBank</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── STEP 3: Credentials Entry ───────────────────────── -->
+  <div data-testid="step-credentials" class="step">
+    <div class="link-modal" data-testid="link-modal-credentials">
+      <div class="link-header">
+        <button class="btn-back" data-testid="btn-back-credentials" onclick="window.goToStep('institution-search')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="plaid-logo">
+          <svg width="22" height="22" viewBox="0 0 22 22"><rect width="22" height="22" rx="4" fill="#1a1a1a"/><g fill="#fff"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="12" y="4" width="6" height="6" rx="1"/><rect x="4" y="12" width="6" height="6" rx="1"/><rect x="12" y="12" width="6" height="6" rx="1"/></g></svg>
+          <span>PLAID</span>
+        </div>
+        <button class="btn-close" data-testid="btn-close-credentials" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="link-body">
+        <!-- Institution icon with halo -->
+        <div class="institution-icon-lg" data-testid="credentials-institution-icon" style="background:#2563eb;position:relative;z-index:0;">
+          <div class="institution-icon-halo"></div>
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><g fill="#fff"><path d="M18 6l13 7H5l13-7z" opacity="0.9"/><rect x="8" y="15" width="4" height="10" rx="1"/><rect x="16" y="15" width="4" height="10" rx="1"/><rect x="24" y="15" width="4" height="10" rx="1"/><rect x="5" y="26" width="26" height="2" rx="1"/></g></svg>
+        </div>
+        <h1 class="link-title" data-testid="credentials-title">Log into Gingham Bank</h1>
+        <p class="link-subtitle" data-testid="credentials-subtitle">Enter your Gingham Bank credentials to connect your account to WonderWallet.</p>
+        <div class="link-input-group" data-testid="credentials-form">
+          <div class="link-input-wrap">
+            <input type="text" data-testid="credentials-username" placeholder="" value="user_good" aria-label="Username" />
+            <span class="input-label">Username</span>
+          </div>
+          <div class="link-input-wrap">
+            <input type="password" data-testid="credentials-password" placeholder="" value="••••••••••••••••••••" aria-label="Password" />
+            <span class="input-label">Password</span>
+          </div>
+        </div>
+      </div>
+      <div class="link-footer">
+        <button class="btn-primary" data-testid="btn-credentials-submit"
+          onclick="window.goToStep('account-select')">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── STEP 4: Account Select ───────────────────────────── -->
+  <div data-testid="step-account-select" class="step">
+    <div class="link-modal" data-testid="link-modal-account-select">
+      <div class="link-header">
+        <button class="btn-back" data-testid="btn-back-account" onclick="window.goToStep('credentials')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="plaid-logo">
+          <svg width="22" height="22" viewBox="0 0 22 22"><rect width="22" height="22" rx="4" fill="#1a1a1a"/><g fill="#fff"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="12" y="4" width="6" height="6" rx="1"/><rect x="4" y="12" width="6" height="6" rx="1"/><rect x="12" y="12" width="6" height="6" rx="1"/></g></svg>
+          <span>PLAID</span>
+        </div>
+        <button class="btn-close" data-testid="btn-close-account" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="link-body">
+        <!-- Icon -->
+        <div class="link-icon">
+          <svg viewBox="0 0 64 64" fill="none">
+            <circle cx="32" cy="32" r="32" fill="#f3f4f6"/>
+            <path d="M18 42V32a14 14 0 0128 0v10" stroke="#1a1a1a" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+            <circle cx="32" cy="26" r="6" fill="#fbbf24"/>
+            <rect x="24" y="36" width="16" height="10" rx="3" fill="#1a1a1a"/>
+          </svg>
+        </div>
+        <h1 class="link-title">Select accounts</h1>
+        <p class="link-subtitle">Plaid will only share data from the <strong>Gingham Bank</strong> account you select with WonderWallet.</p>
+        <div class="account-list" data-testid="account-list">
+          <div class="account-item selected" data-testid="account-checking" onclick="window.toggleAccount(this)">
+            <div class="account-radio"></div>
+            <div class="account-info">
+              <div class="account-name">Personal Checking · 5521</div>
+            </div>
+            <div class="account-balance">$10,324.00</div>
+          </div>
+          <div class="account-item" data-testid="account-savings" onclick="window.toggleAccount(this)">
+            <div class="account-radio"></div>
+            <div class="account-info">
+              <div class="account-name">High Interest Savings · 7398</div>
+            </div>
+            <div class="account-balance">$32,904.00</div>
+          </div>
+          <div class="account-item" data-testid="account-college" onclick="window.toggleAccount(this)">
+            <div class="account-radio"></div>
+            <div class="account-info">
+              <div class="account-name">College Savings · 2313</div>
+            </div>
+            <div class="account-balance">$237.00</div>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--link-text-secondary);line-height:1.5;margin-bottom:8px;">
+          You'll share account and routing numbers, account and balance info, and contact details to help you send and receive money. <a href="#" style="color:var(--link-text-primary);">Learn more</a>
+        </p>
+      </div>
+      <div class="link-footer">
+        <button class="btn-primary" data-testid="btn-account-continue"
+          onclick="window.goToStep('connected')">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── STEP 5: Connected ────────────────────────────────── -->
+  <div data-testid="step-connected" class="step">
+    <div class="link-modal" data-testid="link-modal-connected">
+      <div class="link-header">
+        <button class="btn-close" data-testid="btn-close-connected" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="link-body">
+        <div class="connected-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <h1 class="link-title">Account connected</h1>
+        <p class="link-subtitle">Your Gingham Bank account is now connected to WonderWallet.</p>
+        <div class="connected-accounts" data-testid="connected-accounts">
+          <div class="connected-account-row">
+            <div class="connected-bank-icon" style="background:#2563eb;">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><g fill="#fff"><path d="M9 2l7 4H2l7-4z" opacity="0.9"/><rect x="3" y="8" width="2" height="6" rx="0.5"/><rect x="8" y="8" width="2" height="6" rx="0.5"/><rect x="13" y="8" width="2" height="6" rx="0.5"/><rect x="2" y="15" width="14" height="1" rx="0.5"/></g></svg>
+            </div>
+            <span class="connected-account-text">Personal Checking ····5521</span>
+            <div class="connected-checkmark">
+              <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="2 6 5 9 10 3"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="link-footer">
+        <button class="btn-primary" data-testid="btn-connected-done"
+          onclick="alert('onSuccess fired — public_token ready for exchange')">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── RIGHT PANEL: API Response ───────────────────────── -->
+  <div id="api-response-panel" data-testid="api-response-panel" class="side-panel">
+    <div class="side-panel-header">API Response</div>
+    <div class="side-panel-body">
+      <pre class="api-response-pre" style="color:rgba(255,255,255,0.25);font-style:italic;">Waiting for API response…</pre>
+    </div>
+  </div>
+
+</div><!-- /.plaid-demo-page -->
+
+<script src="plaid-link.js"></script>
+</body>
+</html>

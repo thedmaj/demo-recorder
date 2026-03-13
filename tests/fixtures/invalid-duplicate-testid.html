@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Invalid — duplicate data-testid</title></head>
+<body>
+<div data-testid="step-intro" class="step"><h1>Intro</h1></div>
+<div data-testid="step-intro" class="step"><h1>Intro (duplicate!)</h1></div>
+<script>
+window.goToStep = function(id) {};
+window.getCurrentStep = function() { return null; };
+</script>
+</body>
+</html>

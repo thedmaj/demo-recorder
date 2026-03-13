@@ -1,0 +1,36 @@
+{
+  "scripts": {
+    "test": "node --test 'tests/unit/**/*.test.js'",
+    "dashboard": "node scripts/dashboard/server.js",
+    "demo": "node scripts/scratch/orchestrator.js",
+    "demo:from:script": "node scripts/scratch/orchestrator.js --from=script",
+    "demo:from:build": "node scripts/scratch/orchestrator.js --from=build",
+    "demo:from:record": "node scripts/scratch/orchestrator.js --from=record",
+    "demo:from:post-process": "node scripts/scratch/orchestrator.js --from=post-process",
+    "demo:from:voiceover": "node scripts/scratch/orchestrator.js --from=voiceover",
+    "demo:from:resync-audio": "node scripts/scratch/orchestrator.js --from=resync-audio",
+    "resync-audio": "PIPELINE_RUN_DIR=$(cat out/latest/.rundir 2>/dev/null || echo out) node scripts/resync-audio.js",
+    "demo:from:render": "node scripts/scratch/orchestrator.js --from=render",
+    "demo:no-touchup": "node scripts/scratch/orchestrator.js --no-touchup",
+    "studio": "remotion studio",
+    "test:record": "node scripts/test-plaid-link-record.js",
+    "test:record:fast": "SCREEN_DWELL_MS=1000 node scripts/test-plaid-link-record.js",
+    "post-process": "node scripts/post-process-recording.js",
+    "post-process:preview": "node scripts/post-process-recording.js --preview",
+    "post-process:dry-run": "node scripts/post-process-recording.js --dry-run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@remotion/animated-emoji": "4.0.434",
+    "@remotion/animation-utils": "4.0.434",
+    "@remotion/cloudrun": "4.0.434",
+    "@remotion/enable-scss": "4.0.434",
+    "@remotion/shapes": "4.0.434",
+    "@remotion/studio": "4.0.434",
+    "@remotion/tailwind": "4.0.434",
+    "@remotion/tailwind-v4": "4.0.434",
+    "playwright": "^1.58.2",
+    "playwright-core": "^1.58.2",
+    "pptxgenjs": "^4.0.1"
+  }
+}

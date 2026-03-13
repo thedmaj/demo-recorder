@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Invalid — missing goToStep</title></head>
+<body>
+<div data-testid="step-intro" class="step"><h1>Intro</h1></div>
+<script>
+// goToStep is NOT defined
+window.getCurrentStep = function() { return null; };
+</script>
+</body>
+</html>

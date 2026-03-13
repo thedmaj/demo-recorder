@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "step": "intro",    "recordingOffsetS": 5.0 },
+    { "noStep": true,     "recordingOffsetS": 3.0 },
+    { "step": "outcome",  "recordingOffsetS": 2.0 }
+  ]
+}

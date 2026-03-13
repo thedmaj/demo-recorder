@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Invalid — inline display on step div</title></head>
+<body>
+<!-- style="display:flex" on a .step div overrides the hidden state -->
+<div data-testid="step-intro" class="step" style="display:flex"><h1>Intro</h1></div>
+<div data-testid="step-main" class="step"><h1>Main</h1></div>
+<script>
+window.goToStep = function(id) {};
+window.getCurrentStep = function() { return null; };
+</script>
+</body>
+</html>

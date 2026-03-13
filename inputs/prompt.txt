@@ -1,0 +1,273 @@
+# Chime Account Funding Demo — Branded Demo Specification
+
+Build a branded demo for Chime showing an account funding flow where a consumer links their external bank account using Plaid Link, then sequences the auth/get, identity/match, and signal/evaluate APIs. Open with the use case narrative and close with a strong value proposition.
+
+Brand URL: https://www.chime.com
+
+## Demo Intent
+- **Hyper-realistic large online banking app** — simulate a full-featured banking portal with typical menu, headers, and user navigation. The host app should feel like a mature retail or neobank product (dashboards, account cards, transaction history, settings, notifications).
+- Realistic Chime banking UI — brand colors, typography, logo, motion, and layout guidance are in `brand/chime.json`, which is **always freshly generated** by brand-extract.js (via Brandfetch) at the start of each pipeline run. Do NOT hardcode any brand tokens and do NOT reuse a cached brand JSON — always use the file written by the current run's brand-extract stage. Follow `brand.promptInstructions` for host app layout (nav, sidebar, cards, buttons, etc.).
+- Persona: Berta Charleson (KYC name on file at Chime), bank account holder name "Alberta Bobbeth Charleson" (as it appears at the external bank) — this name variation is intentional and demonstrates Identity Match's fuzzy matching capability. Chime Checking (...4829), linking an external bank account via Plaid Link. The connected bank name and account details are populated at runtime from the Plaid Link onSuccess callback — never hardcode them.
+- API sequence: Plaid Link → auth/get → identity/match → signal/evaluate
+- **Strict separation of layers**: the consumer-facing Chime UX and the Plaid API insight layer must NEVER appear on the same screen simultaneously
+- Consumer UX steps show only what Berta sees — no API JSON, no data summaries, no technical overlays
+
+## Host App Shell — Large Online Banking Layout
+
+The Chime consumer experience must render as a **hyper-realistic large online banking app** with the following structure. Use white/light backgrounds for the shell; when brand colors conflict with this requirement, prefer light.
+
+### Global header
+- **Top bar** — Logo (left), primary nav items (center/right), user menu with avatar/initials (right), notifications icon, help/support
+- **Sticky** — Header remains visible on scroll
+- **Height** — Typical 56–64px; compact but visible
+
+### Primary navigation (horizontal tabs or sidebar)
+- **Home / Dashboard** — Overview of accounts and balances
+- **Accounts** — List of linked accounts (Checking, Savings, etc.)
+- **Transfers** — Move money between accounts; **Add external account** / **Link bank** entry point lives here
+- **Pay / Bills** — Bill pay, recurring payments
+- **Activity / Transactions** — Recent transactions, filters, search
+- **Settings** — Profile, security, notifications, connected accounts
+
+### Main content area
+- **Card-based layout** — Account cards, quick actions, recent activity
+- **Breadcrumbs** when drilling into flows (e.g. Transfers > Add external account > Link bank)
+- **Sidebar (optional)** — Secondary nav or contextual actions; collapsible on smaller viewports
+
+### Account funding flow entry
+- Berta enters via **Transfers** → **Add external account** or **Link bank to fund**
+- Clear CTA: "Link your bank" or "Add an external account" — opens Plaid Link
+- Flow feels native to the banking app; no technical jargon
+
+### Step-by-step user journey (consumer UX)
+1. **Dashboard** — Berta sees her Chime Checking (...4829) with balance; nav shows Home, Accounts, Transfers, Activity, Settings
+2. **Transfers** — Clicks Transfers; sees options to move money between Chime accounts and "Add external account"
+3. **Add external account** — Clicks "Link your bank"; page shows explanation (e.g. "Add a bank to transfer funds") and primary CTA
+4. **Plaid Link modal** — Opens in-app; Berta completes Remember Me flow (consent → OTP → credentials → account select → success)
+5. **Post-link success** — Returns to Chime app; new external account card appears; "Funds available instantly" or similar confirmation
+6. **All consumer steps** — Header, nav, and content area remain visible; light backgrounds throughout
+
+### Visual requirements
+- **Backgrounds** — Main area `#ffffff` or `#f8f9fa`; cards on subtle `#ffffff` with light shadow
+- **Typography** — Clear hierarchy: page title, section headings, body, captions
+- **Font sizes** — Use larger type for easier visibility in recorded demos (Chime consumer screens and Plaid insight screens):
+  - **Page title**: 24–28px (1.5rem–1.75rem)
+  - **Section headings**: 18–20px (1.125rem–1.25rem)
+  - **Body text**: 16px minimum (1rem); 18px preferred for key stats
+  - **Summary stats / metrics**: 20–24px, semi-bold; ensure 4.5:1 contrast
+  - **Captions / labels**: 14px minimum (0.875rem)
+  - **JSON / code blocks**: 14–15px, monospace
+- **Spacing** — Generous padding; typical 16–24px gutters; card spacing 16–20px
+- **Depth** — Light shadows, subtle borders; avoid flat, single-color blocks
+
+## Two-Layer Visual Architecture
+
+### Background preference rule
+- **When conflicted, prefer white/light backgrounds for non-Plaid (Chime branded) demo screens.** Consumer banking UIs are predominantly light; dark themes are the exception. Use `#ffffff`, `#f8f9fa`, or brand-approved light neutrals for the host app shell. Plaid insight screens use the dark navy design system; the host app must feel distinct and familiar as a banking interface.
+
+### Layer 1 — Consumer Experience (Chime branded)
+- All steps where Berta interacts with the Chime app use Chime branding exclusively
+- **White/light backgrounds** — main content area, cards, modals, and navigation use light backgrounds (e.g. `#ffffff`, `#fafafa`). Avoid dark themes for the consumer flow unless the brand JSON explicitly specifies a dark mode.
+- Side panels (`api-response-panel`, `link-events-panel`) must be **collapsed/hidden** during ALL consumer UX steps
+- No API response data, field names, or JSON shown during the consumer flow
+- Plaid Link modal uses the simulated institution UI — institution name and account data must match the actual Plaid Link configuration (per CLAUDE.md dual-track architecture)
+
+### Layer 2 — Plaid Insight Screens (Plaid.com branded)
+- After each key API call (auth/get, identity/match, signal/evaluate), the demo **transitions to a dedicated full-viewport Plaid-branded screen**
+- These screens use the Plaid design system (dark navy background `#0d1117`, teal accent `#00A67E`) — NOT Chime colors
+- The `api-response-panel` animates open (slides in from the right) on these screens to show the JSON response
+- Each insight screen closes with a clear value statement (one sentence, from `inputs/plaid-value-props.md`)
+- After the insight screen, the demo transitions BACK to the Chime consumer UX to continue Berta's journey
+
+### Transition Mechanic
+- Use a smooth CSS transition (e.g. fade + slide, 400ms) between Chime consumer steps and Plaid insight screens
+- Insight screens must be visually distinct — a thin teal header bar labeled "Plaid API Response" signals the layer change
+- The `goToStep` sequence must alternate: Chime consumer step → Plaid insight step → Chime consumer step
+
+## Remotion Studio — Video Animation Enhancements
+
+Use [Remotion](https://www.remotion.dev/) (React-based programmatic video) for post-production or to generate polished demo clips. Suggested animations:
+
+| Use case | Remotion approach | Notes |
+|----------|-------------------|-------|
+| **Layer transitions** | `TransitionSeries` with `fade()` or `slide()` | Smooth crossfade between Chime consumer screens and Plaid insight screens; use `springTiming({ config: { damping: 200 } })` for natural feel |
+| **API response reveal** | `Sequence` + `interpolate()` | Animate `api-response-panel` slide-in; 15–20 frames for 400ms at 30fps |
+| **Summary stat emphasis** | `spring()` for scale/opacity | Subtle scale-up (1 → 1.02) when stats appear; highlight key numbers |
+| **Breadcrumb / step indicator** | `Sequence` with staggered `delay` | Sequential appearance of step labels for clarity |
+| **Closing value proposition** | `fade()` overlay or `wipe()` | Transition to full-viewport closing card with stat highlights |
+| **JSON/code block entrance** | `slide()` from right | Match `api-response-panel` animation for consistency |
+
+**Recommended composition structure:**
+```
+TransitionSeries
+  → Sequence (Chime consumer step)
+  → Transition (fade, 12 frames)
+  → Sequence (Plaid insight step)
+  → Transition (fade, 12 frames)
+  → Sequence (next Chime step)
+  ...
+```
+
+**Duration guidance:** 30fps; ~90–120 frames (3–4s) per storyboard step; transitions 8–15 frames (267–500ms).
+
+## Messaging Priority
+Value propositions, proof points, talk tracks, and competitive positioning are pre-defined in
+`inputs/plaid-value-props.md`. Use these verbatim or closely adapted. Research supplements
+them with API accuracy, Gong insights, and customer stories — it does NOT replace them.
+
+Key messages to anchor the demo:
+- "Link and fund in seconds, not days."
+- Auth gives you the rails. Identity Match confirms ownership. Signal assesses return risk.
+- ~65% uplift in conversion vs micro-deposits
+- 95%+ of U.S. depository accounts covered
+- Signal: 1,000+ risk factors, 80+ attributes, median response ~1s
+
+## Storyboard — Sample Demo Script Statements
+
+*Source: `docs/plaid-demo-script-value-propositions.md` (Plaid sales collateral). Use verbatim or closely adapted.*
+
+| Step | Scene | Narration (sample script) |
+|------|-------|---------------------------|
+| Opening | Problem / use case | "Today we'll walk through how Plaid powers account funding and instant account verification. We'll connect a bank account in seconds, verify that the person linking owns that account, and evaluate ACH return risk before releasing funds—all in one integrated flow." |
+| Link flow | Consumer links bank | "Users connect via Plaid Link—credentials or OAuth, no typing, no micro-deposits. That gives you 95%+ coverage of U.S. depository accounts." |
+| Auth insight | auth/get screen | "Auth retrieves account and routing numbers directly from the bank. For account funding, Auth is the piece that gets you the rails so you can actually move money via ACH." |
+| Identity insight | identity/match screen | "Before we move money, we verify ownership. Identity Match compares your KYC data to what's on file at the bank. It handles nicknames and typos and typically improves pass rates by 20–30% over legacy matching." |
+| Signal insight | signal/evaluate screen | "Signal evaluates ACH return risk in real time—1,000+ risk factors, 80+ attributes. You get ACCEPT, REVIEW, or REROUTE recommendations, so you can offer instant funding for low-risk users and step up high-risk ones." |
+| Closing | Summary stats | "Auth gives you the rails, Identity Match confirms ownership, Signal assesses return risk. Link and fund in seconds instead of days—with lower returns and higher conversion." |
+
+## Summary Stats — Account Funding Use Case
+
+Use these stats on Plaid insight screens and the closing summary. Display at 20–24px, semi-bold; reference `docs/plaid-demo-script-value-propositions.md`.
+
+| Stat | Value | Context |
+|------|-------|---------|
+| Conversion uplift | ~65% | vs micro-deposits |
+| Account coverage | 95%+ | U.S. depository accounts (10,000+ FIs) |
+| Identity Match pass-rate lift | 20–30% | vs legacy matching |
+| Signal response time | Median ~1s, p95 &lt;2s | Real-time risk decisioning |
+| Risk factors | 1,000+ | ML-based return predictions |
+| Actionable attributes | 80+ | Connection history, balance, tenure, NSF, etc. |
+| Robinhood proof point | $100M+ deposited annually | Instant funding with Signal |
+
+## Narrative Arc
+1. **Problem** — friction and fraud risk in external account funding (micro-deposits, manual entry)
+2. **Solution entry** — Plaid Link opens; Berta connects her external bank account instantly (consumer UX)
+3. **Frictionless experience** — Berta sees success in the Chime app; Plaid insight screens show what happened behind the scenes (auth/get → identity/match)
+4. **Key reveal** — Identity Match insight screen surfaces the name variation ("Alberta Bobbeth Charleson" at bank vs. "Berta Charleson" on file) with scores showing a confident match; Signal insight screen shows ACH transaction risk score confirming low return risk (higher score = lower risk; use 82–97 range); Chime app shows "Funds available instantly" to Berta
+5. **Outcome** — quantified: faster funding, lower returns, higher conversion (closing Plaid-branded screen)
+
+## Plaid Link Configuration
+- Use the **Remember Me** flow: pre-fill the phone number field with `415-555-0011` (returning verified user scenario) so Berta is recognized as a returning user
+- Institution: `ins_109508` (configured in the recording script) — non-OAuth, standard credential flow. Do not reference any bank name in the HTML app; use `window._plaidInstitutionName` instead.
+- Remember Me OTP: `123456` (auto-filled by recording script)
+- The simulated Plaid Link UI must reflect the Remember Me returning-user flow:
+  - Phone screen pre-populated with `415-555-0011`
+  - Skip the "Save with Plaid" phone capture screen (user is already saved)
+  - Institution search skipped — bank auto-selected from saved institutions (name from `window._plaidInstitutionName`)
+  - Credentials screen shown (username/password), then account selection
+- Pass `phone_number: '415-555-0011'` in the `link/token/create` request body
+- In the simulated UI, show Berta's phone as already confirmed ("Verified ···0011") on the consent step
+
+## Plaid Link Steps — Include as Explicit Named Steps in the Demo Script
+
+The demo script MUST include each Plaid Link screen as a distinct, named step with its own
+`id`, `narration`, `durationMs`, and `linkEvents`. Do NOT collapse the Link flow into a single
+"linking" step. This is required for the voiceover to sequence correctly against the edited video.
+
+Minimum required Plaid Link steps for the Remember Me returning-user flow:
+
+| Step id | Screen | Narration guidance |
+|---------|--------|--------------------|
+| `link-consent` | Remember Me consent — Berta's phone shown as verified (···0011) | ~10 words: confirm identity recognition |
+| `link-otp` | OTP entry — 6-digit code fills automatically | ~12 words: frictionless re-auth |
+| `link-account-select` | Account selection — account name and mask from `window._plaidAccountName` / `window._plaidAccountMask` | ~12 words: account ownership confirmed |
+| `link-success` | Plaid Link success — connection complete | ~8 words: instant, no manual entry |
+
+After the link-success step, the demo transitions to Plaid insight screens (auth/get → identity/match → signal/evaluate).
+
+**Voiceover timing note:** Narration is generated AFTER the video is post-processed (still frames
+removed). Each step's `durationMs` must reflect the post-processed keep window duration for that
+section — not the raw recording length. Use the keep window guidelines from post-process-recording.js:
+- Phone + consent: ~3–4s
+- OTP appear + fill + hold: ~2-3s
+- Institution list + account + confirm: ≤3s total
+- Success screen: ~4s
+
+## Connected Bank — Dynamic from Plaid Link onSuccess
+
+The name and account details of the connected external bank must be populated dynamically
+from the Plaid Link `onSuccess` callback metadata — never hardcoded in the HTML.
+
+In the `onSuccess` handler, store:
+```js
+window._plaidInstitutionName = metadata.institution.name;
+window._plaidAccountName     = metadata.accounts[0].name;
+window._plaidAccountMask     = metadata.accounts[0].mask;
+```
+
+Every place in the host app that references the connected bank (account cards, confirmation
+screens, funding summary, API insight screens) must read from these variables, not from
+a hardcoded institution name. This ensures the demo stays accurate regardless of which
+institution is selected.
+
+For the connected bank logo: use a generic Heroicons `building-library` SVG. Do not fetch
+or hardcode any real bank logo — the institution name displayed beside the icon is sufficient.
+
+## Technical Notes
+- Follow the Demo DOM Contract in CLAUDE.md exactly (data-testid, window.goToStep, side panels)
+- Use realistic but idealized data only — no error states, no 100/100 scores
+- Signal ACH transaction risk scores: realistic range 82–97 (Plaid Signal returns a score 0–99; higher = lower return risk)
+
+### Identity Match reference data (use these exact values in the identity/match API response and insight screen)
+
+| Field | Bank data (at external bank) | KYC data on file (at Chime) | Match score |
+|-------|-----------------------------|-----------------------------|-------------|
+| Name | Alberta Bobbeth Charleson | Berta Charleson | 80 |
+| Address | 2992 Cameron Road | 2992 Cameron Rd. Unit B | 90 |
+| City | Malakoff | Malakoff | 90 |
+| State/Zip | NY 14236 | New York 14236 | 80 |
+| Phone | 1112223333 | +1(111)222-3333 | 80 |
+| Email | accountholder0@example.com | bcharleson@mailnator.com | 0 |
+
+Key insight to narrate: despite the email mismatch (score 0) and the nickname variation in name (80), all address/city/phone fields pass — Identity Match surfaces this nuance and returns a confident approval rather than blocking Berta.
+
+### Signal Evaluate reference data (use in signal/evaluate API response and insight screen)
+
+**Note:** Plaid Signal returns scores 0–99 where **higher = lower return risk**. Use realistic range 82–97 for low-risk instant approval.
+
+| Attribute | Example value | Purpose |
+|-----------|---------------|---------|
+| `days_since_first_plaid_connection` | 367 | Tenure; longer = more established |
+| `plaid_connections_count_7d` | 1 | Low churn; single recent connection |
+| `plaid_connections_count_30d` | 1 | Consistent usage |
+| `total_plaid_connections_count` | 3 | Not over-connecting |
+| `bank_initiated_return_risk.score` | 89 | Low NSF/closed-account risk (higher = lower risk) |
+| `customer_initiated_return_risk.score` | 91 | Low dispute/unauthorized risk |
+| `ruleset.result` | `ACCEPT` | Recommended action for instant funding |
+
+**Sample core_attributes block:**
+```json
+"core_attributes": {
+  "days_since_first_plaid_connection": 367,
+  "plaid_connections_count_7d": 1,
+  "plaid_connections_count_30d": 1,
+  "total_plaid_connections_count": 3
+},
+"scores": {
+  "bank_initiated_return_risk": { "score": 89 },
+  "customer_initiated_return_risk": { "score": 91 }
+},
+"ruleset": { "result": "ACCEPT" }
+```
+
+- Do not show loading spinners without resolving
+- api-response-panel: hidden on ALL Chime consumer steps; animates open on ALL Plaid insight steps
+- link-events-panel: hidden throughout (developer artifact, never shown in recordings)
+
+## Icons
+- **Never use Markdown-style emoji or Unicode symbols as icons** (no ✅, ❌, 🔒, →, ✓, etc.)
+- Use Heroicons (https://heroicons.com) for all iconography where brand-specific icons are not available
+- Load via CDN: `<script src="https://unpkg.com/heroicons@2/dist/heroicons.js"></script>` or inline SVG from the Heroicons library
+- Prefer the outline style for UI chrome and the solid style for filled/active states
+- Brand logos (Chime, Plaid) must use the actual SVG logo — do not substitute with a generic icon
+- Chime logo: use `brand.logo` from `brand/chime.json`. If `brand.logo.svgOrEmoji` is a URL, render as `<img>`; if it is an inline SVG string, inject it directly. If the field is an emoji or absent, fall back to a Heroicons SVG appropriate to the use case (e.g. `building-library` for a bank/financial institution) — never render emoji as a logo substitute.

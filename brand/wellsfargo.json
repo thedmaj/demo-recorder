@@ -1,0 +1,69 @@
+{
+  "$schema": "brand-profile/v1",
+  "name": "Wells Fargo",
+  "slug": "wellsfargo",
+  "mode": "light",
+  "colors": {
+    "bgPrimary": "#FFFFFF",
+    "bgGradient": null,
+    "accentCta": "#D71E28",
+    "textPrimary": "#141414",
+    "textSecondary": "#666666",
+    "textTertiary": "#999999",
+    "accentBorder": "#D71E28",
+    "accentBgTint": "#FFF5F5",
+    "error": "#D71E28",
+    "success": "#2E7D32",
+    "surfaceCard": "#F5F5F5",
+    "surfaceCardBorder": "#E0E0E0",
+    "navBg": "#FFFFFF",
+    "navAccentStripe": "#D71E28",
+    "footerBg": "#141414"
+  },
+  "typography": {
+    "fontHeading": "\"Wells Fargo Sans\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "fontBody": "\"Wells Fargo Sans\", -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+    "fontMono": "\"SF Mono\", \"Fira Code\", Consolas, monospace",
+    "googleFontsImport": null,
+    "scaleH1": "32px/700",
+    "scaleH2": "24px/600",
+    "scaleH3": "18px/600",
+    "scaleBody": "15px/400",
+    "headingLetterSpacing": "-0.02em",
+    "headingLineHeight": "1.2",
+    "bodyLineHeight": "1.6"
+  },
+  "motion": {
+    "stepTransition": "opacity 0.3s ease, transform 0.3s ease",
+    "cardEntrance": "fadeIn + translateY(10px → 0) 0.4s ease",
+    "buttonHover": "all 0.2s ease",
+    "modalScale": "scale(0.95 → 1.0) 0.25s ease",
+    "loadingIndicatorColor": "#D71E28"
+  },
+  "atmosphere": {
+    "overlayBackdropFilter": "blur(8px)",
+    "cardBorderRadius": "8px",
+    "cardBoxShadow": "0 2px 8px rgba(0,0,0,0.08)",
+    "cardPadding": "32px",
+    "maxContentWidth": "1440px",
+    "sidebarWidth": null
+  },
+  "sidePanels": {
+    "bg": "#111111",
+    "accentColor": "#D71E28",
+    "jsonKeyColor": "#FFCD41",
+    "jsonStringColor": "#A8D5BA",
+    "jsonNumberColor": "#FFB86C"
+  },
+  "logo": {
+    "svgOrEmoji": null,
+    "wordmark": "Wells Fargo",
+    "letterSpacing": "0.05em",
+    "fontWeight": "700",
+    "fontSize": "18px",
+    "color": "#141414"
+  },
+  "promptInstructions": "Wells Fargo's financial services UI employs a clean, professional light-mode design with dark navy (#141414) text on white backgrounds. Primary actions use the distinctive red accent (#D71E28) for CTAs, forms, and error states. Navigation is top-aligned with white background and red accent stripe. Cards have subtle light gray borders and shadows. The brand's custom Wells Fargo Sans font ensures consistent, modern typographic hierarchy. Sidebars maintain dark backgrounds for contrast. The golden yellow (#FFCD41) serves as a secondary accent for highlights and badges. Footer adopts dark background matching header, creating visual bookends. Spacing is generous with 32px padding in cards and consistent 8px border radius throughout, reflecting institutional trust and clarity essential to banking applications.",
+  "_source": "brandfetch",
+  "_extractedAt": "2026-03-11T04:37:32.392Z"
+}

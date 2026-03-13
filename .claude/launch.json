@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "remotion-studio",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["remotion", "studio", "remotion/index.js"],
+      "port": 3000
+    },
+    {
+      "name": "scratch-app",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["scripts/scratch/utils/app-server.js"],
+      "port": 3737
+    }
+  ]
+}

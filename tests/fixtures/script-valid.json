@@ -1,0 +1,41 @@
+{
+  "product": "Plaid Auth",
+  "steps": [
+    {
+      "id": "intro",
+      "label": "Introduction",
+      "narration": "Today we show how Plaid Auth connects bank accounts securely and instantly for your users.",
+      "durationMs": 5000
+    },
+    {
+      "id": "link-consent",
+      "label": "Plaid Link — Consent",
+      "narration": "The user opens Plaid Link and consents to sharing their account data with the application.",
+      "durationMs": 4000
+    },
+    {
+      "id": "link-otp",
+      "label": "Plaid Link — OTP",
+      "narration": "Plaid confirms identity with a one-time passcode sent to the user registered phone number.",
+      "durationMs": 4000
+    },
+    {
+      "id": "link-account-select",
+      "label": "Plaid Link — Account Selection",
+      "narration": "The user selects the checking account they want to connect to complete the linking process.",
+      "durationMs": 4000
+    },
+    {
+      "id": "link-success",
+      "label": "Plaid Link — Success",
+      "narration": "Account linked. Plaid returns the public token for secure server-side exchange immediately.",
+      "durationMs": 3000
+    },
+    {
+      "id": "outcome",
+      "label": "Outcome",
+      "narration": "The developer now has verified account and routing numbers ready for ACH transactions today.",
+      "durationMs": 5000
+    }
+  ]
+}

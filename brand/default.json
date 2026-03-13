@@ -1,0 +1,69 @@
+{
+  "$schema": "brand-profile/v1",
+  "name": "Default",
+  "slug": "default",
+  "_comment": "Copy this file and rename it to <slug>.json (e.g. chase.json, bofa.json) to add a new brand. The slug must match persona.company normalized: lowercase, non-alphanumeric chars removed (e.g. 'Bank of America' → 'bankofamerica').",
+  "mode": "dark",
+  "colors": {
+    "bgPrimary": "#111827",
+    "bgGradient": "linear-gradient(135deg, #111827, #1e3a5f)",
+    "accentCta": "#3b82f6",
+    "textPrimary": "#ffffff",
+    "textSecondary": "rgba(255,255,255,0.65)",
+    "textTertiary": "rgba(255,255,255,0.35)",
+    "accentBorder": "rgba(59,130,246,0.45)",
+    "accentBgTint": "rgba(59,130,246,0.12)",
+    "error": "#f87171",
+    "success": "#22c55e",
+    "surfaceCard": null,
+    "surfaceCardBorder": null,
+    "navBg": null,
+    "navAccentStripe": null,
+    "footerBg": null
+  },
+  "typography": {
+    "fontHeading": "system-ui, -apple-system, \"Helvetica Neue\", Arial, sans-serif",
+    "fontBody": "system-ui, -apple-system, \"Helvetica Neue\", Arial, sans-serif",
+    "fontMono": "\"SF Mono\", \"Fira Code\", Consolas, monospace",
+    "googleFontsImport": null,
+    "_googleFontsExample": "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');",
+    "scaleH1": "32px/700",
+    "scaleH2": "24px/600",
+    "scaleH3": "18px/600",
+    "scaleBody": "15px/400",
+    "headingLetterSpacing": "-0.02em",
+    "headingLineHeight": "1.2",
+    "bodyLineHeight": "1.6"
+  },
+  "motion": {
+    "stepTransition": "opacity 0.3s ease, transform 0.3s ease",
+    "cardEntrance": "fadeIn + translateY(10px → 0) 0.4s ease-out",
+    "buttonHover": "all 0.2s ease",
+    "modalScale": "scale(0.95 → 1.0) 0.25s ease",
+    "loadingIndicatorColor": null
+  },
+  "atmosphere": {
+    "overlayBackdropFilter": "blur(8px)",
+    "cardBorderRadius": "8px",
+    "cardBoxShadow": "0 2px 8px rgba(0,0,0,0.15)",
+    "cardPadding": "32px",
+    "maxContentWidth": "1440px",
+    "sidebarWidth": null
+  },
+  "sidePanels": {
+    "bg": "#111827",
+    "accentColor": "#3b82f6",
+    "jsonKeyColor": "#7dd3fc",
+    "jsonStringColor": "#ffffff",
+    "jsonNumberColor": "#86efac"
+  },
+  "logo": {
+    "svgOrEmoji": null,
+    "wordmark": null,
+    "letterSpacing": "0.1em",
+    "fontWeight": "700",
+    "fontSize": "16px",
+    "color": null
+  },
+  "promptInstructions": ""
+}

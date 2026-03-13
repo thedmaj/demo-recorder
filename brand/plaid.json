@@ -1,0 +1,67 @@
+{
+  "$schema": "brand-profile/v1",
+  "name": "Plaid",
+  "slug": "plaid",
+  "mode": "dark",
+  "colors": {
+    "bgPrimary": "#0d1117",
+    "bgGradient": "linear-gradient(135deg, #0d1117, #0a2540)",
+    "accentCta": "#00A67E",
+    "textPrimary": "#ffffff",
+    "textSecondary": "rgba(255,255,255,0.65)",
+    "textTertiary": "rgba(255,255,255,0.35)",
+    "accentBorder": "rgba(0,166,126,0.45)",
+    "accentBgTint": "rgba(0,166,126,0.12)",
+    "error": "#f87171",
+    "success": "#22c55e",
+    "surfaceCard": null,
+    "surfaceCardBorder": null,
+    "navBg": null,
+    "navAccentStripe": null,
+    "footerBg": null
+  },
+  "typography": {
+    "fontHeading": "system-ui, -apple-system, \"Helvetica Neue\", Arial, sans-serif",
+    "fontBody": "system-ui, -apple-system, \"Helvetica Neue\", Arial, sans-serif",
+    "fontMono": "\"SF Mono\", \"Fira Code\", Consolas, monospace",
+    "googleFontsImport": null,
+    "scaleH1": "32px/700",
+    "scaleH2": "24px/600",
+    "scaleH3": "18px/600",
+    "scaleBody": "15px/400",
+    "headingLetterSpacing": "-0.02em",
+    "headingLineHeight": "1.2",
+    "bodyLineHeight": "1.6"
+  },
+  "motion": {
+    "stepTransition": "opacity 0.3s ease, transform 0.3s ease",
+    "cardEntrance": "fadeIn + translateY(10px → 0) 0.4s ease-out",
+    "buttonHover": "all 0.2s ease",
+    "modalScale": "scale(0.95 → 1.0) 0.25s ease",
+    "loadingIndicatorColor": "#00A67E"
+  },
+  "atmosphere": {
+    "overlayBackdropFilter": "blur(8px)",
+    "cardBorderRadius": "8px",
+    "cardBoxShadow": "0 2px 8px rgba(0,0,0,0.15)",
+    "cardPadding": "32px",
+    "maxContentWidth": "1440px",
+    "sidebarWidth": null
+  },
+  "sidePanels": {
+    "bg": "#0d1117",
+    "accentColor": "#00A67E",
+    "jsonKeyColor": "#7dd3fc",
+    "jsonStringColor": "#ffffff",
+    "jsonNumberColor": "#86efac"
+  },
+  "logo": {
+    "svgOrEmoji": null,
+    "wordmark": "PLAID",
+    "letterSpacing": "0.1em",
+    "fontWeight": "700",
+    "fontSize": "16px",
+    "color": "#00A67E"
+  },
+  "promptInstructions": "Host app chrome uses dark navy palette. Plaid Link modal is always white, controlled by the assetlib design plugin — do not replicate it in the host app."
+}

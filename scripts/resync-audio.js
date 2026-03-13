@@ -1,0 +1,165 @@
+#!/usr/bin/env node
+/**
+ * resync-audio.js
+ *
+ * Re-stitches voiceover.mp3 using existing TTS clips with timing corrected
+ * for SYNC_MAP_S speed/freeze adjustments stored in sync-map.json.
+ *
+ * Run this any time the video is edited AFTER voiceover was generated:
+ *   - After editing sync-map.json (changing speed or freeze windows)
+ *   - After re-running post-process on a new recording
+ *   - After any touchup that changes video speed or duration
+ *
+ * This is fast (<30s): it only runs ffmpeg re-stitching — NO ElevenLabs TTS calls.
+ * Existing vo_*.mp3 clips are reused as-is.
+ *
+ * Usage:
+ *   PIPELINE_RUN_DIR=out/demos/2026-03-13-layer-v1 node scripts/resync-audio.js
+ *   npm run demo -- --from=resync-audio
+ */
+
+require('dotenv').config();
+
+const fs   = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+const { processedToCompMs, loadSyncMap } = require('./sync-map-utils');
+
+const OUT_DIR          = process.env.PIPELINE_RUN_DIR || path.resolve(__dirname, '../out');
+const MANIFEST_FILE    = path.join(OUT_DIR, 'voiceover-manifest.json');
+const AUDIO_DIR        = path.join(OUT_DIR, 'audio');
+const VOICEOVER_OUTPUT = path.join(AUDIO_DIR, 'voiceover.mp3');
+
+// ── Stitch audio clips with silence gaps ──────────────────────────────────────
+
+function stitchAudio(clips, outputPath) {
+  console.log('\n[resync-audio] Re-stitching with ffmpeg...');
+  const tmpList = path.join(AUDIO_DIR, '_resync_concat.txt');
+  const lines   = [];
+  let cursor    = 0;
+
+  for (const clip of clips) {
+    const gapMs = clip.startMs - cursor;
+    if (gapMs > 50) {
+      const silenceFile = path.join(AUDIO_DIR, `silence_${clip.id}.mp3`);
+      execSync(
+        `ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t ${(gapMs / 1000).toFixed(3)} ` +
+        `-q:a 9 -acodec libmp3lame "${silenceFile}" -y`,
+        { stdio: 'pipe' }
+      );
+      lines.push(`file '${silenceFile}'`);
+    }
+    lines.push(`file '${clip.audioFile}'`);
+    cursor = clip.startMs + clip.audioDurationMs;
+  }
+
+  fs.writeFileSync(tmpList, lines.join('\n'));
+  execSync(
+    `ffmpeg -f concat -safe 0 -i "${tmpList}" -acodec libmp3lame -q:a 4 "${outputPath}" -y`,
+    { stdio: 'inherit' }
+  );
+  console.log(`[resync-audio] ✓ ${outputPath}`);
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+function main() {
+  console.log('=== resync-audio: re-stitching voiceover with sync-map corrections ===\n');
+
+  // Load sync map (identity if missing — no adjustments)
+  const syncMap = loadSyncMap(OUT_DIR);
+  if (syncMap.length === 0) {
+    console.log('[resync-audio] No sync-map.json segments found — using identity mapping.');
+    console.log('[resync-audio] Edit sync-map.json to define speed/freeze windows.\n');
+  } else {
+    console.log(`[resync-audio] sync-map.json loaded: ${syncMap.length} segment(s)`);
+    for (const seg of syncMap) {
+      if (seg.mode === 'speed') {
+        console.log(`  speed ×${seg.speed}: comp [${seg.compStart}s → ${seg.compEnd}s], videoStart=${seg.videoStart}s`);
+      } else if (seg.mode === 'freeze') {
+        console.log(`  freeze: comp [${seg.compStart}s → ${seg.compEnd}s], hold video at ${seg.videoStart}s`);
+      }
+    }
+    console.log();
+  }
+
+  // Load existing manifest
+  if (!fs.existsSync(MANIFEST_FILE)) {
+    console.error(`[resync-audio] CRITICAL: voiceover-manifest.json not found at ${MANIFEST_FILE}`);
+    console.error('[resync-audio] Run the voiceover stage first: npm run demo -- --from=voiceover');
+    process.exit(1);
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(MANIFEST_FILE, 'utf8'));
+  const rawClips = manifest.clips || [];
+  if (rawClips.length === 0) {
+    console.error('[resync-audio] No clips in voiceover-manifest.json — nothing to resync.');
+    process.exit(1);
+  }
+  console.log(`[resync-audio] ${rawClips.length} clip(s) loaded from manifest.\n`);
+
+  // Verify clip audio files exist
+  for (const clip of rawClips) {
+    if (!fs.existsSync(clip.audioFile)) {
+      console.error(`[resync-audio] CRITICAL: Missing audio file: ${clip.audioFile}`);
+      console.error('[resync-audio] Re-run the voiceover stage to regenerate missing clips.');
+      process.exit(1);
+    }
+  }
+
+  // Remap each clip's startMs from processed video time → composition time
+  const fps = 30;
+  let anyChanged = false;
+  const remappedClips = rawClips.map(clip => {
+    // The manifest stores startMs in processed video coordinates.
+    // Convert to composition coordinates using the inverse sync map.
+    const compStartMs = processedToCompMs(clip.startMs, syncMap);
+    const compEndMs   = processedToCompMs(clip.endMs,   syncMap);
+    const deltaS      = (compStartMs - clip.startMs) / 1000;
+    if (Math.abs(deltaS) > 0.05) {
+      anyChanged = true;
+      const sign = deltaS >= 0 ? '+' : '';
+      console.log(
+        `  ${clip.id}: ${(clip.startMs / 1000).toFixed(2)}s → comp ${(compStartMs / 1000).toFixed(2)}s ` +
+        `(${sign}${deltaS.toFixed(2)}s)`
+      );
+    }
+    return {
+      ...clip,
+      startMs:      compStartMs,
+      endMs:        compEndMs,
+      startFrame:   Math.round(compStartMs / 1000 * fps),
+      endFrame:     Math.round(compEndMs   / 1000 * fps),
+      audioEndFrame: Math.round((compStartMs + clip.audioDurationMs) / 1000 * fps),
+    };
+  });
+
+  if (!anyChanged) {
+    console.log('[resync-audio] All clips already at composition-space timing (no changes needed).\n');
+  }
+
+  // Re-stitch voiceover.mp3 with corrected clip positions
+  stitchAudio(remappedClips, VOICEOVER_OUTPUT);
+
+  // Write updated manifest (preserve original processedMs in _processedStartMs for reference)
+  const updatedClips = remappedClips.map((clip, i) => ({
+    ...clip,
+    _processedStartMs: rawClips[i].startMs, // retain original for debugging
+  }));
+
+  const updatedManifest = {
+    ...manifest,
+    clips:      updatedClips,
+    resyncedAt: new Date().toISOString(),
+    syncMapApplied: syncMap.length > 0,
+  };
+  fs.writeFileSync(MANIFEST_FILE, JSON.stringify(updatedManifest, null, 2));
+  console.log('[resync-audio] ✓ Updated voiceover-manifest.json\n');
+
+  const lastClip = remappedClips[remappedClips.length - 1];
+  const totalS   = ((lastClip.startMs + lastClip.audioDurationMs) / 1000).toFixed(1);
+  console.log(`[resync-audio] Audio total: ~${totalS}s`);
+  console.log('[resync-audio] Done. Next: npm run demo -- --from=render');
+}
+
+main();

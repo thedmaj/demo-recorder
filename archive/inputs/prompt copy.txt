@@ -1,0 +1,65 @@
+Build a branded demo for Wells Fargo bank showing an account funding flow where a consumer links their bank account using Plaid Link. After the Account Linking process, sequence the identity/match, auth/get, and signal/evaluate API calls and illustrate their value proposition — explaining both the front-end experience and back-end data received through APIs.
+
+## HYPER-REALISTIC WELLS FARGO BRANDING (CRITICAL — follow exactly)
+
+### Color Palette (exact Wells Fargo brand colors)
+- Primary Red: #D71E28 (Wells Fargo signature red — use for primary CTAs, headers, active states)
+- Dark Red: #B5121B (hover states, pressed buttons)
+- Charcoal: #2C2C2C (primary body text)
+- Dark Gray: #4D4D4D (secondary text, labels)
+- Light Gray: #F4F4F4 (page backgrounds, card backgrounds)
+- White: #FFFFFF (card surfaces, modals)
+- Border Gray: #D6D6D6 (input borders, dividers)
+- Success Green: #008A07 (success states, checkmarks, verified badges)
+- Warning Yellow: #FDB813 (Wells Fargo stagecoach gold — accents, progress indicators)
+- Navy: #003B5C (footer background, secondary headers)
+
+### Typography (Wells Fargo uses these exact fonts)
+- Primary Heading Font: "Wells Fargo Sans", "Helvetica Neue", Helvetica, Arial, sans-serif
+- Body Font: "Wells Fargo Sans", "Helvetica Neue", Helvetica, Arial, sans-serif
+- Monospace (for API/code displays): "SF Mono", "Fira Code", "Consolas", monospace
+- Font weights: 300 (light), 400 (regular), 600 (semibold), 700 (bold)
+- Heading sizes: H1 = 32px/700, H2 = 24px/600, H3 = 18px/600, Body = 15px/400
+- Letter-spacing on headings: -0.02em
+- Line-height: headings 1.2, body 1.6
+
+### Wells Fargo UI Patterns (replicate these exactly)
+- Top navigation bar: white background, Wells Fargo logo (red stagecoach icon + "WELLS FARGO" wordmark) left-aligned, nav links in charcoal, user avatar/initials circle right-aligned
+- Navigation bar has a thin 3px #D71E28 red stripe across the very top of the page
+- Card-based layout: white cards with border-radius: 8px, box-shadow: 0 2px 8px rgba(0,0,0,0.08), padding: 32px
+- Primary buttons: background #D71E28, color white, border-radius: 4px, font-weight: 600, padding: 12px 24px, text-transform: none (NOT uppercase), hover: #B5121B
+- Secondary buttons: border: 2px solid #D71E28, color: #D71E28, background: transparent, hover: background #FFF5F5
+- Input fields: border: 1px solid #D6D6D6, border-radius: 4px, padding: 12px 16px, font-size: 15px, focus: border-color #D71E28, box-shadow: 0 0 0 3px rgba(215,30,40,0.15)
+- Progress indicators: horizontal step bar using Wells Fargo gold #FDB813 for completed steps, #D71E28 for active step
+- Footer: #003B5C navy background, white text, includes "Equal Housing Lender" and "FDIC" badges, copyright notice
+- Page background: #F4F4F4 light gray
+- Section headers use a small red accent line (3px wide, 40px long, #D71E28) above the heading text
+
+### Wells Fargo Logo
+- Use a text-based logo: red stagecoach-style icon (can be an SVG of a simplified stagecoach or the Unicode horse emoji in red) followed by "WELLS FARGO" in Wells Fargo red, letter-spacing: 0.15em, font-weight: 700, font-size: 14px
+- Logo container: height 60px, vertically centered, left padding 24px
+
+### Realistic Page Layout
+- Max content width: 1200px centered
+- Left sidebar navigation (240px wide) on dashboard views with: Account Overview, Transfers, Bill Pay, Account Linking (active/highlighted), Settings
+- Main content area with breadcrumbs at top: "Home > Account Linking > Add External Account"
+- All interactive elements have subtle transitions: transition: all 0.2s ease
+
+### Realistic Data
+- Customer name: Sarah Mitchell
+- Account: Wells Fargo Checking (...4829)
+- External bank for linking: Chase Bank
+- Use realistic dollar amounts, dates, routing numbers (masked as •••••1234)
+
+### Side Panels (Link Events + API Response)
+- Link Events panel: dark charcoal (#2C2C2C) background with syntax-highlighted JSON
+- API Response panel: same dark theme, with Wells Fargo red (#D71E28) accent on the endpoint method badge
+- JSON keys in Wells Fargo gold (#FDB813), string values in white, numbers in Success Green (#008A07)
+
+### Animation & Polish
+- All step transitions should use smooth CSS transitions (opacity + transform translateY)
+- Cards should have a subtle entrance animation: fadeIn + slideUp (transform: translateY(10px) to 0)
+- Loading states should use a Wells Fargo red spinner/pulse animation
+- The Plaid Link modal should appear with a slight scale animation (0.95 to 1.0)
+
+Voice: Professional, confident, and reassuring — matching Wells Fargo's "Established. Trusted. Innovative." brand voice. Lead with the customer benefit, then explain the technical capabilities.

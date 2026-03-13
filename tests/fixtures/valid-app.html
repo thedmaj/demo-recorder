@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Test Demo App</title></head>
+<body>
+<div data-testid="step-intro" class="step">
+  <h1>Introduction</h1>
+</div>
+<div data-testid="step-main" class="step">
+  <button data-testid="confirm-btn">Confirm</button>
+</div>
+<div data-testid="step-outcome" class="step">
+  <p>Done</p>
+</div>
+<script>
+window.goToStep = function(id) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+  document.querySelector('[data-testid="step-' + id + '"]').classList.add('active');
+};
+window.getCurrentStep = function() {
+  var el = document.querySelector('.step.active');
+  return el ? el.dataset.testid : null;
+};
+</script>
+</body>
+</html>

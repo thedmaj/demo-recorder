@@ -1,0 +1,8 @@
+{
+  "steps": [
+    { "step": "intro",         "recordingOffsetS": 0.0,  "durationS": 5.0 },
+    { "step": "link-consent",  "recordingOffsetS": 5.0,  "durationS": 4.0 },
+    { "step": "link-success",  "recordingOffsetS": 9.0,  "durationS": 3.0 },
+    { "step": "outcome",       "recordingOffsetS": 12.0, "durationS": 5.0 }
+  ]
+}

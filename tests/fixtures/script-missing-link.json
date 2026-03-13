@@ -1,0 +1,17 @@
+{
+  "product": "Plaid Auth",
+  "steps": [
+    {
+      "id": "intro",
+      "label": "Introduction",
+      "narration": "Today we show how Plaid Auth connects bank accounts securely and instantly for your users.",
+      "durationMs": 5000
+    },
+    {
+      "id": "outcome",
+      "label": "Outcome",
+      "narration": "The developer now has verified account and routing numbers ready for ACH transactions today.",
+      "durationMs": 5000
+    }
+  ]
+}

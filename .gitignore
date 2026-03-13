@@ -1,0 +1,9 @@
+.env
+node_modules/
+out/
+public/*.mp4
+public/*.webm
+public/*.mp3
+.DS_Store
+EXIT*
+.claude/scheduled_tasks.lock

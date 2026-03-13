@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plaid Demo Pipeline</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <header id="header">
+    <span class="header-title">Plaid Demo Pipeline</span>
+    <div id="recording-status-badge" class="recording-badge" style="display:none" title="Recording status"></div>
+    <div class="header-spacer"></div>
+    <select id="run-selector">
+      <option value="">Loading runs…</option>
+    </select>
+  </header>
+
+  <div id="layout">
+    <!-- Sidebar -->
+    <nav id="sidebar">
+      <div class="nav-item active" data-tab="overview">
+        <span class="nav-icon">◈</span> Overview
+      </div>
+      <div class="nav-item" data-tab="config">
+        <span class="nav-icon">⚙</span> Config
+      </div>
+      <div class="nav-item" data-tab="files">
+        <span class="nav-icon">📁</span> Files
+      </div>
+      <div class="nav-item" data-tab="storyboard">
+        <span class="nav-icon">🎬</span> Storyboard
+      </div>
+      <div class="nav-item" data-tab="pipeline">
+        <span class="nav-icon">▶</span> Pipeline
+      </div>
+      <div class="nav-item" data-tab="valueprop">
+        <span class="nav-icon">📝</span> Value Props
+      </div>
+
+      <div class="sidebar-bottom">
+        <button id="studio-btn" class="disabled">Open Remotion Studio</button>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <main id="main">
+      <!-- Overview Tab -->
+      <div class="tab-panel active" id="tab-overview">
+        <div id="overview-content">
+          <div class="empty-state">Select a run to view overview</div>
+        </div>
+      </div>
+
+      <!-- Config Tab -->
+      <div class="tab-panel" id="tab-config">
+        <div id="config-content">
+          <div class="empty-state">Loading config…</div>
+        </div>
+      </div>
+
+      <!-- Files Tab -->
+      <div class="tab-panel" id="tab-files">
+        <div id="files-content">
+          <div class="empty-state">Select a run to browse files</div>
+        </div>
+      </div>
+
+      <!-- Storyboard Tab -->
+      <div class="tab-panel" id="tab-storyboard">
+        <div id="storyboard-content">
+          <div class="empty-state">Select a run to view storyboard</div>
+        </div>
+      </div>
+
+      <!-- Pipeline Tab -->
+      <div class="tab-panel" id="tab-pipeline">
+        <div id="pipeline-content">
+          <div class="empty-state">Loading pipeline…</div>
+        </div>
+      </div>
+
+      <!-- Value Props Tab -->
+      <div class="tab-panel" id="tab-valueprop">
+        <div id="valueprop-content">
+          <div class="empty-state">Loading…</div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Lightbox -->
+<div id="lightbox">
+  <div id="lightbox-inner">
+    <button id="lightbox-close" title="Close (Esc)">✕</button>
+    <div id="lightbox-nav">
+      <button class="lightbox-arrow" id="lightbox-prev">&#8592;</button>
+      <button class="lightbox-arrow" id="lightbox-next">&#8594;</button>
+    </div>
+    <img id="lightbox-img" src="" alt="">
+    <div id="lightbox-caption"></div>
+  </div>
+</div>
+
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,232 @@
+'use strict';
+/**
+ * generate-script.js
+ * Calls Claude to generate out/demo-script.json from ingested inputs +
+ * optional product research.
+ *
+ * Reads:  out/ingested-inputs.json
+ *         out/product-research.json   (optional)
+ * Writes: out/demo-script.json
+ *
+ * Usage: node scripts/scratch/scratch/generate-script.js
+ *
+ * Environment:
+ *   ANTHROPIC_API_KEY        — required
+ *   SCRATCH_AUTO_APPROVE     — set to 'true' to skip the ENTER pause
+ */
+
+require('dotenv').config({ override: true });
+const Anthropic  = require('@anthropic-ai/sdk');
+const fs         = require('fs');
+const path       = require('path');
+const readline   = require('readline');
+
+const {
+  buildScriptGenerationPrompt,
+} = require('../utils/prompt-templates');
+
+// ── Paths ─────────────────────────────────────────────────────────────────────
+
+const PROJECT_ROOT    = path.resolve(__dirname, '../../..');
+const OUT_DIR         = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
+const INGESTED_FILE   = path.join(OUT_DIR, 'ingested-inputs.json');
+const RESEARCH_FILE   = path.join(OUT_DIR, 'product-research.json');
+const OUT_FILE        = path.join(OUT_DIR, 'demo-script.json');
+
+// ── Model config ──────────────────────────────────────────────────────────────
+
+const MODEL          = 'claude-opus-4-6';
+const BUDGET_TOKENS  = 8000;
+const MAX_TOKENS     = 16000;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Extracts JSON from a Claude response content array.
+ * Looks for a text block containing a fenced JSON block or raw JSON object.
+ */
+function extractJSON(content) {
+  // Find the first text block
+  const textBlock = content.find(b => b.type === 'text');
+  if (!textBlock) {
+    throw new Error('[Script] No text block in Claude response');
+  }
+  const raw = textBlock.text;
+
+  // Try fenced JSON block first (```json ... ```)
+  const fencedMatch = raw.match(/```json\s*([\s\S]*?)```/);
+  if (fencedMatch) {
+    try {
+      return JSON.parse(fencedMatch[1].trim());
+    } catch (err) {
+      throw new Error(`[Script] JSON parse error in fenced block: ${err.message}\n\nRaw:\n${fencedMatch[1].substring(0, 500)}`);
+    }
+  }
+
+  // Try plain fenced block (``` ... ```)
+  const plainFencedMatch = raw.match(/```\s*([\s\S]*?)```/);
+  if (plainFencedMatch) {
+    try {
+      return JSON.parse(plainFencedMatch[1].trim());
+    } catch (_) {
+      // Fall through to raw JSON attempt
+    }
+  }
+
+  // Try to find raw JSON object in the response
+  const jsonMatch = raw.match(/(\{[\s\S]*\})/);
+  if (jsonMatch) {
+    try {
+      return JSON.parse(jsonMatch[1]);
+    } catch (err) {
+      throw new Error(`[Script] JSON parse error in raw response: ${err.message}\n\nFirst 500 chars:\n${raw.substring(0, 500)}`);
+    }
+  }
+
+  throw new Error(`[Script] Could not locate JSON in Claude response.\nFirst 500 chars:\n${raw.substring(0, 500)}`);
+}
+
+/**
+ * Waits for the user to press ENTER (unless SCRATCH_AUTO_APPROVE is set).
+ */
+function waitForApproval(message) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input:  process.stdin,
+      output: process.stdout,
+    });
+    rl.question(message, () => {
+      rl.close();
+      resolve();
+    });
+  });
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main() {
+  // Validate inputs
+  if (!fs.existsSync(INGESTED_FILE)) {
+    console.error(`[Script] Missing: out/ingested-inputs.json — run ingest.js first`);
+    process.exit(1);
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error('[Script] Missing ANTHROPIC_API_KEY in environment');
+    process.exit(1);
+  }
+
+  const ingestedInputs = JSON.parse(fs.readFileSync(INGESTED_FILE, 'utf8'));
+
+  let productResearch = null;
+  if (fs.existsSync(RESEARCH_FILE)) {
+    try {
+      productResearch = JSON.parse(fs.readFileSync(RESEARCH_FILE, 'utf8'));
+      console.log('[Script] Loaded product-research.json');
+    } catch (err) {
+      console.warn(`[Script] Warning: could not parse product-research.json: ${err.message}`);
+    }
+  }
+
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  console.log('[Script] Calling Claude (claude-opus-4-6 with extended thinking)...');
+
+  // Build prompts from the shared template
+  const { system: systemPrompt, userMessages } = buildScriptGenerationPrompt(
+    ingestedInputs || { texts: [], screenshots: [], transcriptions: [] },
+    productResearch || { synthesizedInsights: {}, internalKnowledge: [], apiSpec: {} }
+  );
+
+  const response = await client.messages.create({
+    model:      MODEL,
+    max_tokens: MAX_TOKENS,
+    thinking: {
+      type:          'enabled',
+      budget_tokens: BUDGET_TOKENS,
+    },
+    system:   systemPrompt,
+    messages: userMessages,
+  });
+
+  // Extract and parse the demo script
+  let demoScript;
+  try {
+    demoScript = extractJSON(response.content);
+  } catch (err) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
+  // Validate minimum structure
+  if (!demoScript.steps || !Array.isArray(demoScript.steps) || demoScript.steps.length === 0) {
+    console.error('[Script] Claude response did not contain valid steps array');
+    process.exit(1);
+  }
+
+  // ── Narration word count validation ───────────────────────────────────────
+  // CLAUDE.md spec: 20–35 words per step narration (fits ~8–12s of speech at 150 wpm)
+  // We enforce 8–35 here (8 as floor to catch accidental one-liners).
+  const narrationErrors = [];
+  for (const step of demoScript.steps) {
+    if (step.narration) {
+      const words = step.narration.trim().split(/\s+/).length;
+      if (words > 35) {
+        narrationErrors.push(`  Step "${step.id}": narration has ${words} words (max 35)`);
+      } else if (words < 8) {
+        narrationErrors.push(`  Step "${step.id}": narration has ${words} words (min 8)`);
+      }
+    }
+  }
+  if (narrationErrors.length > 0) {
+    console.warn('[Script] Narration word count issues:');
+    narrationErrors.forEach(e => console.warn(e));
+    if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+      await waitForApproval('\nNarration lengths are outside 8–35 word range. Press ENTER to continue with current narrations, or Ctrl+C to abort and regenerate...');
+    } else {
+      console.warn('[Script] SCRATCH_AUTO_APPROVE=true — continuing with out-of-range narrations.');
+    }
+  }
+
+  // ── Required Plaid Link step IDs ──────────────────────────────────────────
+  // When PLAID_LINK_LIVE=true, record-local.js uses these step IDs for phase navigation.
+  // If they're absent, the recording will show wrong screens during the Plaid Link flow.
+  if (process.env.PLAID_LINK_LIVE === 'true') {
+    const REQUIRED_PLAID_STEPS = ['link-consent', 'link-otp', 'link-account-select', 'link-success'];
+    const scriptStepIds = demoScript.steps.map(s => s.id);
+    const missingPlaidSteps = REQUIRED_PLAID_STEPS.filter(id => !scriptStepIds.includes(id));
+    if (missingPlaidSteps.length > 0) {
+      console.error(`[Script] Required Plaid Link steps missing: ${missingPlaidSteps.join(', ')}`);
+      console.error('[Script] These step IDs are required for record-local.js phase navigation when PLAID_LINK_LIVE=true.');
+      process.exit(1);
+    }
+  }
+
+  // Write to disk
+  fs.writeFileSync(OUT_FILE, JSON.stringify(demoScript, null, 2));
+
+  const stepCount       = demoScript.steps.length;
+  const estimatedSeconds = demoScript.steps.reduce((sum, s) => sum + (s.durationHintMs || 0), 0) / 1000;
+
+  console.log(`[Script] Generated: ${stepCount} steps, ~${estimatedSeconds.toFixed(0)}s estimated`);
+  console.log(`[Script] Written: out/demo-script.json`);
+
+  // Pause for human review unless auto-approved
+  if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+    await waitForApproval(
+      '\nReview out/demo-script.json and press ENTER to continue (CTRL+C to abort and edit)...'
+    );
+  }
+
+  console.log('[Script] Approved — proceeding to build-app');
+}
+
+module.exports = { main };
+
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[Script] Fatal error:', err.message);
+    process.exit(1);
+  });
+}

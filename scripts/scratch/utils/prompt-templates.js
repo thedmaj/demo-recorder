@@ -1,0 +1,1267 @@
+/**
+ * prompt-templates.js
+ *
+ * All Claude prompt assembly functions for the Plaid demo pipeline.
+ * Pure data transformation — no business logic, no I/O, no API calls.
+ * Each function returns a { system, userMessages } object ready to pass
+ * directly to the Anthropic SDK messages.create() call.
+ *
+ * Exports:
+ *   buildResearchPrompt(config)
+ *   buildScriptGenerationPrompt(ingestedInputs, productResearch)
+ *   buildAppArchitectureBriefPrompt(demoScript)
+ *   buildAppGenerationPrompt(demoScript, architectureBrief, qaReport?)
+ *   buildQAReviewPrompt(step, framesBase64, expectedState)
+ *   buildSegmentationPrompt(videoAnalysis, productResearch)
+ *   buildNarrationPolishPrompt(steps, productResearch)
+ *   buildOverlayPlanPrompt(demoScript, videoAnalysis)
+ *   buildScriptCritiquePrompt(demoScript, productResearch)
+ */
+
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Serialise a value to a formatted JSON string, or return a safe fallback.
+ * @param {*} value
+ * @returns {string}
+ */
+function toJSON(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (_) {
+    return String(value);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Brand theming
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Inline Plaid brand defaults — used when no brand profile is loaded.
+ * Matches brand/plaid.json exactly. Keeps the module self-contained.
+ */
+const PLAID_DEFAULT_BRAND = {
+  name: 'Plaid', slug: 'plaid', mode: 'dark',
+  colors: {
+    bgPrimary: '#0d1117', bgGradient: 'linear-gradient(135deg, #0d1117, #0a2540)',
+    accentCta: '#00A67E', textPrimary: '#ffffff',
+    textSecondary: 'rgba(255,255,255,0.65)', textTertiary: 'rgba(255,255,255,0.35)',
+    accentBorder: 'rgba(0,166,126,0.45)', accentBgTint: 'rgba(0,166,126,0.12)',
+    error: '#f87171', success: '#22c55e',
+  },
+  typography: {
+    fontHeading: 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
+    fontBody:    'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
+    fontMono:    '"SF Mono", "Fira Code", Consolas, monospace',
+    scaleH1: '32px/700', scaleH2: '24px/600', scaleH3: '18px/600', scaleBody: '15px/400',
+    headingLetterSpacing: '-0.02em', headingLineHeight: '1.2', bodyLineHeight: '1.6',
+  },
+  motion: {
+    stepTransition: 'opacity 0.3s ease, transform 0.3s ease',
+    cardEntrance: 'fadeIn + translateY(10px → 0) 0.4s ease-out',
+    buttonHover: 'all 0.2s ease', modalScale: 'scale(0.95 → 1.0) 0.25s ease',
+    loadingIndicatorColor: '#00A67E',
+  },
+  atmosphere: {
+    overlayBackdropFilter: 'blur(8px)', cardBorderRadius: '8px',
+    cardBoxShadow: '0 2px 8px rgba(0,0,0,0.15)', cardPadding: '32px',
+    maxContentWidth: '1440px',
+  },
+  sidePanels: {
+    bg: '#0d1117', accentColor: '#00A67E',
+    jsonKeyColor: '#7dd3fc', jsonStringColor: '#ffffff', jsonNumberColor: '#86efac',
+  },
+  logo: { wordmark: 'PLAID', letterSpacing: '0.1em', fontWeight: '700', fontSize: '16px', color: '#00A67E' },
+  promptInstructions: 'Host app chrome uses dark navy palette. Plaid Link modal is always white, controlled by the assetlib design plugin.',
+};
+
+/**
+ * Renders a brand profile object into the design system block injected into the
+ * app-generation system prompt. Covers the HOST APP chrome only — the Plaid Link
+ * modal is always white/Plaid-branded, controlled separately by the assetlib plugin.
+ *
+ * @param {object} brand  Parsed brand profile (brand/*.json or PLAID_DEFAULT_BRAND)
+ * @returns {string}
+ */
+function renderBrandBlock(brand) {
+  const c  = brand.colors      || {};
+  const t  = brand.typography  || {};
+  const m  = brand.motion      || {};
+  const a  = brand.atmosphere  || {};
+  const sp = brand.sidePanels  || {};
+  const logo = brand.logo      || {};
+
+  const lines = [];
+  lines.push(`- HOST APP DESIGN SYSTEM — ${brand.name} brand (applies to app chrome only; Plaid Link modal is always white/Plaid-branded):`);
+
+  // Colors
+  lines.push(`    Mode:              ${brand.mode || 'dark'}`);
+  if (c.bgGradient) {
+    lines.push(`    Background:        ${c.bgPrimary} or ${c.bgGradient}`);
+  } else {
+    lines.push(`    Background:        ${c.bgPrimary}`);
+  }
+  lines.push(`    Primary CTA color: ${c.accentCta}`);
+  lines.push(`    Text primary:      ${c.textPrimary}`);
+  lines.push(`    Text secondary:    ${c.textSecondary}`);
+  lines.push(`    Text tertiary:     ${c.textTertiary}`);
+  lines.push(`    Accent border:     ${c.accentBorder}`);
+  lines.push(`    Accent bg tint:    ${c.accentBgTint}`);
+  lines.push(`    Error color:       ${c.error}`);
+  lines.push(`    Success color:     ${c.success}`);
+  if (c.surfaceCard)      lines.push(`    Card surface:      ${c.surfaceCard}`);
+  if (c.navBg)            lines.push(`    Nav background:    ${c.navBg}`);
+  if (c.navAccentStripe)  lines.push(`    Nav accent stripe: ${c.navAccentStripe}`);
+  if (c.footerBg)         lines.push(`    Footer background: ${c.footerBg}`);
+
+  // Typography
+  lines.push(`    Font (heading):    ${t.fontHeading}`);
+  lines.push(`    Font (body):       ${t.fontBody}`);
+  lines.push(`    Font (mono):       ${t.fontMono}`);
+  if (t.googleFontsImport) {
+    lines.push(`    Google Fonts:      Add in <style> inside <head> (CSS @import, NOT a script tag):`);
+    lines.push(`                       ${t.googleFontsImport}`);
+  }
+  lines.push(`    Type scale:        H1 ${t.scaleH1}, H2 ${t.scaleH2}, H3 ${t.scaleH3}, Body ${t.scaleBody}`);
+  lines.push(`    Letter-spacing:    headings ${t.headingLetterSpacing}`);
+  lines.push(`    Line-height:       headings ${t.headingLineHeight}, body ${t.bodyLineHeight}`);
+
+  // Motion and atmosphere
+  lines.push(`    Step transition:   ${m.stepTransition}`);
+  lines.push(`    Card entrance:     ${m.cardEntrance}`);
+  lines.push(`    Button hover:      ${m.buttonHover}`);
+  lines.push(`    Modal scale-in:    ${m.modalScale}`);
+  if (m.loadingIndicatorColor) lines.push(`    Loading indicator: ${m.loadingIndicatorColor}`);
+  lines.push(`    Overlay panels:    backdrop-filter: ${a.overlayBackdropFilter}`);
+  lines.push(`    Card border-radius:${a.cardBorderRadius}`);
+  lines.push(`    Card box-shadow:   ${a.cardBoxShadow}`);
+  lines.push(`    Max content width: ${a.maxContentWidth}`);
+  if (a.sidebarWidth) lines.push(`    Sidebar width:     ${a.sidebarWidth}`);
+
+  // Side panels
+  if (sp.bg)              lines.push(`    Side-panel bg:     ${sp.bg}`);
+  if (sp.accentColor)     lines.push(`    Side-panel accent: ${sp.accentColor}`);
+  if (sp.jsonKeyColor)    lines.push(`    JSON key color:    ${sp.jsonKeyColor}`);
+  if (sp.jsonStringColor) lines.push(`    JSON string color: ${sp.jsonStringColor}`);
+  if (sp.jsonNumberColor) lines.push(`    JSON number color: ${sp.jsonNumberColor}`);
+
+  // Logo
+  if (logo.wordmark) {
+    const icon = logo.svgOrEmoji ? `${logo.svgOrEmoji} ` : '';
+    lines.push(`    Logo:              ${icon}"${logo.wordmark}" — color ${logo.color || c.accentCta}, ` +
+      `${logo.fontSize}/${logo.fontWeight}, letter-spacing ${logo.letterSpacing || 'normal'}`);
+  }
+
+  // Frontend-design quality principles — scoped to host app chrome only
+  lines.push(`    FRONTEND DESIGN PRINCIPLES (host app chrome only):`);
+  lines.push(`      - Make the app unmistakably feel like ${brand.name}'s product — not a generic SaaS template.`);
+  lines.push(`        Use real brand patterns. Depth and surface hierarchy: ${brand.mode === 'light'
+    ? 'white cards on light-gray page bg, subtle shadows, clear nav separation'
+    : 'layered dark surfaces, accent color glows, high contrast CTAs'}.`);
+  lines.push(`      - Motion with purpose: step transitions use "${m.stepTransition}".`);
+  lines.push(`        Card entrances: ${m.cardEntrance}. Button hover: ${m.buttonHover}.`);
+  lines.push(`      - Typography as identity: headings set in ${(t.fontHeading || '').split(',')[0]}.`);
+  lines.push(`        Never substitute with a generic sans-serif unless it's the explicit first fallback.`);
+  lines.push(`      - DO NOT apply these principles to the Plaid Link modal — it is always white (#ffffff), Plaid-branded, 400×720px.`);
+
+  // Conflict-prevention when overriding Plaid defaults
+  if (brand.slug && brand.slug !== 'plaid') {
+    lines.push(`    IMPORTANT: This is a ${brand.name} host application. Do NOT use Plaid's dark navy (#0d1117),`);
+    lines.push(`    Plaid teal (#00A67E), or Plaid gradient backgrounds in the host app chrome.`);
+    lines.push(`    The visualState descriptions in the demo script are authoritative for step-level layout.`);
+    lines.push(`    Where this design system and visualState conflict: visualState wins for per-step layout;`);
+    lines.push(`    this design system wins for global tokens (colors, fonts, nav, sidebar patterns).`);
+  }
+
+  // Brand-specific layout rules from promptInstructions
+  if (brand.promptInstructions && brand.promptInstructions.trim()) {
+    lines.push(`    BRAND-SPECIFIC LAYOUT RULES:`);
+    brand.promptInstructions
+      .split(/\.\s+/)
+      .map(s => s.trim())
+      .filter(Boolean)
+      .forEach(s => lines.push(`      - ${s}.`));
+  }
+
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Research prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that drives product research using AskBill and Glean tools.
+ *
+ * @param {{
+ *   product: string,
+ *   productShortName: string,
+ *   persona: string,
+ *   targetAudience: string,
+ *   researchTopics: string[]
+ * }} config
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildResearchPrompt(config) {
+  const { product, productShortName, persona, targetAudience, researchTopics } = config;
+
+  const system =
+    `You are a Plaid product expert preparing for demo video production. ` +
+    `Your job is to gather accurate, current information about ${product} so the demo script team ` +
+    `can produce a compelling, technically precise walkthrough. ` +
+    `Use the ask_plaid_docs tool for authoritative product facts and the glean_chat ` +
+    `tool to query Plaid's internal knowledge base for one-pagers, existing demo scripts, ` +
+    `and customer success stories. ` +
+    `Be thorough — accuracy matters more than speed. Do not invent field names, status codes, ` +
+    `or metric ranges; verify everything against official sources.`;
+
+  const topicList = (researchTopics || []).map((t, i) => `${i + 1}. ${t}`).join('\n') ||
+    '1. Core features and value proposition\n' +
+    '2. Accurate API terminology and field names\n' +
+    '3. Typical customer use cases\n' +
+    '4. Key differentiators vs. alternatives\n' +
+    '5. Any existing demo scripts or product one-pagers';
+
+  const userText =
+    `Research ${product} (short name: "${productShortName}") in preparation ` +
+    `for a demo video targeting ${targetAudience}.\n\n` +
+    `Persona for the demo: ${persona}\n\n` +
+    `Use ask_plaid_docs and glean_chat to research the following topics:\n` +
+    `${topicList}\n\n` +
+    `For each topic, verify claims with at least one tool call before including them.\n\n` +
+    `Also search internally for:\n` +
+    `- Existing demo scripts or walkthroughs for ${productShortName}\n` +
+    `- Customer success stories or case studies\n` +
+    `- Any approved messaging or positioning documents\n\n` +
+    `When research is complete, output ONLY a single JSON object matching this schema ` +
+    `— no prose, no markdown fences, just raw JSON:\n\n` +
+    `{\n` +
+    `  "product": "<string>",\n` +
+    `  "productShortName": "<string>",\n` +
+    `  "synthesizedInsights": "<multi-paragraph string: features, value props, differentiators>",\n` +
+    `  "accurateTerminology": {\n` +
+    `    "statusValues": ["<string>", ...],\n` +
+    `    "keyFieldNames": ["<string>", ...],\n` +
+    `    "eventNames": ["<string>", ...]\n` +
+    `  },\n` +
+    `  "customerUseCases": [\n` +
+    `    { "industry": "<string>", "useCase": "<string>", "outcome": "<string>" }\n` +
+    `  ],\n` +
+    `  "internalKnowledge": [\n` +
+    `    { "source": "<string>", "snippet": "<string>", "url": "<string>" }\n` +
+    `  ],\n` +
+    `  "apiSpec": "<string: key endpoints, request/response fields, realistic example values>",\n` +
+    `  "existingDemoAssets": [\n` +
+    `    { "type": "<script|one-pager|case-study>", "title": "<string>", "url": "<string>" }\n` +
+    `  ],\n` +
+    `  "researchedAt": "<ISO 8601 timestamp>"\n` +
+    `}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. Script generation prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that generates a demo-script.json from research + ingested inputs.
+ *
+ * @param {{
+ *   texts: string[],
+ *   screenshots: Array<{ base64: string, mimeType: string, label?: string }>,
+ *   transcriptions: string[]
+ * }} ingestedInputs
+ * @param {{
+ *   synthesizedInsights: string,
+ *   internalKnowledge: Array<{ source: string, snippet: string }>,
+ *   apiSpec: string
+ * }} productResearch
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
+  const system =
+    `You are a senior Plaid demo designer with deep knowledge of Plaid's product ` +
+    `portfolio and brand voice. You produce demo scripts that convert prospects and train sales teams.\n\n` +
+    `Brand voice rules (non-negotiable):\n` +
+    `- Confident, precise, outcome-focused. Never apologetic or jargon-heavy.\n` +
+    `- Lead with customer value, not technical implementation details.\n` +
+    `- Use active voice: "Plaid verifies the document in real time" not "the document is verified."\n` +
+    `- Quantify value where possible: "94/100 Trust Index", "verified in under 3 seconds."\n` +
+    `- Never use: "simply", "just", "unfortunately", "robust", "seamless".\n` +
+    `- Use only approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth", ` +
+    `"Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".\n\n` +
+    `Narrative arc (always follow):\n` +
+    `1. Problem — friction or compliance challenge\n` +
+    `2. Solution entry — Plaid introduced as the answer\n` +
+    `3. Frictionless experience — key flow steps\n` +
+    `4. Key reveal — the "wow moment" (score, approval, matched data)\n` +
+    `5. Outcome — faster, safer, more compliant\n\n` +
+    `Quality standards:\n` +
+    `- 8–14 steps, 2–3 minutes total\n` +
+    `- Narration: 20–35 words per step\n` +
+    `- Include a climactic reveal with a quantified outcome\n` +
+    `- Use realistic persona data (never generic placeholders)\n` +
+    `- No error states, declined flows, or unresolved loading spinners`;
+
+  // Build the multi-part user message content array
+  const contentBlocks = [];
+
+  // Research block
+  contentBlocks.push({
+    type: 'text',
+    text: `## PRODUCT RESEARCH\n\n${productResearch.synthesizedInsights || ''}`,
+  });
+
+  // Internal knowledge
+  if (Array.isArray(productResearch.internalKnowledge) && productResearch.internalKnowledge.length > 0) {
+    const snippets = productResearch.internalKnowledge
+      .map((k) => `[${k.source}] ${k.snippet}`)
+      .join('\n\n');
+    contentBlocks.push({
+      type: 'text',
+      text: `## INTERNAL KNOWLEDGE\n\n${snippets}`,
+    });
+  }
+
+  // API spec
+  if (productResearch.apiSpec) {
+    contentBlocks.push({
+      type: 'text',
+      text: `## API SPEC\n\n${typeof productResearch.apiSpec === 'string' ? productResearch.apiSpec : JSON.stringify(productResearch.apiSpec, null, 2)}`,
+    });
+  }
+
+  // Gong call insights (from real customer conversations)
+  if (productResearch.gongInsights) {
+    const gi = productResearch.gongInsights;
+    const gongParts = [];
+    if (Array.isArray(gi.commonQuestions) && gi.commonQuestions.length > 0) {
+      gongParts.push(`Common customer questions:\n${gi.commonQuestions.map(q => `- ${q}`).join('\n')}`);
+    }
+    if (Array.isArray(gi.customerPainPoints) && gi.customerPainPoints.length > 0) {
+      gongParts.push(`Customer pain points:\n${gi.customerPainPoints.map(p => `- ${p}`).join('\n')}`);
+    }
+    if (Array.isArray(gi.objectionsAndResponses) && gi.objectionsAndResponses.length > 0) {
+      gongParts.push(`Objections & responses:\n${gi.objectionsAndResponses.map(o => `- ${typeof o === 'string' ? o : `${o.objection} → ${o.response}`}`).join('\n')}`);
+    }
+    if (Array.isArray(gi.successStories) && gi.successStories.length > 0) {
+      gongParts.push(`Success stories:\n${gi.successStories.map(s => `- ${s}`).join('\n')}`);
+    }
+    if (gongParts.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: `## GONG CALL INSIGHTS (from real customer conversations — use these to make the demo authentic)\n\n${gongParts.join('\n\n')}`,
+      });
+    }
+  }
+
+  // Sales collateral
+  if (Array.isArray(productResearch.salesCollateral) && productResearch.salesCollateral.length > 0) {
+    const collateralText = productResearch.salesCollateral
+      .map(c => `[${c.type || 'doc'}] ${c.title}\n  Key messages: ${(c.keyMessages || []).join('; ')}`)
+      .join('\n\n');
+    contentBlocks.push({
+      type: 'text',
+      text: `## SALES COLLATERAL\n\n${collateralText}`,
+    });
+  }
+
+  // Text inputs (each item is { filename, content } from ingest.js)
+  if (Array.isArray(ingestedInputs.texts) && ingestedInputs.texts.length > 0) {
+    const formattedTexts = ingestedInputs.texts.map(t => {
+      if (typeof t === 'string') return t;
+      const label = t.filename ? `### ${t.filename}\n` : '';
+      return label + (t.content || '');
+    }).join('\n\n---\n\n');
+    contentBlocks.push({
+      type: 'text',
+      text: `## TEXT INPUTS\n\n${formattedTexts}`,
+    });
+  }
+
+  // Screenshot image blocks
+  if (Array.isArray(ingestedInputs.screenshots)) {
+    ingestedInputs.screenshots.forEach((shot, idx) => {
+      if (shot.label) {
+        contentBlocks.push({
+          type: 'text',
+          text: `Screenshot ${idx + 1}: ${shot.label}`,
+        });
+      }
+      contentBlocks.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: shot.mimeType || 'image/png',
+          data: shot.base64,
+        },
+      });
+    });
+  }
+
+  // Transcriptions (each item is { filename, transcript: { text, words } } from ingest.js)
+  if (Array.isArray(ingestedInputs.transcriptions) && ingestedInputs.transcriptions.length > 0) {
+    const formattedTranscriptions = ingestedInputs.transcriptions.map(t => {
+      if (typeof t === 'string') return t;
+      const label = t.filename ? `### ${t.filename}\n` : '';
+      const text = t.transcript?.text || t.text || '';
+      return label + text;
+    }).join('\n\n---\n\n');
+    contentBlocks.push({
+      type: 'text',
+      text: `## TRANSCRIPTIONS\n\n${formattedTranscriptions}`,
+    });
+  }
+
+  // Schema + instruction
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## OUTPUT SCHEMA: demo-script.json\n\n` +
+      `Output ONLY a JSON object matching this schema — no prose, no markdown fences:\n\n` +
+      `{\n` +
+      `  "product": "<string>",\n` +
+      `  "persona": {\n` +
+      `    "name": "<string>",\n` +
+      `    "role": "<string>",\n` +
+      `    "company": "<string>",\n` +
+      `    "useCase": "<string>"\n` +
+      `  },\n` +
+      `  "totalDurationMs": <number>,\n` +
+      `  "steps": [\n` +
+      `    {\n` +
+      `      "id": "<kebab-case string>",\n` +
+      `      "label": "<string>",\n` +
+      `      "narration": "<20–35 words, active voice, quantified outcomes>",\n` +
+      `      "durationMs": <number>,\n` +
+      `      "interaction": {\n` +
+      `        "type": "<click|fill|wait|navigate>",\n` +
+      `        "target": "<data-testid value in kebab-case>",\n` +
+      `        "value": "<string, optional>"\n` +
+      `      },\n` +
+      `      "linkEvents": [\n` +
+      `        { "eventName": "<OPEN|HANDOFF|TRANSITION_VIEW|etc.>", "metadata": {} }\n` +
+      `      ],\n` +
+      `      "apiResponse": {},\n` +
+      `      "visualState": "<brief description of what the screen shows at this step>",\n` +
+      `      "plaidPhase": "<launch|credentials|select-account|success|omit if not a Plaid Link step>"\n` +
+      `    }\n` +
+      `  ],\n` +
+      `  "ctaText": "<string>",\n` +
+      `  "ctaOutcome": "<string>"\n` +
+      `}`,
+  });
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: contentBlocks }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. App architecture brief prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that produces a concise architecture brief before app generation.
+ *
+ * @param {object} demoScript  Parsed demo-script.json object
+ * @param {object} [opts]      Options
+ * @param {boolean} [opts.plaidLinkLive]  When true, include live Plaid Link architecture notes
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
+  const system =
+    `You are an expert frontend developer who specialises in demo applications ` +
+    `for B2B SaaS sales teams. You understand Plaid's design system and the DOM contract ` +
+    `that Playwright recording scripts depend on.`;
+
+  let userText =
+    `Given the following demo script, describe the frontend architecture ` +
+    `in approximately 200 words. Cover:\n\n` +
+    `1. Number of screens and their logical groupings\n` +
+    `2. CSS transitions between steps (type, duration, easing)\n` +
+    `3. Mock data needed (names, numbers, scores, API responses)\n` +
+    `4. Key animations and reveal moments\n` +
+    `5. Any components shared across multiple steps\n\n` +
+    `Keep the description concise and actionable — this brief will be handed to a code ` +
+    `generator, not a human developer. No JSON required.\n\n`;
+
+  if (opts.plaidLinkLive) {
+    userText +=
+      `IMPORTANT — LIVE PLAID LINK MODE:\n` +
+      `The Plaid Link flow steps will use the REAL Plaid Link SDK (loaded from cdn.plaid.com).\n` +
+      `The app must fetch a link_token from POST /api/create-link-token on page load, then ` +
+      `initialize Plaid.create() with onSuccess/onEvent/onExit callbacks.\n` +
+      `Do NOT describe a mock Plaid Link modal — the real SDK renders its own iframe.\n` +
+      `The architecture should account for: link_token fetch on init, Link open on button click, ` +
+      `event forwarding to link-events-panel, and post-Link API calls (auth, identity, signal).\n\n`;
+  }
+
+  userText += `DEMO SCRIPT:\n${toJSON(demoScript)}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. App generation prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that generates the self-contained demo HTML app and Playwright script.
+ *
+ * @param {object} demoScript        Parsed demo-script.json
+ * @param {string} architectureBrief Plain-text architecture brief from step 3
+ * @param {object|null} [qaReport]   Optional QA report from a previous recording pass
+ * @param {object} [opts]            Options
+ * @param {boolean} [opts.plaidLinkLive]     When true, include live Plaid Link SDK instructions
+ * @param {Array}   [opts.plaidLinkScreens]  Captured Plaid Link screenshots [{stepId, base64}].
+ *                                           When present, the build agent creates simulated step
+ *                                           divs based on the captures instead of using the live
+ *                                           SDK iframe for all Plaid Link steps.
+ * @param {string}  [opts.designPluginHtml]  assetlib/index.html — pixel-perfect Plaid Link modal ref
+ * @param {string}  [opts.designPluginCss]   assetlib/plaid-link.css source
+ * @param {object}  [opts.brand]             Brand profile from brand/*.json. Falls back to Plaid defaults.
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null, opts = {}) {
+  const brand = opts.brand || PLAID_DEFAULT_BRAND;
+
+  let cdnRule = `- Single index.html file: all CSS and JavaScript inlined, zero external libraries or CDN links.\n`;
+  if (opts.plaidLinkLive) {
+    cdnRule = `- Single index.html file: all CSS and JavaScript inlined. EXCEPTION: load the Plaid Link SDK from https://cdn.plaid.com/link/v2/stable/link-initialize.js (this is the ONLY allowed CDN link).\n`;
+  }
+  if (brand.typography && brand.typography.googleFontsImport) {
+    cdnRule += `  ALSO ALLOWED: the Google Fonts @import specified in the brand design system below (CSS only, in <style> tag).\n`;
+  }
+
+  const system =
+    `You are an expert frontend developer generating a self-contained HTML demo ` +
+    `application for Plaid. The app will be recorded by Playwright at 1440×900.\n\n` +
+    `DOM CONTRACT (mandatory — Playwright depends on this exactly):\n` +
+    cdnRule +
+    renderBrandBlock(brand) + `\n` +
+    `- Viewport locked: html, body { width: 1440px; height: 900px; overflow: hidden; }\n` +
+    `- Each step: <div data-testid="step-{id}" class="step"> (only one .active at a time)\n` +
+    `- Global functions:\n` +
+    `    window.goToStep(id)       — activate a step by id, fire its link events and API panel\n` +
+    `    window.getCurrentStep()   — return the data-testid of the currently active step\n` +
+    `- Manual navigation (REQUIRED — add immediately after goToStep/getCurrentStep definitions):\n` +
+    `    ArrowRight/ArrowDown = next step. ArrowLeft/ArrowUp = previous step.\n` +
+    `    Clicking any non-interactive area of a step also advances to the next step.\n` +
+    `    Clicks on button, input, select, textarea, a, [role="button"]/[role="link"] pass through.\n` +
+    `    Use this exact implementation (do not alter):\n` +
+    `    (function(){\n` +
+    `      function _sids(){return Array.from(document.querySelectorAll('.step[data-testid]')).map(function(s){return s.dataset.testid.replace(/^step-/,'');});}\n` +
+    `      function _nav(d){var ids=_sids(),cur=(window.getCurrentStep()||'').replace(/^step-/,''),idx=ids.indexOf(cur),n=ids[Math.max(0,Math.min(ids.length-1,idx+d))];if(n&&n!==cur)window.goToStep(n);}\n` +
+    `      document.addEventListener('keydown',function(e){if(e.key==='ArrowRight'||e.key==='ArrowDown')_nav(1);else if(e.key==='ArrowLeft'||e.key==='ArrowUp')_nav(-1);});\n` +
+    `      document.addEventListener('click',function(e){if(e.target.closest('button,input,select,textarea,a,[role="button"],[role="link"]'))return;_nav(1);});\n` +
+    `    })();\n` +
+    `- Side panels (always present):\n` +
+    `    <div id="link-events-panel"  data-testid="link-events-panel"  class="side-panel">\n` +
+    `    <div id="api-response-panel" data-testid="api-response-panel" class="side-panel">\n` +
+    `- All interactive elements must have data-testid attributes in kebab-case that match\n` +
+    `  the interaction.target field in demo-script.json exactly.\n` +
+    `- Plaid Link event names to use verbatim:\n` +
+    `    OPEN, LAYER_READY, LAYER_NOT_AVAILABLE, SELECT_INSTITUTION, SELECT_BRAND,\n` +
+    `    SELECT_DEGRADED_INSTITUTION, ERROR, EXIT, HANDOFF, TRANSITION_VIEW,\n` +
+    `    SEARCH_INSTITUTION, SUBMIT_CREDENTIALS, SUBMIT_MFA,\n` +
+    `    BANK_INCOME_INSIGHTS_COMPLETED,\n` +
+    `    IDENTITY_VERIFICATION_START_STEP, IDENTITY_VERIFICATION_PASS_SESSION,\n` +
+    `    IDENTITY_VERIFICATION_FAIL_SESSION, IDENTITY_VERIFICATION_PENDING_REVIEW_SESSION,\n` +
+    `    IDENTITY_VERIFICATION_CREATE_SESSION\n\n` +
+    `After the HTML, output the Playwright recording script as a JSON fenced code block with\n` +
+    `the prefix comment <!-- PLAYWRIGHT_SCRIPT_JSON --> on the line immediately before the block.\n` +
+    `The Playwright script JSON schema:\n` +
+    `{\n` +
+    `  "steps": [\n` +
+    `    {\n` +
+    `      "id": "<MUST be one of the exact step IDs listed below — no other values allowed>",\n` +
+    `      "action": "<goToStep|click|fill|wait>",\n` +
+    `      "target": "<CSS selector or function call>",\n` +
+    `      "value": "<string, optional>",\n` +
+    `      "waitMs": <number, optional>\n` +
+    `    }\n` +
+    `  ]\n` +
+    `}\n\n` +
+    `REQUIRED: Every step "id" in playwright-script.json MUST exactly match one of these step IDs\n` +
+    `from demo-script.json (copy-paste exactly, no modifications):\n` +
+    demoScript.steps.map(s => `  "${s.id}"`).join('\n') + '\n' +
+    `Do NOT invent new IDs. Do NOT rename, combine, or reorder them. Use only IDs from this list.`;
+
+  const contentBlocks = [];
+
+  // Refinement context if a QA report is provided
+  if (qaReport) {
+    const issueLines = [];
+    if (Array.isArray(qaReport.steps)) {
+      for (const stepReport of qaReport.steps) {
+        if (stepReport.issues && stepReport.issues.length > 0) {
+          issueLines.push(`Step "${stepReport.stepId}" (score ${stepReport.score}/100):`);
+          stepReport.issues.forEach((issue) => issueLines.push(`  - ${issue}`));
+          if (stepReport.suggestions && stepReport.suggestions.length > 0) {
+            stepReport.suggestions.forEach((s) => issueLines.push(`  ? ${s}`));
+          }
+        }
+      }
+    }
+
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## REFINEMENT CONTEXT\n\n` +
+        `The following issues were found during QA review of the previous build.\n` +
+        `Make surgical patches only — do not rewrite the entire app unless a critical structural\n` +
+        `issue makes targeted fixes impractical.\n\n` +
+        (issueLines.length > 0
+          ? issueLines.join('\n')
+          : 'No specific issues logged — general quality improvement pass.'),
+    });
+
+    // Attach QA frame screenshots for failed steps so the build agent can see the visual issues
+    if (opts.qaFrames && opts.qaFrames.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text: `### QA Frames — Visual Evidence of Issues\n\nThe following screenshots are from the failed steps listed above.`,
+      });
+      for (const frame of opts.qaFrames) {
+        contentBlocks.push({
+          type: 'text',
+          text: `**Step "${frame.stepId}" — ${frame.suffix} frame:**`,
+        });
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type:       'base64',
+            media_type: 'image/png',
+            data:       frame.base64,
+          },
+        });
+      }
+    }
+
+    // Include the data-testid inventory from the previous build to prevent regressions
+    if (opts.prevTestids && opts.prevTestids.length > 0) {
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `### Previous Build — data-testid Inventory\n\n` +
+          `These testids were present in the previous build. Preserve them unless explicitly changing an element.\n` +
+          opts.prevTestids.map((id) => `  - ${id}`).join('\n'),
+      });
+    }
+
+    // ── Human reviewer feedback (highest priority — overrides all other guidance) ──
+    if (opts.humanFeedback && opts.humanFeedback.trim()) {
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `### ⭐ Human Reviewer Feedback — HIGHEST PRIORITY\n\n` +
+          `A human has reviewed the demo and provided the following specific feedback.\n` +
+          `These instructions take priority over automated QA findings, design system defaults, and ` +
+          `architecture brief suggestions. Address every point explicitly.\n\n` +
+          opts.humanFeedback.trim(),
+      });
+    }
+  }
+
+  contentBlocks.push({
+    type: 'text',
+    text: `## DEMO SCRIPT\n\n${toJSON(demoScript)}`,
+  });
+
+  contentBlocks.push({
+    type: 'text',
+    text: `## ARCHITECTURE BRIEF\n\n${architectureBrief}`,
+  });
+
+  // Live Plaid Link mode instructions
+  if (opts.plaidLinkLive) {
+    const hasCaptures = Array.isArray(opts.plaidLinkScreens) && opts.plaidLinkScreens.length > 0;
+
+    if (false && hasCaptures) {
+      // ── Captured-screen mode: DISABLED (reverted to real-SDK mode) ────────
+      // Simulated step divs conflict with record-local.js phase detection and cause
+      // the recording to show steps in the wrong order. The storyboard now shows
+      // the captured screenshots directly from plaid-link-screens/ instead.
+      // This block is intentionally disabled.
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `## LIVE PLAID LINK MODE — SIMULATED SCREENS\n\n` +
+          `The real Plaid Link SDK initialises on page load for token exchange, but the VIDEO shows\n` +
+          `SIMULATED Plaid Link step divs that you must build.  Reference screenshots of the actual\n` +
+          `Plaid Link sandbox screens are provided below — match the layout and content exactly.\n\n` +
+          `Follow these rules precisely:\n\n` +
+          `1. SCRIPT TAG: <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
+          `   in <head>. This is the ONLY permitted CDN script.\n\n` +
+          `2. ON PAGE LOAD — initialise the handler silently (no open() call):\n` +
+          `   fetch('/api/create-link-token', { method: 'POST',\n` +
+          `     headers: { 'Content-Type': 'application/json' },\n` +
+          `     body: JSON.stringify({ client_name: '<BrandName>' }) })\n` +
+          `   .then(r => r.json())\n` +
+          `   .then(data => {\n` +
+          `     window._plaidHandler = Plaid.create({\n` +
+          `       token: data.link_token,\n` +
+          `       onSuccess: function(public_token, metadata) {\n` +
+          `         window._plaidPublicToken = public_token;\n` +
+          `         window._plaidLinkComplete = true;\n` +
+          `         if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }\n` +
+          `         if (metadata && metadata.institution) window._plaidInstitutionName = metadata.institution.name;\n` +
+          `         if (metadata && metadata.accounts && metadata.accounts[0]) {\n` +
+          `           window._plaidAccountName = metadata.accounts[0].name;\n` +
+          `           window._plaidAccountMask = metadata.accounts[0].mask;\n` +
+          `         }\n` +
+          `         window.goToStep('<FIRST_POST_LINK_STEP_ID>');\n` +
+          `       },\n` +
+          `       onExit: function(err) { console.warn('Plaid exited', err); },\n` +
+          `       onEvent: function(name, meta) {\n` +
+          `         if (window.addLinkEvent) window.addLinkEvent(name, meta);\n` +
+          `       },\n` +
+          `     });\n` +
+          `   });\n` +
+          `   Replace <FIRST_POST_LINK_STEP_ID> with the step ID immediately after the last link-* step.\n\n` +
+          `3. INITIATE LINK BUTTON: The button (data-testid="link-external-account-btn") MUST be inside\n` +
+          `   the initiate-link step div. Clicking it calls:\n` +
+          `     if (window._plaidHandler) window._plaidHandler.open(); // background token exchange\n` +
+          `     window.goToStep('<FIRST_LINK_STEP_ID>');               // advance simulated UI\n` +
+          `   Replace <FIRST_LINK_STEP_ID> with the ID of the first link-* step.\n\n` +
+          `4. SIMULATED PLAID LINK STEP DIVS: Build a step div for EVERY link-* step in the demo script.\n` +
+          `   Each div must:\n` +
+          `   a. Have data-testid="step-{stepId}" and class="step".\n` +
+          `   b. Show a Plaid Link modal overlay: position:fixed, top:0, left:0, width:100%, height:100%,\n` +
+          `      backdrop-filter:blur(4px), background:rgba(0,0,0,0.6), z-index:9999,\n` +
+          `      with a centred white modal card (width:400px, min-height:500px, border-radius:16px,\n` +
+          `      background:#fff, padding:32px).\n` +
+          `   c. Contain the Plaid logo at the top of the card (SVG or text "Plaid").\n` +
+          `   d. Contain the required data-testid for that step's interaction target (from demo-script.json).\n` +
+          `      CRITICAL: every data-testid must be unique across the ENTIRE document — never reuse the same\n` +
+          `      testid on multiple step divs. Each link-* step has its own unique container testid:\n` +
+          `      - link-consent: data-testid="link-consent-container" on the modal card inner div\n` +
+          `      - link-otp: data-testid="otp-input" on the OTP text input (a visible <input>, styled as OTP boxes)\n` +
+          `        The step container itself: data-testid="link-otp-container"\n` +
+          `      - link-account-select: data-testid="account-select-item" on the first clickable account row\n` +
+          `        The step container itself: data-testid="link-account-select-container"\n` +
+          `      - link-success: data-testid="link-success-container" on the modal card inner div\n` +
+          `      DO NOT use data-testid="plaid-link-modal" anywhere — it is not a required target and causes\n` +
+          `      duplicate testid violations when the same name appears in multiple step divs.\n` +
+          `   e. Match the captured screenshot as closely as possible (see images below).\n` +
+          `   f. NEVER add style="display:..." to a .step div — use only CSS class toggling.\n\n` +
+          `5. DYNAMIC BANK DATA: Institution name, account name, and account mask come from the real\n` +
+          `   onSuccess callback. Display them using window._plaidInstitutionName,\n` +
+          `   window._plaidAccountName, window._plaidAccountMask.  For the simulated screens that\n` +
+          `   appear BEFORE onSuccess fires, show placeholder text (e.g. "Your Bank") that gets\n` +
+          `   replaced by the goToStep handler for post-link steps.\n` +
+          `   For bank logo: always use a generic Heroicons building-library SVG — never fetch real logos.\n\n` +
+          `6. COMPLETION FLAG: window._plaidLinkComplete = true is set in onSuccess callback only.\n` +
+          `   Also set it in the goToStep handler for the link-success step so the recording does not\n` +
+          `   stall if CDP automation completes ahead of the simulated step navigation:\n` +
+          `     window._stepLinkEvents['link-success'] = [...];\n` +
+          `     // In goToStep for link-success, also set: window._plaidLinkComplete = true;\n\n` +
+          `7. PLAYWRIGHT SCRIPT for link-* steps:\n` +
+          `   - link-consent: action "goToStep", target "link-consent", waitMs equal to durationMs\n` +
+          `   - link-otp: action "fill", target "[data-testid=\\"otp-input\\"]", value "123456",\n` +
+          `     followed by action "goToStep" for the next step\n` +
+          `   - link-account-select: action "click", target "[data-testid=\\"account-select-item\\"]",\n` +
+          `     followed by action "goToStep" for the next step\n` +
+          `   - link-success: action "goToStep", target "link-success", waitMs 45000\n` +
+          `     (the recording waits for _plaidLinkComplete before advancing)\n\n` +
+          `8. POST-LINK STEPS: Hard-code realistic sandbox data:\n` +
+          `   - auth/get: account "934816720281", routing "021000021"\n` +
+          `   - identity/match: legal_name 97, phone_number 92, email_address 90, address 88\n` +
+          `   - signal/evaluate: score 91, risk_tier "LOW"`,
+      });
+
+      // Inject captured screenshots as visual reference
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `### Plaid Link Captured Screenshots — Reference for Simulated Step Divs\n\n` +
+          `The following screenshots were taken from the real Plaid Link sandbox. ` +
+          `Build each simulated step div to match its corresponding screenshot as closely as possible. ` +
+          `Pay attention to typography, layout, button styles, and the Plaid colour scheme (#00c5c8 accent).`,
+      });
+      for (const screen of opts.plaidLinkScreens) {
+        contentBlocks.push({
+          type: 'text',
+          text: `**Captured screen for step "${screen.stepId}":**`,
+        });
+        contentBlocks.push({
+          type:   'image',
+          source: { type: 'base64', media_type: 'image/png', data: screen.base64 },
+        });
+      }
+
+    } else {
+      // ── No-capture mode: real SDK iframe, no simulated step divs ─────────
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `## LIVE PLAID LINK MODE\n\n` +
+          `The real Plaid Link SDK renders its own modal UI — do NOT build simulated Plaid step divs.\n` +
+          `Your step list goes directly from the initiate-link step to the post-link customer UI steps.\n\n` +
+          `Follow these rules precisely:\n\n` +
+          `1. SCRIPT TAG: Add <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
+          `   in <head>. This is the ONLY permitted CDN script.\n\n` +
+          `2. ON PAGE LOAD — initialise the handler silently:\n` +
+          `   fetch('/api/create-link-token', { method: 'POST',\n` +
+          `     headers: { 'Content-Type': 'application/json' },\n` +
+          `     body: JSON.stringify({ client_name: '<BrandName>' }) })\n` +
+          `   .then(r => r.json())\n` +
+          `   .then(data => {\n` +
+          `     window._plaidHandler = Plaid.create({\n` +
+          `       token: data.link_token,\n` +
+          `       onSuccess: function(public_token, metadata) {\n` +
+          `         window._plaidPublicToken = public_token;\n` +
+          `         window._plaidLinkComplete = true;\n` +
+          `         if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }\n` +
+          `         window.goToStep('<FIRST_POST_LINK_STEP_ID>');\n` +
+          `       },\n` +
+          `       onExit: function(err) { console.warn('Plaid exited', err); },\n` +
+          `       onEvent: function(name, meta) {\n` +
+          `         if (window.addLinkEvent) window.addLinkEvent(name, meta);\n` +
+          `       },\n` +
+          `     });\n` +
+          `   });\n` +
+          `   Replace <FIRST_POST_LINK_STEP_ID> with the ID of the step immediately after the\n` +
+          `   initiate-link step in the demo script.\n\n` +
+          `3. INITIATE LINK BUTTON: The "Link External Account" button\n` +
+          `   (data-testid="link-external-account-btn") MUST be inside the initiate-link step div.\n` +
+          `   Clicking it runs: if (window._plaidHandler) window._plaidHandler.open();\n` +
+          `   Do NOT call goToStep — the Plaid SDK opens its own iframe modal immediately.\n\n` +
+          `4. NO SIMULATED PLAID STEPS: Do NOT build step divs for institution search, credentials,\n` +
+          `   account selection, or a Plaid success screen. The real SDK handles all of that inside\n` +
+          `   its own cross-origin iframe. The recording automation interacts with the iframe directly.\n\n` +
+          `5. POST-LINK STEPS: Hard-code realistic sandbox data in the post-link step divs:\n` +
+          `   - auth/get: account "934816720281", routing "021000021", wire routing "021000021"\n` +
+          `   - identity/match: legal_name 97, phone_number 92, email_address 90, address 88\n` +
+          `   - signal/evaluate: trust_index 91, risk_tier "LOW", customer_initiated_return_risk 8,\n` +
+          `     bank_initiated_return_risk 4\n\n` +
+          `6. COMPLETION FLAG: window._plaidLinkComplete = true is set only in onSuccess.\n` +
+          `   The recording waits for this flag before advancing past the initiate-link step.\n` +
+          `   Do not set it anywhere else.\n\n` +
+          `7. LINK EVENTS: The link-events-panel is a developer artifact — NEVER visible in recordings.\n\n` +
+          `8. PLAYWRIGHT SCRIPT: For the initiate-link step use action "click" on\n` +
+          `   [data-testid="link-external-account-btn"] with waitMs 45000.\n` +
+          `   The recording handles the real Plaid flow internally and waits for _plaidLinkComplete.\n` +
+          `   Do NOT include playwright steps for institution search, credentials, or account selection.`,
+      });
+
+      // Plaid Link reference screenshots — DISABLED (plaid-link-capture stage off)
+      // To restore: re-enable plaid-link-capture in orchestrator.js and uncomment below.
+      /*
+      if (hasCaptures) {
+        contentBlocks.push({
+          type: 'text',
+          text:
+            `### Plaid Link Reference Screenshots (visual context only)\n\n` +
+            `These screenshots show what the real Plaid Link sandbox looks like during this demo flow. ` +
+            `You do NOT need to recreate these screens — the real SDK renders them. ` +
+            `Use these as context for how the app should look AROUND the Plaid Link modal ` +
+            `(background dimming, app chrome behind the modal, etc.).`,
+        });
+        for (const screen of opts.plaidLinkScreens) {
+          contentBlocks.push({ type: 'text', text: `**Plaid Link — ${screen.stepId}:**` });
+          contentBlocks.push({
+            type:   'image',
+            source: { type: 'base64', media_type: 'image/png', data: screen.base64 },
+          });
+        }
+      }
+      */
+    }
+  }
+
+  // Design plugin: inject assetlib as pixel-perfect reference for Plaid Link UI
+  if (opts.designPluginHtml) {
+    let designBlock =
+      `## DESIGN PLUGIN: Plaid Link Asset Library (pixel-perfect reference)\n\n` +
+      `The following HTML/CSS is a production-accurate prototype of Plaid Link's Core Credentials ` +
+      `flow, derived directly from Plaid's official Product Shots Toolkit Figma file. ` +
+      `When generating the Plaid Link modal steps (institution search, credentials, account ` +
+      `selection, connected), use this exact component structure, CSS class names, color tokens, ` +
+      `and layout as your reference. Do NOT deviate from the design tokens defined here.\n\n` +
+      `Key design tokens from the asset library:\n` +
+      `  --link-bg: #ffffff (modal background)\n` +
+      `  --link-teal: #00c5c8 (Plaid accent / CTA)\n` +
+      `  --link-black-btn: #1a1a1a (primary button background)\n` +
+      `  --modal-w: 400px, --modal-h: 720px\n` +
+      `  Institution tiles: 80px × 80px, border-radius 12px\n` +
+      `  Account list rows: radio-button pattern, teal selected state\n\n` +
+      `### assetlib/plaid-link.css (design tokens and component styles)\n\`\`\`css\n` +
+      (opts.designPluginCss || '') +
+      `\n\`\`\`\n\n` +
+      `### assetlib/index.html (reference prototype)\n\`\`\`html\n` +
+      opts.designPluginHtml +
+      `\n\`\`\``;
+    contentBlocks.push({ type: 'text', text: designBlock });
+  }
+
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `Generate the complete index.html and the playwright-script.json as described in the system prompt. ` +
+      `Output the HTML first, then the <!-- PLAYWRIGHT_SCRIPT_JSON --> comment, then the JSON fenced block. ` +
+      `Nothing else.`,
+  });
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: contentBlocks }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. QA review prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt for per-step QA review using video frame images.
+ *
+ * @param {{ id: string, label: string, narration: string, visualState: string }} step
+ * @param {string[]} framesBase64  Exactly 3 base64-encoded PNG images [start, mid, end]
+ * @param {string}   expectedState Description of what the screen should look like
+ * @param {object}   [demoContext] Demo-level context to anchor scoring
+ * @param {string}   [demoContext.product]   Product name (e.g. "Plaid Instant Auth + Signal")
+ * @param {object}   [demoContext.persona]   { name, role, company, useCase }
+ * @param {number}   [demoContext.stepIndex] 0-based index of this step
+ * @param {number}   [demoContext.totalSteps] Total steps in the demo
+ * @param {object}   [demoContext.prevStep]  { id, label } of preceding step, or null
+ * @param {object}   [demoContext.nextStep]  { id, label } of following step, or null
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}) {
+  const {
+    product    = '',
+    persona    = {},
+    stepIndex  = null,
+    totalSteps = null,
+    prevStep   = null,
+    nextStep   = null,
+  } = demoContext;
+
+  // Detect whether this step is intentionally Plaid-branded
+  const isPlaidBrandedStep = /^plaid-/.test(step.id);
+
+  // Build system prompt with full demo context
+  const personaLine = persona.name
+    ? `Persona: ${persona.name} (${persona.role || ''} at ${persona.company || ''}). Use case: ${persona.useCase || ''}.`
+    : '';
+  const productLine = product ? `Product being demoed: ${product}.` : '';
+  const stepPosition = (stepIndex !== null && totalSteps !== null)
+    ? `This is step ${stepIndex + 1} of ${totalSteps} in the demo.`
+    : '';
+
+  const plaidBrandingNote = isPlaidBrandedStep
+    ? `\n\nIMPORTANT — PLAID-BRANDED STEP: This step (${step.id}) is intentionally a full-viewport ` +
+      `Plaid-branded screen. It is a designed "insight reveal" or outcome screen — NOT a bug. ` +
+      `Plaid colors, Plaid logo, Plaid API response panels, and teal/navy design system elements ` +
+      `are ALL correct and expected on this step. Do NOT penalize the presence of Plaid branding.`
+    : `\n\nIMPORTANT — CUSTOMER-BRANDED STEP: This step should show the customer's (${persona.company || 'brand'}) ` +
+      `UI. Plaid UI elements (Plaid logo, Plaid Link modal, Plaid-branded panels) should only appear ` +
+      `if the expected visual state explicitly describes them. If Plaid Link modal is open when it ` +
+      `should be dismissed, that is a real bug.`;
+
+  const system =
+    `You are a QA engineer reviewing a Plaid product demo recording. ` +
+    `${productLine} ${personaLine} ${stepPosition}\n\n` +
+    `Your ONLY job is to verify that the recorded frames match the step's "Expected visual state" ` +
+    `field. Score strictly against that description — do not apply general assumptions about what ` +
+    `Plaid demos "should" look like or invent criteria not present in the expected state. ` +
+    `Be specific and actionable in your feedback.` +
+    plaidBrandingNote;
+
+  // Build step position context string
+  const navContext = [
+    prevStep ? `Previous step: "${prevStep.id}" — ${prevStep.label}` : 'This is the first step.',
+    nextStep ? `Next step: "${nextStep.id}" — ${nextStep.label}` : 'This is the final step.',
+  ].join('\n');
+
+  const contentBlocks = [
+    {
+      type: 'text',
+      text:
+        `## DEMO CONTEXT\n\n` +
+        navContext + `\n\n` +
+        `## STEP UNDER REVIEW\n\n` +
+        `Step ID:    ${step.id}\n` +
+        `Label:      ${step.label}\n` +
+        `Narration:  ${step.narration}\n\n` +
+        `Expected visual state (score against THIS description only):\n${expectedState}\n\n` +
+        `Below are three frames captured during recording: start of step, midpoint, and end of step.`,
+    },
+  ];
+
+  const frameLabels = ['Start frame', 'Mid frame', 'End frame'];
+  framesBase64.slice(0, 3).forEach((b64, idx) => {
+    contentBlocks.push({ type: 'text', text: frameLabels[idx] });
+    contentBlocks.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: b64 },
+    });
+  });
+
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `Review the frames against the expected visual state and narration above.\n\n` +
+      `Scoring rules:\n` +
+      `- 100 = frames match the expected state exactly\n` +
+      `- Deduct points only for deviations from the expected visual state\n` +
+      `- Do NOT deduct points for design choices that are consistent with the expected state\n` +
+      `- A "critical" issue is one where the step is completely wrong or broken (wrong screen, modal stuck open, blank frame)\n\n` +
+      `Output ONLY a JSON object — no prose, no markdown fences:\n\n` +
+      `{\n` +
+      `  "stepId": "${step.id}",\n` +
+      `  "score": <0–100>,\n` +
+      `  "issues": ["<specific deviation from expected state>", ...],\n` +
+      `  "suggestions": ["<actionable fix>", ...],\n` +
+      `  "critical": <true if the step is completely wrong or broken>\n` +
+      `}`,
+  });
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: contentBlocks }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Segmentation prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that maps a raw video analysis to step-timing.json.
+ *
+ * @param {{ videoIndex: Array, voiceover?: Array }} videoAnalysis  Output of analyze.js
+ * @param {{ synthesizedInsights: string }} productResearch
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildSegmentationPrompt(videoAnalysis, productResearch) {
+  const system =
+    `You are a demo video analyst. You segment raw video analysis data into ` +
+    `discrete steps by correlating visual changes with voiceover timestamps. ` +
+    `Your output drives the Remotion composition timing — precision matters.`;
+
+  const userText =
+    `Segment the following video analysis into demo steps.\n\n` +
+    `## PRODUCT RESEARCH (for context)\n${productResearch.synthesizedInsights || ''}\n\n` +
+    `## WHISPER TRANSCRIPT (word-level timestamps)\n${toJSON(videoAnalysis.voiceover || [])}\n\n` +
+    `## FRAME DESCRIPTIONS (1 frame per second)\n${toJSON(videoAnalysis.videoIndex || [])}\n\n` +
+    `Output ONLY a JSON object matching this schema — no prose, no markdown fences:\n\n` +
+    `{\n` +
+    `  "totalMs": <number>,\n` +
+    `  "totalFrames": <number>,\n` +
+    `  "steps": [\n` +
+    `    {\n` +
+    `      "id": "<kebab-case string matching demo-script step id>",\n` +
+    `      "label": "<string>",\n` +
+    `      "startMs": <number>,\n` +
+    `      "endMs": <number>,\n` +
+    `      "durationMs": <number>,\n` +
+    `      "startFrame": <number>,\n` +
+    `      "endFrame": <number>,\n` +
+    `      "durationFrames": <number>\n` +
+    `    }\n` +
+    `  ]\n` +
+    `}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. Narration polish prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that polishes step narration to fit timing and brand voice.
+ *
+ * @param {Array<{ id: string, narration: string, durationMs: number }>} steps
+ * @param {{ synthesizedInsights: string, accurateTerminology: object }} productResearch
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildNarrationPolishPrompt(steps, productResearch) {
+  const system =
+    `You are a senior Plaid copywriter. You polish demo narration to be ` +
+    `concise, accurate, and on-brand. Every word must earn its place — the narrator speaks ` +
+    `at 150 words per minute and each step has a fixed duration.\n\n` +
+    `Brand voice rules:\n` +
+    `- Confident, precise, outcome-focused.\n` +
+    `- Active voice. Quantified outcomes where possible.\n` +
+    `- Never: "simply", "just", "unfortunately", "robust", "seamless".\n` +
+    `- Use approved product names only.`;
+
+  // Build per-step instructions with max word count derived from duration
+  const stepInstructions = steps.map((step) => {
+    const maxWords = Math.floor((step.durationMs / 1000 / 60) * 150);
+    return (
+      `Step "${step.id}" (${step.durationMs}ms, max ${maxWords} words):\n` +
+      `Original: ${step.narration}`
+    );
+  }).join('\n\n');
+
+  const userText =
+    `Polish the narration for each step below. Apply brand voice rules strictly.\n\n` +
+    `## PRODUCT RESEARCH (for accuracy checks)\n${productResearch.synthesizedInsights || ''}\n\n` +
+    `Accurate terminology to use:\n${toJSON(productResearch.accurateTerminology || {})}\n\n` +
+    `## STEPS TO POLISH\n\n${stepInstructions}\n\n` +
+    `Output ONLY a JSON object matching the demo-script.json schema with polished narration ` +
+    `fields — no prose, no markdown fences. Preserve all other fields unchanged:\n\n` +
+    `{\n` +
+    `  "steps": [\n` +
+    `    {\n` +
+    `      "id": "<string>",\n` +
+    `      "narration": "<polished narration, within word limit>"\n` +
+    `    }\n` +
+    `  ]\n` +
+    `}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. Overlay plan prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt that decides where to add motion graphics overlays.
+ *
+ * @param {object} demoScript   Parsed demo-script.json (with polished narration)
+ * @param {{ videoIndex: Array }} videoAnalysis
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildOverlayPlanPrompt(demoScript, videoAnalysis) {
+  const system =
+    `You are a motion graphics designer for Plaid demo videos. ` +
+    `You decide where to add visual overlays that reinforce the narration and ` +
+    `direct the viewer's attention to the key reveal moments. ` +
+    `Overlays should feel purposeful and premium — never gratuitous.`;
+
+  const userText =
+    `Review the polished demo script and frame descriptions below, ` +
+    `then produce an overlay plan.\n\n` +
+    `Available overlay types:\n` +
+    `- zoom_punch:      Zoom into a specific region to highlight a value or element\n` +
+    `- callout_badge:   Floating label pointing to a UI element (e.g. "Trust Index 94/100")\n` +
+    `- lower_third:     Title card at the bottom of screen (persona name, step label)\n` +
+    `- highlight_box:   Animated rectangle around a specific element\n` +
+    `- annotation_text: Short floating text annotation (max 8 words)\n\n` +
+    `## DEMO SCRIPT (polished)\n${toJSON(demoScript)}\n\n` +
+    `## FRAME DESCRIPTIONS\n${toJSON(videoAnalysis.videoIndex || [])}\n\n` +
+    `Output ONLY a JSON object matching this schema — no prose, no markdown fences:\n\n` +
+    `{\n` +
+    `  "overlays": [\n` +
+    `    {\n` +
+    `      "stepId": "<string>",\n` +
+    `      "type": "<zoom_punch|callout_badge|lower_third|highlight_box|annotation_text>",\n` +
+    `      "startMs": <number, offset from step start>,\n` +
+    `      "durationMs": <number>,\n` +
+    `      "region": { "x": <0–1>, "y": <0–1>, "width": <0–1>, "height": <0–1> },\n` +
+    `      "text": "<string, for badge/lower_third/annotation types>",\n` +
+    `      "rationale": "<one sentence explaining why this overlay is here>"\n` +
+    `    }\n` +
+    `  ]\n` +
+    `}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. Script critique prompt
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build the prompt for automated quality critique of a generated demo script.
+ *
+ * @param {object} demoScript     Parsed demo-script.json
+ * @param {{ synthesizedInsights: string, accurateTerminology: object }} productResearch
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildScriptCritiquePrompt(demoScript, productResearch) {
+  const system =
+    `You are a Plaid demo quality reviewer. You evaluate demo scripts against ` +
+    `Plaid's quality standards and flag issues before production begins. ` +
+    `Be direct and specific — vague praise or criticism is not useful.`;
+
+  const userText =
+    `Review the following demo script against the quality criteria below.\n\n` +
+    `## QUALITY CRITERIA\n\n` +
+    `Narration:\n` +
+    `- Each step must have 20–35 words (flag steps with > 35 words as critical)\n` +
+    `- Active voice only (flag passive constructions)\n` +
+    `- No banned words: "simply", "just", "unfortunately", "robust", "seamless"\n` +
+    `- Quantified outcomes in the key reveal step\n\n` +
+    `Structure:\n` +
+    `- 8–14 steps total\n` +
+    `- Must follow narrative arc: Problem → Solution entry → Frictionless experience → Key reveal → Outcome\n` +
+    `- A climactic reveal moment with a specific score or metric must be present\n` +
+    `- Final step must include a clear CTA or outcome\n\n` +
+    `Accuracy:\n` +
+    `- Product names must match approved list: "Plaid Identity Verification (IDV)", ` +
+    `"Plaid Instant Auth", "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets"\n` +
+    `- Metric values must be realistic (Trust Index 82–97, not 100/100)\n` +
+    `- No API error responses in the main flow\n` +
+    `- Verify terminology against the product research below\n\n` +
+    `Anti-patterns (flag each occurrence):\n` +
+    `- Error states, declined flows, or unresolved loading spinners\n` +
+    `- Generic placeholder data (John Doe, example@email.com, etc.)\n` +
+    `- Technical API jargon without customer-facing context\n\n` +
+    `## PRODUCT RESEARCH (for accuracy verification)\n${productResearch.synthesizedInsights || ''}\n\n` +
+    `Approved terminology:\n${toJSON(productResearch.accurateTerminology || {})}\n\n` +
+    `## DEMO SCRIPT TO REVIEW\n${toJSON(demoScript)}\n\n` +
+    `Output ONLY a JSON object — no prose, no markdown fences:\n\n` +
+    `{\n` +
+    `  "passed": <true if no critical issues found>,\n` +
+    `  "issues": [\n` +
+    `    {\n` +
+    `      "stepId": "<string or 'global'>",\n` +
+    `      "severity": "<critical|warning|suggestion>",\n` +
+    `      "rule": "<which quality criterion was violated>",\n` +
+    `      "description": "<specific description of the issue>"\n` +
+    `    }\n` +
+    `  ],\n` +
+    `  "suggestions": ["<actionable improvement>", ...]\n` +
+    `}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exports
+// ─────────────────────────────────────────────────────────────────────────────
+
+module.exports = {
+  buildResearchPrompt,
+  buildScriptGenerationPrompt,
+  buildAppArchitectureBriefPrompt,
+  buildAppGenerationPrompt,
+  buildQAReviewPrompt,
+  buildSegmentationPrompt,
+  buildNarrationPolishPrompt,
+  buildOverlayPlanPrompt,
+  buildScriptCritiquePrompt,
+};

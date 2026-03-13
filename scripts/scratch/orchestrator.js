@@ -1,0 +1,1774 @@
+#!/usr/bin/env node
+/**
+ * orchestrator.js
+ * Governing agent for the Plaid demo pipeline.
+ * Reads inputs/prompt.txt → determines mode → drives all pipeline stages.
+ *
+ * Usage:
+ *   node scripts/scratch/orchestrator.js              # auto-detect mode from prompt
+ *   node scripts/scratch/orchestrator.js --mode=scratch
+ *   node scripts/scratch/orchestrator.js --mode=enhance
+ *   node scripts/scratch/orchestrator.js --mode=hybrid
+ *   node scripts/scratch/orchestrator.js --from=build  # restart from a stage
+ *   node scripts/scratch/orchestrator.js --no-touchup  # skip Remotion Studio touchup
+ */
+
+'use strict';
+
+require('dotenv').config({ override: true });
+
+const fs            = require('fs');
+const path          = require('path');
+const { execSync }  = require('child_process');
+const readline      = require('readline');
+const Anthropic     = require('@anthropic-ai/sdk');
+
+// ── Paths ─────────────────────────────────────────────────────────────────────
+
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const INPUTS_DIR   = path.join(PROJECT_ROOT, 'inputs');
+const OUT_DIR      = path.join(PROJECT_ROOT, 'out');
+const DEMOS_DIR    = path.join(OUT_DIR, 'demos');
+const LATEST_LINK  = path.join(OUT_DIR, 'latest');
+
+// ── Stage ordering ────────────────────────────────────────────────────────────
+
+const STAGES = [
+  'research',
+  'ingest',
+  'brand-extract',
+  'script',
+  'script-critique',
+  // 'plaid-link-capture',  // DISABLED — using manual Playwright recording of real Plaid Link
+  'build',
+  'record',
+  'qa',
+  'figma-review',
+  'post-process',
+  'voiceover',
+  'resync-audio',
+  'audio-qa',
+  'render',
+  'ppt',
+  'touchup',
+];
+
+// ── CLI arg parsing ───────────────────────────────────────────────────────────
+
+function parseArgs() {
+  const args = process.argv.slice(2);
+
+  const modeArg  = args.find(a => a.startsWith('--mode='));
+  const fromArg  = args.find(a => a.startsWith('--from='));
+  const noTouchup = args.includes('--no-touchup');
+
+  const mode      = modeArg ? modeArg.replace('--mode=', '').toLowerCase() : null;
+  const fromStage = fromArg ? fromArg.replace('--from=', '').toLowerCase() : null;
+
+  return { mode, fromStage, noTouchup };
+}
+
+// ── Prompt file loading ───────────────────────────────────────────────────────
+
+function loadPrompt() {
+  const promptFile = path.join(INPUTS_DIR, 'prompt.txt');
+  if (fs.existsSync(promptFile)) {
+    return fs.readFileSync(promptFile, 'utf8').trim();
+  }
+  return null;
+}
+
+// ── Mode classification ───────────────────────────────────────────────────────
+
+/**
+ * Uses Claude Haiku to classify the pipeline mode from the raw prompt text.
+ * Returns 'scratch' | 'enhance' | 'hybrid'.
+ *
+ * scratch = no video mentioned OR only screenshots/scripts mentioned
+ * enhance = a video file is mentioned as the entire demo ("polish it", "replace my voice")
+ * hybrid  = some parts recorded, some Claude builds ("use intro.mp4 for the opening, then build...")
+ */
+async function classifyMode(promptText) {
+  if (!promptText) {
+    console.log('[Orchestrator] No prompt.txt found — defaulting to scratch mode.');
+    return 'scratch';
+  }
+
+  console.log('[Orchestrator] Classifying pipeline mode with Claude Haiku...');
+
+  const client = new Anthropic();
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 256,
+      messages: [
+        {
+          role: 'user',
+          content:
+            `You are classifying a Plaid demo pipeline request into one of three modes.\n\n` +
+            `Modes:\n` +
+            `- scratch: No existing video mentioned, or only screenshots/scripts/images are provided. ` +
+            `Claude will build the entire demo from scratch.\n` +
+            `- enhance: One video file is mentioned as the complete source material for the demo ` +
+            `(e.g. "polish it", "replace my voice", "clean up this recording"). ` +
+            `Claude enhances that video.\n` +
+            `- hybrid: Some segments are existing recordings and some need to be built by Claude ` +
+            `(e.g. "use intro.mp4 for the opening, then build the IDV flow...").\n\n` +
+            `Respond with ONLY one of these three words in lowercase: scratch, enhance, or hybrid.\n\n` +
+            `User prompt:\n${promptText}`,
+        },
+      ],
+    });
+
+    const text = response.content.find(b => b.type === 'text')?.text?.trim().toLowerCase() || '';
+
+    if (text === 'scratch' || text === 'enhance' || text === 'hybrid') {
+      console.log(`[Orchestrator] Detected mode: ${text}`);
+      return text;
+    }
+
+    // Response may contain the word somewhere in a sentence
+    if (text.includes('enhance')) return 'enhance';
+    if (text.includes('hybrid'))  return 'hybrid';
+
+    console.warn(`[Orchestrator] Unexpected mode response "${text}" — defaulting to scratch.`);
+    return 'scratch';
+  } catch (err) {
+    console.warn(`[Orchestrator] Mode classification failed (${err.message}) — defaulting to scratch.`);
+    return 'scratch';
+  }
+}
+
+// ── Product slug extraction ───────────────────────────────────────────────────
+
+/**
+ * Extracts a product slug from the prompt text for use in versioned directory names.
+ * Falls back to 'demo' if nothing recognisable is found.
+ */
+function extractProductSlug(promptText) {
+  if (!promptText) return 'demo';
+
+  const productMap = {
+    'identity verification': 'idv',
+    'idv':                   'idv',
+    'instant auth':          'instant-auth',
+    'layer':                 'layer',
+    'monitor':               'monitor',
+    'signal':                'signal',
+    'assets':                'assets',
+    'income':                'income',
+    'transfer':              'transfer',
+    'balance':               'balance',
+  };
+
+  const lower = promptText.toLowerCase();
+  for (const [keyword, slug] of Object.entries(productMap)) {
+    if (lower.includes(keyword)) return slug;
+  }
+
+  // Generic slug: take first 3 significant words, join with hyphens
+  const words = lower
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !['with', 'that', 'this', 'from', 'build', 'make', 'create', 'demo'].includes(w))
+    .slice(0, 3);
+
+  return words.length > 0 ? words.join('-') : 'demo';
+}
+
+// ── Versioned output directory ────────────────────────────────────────────────
+
+/**
+ * Determines the versioned output directory for this run.
+ * Pattern: out/demos/{YYYY-MM-DD}-{product-slug}-v{N}/
+ * Increments N if a same-day, same-product directory already exists.
+ */
+function resolveVersionedDir(productSlug) {
+  fs.mkdirSync(DEMOS_DIR, { recursive: true });
+
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const prefix = `${today}-${productSlug}-v`;
+
+  const existing = fs.readdirSync(DEMOS_DIR)
+    .filter(name => name.startsWith(prefix))
+    .map(name => {
+      const n = parseInt(name.replace(prefix, ''), 10);
+      return isNaN(n) ? 0 : n;
+    });
+
+  const nextN  = existing.length > 0 ? Math.max(...existing) + 1 : 1;
+  const dirName = `${prefix}${nextN}`;
+  const fullPath = path.join(DEMOS_DIR, dirName);
+
+  fs.mkdirSync(fullPath, { recursive: true });
+
+  // Update out/latest symlink
+  try { fs.unlinkSync(LATEST_LINK); } catch (_) {}
+
+  try {
+    fs.symlinkSync(fullPath, LATEST_LINK);
+  } catch (err) {
+    console.warn(`[Orchestrator] Could not create symlink out/latest: ${err.message}`);
+  }
+
+  return fullPath;
+}
+
+// ── Elapsed time tracker ──────────────────────────────────────────────────────
+
+function makeTimer() {
+  const pipelineStart = Date.now();
+  const stageStart    = {};
+
+  return {
+    startStage(stage) {
+      stageStart[stage] = Date.now();
+      console.log(`\n${'─'.repeat(60)}`);
+      console.log(`[Stage: ${stage}] Starting...`);
+      console.log(`${'─'.repeat(60)}`);
+    },
+    endStage(stage) {
+      const elapsed = ((Date.now() - (stageStart[stage] || Date.now())) / 1000).toFixed(1);
+      console.log(`[Stage: ${stage}] Done in ${elapsed}s`);
+    },
+    totalElapsed() {
+      return ((Date.now() - pipelineStart) / 1000).toFixed(1);
+    },
+  };
+}
+
+// ── User prompt for continue/abort ───────────────────────────────────────────
+
+async function promptContinue(message) {
+  // TTY path: interactive terminal — readline works normally
+  if (process.stdin.isTTY) {
+    return new Promise(resolve => {
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      rl.question(`${message} Press ENTER to continue or Ctrl+C to abort. `, () => {
+        rl.close();
+        resolve();
+      });
+    });
+  }
+
+  // Non-TTY path (spawned by dashboard with piped stdin):
+  // Accept ENTER via the pipe (dashboard POST /api/pipeline/stdin → '\n'),
+  // OR wait for a signal file written by the dashboard at {runDir}/continue.signal.
+  const runDir = process.env.PIPELINE_RUN_DIR || path.join(__dirname, '../../out/latest');
+  const signalFile = path.join(runDir, 'continue.signal');
+  // Remove stale signal file from a prior run
+  try { fs.unlinkSync(signalFile); } catch (_) {}
+
+  console.log(`\n[Orchestrator] Waiting for continue signal — click "▶ Continue" in the dashboard or POST /api/pipeline/stdin`);
+
+  return new Promise(resolve => {
+    // Option A: data arrives on piped stdin (dashboard sends '\n')
+    const onData = () => { cleanup(); resolve(); };
+    process.stdin.once('data', onData);
+
+    // Option B: signal file is written by dashboard
+    const poll = setInterval(() => {
+      if (fs.existsSync(signalFile)) {
+        try { fs.unlinkSync(signalFile); } catch (_) {}
+        cleanup();
+        resolve();
+      }
+    }, 500);
+
+    function cleanup() {
+      process.stdin.removeListener('data', onData);
+      clearInterval(poll);
+    }
+  });
+}
+
+// ── Script critique (inline, no separate file) ────────────────────────────────
+
+async function runScriptCritique() {
+  const runDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+  const scriptFile = path.join(runDir, 'demo-script.json');
+  if (!fs.existsSync(scriptFile)) {
+    console.log('[script-critique] No demo-script.json found — skipping.');
+    return;
+  }
+
+  console.log('[script-critique] Checking script quality...');
+
+  const script = JSON.parse(fs.readFileSync(scriptFile, 'utf8'));
+  const client = new Anthropic();
+
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 1024,
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Review this Plaid demo script for quality issues. Check: narration > 35 words per step, ` +
+          `passive voice, filler words (simply, just, unfortunately), missing persona name, ` +
+          `missing reveal moment. Output JSON: ` +
+          `{ "issues": [{ "stepId", "severity": "critical"|"warning", "message" }], "passed": boolean }.\n\n` +
+          `Script:\n${JSON.stringify(script, null, 2)}`,
+      },
+    ],
+  });
+
+  const text = response.content.find(b => b.type === 'text')?.text || '';
+
+  try {
+    const raw =
+      text.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ||
+      text.match(/(\{[\s\S]*\})/)?.[1] ||
+      '{"passed":true,"issues":[]}';
+
+    const critique = JSON.parse(raw);
+
+    if (!critique.passed) {
+      console.warn('[script-critique] Issues found:');
+      (critique.issues || []).forEach(i =>
+        console.warn(`  [${i.severity}] Step ${i.stepId}: ${i.message}`)
+      );
+
+      if (!process.env.SCRATCH_AUTO_APPROVE) {
+        await promptContinue('[script-critique] Script has issues.');
+      }
+    } else {
+      console.log('[script-critique] Script passed quality check.');
+    }
+  } catch {
+    console.warn('[script-critique] Could not parse critique response.');
+  }
+}
+
+// ── Pipeline plan for hybrid mode ────────────────────────────────────────────
+
+/**
+ * Uses Claude Haiku to parse prompt.txt and identify which segments are
+ * existing recordings vs. segments Claude should build.
+ */
+async function buildPipelinePlan(promptText) {
+  const client = new Anthropic();
+
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 2048,
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Parse this hybrid demo pipeline request. Identify which segments are existing ` +
+          `video recordings and which segments Claude should build from scratch.\n\n` +
+          `Output ONLY a JSON object — no prose, no markdown fences:\n\n` +
+          `{\n` +
+          `  "segments": [\n` +
+          `    {\n` +
+          `      "id": "<kebab-case segment id>",\n` +
+          `      "type": "<recorded|build>",\n` +
+          `      "file": "<video filename if recorded, null if build>",\n` +
+          `      "description": "<what this segment covers>"\n` +
+          `    }\n` +
+          `  ]\n` +
+          `}\n\n` +
+          `Prompt:\n${promptText}`,
+      },
+    ],
+  });
+
+  const text = response.content.find(b => b.type === 'text')?.text || '';
+  const raw  =
+    text.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ||
+    text.match(/(\{[\s\S]*\})/)?.[1] ||
+    '{"segments":[]}';
+
+  return JSON.parse(raw);
+}
+
+// ── Stage execution helpers ───────────────────────────────────────────────────
+
+/**
+ * Wraps a stage execution with error handling and optional auto-approve.
+ *
+ * Error classification:
+ *   CRITICAL: Errors whose messages begin with "CRITICAL:" — always halt, even with
+ *             SCRATCH_AUTO_APPROVE=true. These indicate missing artifacts or contract
+ *             violations that make downstream stages meaningless.
+ *   QUALITY_GATE: All other errors — prompt in interactive mode; auto-skip when
+ *                 SCRATCH_AUTO_APPROVE=true.
+ */
+function writePipelineProgress(stageName) {
+  const runDir = process.env.PIPELINE_RUN_DIR;
+  if (!runDir) return;
+  const progressFile = path.join(runDir, 'pipeline-progress.json');
+  const tmpFile = progressFile + '.tmp';
+  let progress = { runId: path.basename(runDir), completedStages: [] };
+  try {
+    if (fs.existsSync(progressFile)) progress = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+  } catch (_) {}
+  if (!progress.completedStages.includes(stageName)) progress.completedStages.push(stageName);
+  progress.lastUpdated = new Date().toISOString();
+  fs.writeFileSync(tmpFile, JSON.stringify(progress, null, 2), 'utf8');
+  fs.renameSync(tmpFile, progressFile);
+}
+
+async function runStage(stageName, fn, timer) {
+  timer.startStage(stageName);
+  const t0 = Date.now();
+
+  try {
+    await fn();
+    writePipelineProgress(stageName);
+    timer.endStage(stageName);
+  } catch (err) {
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.error(`\n[Stage: ${stageName}] ERROR after ${elapsed}s: ${err.message}`);
+    if (err.stack) console.error(err.stack.split('\n').slice(1, 4).join('\n'));
+
+    // Critical errors always halt — downstream stages would produce garbage output.
+    const isCritical = /^CRITICAL:|PLAID_LINK_TIMEOUT|DOM contract|Missing.*PLAYWRIGHT|Missing.*demo-script/i.test(err.message);
+
+    if (isCritical) {
+      console.error(`[Stage: ${stageName}] CRITICAL failure — halting pipeline.`);
+      process.exit(1);
+    }
+
+    if (process.env.SCRATCH_AUTO_APPROVE === 'true') {
+      console.warn(`[Stage: ${stageName}] SCRATCH_AUTO_APPROVE=true — continuing despite error.`);
+    } else {
+      await promptContinue(`[Stage: ${stageName}] Failed.`);
+    }
+  }
+}
+
+// ── Determines which stage index to start from ────────────────────────────────
+
+function resolveStartIndex(fromStage) {
+  if (!fromStage) return 0;
+  const idx = STAGES.indexOf(fromStage);
+  if (idx === -1) {
+    console.warn(`[Orchestrator] Unknown --from stage "${fromStage}" — starting from beginning.`);
+    return 0;
+  }
+  console.log(`[Orchestrator] Restarting from stage: ${fromStage} (index ${idx})`);
+  return idx;
+}
+
+// ── Remotion props builder ────────────────────────────────────────────────────
+
+function buildRemotionProps() {
+  // Read from isolated run dir (PIPELINE_RUN_DIR) instead of shared out/
+  const runDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+
+  const props = {
+    scratchDurationFrames: 4500,
+    scratchSteps: [],
+    enhanceDurationFrames: 4500,
+    enhanceOverlayPlan: { zoomPunches: [], callouts: [], lowerThirds: [], highlights: [] },
+    enhanceTotalMs: 150000,
+  };
+
+  // Load step-timing.json — then check for processed-step-timing.json to remap coordinates
+  const timingFile          = path.join(runDir, 'step-timing.json');
+  const processedTimingFile = path.join(runDir, 'processed-step-timing.json');
+
+  if (fs.existsSync(timingFile)) {
+    try {
+      const timing = JSON.parse(fs.readFileSync(timingFile, 'utf8'));
+      props.scratchDurationFrames = timing.totalFrames || props.scratchDurationFrames;
+      props.enhanceDurationFrames = timing.totalFrames || props.enhanceDurationFrames;
+      props.enhanceTotalMs        = timing.totalMs     || props.enhanceTotalMs;
+      props.scratchSteps = (timing.steps || []).map(s => ({ ...s, callouts: [] }));
+    } catch {}
+  }
+
+  // If a processed recording exists, remap step timings to processed-video coordinates.
+  // post-process-recording.js writes processed-step-timing.json with keepRanges that map
+  // raw recording timestamps to processed video timestamps. Remotion needs the processed
+  // coordinates because the staged public/recording.webm is the cut version.
+  if (fs.existsSync(processedTimingFile)) {
+    try {
+      const pt  = JSON.parse(fs.readFileSync(processedTimingFile, 'utf8'));
+      const fps = 30;
+
+      /**
+       * Remap a raw timestamp (ms) to its position in the processed recording (ms).
+       * - If inside a keep range: linear interpolation within that range.
+       * - If in a cut (between ranges): map to the start of the next kept range.
+       * - Before first range: 0. After last range: totalProcessedMs.
+       */
+      function remapMs(rawMs) {
+        const rawS = rawMs / 1000;
+        for (let i = 0; i < pt.keepRanges.length; i++) {
+          const r = pt.keepRanges[i];
+          if (rawS >= r.rawStart && rawS <= r.rawEnd) {
+            // Inside this range — linear map
+            const offset = rawS - r.rawStart;
+            return Math.round((r.processedStart + offset) * 1000);
+          }
+          if (i + 1 < pt.keepRanges.length && rawS > r.rawEnd && rawS < pt.keepRanges[i + 1].rawStart) {
+            // In a cut between this range and the next — map to start of next range
+            return Math.round(pt.keepRanges[i + 1].processedStart * 1000);
+          }
+        }
+        // After last range or before first range
+        if (rawS < (pt.keepRanges[0]?.rawStart ?? 0)) return 0;
+        return pt.totalProcessedMs;
+      }
+
+      const totalProcessedMs = pt.totalProcessedMs;
+      props.scratchDurationFrames = Math.round(totalProcessedMs / 1000 * fps);
+      props.enhanceDurationFrames = props.scratchDurationFrames;
+      props.enhanceTotalMs        = totalProcessedMs;
+
+      // Also load sync-map.json to convert processed → composition times.
+      // When SYNC_MAP_S contains speed/freeze windows, step startFrame/endFrame
+      // must be in COMPOSITION space so Remotion overlays fire at the right moment.
+      const { processedToCompMs: p2c, loadSyncMap: lsm } = require('../../scripts/sync-map-utils');
+      const syncMapSegs = lsm(runDir);
+      props.syncMap = syncMapSegs; // Passed to ScratchComposition for video playback
+
+      props.scratchSteps = props.scratchSteps.map(s => {
+        const processedStartMs = remapMs(s.startMs);
+        const processedEndMs   = remapMs(s.endMs);
+        const startMs          = p2c(processedStartMs, syncMapSegs);
+        const endMs            = p2c(processedEndMs,   syncMapSegs);
+        const durationMs       = Math.max(0, endMs - startMs);
+        const startFrame       = Math.round(startMs  / 1000 * fps);
+        const endFrame         = Math.round(endMs    / 1000 * fps);
+        return {
+          ...s,
+          startMs,
+          endMs,
+          durationMs,
+          startFrame,
+          endFrame,
+          durationFrames: Math.max(0, endFrame - startFrame),
+        };
+      });
+
+      console.log(
+        `[Render] Remapped step timings to processed recording (${(totalProcessedMs / 1000).toFixed(1)}s)` +
+        (syncMapSegs.length > 0 ? ` + sync-map (${syncMapSegs.length} segments)` : '')
+      );
+    } catch (err) {
+      console.warn(`[Render] Could not remap processed step timing: ${err.message}`);
+    }
+  }
+
+  // Load overlay-plan.json
+  const overlayFile = path.join(runDir, 'overlay-plan.json');
+  if (fs.existsSync(overlayFile)) {
+    try {
+      props.enhanceOverlayPlan = JSON.parse(fs.readFileSync(overlayFile, 'utf8'));
+    } catch {}
+  }
+
+  // Merge callouts from demo-script.json
+  const scriptFile = path.join(runDir, 'demo-script.json');
+  let demoScriptSteps = [];
+  if (fs.existsSync(scriptFile)) {
+    try {
+      const script = JSON.parse(fs.readFileSync(scriptFile, 'utf8'));
+      demoScriptSteps = script.steps || [];
+      props.scratchSteps = props.scratchSteps.map(s => {
+        const ss = demoScriptSteps.find(x => x.id === s.id);
+        return { ...s, callouts: ss?.callouts || [], narration: ss?.narration || '', apiResponse: ss?.apiResponse || null };
+      });
+    } catch {}
+  }
+
+  // ── Auto-overlay generation ────────────────────────────────────────────────
+  // 1. Click ripple + targeted zoom from click-coords.json
+  const coordsFile = path.join(runDir, 'click-coords.json');
+  if (fs.existsSync(coordsFile)) {
+    try {
+      const coords = JSON.parse(fs.readFileSync(coordsFile, 'utf8'));
+      props.scratchSteps = props.scratchSteps.map(s => {
+        const coord = coords[s.id];
+        if (!coord) return s;
+        const update = {
+          clickRipple: { xFrac: coord.xFrac, yFrac: coord.yFrac, atFrame: 15 },
+        };
+        // Targeted zoom — skip for wf-link-launch (already speed-adjusted by SYNC_MAP_S)
+        if (s.id !== 'wf-link-launch') {
+          update.zoomPunch = {
+            scale:   1.08,
+            peakFrac: 0.5,
+            originX: `${(coord.xFrac * 100).toFixed(1)}%`,
+            originY: `${(coord.yFrac * 100).toFixed(1)}%`,
+          };
+        }
+        return { ...s, ...update };
+      });
+    } catch (err) {
+      console.warn(`[Render] Could not load click-coords.json: ${err.message}`);
+    }
+  }
+
+  // 2. Lower-thirds for API insight steps + reveal zoom for long API steps
+  // 3. Badge callouts for outcome step with stat-counter entries from narration
+  const STAT_RE = /(\d+\.?\d*)\s*([\+%×xX]|percent|seconds?|ms\b)/gi;
+  props.scratchSteps = props.scratchSteps.map(s => {
+    const callouts   = [...(s.callouts || [])];
+    let   zoomPunch  = s.zoomPunch;
+    const durationS  = (s.durationMs || 0) / 1000;
+
+    // Lower-third for steps with an API response endpoint
+    if (s.apiResponse?.endpoint) {
+      const words = (s.narration || '').trim().split(/\s+/).slice(0, 8).join(' ');
+      // Only add if not already present
+      if (!callouts.some(c => c.type === 'lower-third' && c.title === s.apiResponse.endpoint)) {
+        callouts.push({ type: 'lower-third', title: s.apiResponse.endpoint, subtext: words });
+      }
+      // Gentle reveal zoom at 30% into step for long API steps (no click coord zoom)
+      if (!zoomPunch && durationS > 12) {
+        zoomPunch = { scale: 1.06, peakFrac: 0.3, originX: 'center', originY: 'center' };
+      }
+    }
+
+    // Stat-counter callouts for the outcome step
+    if (s.id === 'plaid-outcome') {
+      const narration = s.narration || '';
+      const matches   = [...narration.matchAll(STAT_RE)];
+      matches.slice(0, 3).forEach((m, i) => {
+        const value  = parseFloat(m[1]);
+        const suffix = m[2].startsWith('percent') ? '%' : m[2];
+        if (!isNaN(value)) {
+          callouts.push({ type: 'stat-counter', value, suffix, label: '', position: `stat-${i + 1}` });
+        }
+      });
+    }
+
+    return { ...s, callouts, zoomPunch: zoomPunch !== undefined ? zoomPunch : s.zoomPunch };
+  });
+
+  // 4. Derive cut frame positions from processed-step-timing.json for CrossDissolve
+  const processedTimingFile2 = path.join(runDir, 'processed-step-timing.json');
+  props.cutFrames = [];
+  if (fs.existsSync(processedTimingFile2)) {
+    try {
+      const pt2  = JSON.parse(fs.readFileSync(processedTimingFile2, 'utf8'));
+      const fps2 = 30;
+      for (let i = 0; i + 1 < (pt2.keepRanges || []).length; i++) {
+        const r = pt2.keepRanges[i];
+        const processedEndS = r.processedStart + (r.rawEnd - r.rawStart);
+        props.cutFrames.push(Math.round(processedEndS * fps2));
+      }
+    } catch {}
+  }
+
+  // Check whether voiceover.mp3 exists in public/ (where stageArtifactsForRemotion copies it)
+  const publicDir = path.join(PROJECT_ROOT, 'public');
+  props.hasVoiceover = fs.existsSync(path.join(publicDir, 'voiceover.mp3'));
+  if (!props.hasVoiceover) {
+    console.log('[Render] No voiceover.mp3 found — rendering video-only (no audio)');
+  }
+
+  return props;
+}
+
+/**
+ * Checks the stitched voiceover audio for quality issues:
+ * - Detects silence gaps > 2s (choppy audio indicator)
+ * - Checks for audio clipping (peak > -0.5dB)
+ * - Validates total duration matches expected from step-timing
+ *
+ * @param {string} runDir  The versioned run directory
+ * @returns {{ passed: boolean, issues: string[] }}
+ */
+function checkAudioQuality(runDir) {
+  const voiceoverPath = path.join(runDir, 'audio', 'voiceover.mp3');
+  const timingPath = path.join(runDir, 'step-timing.json');
+  const issues = [];
+
+  if (!fs.existsSync(voiceoverPath)) {
+    console.warn('[Audio QA] No voiceover.mp3 found — skipping audio QA');
+    return { passed: true, issues: ['No voiceover file to check'] };
+  }
+
+  try {
+    // 1. Check for silence gaps using ffmpeg silencedetect filter
+    const silenceResult = require('child_process').spawnSync(
+      'ffmpeg',
+      ['-i', voiceoverPath, '-af', 'silencedetect=noise=-30dB:d=2', '-f', 'null', '-'],
+      { encoding: 'utf8', timeout: 60000 }
+    );
+    const silenceOutput = (silenceResult.stderr || '') + (silenceResult.stdout || '');
+    const silenceMatches = silenceOutput.match(/silence_start:\s*([\d.]+)/g) || [];
+    const silenceEndMatches = silenceOutput.match(/silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/g) || [];
+
+    if (silenceMatches.length > 0) {
+      // Parse silence durations
+      const silenceDurations = silenceEndMatches.map(m => {
+        const durMatch = m.match(/silence_duration:\s*([\d.]+)/);
+        return durMatch ? parseFloat(durMatch[1]) : 0;
+      });
+      const longSilences = silenceDurations.filter(d => d > 3.0);
+      if (longSilences.length > 0) {
+        issues.push(`${longSilences.length} silence gap(s) longer than 3s detected (max: ${Math.max(...longSilences).toFixed(1)}s) — may indicate choppy audio`);
+      }
+      if (silenceMatches.length > 5) {
+        issues.push(`${silenceMatches.length} silence gaps > 2s detected — audio may sound choppy`);
+      }
+    }
+
+    // 2. Check for audio clipping using ffmpeg astats filter
+    const statsResult = require('child_process').spawnSync(
+      'ffmpeg',
+      ['-i', voiceoverPath, '-af', 'astats=metadata=1:reset=1', '-f', 'null', '-'],
+      { encoding: 'utf8', timeout: 60000 }
+    );
+    const statsOutput = (statsResult.stderr || '') + (statsResult.stdout || '');
+    const peakMatch = statsOutput.match(/Peak level dB:\s*(-?[\d.]+)/);
+    if (peakMatch) {
+      const peakDb = parseFloat(peakMatch[1]);
+      if (peakDb > -0.5) {
+        issues.push(`Audio clipping detected (peak: ${peakDb.toFixed(1)}dB) — audio may sound distorted`);
+      }
+    }
+
+    // 3. Validate duration matches expected from step-timing
+    const durationResult = require('child_process').spawnSync(
+      'ffprobe',
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', voiceoverPath],
+      { encoding: 'utf8', timeout: 30000 }
+    );
+    const audioDurationSec = parseFloat(durationResult.stdout?.trim() || '0');
+
+    if (fs.existsSync(timingPath)) {
+      const timing = JSON.parse(fs.readFileSync(timingPath, 'utf8'));
+      const expectedDurationSec = (timing.totalMs || 0) / 1000;
+      if (expectedDurationSec > 0) {
+        const ratio = audioDurationSec / expectedDurationSec;
+        if (ratio < 0.5) {
+          issues.push(`Audio duration (${audioDurationSec.toFixed(1)}s) is less than half the video duration (${expectedDurationSec.toFixed(1)}s) — audio may be truncated or missing segments`);
+        } else if (ratio > 1.5) {
+          issues.push(`Audio duration (${audioDurationSec.toFixed(1)}s) is 50% longer than the video (${expectedDurationSec.toFixed(1)}s) — timing mismatch`);
+        }
+      }
+    }
+
+    console.log(`[Audio QA] Duration: ${audioDurationSec.toFixed(1)}s, Issues: ${issues.length}`);
+
+  } catch (err) {
+    console.warn(`[Audio QA] Check failed: ${err.message}`);
+    issues.push(`Audio QA check failed: ${err.message}`);
+  }
+
+  const passed = issues.filter(i => !i.includes('failed')).length === 0;
+  return { passed, issues };
+}
+
+/**
+ * Stages run-dir artifacts into public/ so Remotion's staticFile() can find them.
+ * Remotion's webpack context uses public/ as the static directory — we can't change that.
+ */
+function stageArtifactsForRemotion(runDir) {
+  const publicDir = path.join(PROJECT_ROOT, 'public');
+
+  // Clean old recording/voiceover from public/ to prevent contamination
+  const staleFiles = ['recording.webm', 'voiceover.mp3'];
+  for (const f of staleFiles) {
+    const p = path.join(publicDir, f);
+    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+  }
+
+  // Copy this run's recording — prefer the post-processed cut if it exists.
+  const processedRecording = path.join(runDir, 'recording-processed.webm');
+  const rawRecording       = path.join(runDir, 'recording.webm');
+  const recording = fs.existsSync(processedRecording) ? processedRecording : rawRecording;
+  if (fs.existsSync(recording)) {
+    fs.copyFileSync(recording, path.join(publicDir, 'recording.webm'));
+    const label = fs.existsSync(processedRecording) ? 'recording-processed.webm' : 'recording.webm';
+    console.log(`[Render] Staged ${label} → public/recording.webm`);
+  } else {
+    console.warn('[Render] Warning: no recording.webm found in run dir');
+  }
+
+  // Copy this run's voiceover
+  const voiceover = path.join(runDir, 'audio', 'voiceover.mp3');
+  if (fs.existsSync(voiceover)) {
+    fs.copyFileSync(voiceover, path.join(publicDir, 'voiceover.mp3'));
+    console.log('[Render] Staged voiceover.mp3 → public/');
+  }
+}
+
+// ── Mode A: Scratch pipeline ──────────────────────────────────────────────────
+
+async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) {
+  const stageRunner = async (name, idx, fn) => {
+    if (idx < startIdx) {
+      console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
+      return;
+    }
+    await runStage(name, fn, timer);
+  };
+
+  // Stage 0: research
+  await stageRunner('research', 0, async () => {
+    await require('./research').main();
+  });
+
+  // Stage 1: ingest
+  await stageRunner('ingest', 1, async () => {
+    await require('./scratch/ingest').main();
+  });
+
+  // Stage 2: brand-extract (Brandfetch → Playwright CSS fallback → Haiku normalisation)
+  await stageRunner('brand-extract', 2, async () => {
+    await require('./scratch/brand-extract').main();
+  });
+
+  // Stage 3: script
+  await stageRunner('script', 3, async () => {
+    await require('./scratch/generate-script').main();
+  });
+
+  // Stage 4: script-critique
+  await stageRunner('script-critique', 4, async () => {
+    await runScriptCritique();
+  });
+
+  // Stage 4b: value-prop claim verification (inline — fast Haiku call)
+  // Checks that narrated claims match approved proof points in plaid-value-props.md.
+  // Flags unapproved numbers or misattributed claims before they reach the final video.
+  if (STAGES.indexOf('script-critique') >= startIdx) {
+    await runStage('claim-check', async () => {
+      const runDir     = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+      const scriptFile = path.join(runDir, 'demo-script.json');
+      const vpFile     = path.join(INPUTS_DIR, 'plaid-value-props.md');
+
+      if (!fs.existsSync(scriptFile)) {
+        console.log('[claim-check] No demo-script.json found — skipping.');
+        return;
+      }
+      if (!fs.existsSync(vpFile)) {
+        console.log('[claim-check] No plaid-value-props.md found — skipping claim verification.');
+        return;
+      }
+
+      const script     = JSON.parse(fs.readFileSync(scriptFile, 'utf8'));
+      const valuePropsMd = fs.readFileSync(vpFile, 'utf8');
+      const client     = new Anthropic();
+
+      const response = await client.messages.create({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        messages: [{
+          role:    'user',
+          content:
+            `You are reviewing a Plaid demo script for value proposition accuracy.\n\n` +
+            `Approved value propositions (use ONLY these numbers and claims):\n${valuePropsMd}\n\n` +
+            `Demo script narrations:\n${JSON.stringify(script.steps?.map(s => ({ id: s.id, narration: s.narration })), null, 2)}\n\n` +
+            `Check for:\n` +
+            `1. Any quantified claim NOT found in the approved list (unapproved number or stat)\n` +
+            `2. Any approved claim that is misquoted or misattributed to the wrong product\n` +
+            `3. Use of "Trust Index" (not a Plaid product — use "ACH transaction risk score")\n\n` +
+            `Return JSON only: {"flags": [{"stepId": "...", "claim": "...", "issue": "..."}], "passed": boolean}`,
+        }],
+      });
+
+      const text = response.content.find(b => b.type === 'text')?.text || '';
+      const raw =
+        text.match(/```(?:json)?\s*([\s\S]*?)```/)?.[1] ||
+        text.match(/(\{[\s\S]*\})/)?.[1] ||
+        '{"passed":true,"flags":[]}';
+
+      let claimResult;
+      try {
+        claimResult = JSON.parse(raw);
+      } catch {
+        console.warn('[claim-check] Could not parse claim check response.');
+        return;
+      }
+
+      if (!claimResult.passed && claimResult.flags?.length > 0) {
+        console.warn('[claim-check] Value proposition flags:');
+        claimResult.flags.forEach(f =>
+          console.warn(`  [Step ${f.stepId}] "${f.claim}" — ${f.issue}`)
+        );
+        // Write flags so the script review can surface them
+        fs.writeFileSync(
+          path.join(runDir, 'claim-check-flags.json'),
+          JSON.stringify(claimResult, null, 2)
+        );
+        if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+          await promptContinue('[claim-check] Unapproved claims found in script.');
+        } else {
+          console.warn('[claim-check] SCRATCH_AUTO_APPROVE=true — advancing with flagged claims.');
+        }
+      } else {
+        console.log('[claim-check] All claims match approved value propositions.');
+      }
+    }, timer);
+  }
+
+  // Stage 5: plaid-link-capture — DISABLED
+  // Plaid Link screens are captured via the main Playwright recording (headless:false).
+  // Re-enable this block and uncomment 'plaid-link-capture' in STAGES to restore
+  // the pre-capture reference screenshot flow.
+  /*
+  if (STAGES.indexOf('plaid-link-capture') >= startIdx) {
+    await runStage('plaid-link-capture', async () => {
+      if (process.env.PLAID_LINK_LIVE !== 'true') {
+        console.log('[plaid-link-capture] PLAID_LINK_LIVE != true — skipping.');
+        return;
+      }
+      await require('../plaid-link-capture').main();
+    }, timer);
+  }
+  */
+
+  // Stage 6: build
+  await stageRunner('build', 5, async () => {
+    await require('./scratch/build-app').main();
+  });
+
+  // Post-build preview: launch a local server and open the app in the browser so a human
+  // can step through it with arrow keys / clicks before recording begins.
+  if (STAGES.indexOf('build') >= startIdx && STAGES.indexOf('record') >= startIdx) {
+    const { startServer } = require('./utils/app-server');
+    const scratchAppDir = path.join(versionedDir, 'scratch-app');
+    if (fs.existsSync(path.join(scratchAppDir, 'index.html'))) {
+      const previewServer = await startServer(3739, scratchAppDir).catch(() => null);
+      if (previewServer) {
+        console.log(`\n[Build Preview] App served at: ${previewServer.url}`);
+        console.log('[Build Preview] Use ArrowRight/ArrowDown to advance, ArrowLeft/ArrowUp to go back.');
+        console.log('[Build Preview] Click any non-button area to advance. Click buttons normally.');
+        try { execSync(`open "${previewServer.url}"`, { stdio: 'ignore' }); } catch (_) {}
+        await promptContinue('[Build Preview] Review the app in your browser, then press ENTER to start recording.');
+        previewServer.close();
+      }
+    }
+  }
+
+  // Stage 6: record + QA refinement loop
+  if (STAGES.indexOf('record') >= startIdx) {
+    timer.startStage('record+qa');
+
+    const manualRecord  = process.env.MANUAL_RECORD === 'true';
+    let bestScore     = 0;
+    let bestRecording = null;
+    const maxIterations = manualRecord ? 1 : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
+    const qaThreshold   = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+
+    if (manualRecord) {
+      console.log('\n[Orchestrator] MANUAL_RECORD mode: one human-driven recording pass, no QA refinement loop.');
+    }
+
+    for (let iter = 1; iter <= maxIterations; iter++) {
+      if (!manualRecord) {
+        console.log(`\n[Orchestrator] Record+QA iteration ${iter}/${maxIterations}`);
+      }
+
+      try {
+        // Bust require cache so edits to record-local.js take effect without restarting
+        delete require.cache[require.resolve('./scratch/record-local')];
+        await require('./scratch/record-local').main({ iteration: iter });
+      } catch (err) {
+        console.error(`[record] iteration ${iter} failed: ${err.message}`);
+        if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+          await promptContinue('[record] Recording failed.');
+        }
+      }
+
+      // In manual mode, skip QA — the human's recording is the final recording.
+      if (manualRecord) {
+        console.log('[Orchestrator] MANUAL_RECORD: skipping QA. Advancing to voiceover.');
+        break;
+      }
+
+      let qaResult;
+      try {
+        qaResult = await require('./scratch/qa-review').main({ iteration: iter });
+      } catch (err) {
+        console.error(`[qa] iteration ${iter} failed: ${err.message}`);
+        qaResult = { overallScore: 0, passed: false };
+      }
+
+      const score = qaResult?.overallScore ?? 0;
+      console.log(`[Orchestrator] QA score: ${score}/${qaThreshold} (threshold)`);
+
+      if (score >= qaThreshold) {
+        console.log(`[Orchestrator] QA passed (${score}). Advancing to voiceover.`);
+        bestScore = score;
+        break;
+      }
+
+      if (score > bestScore) {
+        bestScore     = score;
+        bestRecording = path.join(versionedDir, `recording-iter${iter}.webm`);
+        try {
+          fs.copyFileSync(
+            path.join(versionedDir, 'recording.webm'),
+            bestRecording
+          );
+          // Also save the matching step-timing.json for this iteration
+          const timingSource = path.join(versionedDir, 'step-timing.json');
+          const timingBackup = path.join(versionedDir, `step-timing-iter${iter}.json`);
+          if (fs.existsSync(timingSource)) {
+            fs.copyFileSync(timingSource, timingBackup);
+          }
+        } catch (copyErr) {
+          console.warn(`[Orchestrator] Could not copy best recording: ${copyErr.message}`);
+        }
+      }
+
+      if (iter < maxIterations) {
+        console.log(`[Orchestrator] Score ${score} below threshold. Patching app for iteration ${iter + 1}...`);
+        try {
+          // Bust require cache so edits to build-app.js take effect without restarting
+          delete require.cache[require.resolve('./scratch/build-app')];
+          await require('./scratch/build-app').main({
+            refinementIteration: iter,
+            qaReportFile: path.join(versionedDir, `qa-report-${iter}.json`),
+          });
+        } catch (err) {
+          console.error(`[build] refinement iteration ${iter} failed: ${err.message}`);
+          if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+            await promptContinue('[build] Refinement failed.');
+          }
+        }
+      } else {
+        console.log(`[Orchestrator] Max iterations reached. Best score: ${bestScore}.`);
+      }
+    }
+
+    // Restore the best recording + matching step-timing if we never hit the threshold
+    if (bestRecording && fs.existsSync(bestRecording) && bestScore > 0) {
+      fs.copyFileSync(bestRecording, path.join(versionedDir, 'recording.webm'));
+      // Also restore the matching step-timing.json so timing matches the recording
+      const iterMatch = bestRecording.match(/recording-iter(\d+)\.webm$/);
+      if (iterMatch) {
+        const timingBackup = path.join(versionedDir, `step-timing-iter${iterMatch[1]}.json`);
+        if (fs.existsSync(timingBackup)) {
+          fs.copyFileSync(timingBackup, path.join(versionedDir, 'step-timing.json'));
+          console.log(`[Orchestrator] Restored matching step-timing (iteration ${iterMatch[1]})`);
+        }
+      }
+      console.log(`[Orchestrator] Restored best recording (score: ${bestScore})`);
+    }
+
+    // ── Below-threshold warning ────────────────────────────────────────────
+    // Surface prominently — silent advance is the most common cause of unusable output.
+    if (bestScore < qaThreshold) {
+      const warningMsg = `ADVANCING WITH BELOW-THRESHOLD RECORDING (best QA score: ${bestScore}/${qaThreshold})`;
+      console.warn(`\n${'!'.repeat(60)}`);
+      console.warn(`[QA] WARNING: ${warningMsg}`);
+      console.warn(`[QA] The final video may have visual quality issues.`);
+      console.warn(`${'!'.repeat(60)}\n`);
+
+      // Write a qa-warning file so post-run summaries can surface it
+      fs.writeFileSync(
+        path.join(versionedDir, 'recording-qa-warning.json'),
+        JSON.stringify({
+          bestScore,
+          threshold: qaThreshold,
+          message: warningMsg,
+          advancedAt: new Date().toISOString(),
+        }, null, 2)
+      );
+
+      if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+        await promptContinue(`[QA] Best score ${bestScore}/${qaThreshold} — below threshold.`);
+      }
+    }
+
+    writePipelineProgress('record');
+    if (bestScore > 0) writePipelineProgress('qa');
+    timer.endStage('record+qa');
+  }
+
+  // Stage: figma-review (optional — only runs when FIGMA_REVIEW=true)
+  if (STAGES.indexOf('figma-review') >= startIdx) {
+    await runStage('figma-review', async () => {
+      const figmaFeedback = await require('./scratch/figma-review').main();
+
+      // Propagate Figma file key from run-state.json to process.env for downstream stages
+      const runStateFile = path.join(versionedDir, 'run-state.json');
+      if (fs.existsSync(runStateFile)) {
+        try {
+          const runState = JSON.parse(fs.readFileSync(runStateFile, 'utf8'));
+          if (runState.figmaFileKey) {
+            process.env.FIGMA_REVIEW_FILE_KEY = runState.figmaFileKey;
+            console.log(`[Orchestrator] Figma file key loaded from run-state: ${runState.figmaFileKey}`);
+          }
+        } catch (err) {
+          console.warn(`[Orchestrator] Could not read run-state.json: ${err.message}`);
+        }
+      }
+
+      // If Figma feedback was captured, run one final build refinement pass
+      if (figmaFeedback && figmaFeedback.comments && figmaFeedback.comments.length > 0) {
+        console.log(`[Orchestrator] Figma feedback received (${figmaFeedback.comments.length} comment(s)) — running final build refinement`);
+        await require('./scratch/build-app').main({
+          qaReportFile: path.join(versionedDir, 'figma-feedback.json'),
+        });
+        // Re-record with the refined app
+        console.log('[Orchestrator] Re-recording with Figma-refined app...');
+        await require('./scratch/record-local').main({ iteration: 'figma' });
+      }
+    }, timer);
+  }
+
+  // Stage: post-process — hard-cut still/waiting frames from the recording.
+  // Runs BEFORE voiceover so narration timing is derived from the edited video length,
+  // not the raw recording. Output: recording-processed.webm + post-process-summary.json.
+  // Plaid Link keep ranges (phone, OTP, institution, success) are preserved exactly.
+  if (STAGES.indexOf('post-process') >= startIdx) {
+    await runStage('post-process', async () => {
+      const recordingIn   = path.join(versionedDir, 'recording.webm');
+      const recordingOut  = path.join(versionedDir, 'recording-processed.webm');
+      const timingFile    = path.join(versionedDir, 'step-timing.json');
+
+      if (!fs.existsSync(recordingIn)) {
+        console.warn('[post-process] No recording.webm found — skipping post-process.');
+        return;
+      }
+      if (!fs.existsSync(timingFile)) {
+        console.warn('[post-process] No step-timing.json found — skipping post-process.');
+        return;
+      }
+
+      // Read post-process tuning options from demo-script.json (e.g. otpKeep, maxInstitution)
+      let postProcessArgs = '';
+      const demoScriptPath = path.join(versionedDir, 'demo-script.json');
+      if (fs.existsSync(demoScriptPath)) {
+        try {
+          const demoScr = JSON.parse(fs.readFileSync(demoScriptPath, 'utf8'));
+          if (demoScr.postProcessOpts) {
+            if (demoScr.postProcessOpts.otpKeep != null)
+              postProcessArgs += ` --otp-keep ${demoScr.postProcessOpts.otpKeep}`;
+            if (demoScr.postProcessOpts.maxInstitution != null)
+              postProcessArgs += ` --max-institution ${demoScr.postProcessOpts.maxInstitution}`;
+            if (demoScr.postProcessOpts.successKeep != null)
+              postProcessArgs += ` --success-keep ${demoScr.postProcessOpts.successKeep}`;
+          }
+        } catch (_) {}
+      }
+
+      execSync(
+        `node scripts/post-process-recording.js` +
+          ` --input "${recordingIn}"` +
+          ` --output "${recordingOut}"` +
+          ` --timing "${timingFile}"` +
+          postProcessArgs,
+        { stdio: 'inherit', cwd: PROJECT_ROOT }
+      );
+
+      // Record that we have a post-processed recording so downstream stages can use it
+      const summaryFile = path.join(versionedDir, 'post-process-summary.json');
+      if (!fs.existsSync(summaryFile) && fs.existsSync(recordingOut)) {
+        const { spawnSync: sp } = require('child_process');
+        const probe = sp('ffprobe', [
+          '-v', 'quiet', '-print_format', 'json', '-show_format', recordingOut,
+        ], { encoding: 'utf8' });
+        const processedDurationS = probe.status === 0
+          ? parseFloat(JSON.parse(probe.stdout).format.duration)
+          : null;
+        fs.writeFileSync(summaryFile, JSON.stringify({
+          processedRecording: recordingOut,
+          processedDurationS,
+          createdAt: new Date().toISOString(),
+        }, null, 2));
+        if (processedDurationS != null) {
+          console.log(`[post-process] Processed recording: ${processedDurationS.toFixed(1)}s`);
+        }
+      }
+
+      // Write a default sync-map.json if one doesn't already exist.
+      // sync-map.json holds SYNC_MAP_S segments (speed/freeze) that tell both the
+      // voiceover generator and Remotion how to align audio with the composed video.
+      // After post-process, the default is identity (no adjustments). Humans or the
+      // touchup stage can edit it; after any edit, run --from=resync-audio.
+      const syncMapFile = path.join(versionedDir, 'sync-map.json');
+      if (!fs.existsSync(syncMapFile)) {
+        const { buildDefaultSyncMap } = require('../../scripts/sync-map-utils');
+        fs.writeFileSync(syncMapFile, JSON.stringify(buildDefaultSyncMap(), null, 2));
+        console.log('[post-process] Wrote default sync-map.json (identity — no speed/freeze adjustments)');
+        console.log('[post-process] Edit sync-map.json to add speed/freeze windows, then run --from=resync-audio');
+      } else {
+        console.log('[post-process] Existing sync-map.json preserved (edit to change speed/freeze windows)');
+      }
+    }, timer);
+  }
+
+  // Stage 6: voiceover — runs after post-process so timing reflects the edited video.
+  if (STAGES.indexOf('voiceover') >= startIdx) {
+    await runStage('voiceover', async () => {
+      execSync('node scripts/generate-voiceover.js --scratch', {
+        stdio: 'inherit',
+        cwd: PROJECT_ROOT,
+      });
+    }, timer);
+  }
+
+  // Stage 6a: resync-audio — re-stitches voiceover.mp3 using sync-map.json inverse mapping.
+  // Runs automatically after voiceover. Also the entry point when the user edits sync-map.json
+  // or changes any speed/freeze window after voiceover was already generated.
+  // Fast: only ffmpeg stitching, no ElevenLabs TTS calls.
+  if (STAGES.indexOf('resync-audio') >= startIdx) {
+    await runStage('resync-audio', async () => {
+      // Warn if sync-map.json is newer than voiceover-manifest.json (stale audio)
+      const syncMapFile    = path.join(versionedDir, 'sync-map.json');
+      const manifestFile   = path.join(versionedDir, 'voiceover-manifest.json');
+      if (fs.existsSync(syncMapFile) && fs.existsSync(manifestFile)) {
+        const syncMapMtime  = fs.statSync(syncMapFile).mtimeMs;
+        const manifestMtime = fs.statSync(manifestFile).mtimeMs;
+        if (syncMapMtime > manifestMtime) {
+          console.log('[resync-audio] sync-map.json is newer than voiceover-manifest.json — resync required');
+        }
+      }
+      execSync('node scripts/resync-audio.js', {
+        stdio: 'inherit',
+        cwd:  PROJECT_ROOT,
+        env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
+      });
+    }, timer);
+  }
+
+  // Stage 6b: audio QA — per-clip stutter/freeze detection + auto-regeneration, then
+  // overall quality checks (clipping, duration desync).
+  if (STAGES.indexOf('audio-qa') >= startIdx) {
+    await runStage('audio-qa', async () => {
+      const audioDir = path.join(versionedDir, 'audio');
+      const manifestPath = path.join(versionedDir, 'voiceover-manifest.json');
+
+      // ── Per-clip stutter/freeze detection ─────────────────────────────────
+      // Stutter: short bursts of silence inside a clip (silencedetect noise=-40dB d=0.15)
+      // Freeze:  a long flat-amplitude segment mid-clip (same filter, duration >= 0.5s)
+      // Both are common ElevenLabs artefacts on long or punctuation-heavy narration strings.
+      const stutteredClips = [];
+      if (fs.existsSync(manifestPath)) {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        const { spawnSync: spawnSyncAudio } = require('child_process');
+
+        for (const clip of (manifest.clips || [])) {
+          if (!fs.existsSync(clip.audioFile)) continue;
+
+          // Run silencedetect on individual clip file
+          const r = spawnSyncAudio(
+            'ffmpeg',
+            ['-i', clip.audioFile, '-af', 'silencedetect=noise=-40dB:d=0.15', '-f', 'null', '-'],
+            { encoding: 'utf8', timeout: 30000 }
+          );
+          const out = (r.stderr || '') + (r.stdout || '');
+          const silenceEnds = [...out.matchAll(/silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/g)];
+
+          // A mid-clip silence (start > 0.05s from clip start) indicates stutter or freeze
+          const clipDuration = clip.audioDurationMs / 1000;
+          const internalSilences = silenceEnds.filter(m => {
+            const end = parseFloat(m[1]);
+            const dur = parseFloat(m[2]);
+            const start = end - dur;
+            // Ignore leading silence (first 0.1s) and trailing silence (last 0.3s)
+            return start > 0.1 && end < (clipDuration - 0.3) && dur >= 0.15;
+          });
+
+          if (internalSilences.length > 0) {
+            const maxDur = Math.max(...internalSilences.map(m => parseFloat(m[2])));
+            const type = maxDur >= 0.5 ? 'freeze' : 'stutter';
+            console.warn(`  [Audio QA] ${type} detected in ${clip.id}: ${internalSilences.length} internal silence(s), max ${maxDur.toFixed(2)}s`);
+            stutteredClips.push({ clip, type, count: internalSilences.length, maxDur });
+          }
+        }
+
+        if (stutteredClips.length > 0) {
+          console.warn(`[Audio QA] ${stutteredClips.length} clip(s) have stutter/freeze — regenerating...`);
+          for (const { clip } of stutteredClips) {
+            // Delete the bad file so generate-voiceover.js regenerates it
+            try { fs.unlinkSync(clip.audioFile); } catch (_) {}
+            console.log(`  [Audio QA] Deleted ${path.basename(clip.audioFile)} for regeneration`);
+          }
+          // Also delete the stitched voiceover so it gets rebuilt
+          const voiceoverPath = path.join(audioDir, 'voiceover.mp3');
+          try { if (fs.existsSync(voiceoverPath)) fs.unlinkSync(voiceoverPath); } catch (_) {}
+
+          // Re-run generate-voiceover.js to regenerate only the deleted clips
+          console.log('[Audio QA] Re-running voiceover generation for affected clips...');
+          execSync('node scripts/generate-voiceover.js --scratch', {
+            stdio: 'inherit',
+            cwd: PROJECT_ROOT,
+          });
+          console.log('[Audio QA] Regeneration complete.');
+        } else {
+          console.log('[Audio QA] Per-clip stutter/freeze check: all clips clean.');
+        }
+      }
+
+      // ── Overall voiceover quality checks ──────────────────────────────────
+      const { passed, issues } = checkAudioQuality(versionedDir);
+
+      const durationIssues = issues.filter(i =>
+        i.includes('longer than the video') || i.includes('50% longer')
+      );
+      const clippingIssues = issues.filter(i => i.includes('clipping') || i.includes('truncated'));
+
+      if (issues.length > 0) {
+        console.warn('[Audio QA] Overall issues found:');
+        for (const issue of issues) console.warn(`  ⚠ ${issue}`);
+      }
+
+      // Write audio QA report
+      fs.writeFileSync(
+        path.join(versionedDir, 'audio-qa-report.json'),
+        JSON.stringify({
+          passed,
+          issues,
+          stutteredClips: stutteredClips.map(s => ({ id: s.clip.id, type: s.type, count: s.count, maxDurS: s.maxDur })),
+          checkedAt: new Date().toISOString(),
+        }, null, 2)
+      );
+
+      if (durationIssues.length > 0 || clippingIssues.length > 0) {
+        const severity = durationIssues.length > 0 ? 'audio-video desync' : 'audio clipping';
+        console.warn(`[Audio QA] ${severity} detected — final audio may be cut off or distorted.`);
+        if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+          await promptContinue(`[Audio QA] ${severity} detected. Review audio before rendering.`);
+        } else {
+          console.warn('[Audio QA] SCRATCH_AUTO_APPROVE=true — advancing with audio issues.');
+        }
+      } else if (!passed) {
+        console.warn('[Audio QA] Audio quality issues detected. Proceeding with render but review the final output.');
+      } else {
+        console.log('[Audio QA] Audio quality check passed.');
+      }
+    }, timer);
+  }
+
+  // Stage 7: render
+  if (STAGES.indexOf('render') >= startIdx) {
+    await runStage('render', async () => {
+      // ── Pre-flight: verify required artifacts exist ───────────────────────
+      // Missing artifacts produce silent failures (no audio, 0-frame video, desync).
+      const preflight = [
+        { file: 'recording-processed.webm', label: 'Processed recording', fallback: 'recording.webm' },
+        { file: 'audio/voiceover.mp3',      label: 'Voiceover audio' },
+        { file: 'voiceover-manifest.json',  label: 'Voiceover manifest' },
+        { file: 'step-timing.json',         label: 'Step timing' },
+      ];
+      const preflightErrors = [];
+      for (const c of preflight) {
+        const primary  = path.join(versionedDir, c.file);
+        const fallback = c.fallback ? path.join(versionedDir, c.fallback) : null;
+        if (!fs.existsSync(primary) && !(fallback && fs.existsSync(fallback))) {
+          preflightErrors.push(`Missing ${c.label} (${c.file})`);
+        }
+      }
+      if (preflightErrors.length > 0) {
+        throw new Error(`CRITICAL: Render pre-flight failed:\n  ${preflightErrors.join('\n  ')}`);
+      }
+
+      // Warn if sync-map.json is newer than voiceover-manifest.json — audio may be out of sync
+      const syncMapFile2   = path.join(versionedDir, 'sync-map.json');
+      const manifestFile2  = path.join(versionedDir, 'voiceover-manifest.json');
+      if (fs.existsSync(syncMapFile2) && fs.existsSync(manifestFile2)) {
+        const syncMapMtime2  = fs.statSync(syncMapFile2).mtimeMs;
+        const manifestMtime2 = fs.statSync(manifestFile2).mtimeMs;
+        if (syncMapMtime2 > manifestMtime2) {
+          console.warn('[Render] ⚠ WARNING: sync-map.json is newer than voiceover-manifest.json.');
+          console.warn('[Render] ⚠ Audio may be out of sync with video speed/freeze adjustments.');
+          console.warn('[Render] ⚠ Run --from=resync-audio before re-rendering to fix this.');
+        }
+        // Also check resyncedAt in manifest to confirm resync-audio was run
+        try {
+          const mf = JSON.parse(fs.readFileSync(manifestFile2, 'utf8'));
+          if (!mf.syncMapApplied && fs.existsSync(syncMapFile2)) {
+            const sm = JSON.parse(fs.readFileSync(syncMapFile2, 'utf8'));
+            if ((sm.segments || []).length > 0) {
+              console.warn('[Render] ⚠ WARNING: voiceover-manifest.json was not generated with sync-map applied.');
+              console.warn('[Render] ⚠ Run --from=resync-audio to apply sync-map and fix audio timing.');
+            }
+          }
+        } catch {}
+      }
+
+      // Stage this run's recording + voiceover into public/ for Remotion
+      stageArtifactsForRemotion(versionedDir);
+
+      // Build Remotion input props from pipeline artifacts
+      const remotionProps = buildRemotionProps();
+      const propsFile = path.join(versionedDir, 'remotion-props.json');
+      fs.writeFileSync(propsFile, JSON.stringify(remotionProps, null, 2));
+      console.log('[Render] Generated remotion-props.json');
+
+      const outFile = path.join(versionedDir, 'demo-scratch.mp4');
+      execSync(
+        `npx remotion render remotion/index.js DemoScratch "${outFile}" --props="${propsFile}" --timeout=120000`,
+        { stdio: 'inherit', cwd: PROJECT_ROOT }
+      );
+    }, timer);
+  }
+
+  // Stage 8: ppt
+  if (STAGES.indexOf('ppt') >= startIdx) {
+    await runStage('ppt', async () => {
+      await require('./generate-ppt').main({
+        inputVideo: path.join(OUT_DIR, 'demo-scratch.mp4'),
+        outputDir:  versionedDir,
+      });
+    }, timer);
+  }
+
+  // Stage 9: touchup
+  if (STAGES.indexOf('touchup') >= startIdx && !noTouchup) {
+    await runStage('touchup', async () => {
+      await require('./touchup').main({ composition: 'DemoScratch' });
+    }, timer);
+  } else if (noTouchup) {
+    console.log('[Orchestrator] Skipping touchup (--no-touchup).');
+  }
+}
+
+// ── Mode B: Enhance pipeline ──────────────────────────────────────────────────
+
+async function runEnhancePipeline({ startIdx, noTouchup, versionedDir, timer }) {
+  const stageRunner = async (name, idx, fn) => {
+    if (idx < startIdx) {
+      console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
+      return;
+    }
+    await runStage(name, fn, timer);
+  };
+
+  await stageRunner('research', 0, async () => {
+    await require('./research').main();
+  });
+
+  await stageRunner('ingest', 1, async () => {
+    await require('./enhance/analyze-video').main();
+  });
+
+  await stageRunner('script', 2, async () => {
+    await require('./enhance/segment').main();
+  });
+
+  await stageRunner('script-critique', 3, async () => {
+    await require('./enhance/enhance-script').main();
+  });
+
+  await stageRunner('build', 4, async () => {
+    await require('./enhance/overlay-plan').main();
+  });
+
+  // voiceover — enhance mode uses ElevenLabs TTS only (no Playwright recording)
+  if (STAGES.indexOf('voiceover') >= startIdx) {
+    await runStage('voiceover', async () => {
+      execSync('node scripts/generate-voiceover.js --scratch', {
+        stdio: 'inherit',
+        cwd: PROJECT_ROOT,
+      });
+    }, timer);
+  }
+
+  // Audio QA — check for choppy audio
+  if (STAGES.indexOf('audio-qa') >= startIdx) {
+    await runStage('audio-qa', async () => {
+      const { passed, issues } = checkAudioQuality(versionedDir);
+      if (issues.length > 0) {
+        console.log('[Audio QA] Issues found:');
+        for (const issue of issues) console.log(`  ⚠ ${issue}`);
+      }
+      fs.writeFileSync(
+        path.join(versionedDir, 'audio-qa-report.json'),
+        JSON.stringify({ passed, issues, checkedAt: new Date().toISOString() }, null, 2)
+      );
+      if (passed) console.log('[Audio QA] Audio quality check passed.');
+      else console.warn('[Audio QA] Audio quality issues detected — review final output.');
+    }, timer);
+  }
+
+  if (STAGES.indexOf('render') >= startIdx) {
+    await runStage('render', async () => {
+      stageArtifactsForRemotion(versionedDir);
+      const remotionProps = buildRemotionProps();
+      const propsFile = path.join(versionedDir, 'remotion-props.json');
+      fs.writeFileSync(propsFile, JSON.stringify(remotionProps, null, 2));
+
+      const outFile = path.join(versionedDir, 'demo-enhance.mp4');
+      execSync(
+        `npx remotion render remotion/index.js DemoEnhance "${outFile}" --props="${propsFile}" --timeout=120000`,
+        { stdio: 'inherit', cwd: PROJECT_ROOT }
+      );
+    }, timer);
+  }
+
+  if (STAGES.indexOf('ppt') >= startIdx) {
+    await runStage('ppt', async () => {
+      await require('./generate-ppt').main({
+        inputVideo: path.join(OUT_DIR, 'demo-enhance.mp4'),
+        outputDir:  versionedDir,
+      });
+    }, timer);
+  }
+
+  if (STAGES.indexOf('touchup') >= startIdx && !noTouchup) {
+    await runStage('touchup', async () => {
+      await require('./touchup').main({ composition: 'DemoEnhance' });
+    }, timer);
+  } else if (noTouchup) {
+    console.log('[Orchestrator] Skipping touchup (--no-touchup).');
+  }
+}
+
+// ── Mode C: Hybrid pipeline ───────────────────────────────────────────────────
+
+async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText, timer }) {
+  const stageRunner = async (name, idx, fn) => {
+    if (idx < startIdx) {
+      console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
+      return;
+    }
+    await runStage(name, fn, timer);
+  };
+
+  // Research first
+  await stageRunner('research', 0, async () => {
+    await require('./research').main();
+  });
+
+  // Parse the pipeline plan if we haven't skipped past this point
+  let plan = { segments: [] };
+  if (STAGES.indexOf('ingest') >= startIdx) {
+    await runStage('ingest (plan)', async () => {
+      console.log('[Orchestrator] Building hybrid pipeline plan...');
+      plan = await buildPipelinePlan(promptText);
+      const planFile = path.join(OUT_DIR, 'pipeline-plan.json');
+      fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
+      console.log(`[Orchestrator] Pipeline plan written: ${planFile}`);
+      console.log(`[Orchestrator] Segments: ${plan.segments.length}`);
+      plan.segments.forEach(s =>
+        console.log(`  [${s.type}] ${s.id}: ${s.description}`)
+      );
+    }, timer);
+  } else {
+    // Load existing plan if restarting from a later stage
+    const planFile = path.join(OUT_DIR, 'pipeline-plan.json');
+    if (fs.existsSync(planFile)) {
+      plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
+      console.log(`[Orchestrator] Loaded existing pipeline plan (${plan.segments.length} segments)`);
+    }
+  }
+
+  // For recorded segments: run enhance sub-pipeline
+  // For built segments: run scratch sub-pipeline
+  const recordedSegments = plan.segments.filter(s => s.type === 'recorded');
+  const builtSegments    = plan.segments.filter(s => s.type === 'build');
+
+  if (STAGES.indexOf('build') >= startIdx) {
+    await runStage('build (hybrid)', async () => {
+      // Process each recorded segment through the enhance sub-pipeline
+      for (const seg of recordedSegments) {
+        console.log(`[Orchestrator] Enhancing recorded segment: ${seg.id}`);
+        await require('./enhance/analyze-video').main({ segmentId: seg.id, file: seg.file });
+        await require('./enhance/segment').main({ segmentId: seg.id });
+        await require('./enhance/enhance-script').main({ segmentId: seg.id });
+        await require('./enhance/overlay-plan').main({ segmentId: seg.id });
+      }
+
+      // Process each built segment through the scratch sub-pipeline
+      for (const seg of builtSegments) {
+        console.log(`[Orchestrator] Building scratch segment: ${seg.id}`);
+        await require('./scratch/generate-script').main({ segmentId: seg.id });
+        await runScriptCritique();
+        await require('./scratch/build-app').main({ segmentId: seg.id });
+        await require('./scratch/record-local').main({ segmentId: seg.id, iteration: 1 });
+        const qaResult = await require('./scratch/qa-review').main({ segmentId: seg.id, iteration: 1 });
+        if (!qaResult?.passed) {
+          console.warn(`[Orchestrator] Segment ${seg.id} QA did not pass (score: ${qaResult?.overallScore}). Continuing.`);
+        }
+      }
+    }, timer);
+  }
+
+  // Combine all segments
+  if (STAGES.indexOf('record') >= startIdx) {
+    await runStage('combine', async () => {
+      await require('./enhance/combine').main({ plan });
+    }, timer);
+  }
+
+  // Shared finishing stages
+  if (STAGES.indexOf('voiceover') >= startIdx) {
+    await runStage('voiceover', async () => {
+      execSync('node scripts/generate-voiceover.js --scratch', {
+        stdio: 'inherit',
+        cwd: PROJECT_ROOT,
+      });
+    }, timer);
+  }
+
+  // Audio QA — check for choppy audio
+  if (STAGES.indexOf('audio-qa') >= startIdx) {
+    await runStage('audio-qa', async () => {
+      const { passed, issues } = checkAudioQuality(versionedDir);
+      if (issues.length > 0) {
+        console.log('[Audio QA] Issues found:');
+        for (const issue of issues) console.log(`  ⚠ ${issue}`);
+      }
+      fs.writeFileSync(
+        path.join(versionedDir, 'audio-qa-report.json'),
+        JSON.stringify({ passed, issues, checkedAt: new Date().toISOString() }, null, 2)
+      );
+      if (passed) console.log('[Audio QA] Audio quality check passed.');
+      else console.warn('[Audio QA] Audio quality issues detected — review final output.');
+    }, timer);
+  }
+
+  if (STAGES.indexOf('render') >= startIdx) {
+    await runStage('render', async () => {
+      stageArtifactsForRemotion(versionedDir);
+      const remotionProps = buildRemotionProps();
+      const propsFile = path.join(versionedDir, 'remotion-props.json');
+      fs.writeFileSync(propsFile, JSON.stringify(remotionProps, null, 2));
+
+      const outFile = path.join(versionedDir, 'demo-hybrid.mp4');
+      execSync(
+        `npx remotion render remotion/index.js DemoEnhance "${outFile}" --props="${propsFile}"`,
+        { stdio: 'inherit', cwd: PROJECT_ROOT }
+      );
+      fs.copyFileSync(outFile, path.join(OUT_DIR, 'demo-hybrid.mp4'));
+    }, timer);
+  }
+
+  if (STAGES.indexOf('ppt') >= startIdx) {
+    await runStage('ppt', async () => {
+      await require('./generate-ppt').main({
+        inputVideo: path.join(OUT_DIR, 'demo-hybrid.mp4'),
+        outputDir:  versionedDir,
+      });
+    }, timer);
+  }
+
+  if (STAGES.indexOf('touchup') >= startIdx && !noTouchup) {
+    await runStage('touchup', async () => {
+      await require('./touchup').main({ composition: 'DemoEnhance' });
+    }, timer);
+  } else if (noTouchup) {
+    console.log('[Orchestrator] Skipping touchup (--no-touchup).');
+  }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main() {
+  const { mode: cliMode, fromStage, noTouchup } = parseArgs();
+
+  console.log('');
+  console.log('='.repeat(60));
+  console.log(' Plaid Demo Pipeline — Orchestrator');
+  console.log('='.repeat(60));
+  console.log('');
+
+  const timer = makeTimer();
+
+  // Load prompt
+  const promptText = loadPrompt();
+  if (promptText) {
+    console.log(`[Orchestrator] Prompt: "${promptText.substring(0, 120).replace(/\n/g, ' ')}..."`);
+  } else {
+    console.log('[Orchestrator] No prompt.txt found — using defaults.');
+  }
+
+  // Determine mode
+  let mode;
+  if (cliMode) {
+    if (!['scratch', 'enhance', 'hybrid'].includes(cliMode)) {
+      console.error(`[Orchestrator] Invalid --mode="${cliMode}". Must be scratch, enhance, or hybrid.`);
+      process.exit(1);
+    }
+    mode = cliMode;
+    console.log(`[Orchestrator] Mode: ${mode} (from CLI)`);
+  } else {
+    mode = await classifyMode(promptText);
+  }
+
+  // Determine versioned output directory — this becomes the isolated run dir
+  const productSlug  = extractProductSlug(promptText);
+  let versionedDir;
+
+  if (process.env.PIPELINE_RUN_DIR && fs.existsSync(process.env.PIPELINE_RUN_DIR)) {
+    // Dashboard (or other caller) already specified the exact run directory — use it directly.
+    versionedDir = process.env.PIPELINE_RUN_DIR;
+    console.log(`[Orchestrator] Using caller-specified run dir: ${versionedDir}`);
+    const LATEST_LINK_PATH = path.join(path.resolve(__dirname, '../..'), 'out', 'latest');
+    try { fs.existsSync(LATEST_LINK_PATH) && fs.unlinkSync(LATEST_LINK_PATH); } catch (_) {}
+    try { fs.symlinkSync(versionedDir, LATEST_LINK_PATH); } catch (_) {}
+  } else if (fromStage) {
+    // When restarting mid-pipeline, reuse the most recent existing run dir so that
+    // prior-stage artifacts (demo-script.json, product-research.json, etc.) are available.
+    // Search across ALL dates for runs matching the product slug (newest first by version).
+    const slugPart = `-${productSlug}-v`;
+    const demosDir = path.join(path.resolve(__dirname, '../..'), 'out', 'demos');
+    fs.mkdirSync(demosDir, { recursive: true });
+    const existing = fs.readdirSync(demosDir)
+      .filter(n => n.includes(slugPart))
+      .map(n => {
+        const vNum = parseInt(n.slice(n.lastIndexOf('-v') + 2), 10) || 0;
+        const mtime = (() => { try { return fs.statSync(path.join(demosDir, n)).mtimeMs; } catch (_) { return 0; } })();
+        return { name: n, vNum, mtime };
+      })
+      .sort((a, b) => b.mtime - a.mtime); // newest-modified first
+    if (existing.length > 0) {
+      versionedDir = path.join(demosDir, existing[0].name);
+      console.log(`[Orchestrator] Reusing run dir for --from restart: ${versionedDir}`);
+      const LATEST_LINK_PATH = path.join(path.resolve(__dirname, '../..'), 'out', 'latest');
+      try { fs.existsSync(LATEST_LINK_PATH) && fs.unlinkSync(LATEST_LINK_PATH); } catch (_) {}
+      try { fs.symlinkSync(versionedDir, LATEST_LINK_PATH); } catch (_) {}
+    } else {
+      console.warn(`[Orchestrator] No existing run found for slug "${productSlug}" — creating new run dir.`);
+      versionedDir = resolveVersionedDir(productSlug);
+    }
+  } else {
+    versionedDir = resolveVersionedDir(productSlug);
+  }
+
+  // ── PIPELINE_RUN_DIR: all scripts write artifacts here instead of shared out/ ──
+  process.env.PIPELINE_RUN_DIR = versionedDir;
+  console.log(`[Orchestrator] Run directory (isolated): ${versionedDir}`);
+  console.log(`[Orchestrator] Symlink: ${LATEST_LINK}`);
+
+  // Determine start index (for --from)
+  const startIdx = resolveStartIndex(fromStage);
+
+  // Log Plaid Link mode
+  const plaidLinkLive = process.env.PLAID_LINK_LIVE === 'true';
+  if (plaidLinkLive) {
+    console.log(`[Orchestrator] Plaid Link mode: LIVE (sandbox) — real SDK + iframe automation`);
+  } else {
+    console.log(`[Orchestrator] Plaid Link mode: MOCK (self-contained HTML mockups)`);
+  }
+
+  console.log(`[Orchestrator] Mode: ${mode.toUpperCase()} | Stages: ${STAGES.slice(startIdx).join(' → ')}`);
+  console.log('');
+
+  // Ensure run directory exists
+  fs.mkdirSync(versionedDir, { recursive: true });
+
+  // Dispatch to the correct pipeline
+  const pipelineArgs = { startIdx, noTouchup, versionedDir, promptText, timer };
+
+  if (mode === 'scratch') {
+    await runScratchPipeline(pipelineArgs);
+  } else if (mode === 'enhance') {
+    await runEnhancePipeline(pipelineArgs);
+  } else if (mode === 'hybrid') {
+    await runHybridPipeline(pipelineArgs);
+  }
+
+  const total = timer.totalElapsed();
+  console.log('');
+  console.log('='.repeat(60));
+  console.log(` Pipeline complete in ${total}s`);
+  console.log(` Output: ${versionedDir}`);
+  console.log('='.repeat(60));
+  console.log('');
+}
+
+main().catch(err => {
+  console.error('\n[Orchestrator] Fatal error:', err.message);
+  if (err.stack) console.error(err.stack);
+  process.exit(1);
+});
+
+module.exports = { main };
