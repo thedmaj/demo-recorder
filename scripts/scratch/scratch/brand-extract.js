@@ -69,7 +69,9 @@ function loadContext() {
   if (fs.existsSync(INGEST_FILE)) {
     try {
       const ingest = JSON.parse(fs.readFileSync(INGEST_FILE, 'utf8'));
-      const promptText = ingest.rawPrompt || ingest.prompt || '';
+      // Support both legacy {rawPrompt/prompt} and current {texts:[{filename,content}]} format
+      const promptText = ingest.rawPrompt || ingest.prompt ||
+        (ingest.texts || []).map(t => t.content || '').join('\n');
       const urlMatch = promptText.match(/Brand\s+URL\s*:\s*(https?:\/\/\S+)/i);
       if (urlMatch) brandUrl = urlMatch[1];
     } catch {}

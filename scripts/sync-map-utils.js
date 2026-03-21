@@ -34,13 +34,19 @@ function buildInverseSegments(syncMap) {
     // Fill any 1:1 gap before this sync entry
     if (seg.compStart > compHead) {
       const delta = seg.compStart - compHead;
+      // For freeze entries the gap ends at the freeze's videoStart.
+      // Using seg.videoStart directly avoids floating-point accumulation errors
+      // that would make the gap-end slightly exceed the freeze point (e.g.
+      // 6.0070000000000014 instead of 6.007), causing processedToCompMs to
+      // match the gap segment instead of falling through to the post-freeze region.
+      const gapVideoEnd = seg.mode === 'freeze' ? seg.videoStart : videoHead + delta;
       inverse.push({
         videoStart: videoHead,
-        videoEnd:   videoHead + delta,
+        videoEnd:   gapVideoEnd,
         compStart:  compHead,
         compEnd:    seg.compStart,
       });
-      videoHead += delta;
+      videoHead = gapVideoEnd;
       compHead   = seg.compStart;
     }
 
@@ -113,7 +119,10 @@ function processedToCompMs(processedMs, syncMap) {
       continue;
     }
 
-    if (processedS >= seg.videoStart && processedS <= seg.videoEnd) {
+    // Use strict < for videoEnd so that a processedS exactly at the end of a 1:1 segment
+    // (which is also the start of a freeze) falls through to the post-freeze segment.
+    // This correctly maps "after the freeze starts" positions to post-freeze comp time.
+    if (processedS >= seg.videoStart && processedS < seg.videoEnd) {
       const videoDur = seg.videoEnd - seg.videoStart;
       if (videoDur <= 0) return Math.round(seg.compStart * 1000);
       const t     = (processedS - seg.videoStart) / videoDur;

@@ -3,6 +3,14 @@
     "figma": {
       "type": "http",
       "url": "https://mcp.figma.com/mcp"
+    },
+    "askbill-plaid": {
+      "type": "stdio",
+      "command": "/Users/dmajetic/plaid-mcp-servers/askbill-plaid/venv/bin/python",
+      "args": [
+        "/Users/dmajetic/plaid-mcp-servers/askbill-plaid/askbill_mcp_server.py"
+      ],
+      "env": {}
     }
   }
 }

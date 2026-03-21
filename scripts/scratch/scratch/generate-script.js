@@ -189,18 +189,22 @@ async function main() {
     }
   }
 
-  // ── Required Plaid Link step IDs ──────────────────────────────────────────
-  // When PLAID_LINK_LIVE=true, record-local.js uses these step IDs for phase navigation.
-  // If they're absent, the recording will show wrong screens during the Plaid Link flow.
+  // ── Required Plaid Link launch step ───────────────────────────────────────
+  // When PLAID_LINK_LIVE=true, at least one step must have plaidPhase:"launch".
+  // record-local.js uses this to run the full CDP Plaid Link automation and wait
+  // for _plaidLinkComplete without an overrun timer killing the step early.
+  //
+  // The script agent should produce a SINGLE Plaid Link step (e.g. "wf-link-launch")
+  // with plaidPhase:"launch" — NOT four separate link-consent/otp/account/success sub-steps.
+  // The no-capture build mode renders the real Plaid iframe (visible in headless:false).
   if (process.env.PLAID_LINK_LIVE === 'true') {
-    const REQUIRED_PLAID_STEPS = ['link-consent', 'link-otp', 'link-account-select', 'link-success'];
-    const scriptStepIds = demoScript.steps.map(s => s.id);
-    const missingPlaidSteps = REQUIRED_PLAID_STEPS.filter(id => !scriptStepIds.includes(id));
-    if (missingPlaidSteps.length > 0) {
-      console.error(`[Script] Required Plaid Link steps missing: ${missingPlaidSteps.join(', ')}`);
-      console.error('[Script] These step IDs are required for record-local.js phase navigation when PLAID_LINK_LIVE=true.');
+    const launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
+    if (!launchStep) {
+      console.error('[Script] No step with plaidPhase:"launch" found in demo-script.json.');
+      console.error('[Script] Add plaidPhase:"launch" to the step that opens Plaid Link.');
       process.exit(1);
     }
+    console.log(`[Script] Plaid launch step: "${launchStep.id}" (plaidPhase: launch) ✓`);
   }
 
   // Write to disk

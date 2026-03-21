@@ -3,95 +3,74 @@
 
 const STEP_TIMING = [
   {
-    "id": "chime-dashboard",
-    "label": "Chime Dashboard — Berta's Checking Overview",
+    "id": "dashboard",
+    "label": "dashboard",
     "startFrame": 0,
-    "endFrame": 360,
-    "audioEndFrame": 297
+    "endFrame": 339,
+    "audioEndFrame": 298
   },
   {
-    "id": "chime-transfers",
-    "label": "Transfers — Add External Account Option",
-    "startFrame": 360,
-    "endFrame": 604,
-    "audioEndFrame": 592
+    "id": "transfers",
+    "label": "transfers",
+    "startFrame": 339,
+    "endFrame": 610,
+    "audioEndFrame": 586
   },
   {
-    "id": "chime-add-external",
-    "label": "Link Your Bank — Pre-Link Explanation",
-    "startFrame": 604,
-    "endFrame": 1689,
-    "audioEndFrame": 853
+    "id": "add-external-account",
+    "label": "add-external-account",
+    "startFrame": 610,
+    "endFrame": 905,
+    "audioEndFrame": 879
   },
   {
-    "id": "link-consent",
-    "label": "Plaid Link — Remember Me Consent",
-    "startFrame": 1689,
-    "endFrame": 1809,
-    "audioEndFrame": 1862
+    "id": "plaid-link",
+    "label": "plaid-link",
+    "startFrame": 905,
+    "endFrame": 1228,
+    "audioEndFrame": 1209
   },
   {
-    "id": "link-otp",
-    "label": "Plaid Link — OTP Verification",
-    "startFrame": 1809,
-    "endFrame": 1884,
-    "audioEndFrame": 1967
+    "id": "post-link-success",
+    "label": "post-link-success",
+    "startFrame": 1228,
+    "endFrame": 1488,
+    "audioEndFrame": 1463
   },
   {
-    "id": "link-account-select",
-    "label": "Plaid Link — Account Selection",
-    "startFrame": 1884,
-    "endFrame": 1990,
-    "audioEndFrame": 2089
+    "id": "insight-auth",
+    "label": "insight-auth",
+    "startFrame": 1488,
+    "endFrame": 1895,
+    "audioEndFrame": 1858
   },
   {
-    "id": "link-success",
-    "label": "Plaid Link — Connection Complete",
-    "startFrame": 1990,
-    "endFrame": 2155,
-    "audioEndFrame": 2114
+    "id": "insight-identity-match",
+    "label": "insight-identity-match",
+    "startFrame": 1895,
+    "endFrame": 2343,
+    "audioEndFrame": 2290
   },
   {
-    "id": "chime-post-link",
-    "label": "Chime — External Account Linked",
-    "startFrame": 2155,
-    "endFrame": 2455,
-    "audioEndFrame": 2411
+    "id": "insight-signal",
+    "label": "insight-signal",
+    "startFrame": 2343,
+    "endFrame": 2859,
+    "audioEndFrame": 2807
   },
   {
-    "id": "plaid-insight-auth",
-    "label": "Plaid Insight — Instant Auth Response",
-    "startFrame": 2455,
-    "endFrame": 2620,
-    "audioEndFrame": 2778
+    "id": "funding-confirmation",
+    "label": "funding-confirmation",
+    "startFrame": 2859,
+    "endFrame": 3197,
+    "audioEndFrame": 3167
   },
   {
-    "id": "plaid-insight-identity-match",
-    "label": "Plaid Insight — Identity Match Key Reveal",
-    "startFrame": 2620,
-    "endFrame": 3100,
-    "audioEndFrame": 3070
-  },
-  {
-    "id": "plaid-insight-signal",
-    "label": "Plaid Insight — Signal ACH Risk Score",
-    "startFrame": 3100,
-    "endFrame": 3521,
-    "audioEndFrame": 3566
-  },
-  {
-    "id": "chime-funds-available",
-    "label": "Chime — Funds Available Instantly",
-    "startFrame": 3521,
-    "endFrame": 3821,
-    "audioEndFrame": 3772
-  },
-  {
-    "id": "plaid-outcome",
-    "label": "Outcome — Faster Funding, Lower Risk, Higher Conversion",
-    "startFrame": 3821,
-    "endFrame": 4075,
-    "audioEndFrame": 4175
+    "id": "closing-summary",
+    "label": "closing-summary",
+    "startFrame": 3197,
+    "endFrame": 3603,
+    "audioEndFrame": 3595
   }
 ];
 

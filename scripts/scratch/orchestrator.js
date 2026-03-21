@@ -39,6 +39,7 @@ const STAGES = [
   'brand-extract',
   'script',
   'script-critique',
+  'embed-script-validate',   // Phase 3: narration/visual coherence check (skips when no GCP creds)
   // 'plaid-link-capture',  // DISABLED — using manual Playwright recording of real Plaid Link
   'build',
   'record',
@@ -46,8 +47,12 @@ const STAGES = [
   'figma-review',
   'post-process',
   'voiceover',
+  'coverage-check',          // Narration coverage: % of scripted steps/words that made it into voiceover
+  'auto-gap',                // Intelligent inter-scene timing: clips video to narration+gap, not raw recording
   'resync-audio',
+  'embed-sync',              // Phase 1: audio-video sync alignment detection (skips when no GCP creds)
   'audio-qa',
+  'ai-suggest-overlays',    // Gemini 2.0 Flash: per-step overlay suggestion patches (skips when no credentials)
   'render',
   'ppt',
   'touchup',
@@ -58,14 +63,17 @@ const STAGES = [
 function parseArgs() {
   const args = process.argv.slice(2);
 
-  const modeArg  = args.find(a => a.startsWith('--mode='));
-  const fromArg  = args.find(a => a.startsWith('--from='));
-  const noTouchup = args.includes('--no-touchup');
+  const modeArg       = args.find(a => a.startsWith('--mode='));
+  const fromArg       = args.find(a => a.startsWith('--from='));
+  const recordModeArg = args.find(a => a.startsWith('--record-mode='));
+  const noTouchup     = args.includes('--no-touchup');
 
-  const mode      = modeArg ? modeArg.replace('--mode=', '').toLowerCase() : null;
-  const fromStage = fromArg ? fromArg.replace('--from=', '').toLowerCase() : null;
+  const mode       = modeArg       ? modeArg.replace('--mode=', '').toLowerCase()        : null;
+  const fromStage  = fromArg       ? fromArg.replace('--from=', '').toLowerCase()         : null;
+  const recordMode = recordModeArg ? recordModeArg.replace('--record-mode=', '').toLowerCase()
+                                   : (process.env.RECORD_MODE || '').toLowerCase() || null;
 
-  return { mode, fromStage, noTouchup };
+  return { mode, fromStage, noTouchup, recordMode };
 }
 
 // ── Prompt file loading ───────────────────────────────────────────────────────
@@ -516,9 +524,6 @@ function buildRemotionProps() {
       }
 
       const totalProcessedMs = pt.totalProcessedMs;
-      props.scratchDurationFrames = Math.round(totalProcessedMs / 1000 * fps);
-      props.enhanceDurationFrames = props.scratchDurationFrames;
-      props.enhanceTotalMs        = totalProcessedMs;
 
       // Also load sync-map.json to convert processed → composition times.
       // When SYNC_MAP_S contains speed/freeze windows, step startFrame/endFrame
@@ -526,6 +531,17 @@ function buildRemotionProps() {
       const { processedToCompMs: p2c, loadSyncMap: lsm } = require('../../scripts/sync-map-utils');
       const syncMapSegs = lsm(runDir);
       props.syncMap = syncMapSegs; // Passed to ScratchComposition for video playback
+
+      // Composition duration = processedToCompMs(end of processed video) so that
+      // freeze extensions (added by auto-gap) are included.  Using totalProcessedMs
+      // directly would produce a duration that is far too short when freezes extend
+      // the composition well beyond the raw processed video length.
+      const compDurationMs = syncMapSegs.length > 0
+        ? p2c(totalProcessedMs, syncMapSegs)
+        : totalProcessedMs;
+      props.scratchDurationFrames = Math.round(compDurationMs / 1000 * fps);
+      props.enhanceDurationFrames = props.scratchDurationFrames;
+      props.enhanceTotalMs        = compDurationMs;
 
       props.scratchSteps = props.scratchSteps.map(s => {
         const processedStartMs = remapMs(s.startMs);
@@ -545,6 +561,43 @@ function buildRemotionProps() {
           durationFrames: Math.max(0, endFrame - startFrame),
         };
       });
+
+      // ── Inject Remotion freeze segments for short Plaid sub-step screens ──────
+      // post-process-recording.js tags plaidStepWindows with freezeMs when the processed
+      // screen duration is < MIN_PLAID_SCREEN_MS (2000ms). Inject those as sync-map freeze
+      // segments here so Remotion holds the last frame of that screen for the deficit.
+      // Tagged with _plaidMinDuration so auto-gap preserves them across re-runs.
+      const plaidWindowsWithFreeze = (pt.plaidStepWindows || []).filter(w => w.freezeMs > 0);
+      if (plaidWindowsWithFreeze.length > 0) {
+        for (const w of plaidWindowsWithFreeze) {
+          // w.endMs is the processed-video position where the freeze starts.
+          // Convert to composition space (accounts for any speed segments already in syncMapSegs).
+          const freezeStartCompMs = p2c(w.endMs, syncMapSegs);
+          const freezeEndCompMs   = freezeStartCompMs + w.freezeMs;
+          // Hold the frame at w.endMs - 1 frame (33ms) so the freeze shows the last
+          // visible frame of this Plaid screen, not the first frame of the next cut.
+          const holdVideoMs = Math.max(0, w.endMs - 33);
+          syncMapSegs.push({
+            compStart:          freezeStartCompMs / 1000,
+            compEnd:            freezeEndCompMs   / 1000,
+            videoStart:         holdVideoMs       / 1000,
+            mode:               'freeze',
+            _plaidMinDuration:  w.stepId,
+            _reason:            `Min 2s enforcement: ${w.stepId} was ${w.durationMs}ms, freeze +${w.freezeMs}ms`,
+          });
+        }
+        syncMapSegs.sort((a, b) => a.compStart - b.compStart);
+        props.syncMap = syncMapSegs; // update props with injected segments
+
+        // Recompute composition duration to include the newly added freeze time
+        const totalFreezeMs = plaidWindowsWithFreeze.reduce((s, w) => s + w.freezeMs, 0);
+        const newCompDurationMs = p2c(totalProcessedMs, syncMapSegs);
+        props.scratchDurationFrames = Math.round(newCompDurationMs / 1000 * fps);
+        props.enhanceDurationFrames = props.scratchDurationFrames;
+        props.enhanceTotalMs        = newCompDurationMs;
+
+        console.log(`[Render] Injected ${plaidWindowsWithFreeze.length} Plaid min-duration freeze(s) (+${totalFreezeMs}ms total)`);
+      }
 
       console.log(
         `[Render] Remapped step timings to processed recording (${(totalProcessedMs / 1000).toFixed(1)}s)` +
@@ -767,7 +820,7 @@ function stageArtifactsForRemotion(runDir) {
   const publicDir = path.join(PROJECT_ROOT, 'public');
 
   // Clean old recording/voiceover from public/ to prevent contamination
-  const staleFiles = ['recording.webm', 'voiceover.mp3'];
+  const staleFiles = ['recording.webm', 'recording.mp4', 'voiceover.mp3'];
   for (const f of staleFiles) {
     const p = path.join(publicDir, f);
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
@@ -781,6 +834,26 @@ function stageArtifactsForRemotion(runDir) {
     fs.copyFileSync(recording, path.join(publicDir, 'recording.webm'));
     const label = fs.existsSync(processedRecording) ? 'recording-processed.webm' : 'recording.webm';
     console.log(`[Render] Staged ${label} → public/recording.webm`);
+
+    // Also convert to recording.mp4 — ScratchComposition reads recording.mp4 (not .webm)
+    // during the actual npx remotion render invocation. The old recording.mp4 must be
+    // replaced so it matches the current run's processed recording and sync map timestamps.
+    const mp4Out = path.join(publicDir, 'recording.mp4');
+    try { if (fs.existsSync(mp4Out)) fs.unlinkSync(mp4Out); } catch (_) {}
+    console.log('[Render] Converting recording.webm → recording.mp4...');
+    const conv = require('child_process').spawnSync('ffmpeg', [
+      '-i', recording,
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+      '-c:a', 'aac', '-b:a', '192k',
+      '-movflags', '+faststart',
+      '-y', mp4Out,
+    ], { stdio: 'pipe', timeout: 300000 });
+    if (conv.status === 0) {
+      console.log('[Render] recording.mp4 written → public/');
+    } else {
+      const stderr = conv.stderr?.toString().slice(-300) || '';
+      console.warn(`[Render] Warning: recording.mp4 conversion failed — ${stderr}`);
+    }
   } else {
     console.warn('[Render] Warning: no recording.webm found in run dir');
   }
@@ -795,7 +868,7 @@ function stageArtifactsForRemotion(runDir) {
 
 // ── Mode A: Scratch pipeline ──────────────────────────────────────────────────
 
-async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) {
+async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer, recordMode }) {
   const stageRunner = async (name, idx, fn) => {
     if (idx < startIdx) {
       console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
@@ -827,6 +900,11 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
   // Stage 4: script-critique
   await stageRunner('script-critique', 4, async () => {
     await runScriptCritique();
+  });
+
+  // Stage 5: embed-script-validate (Phase 3 — graceful no-op if VERTEX_AI_PROJECT_ID unset)
+  await stageRunner('embed-script-validate', 5, async () => {
+    await require('./scratch/embed-script-validate').main();
   });
 
   // Stage 4b: value-prop claim verification (inline — fast Haiku call)
@@ -920,7 +998,7 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
   */
 
   // Stage 6: build
-  await stageRunner('build', 5, async () => {
+  await stageRunner('build', 6, async () => {
     await require('./scratch/build-app').main();
   });
 
@@ -936,7 +1014,11 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
         console.log('[Build Preview] Use ArrowRight/ArrowDown to advance, ArrowLeft/ArrowUp to go back.');
         console.log('[Build Preview] Click any non-button area to advance. Click buttons normally.');
         try { execSync(`open "${previewServer.url}"`, { stdio: 'ignore' }); } catch (_) {}
-        await promptContinue('[Build Preview] Review the app in your browser, then press ENTER to start recording.');
+        if (process.env.SCRATCH_AUTO_APPROVE === 'true') {
+          console.log('[Build Preview] SCRATCH_AUTO_APPROVE=true — skipping manual review, proceeding to record.');
+        } else {
+          await promptContinue('[Build Preview] Review the app in your browser, then press ENTER to start recording.');
+        }
         previewServer.close();
       }
     }
@@ -946,11 +1028,58 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
   if (STAGES.indexOf('record') >= startIdx) {
     timer.startStage('record+qa');
 
+    const studioMode    = recordMode === 'studio';
     const manualRecord  = process.env.MANUAL_RECORD === 'true';
     let bestScore     = 0;
     let bestRecording = null;
-    const maxIterations = manualRecord ? 1 : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
+    const maxIterations = (studioMode || manualRecord) ? 1 : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
     const qaThreshold   = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+
+    // ── Studio mode: human-driven recording, single QA pass (informational only) ──
+    if (studioMode) {
+      console.log('\n[Orchestrator] STUDIO mode: human-driven recording via our-recorder.');
+      console.log('[Orchestrator] QA will run once for quality feedback — no refinement loop.');
+      console.log('[Stage: record+qa] Starting...');
+
+      try {
+        delete require.cache[require.resolve('./manual-record')];
+        await require('./manual-record').main({ iteration: 1 });
+      } catch (err) {
+        console.error(`[record] Studio recording failed: ${err.message}`);
+        if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+          await promptContinue('[record] Studio recording failed. Fix and press ENTER to continue, or Ctrl-C to abort.');
+        } else {
+          throw err;
+        }
+      }
+
+      // Informational QA — score shown, never blocks, never loops
+      console.log('\n[Orchestrator] Running QA (informational — studio mode, no re-record)...');
+      try {
+        delete require.cache[require.resolve('./scratch/qa-review')];
+        const qaResult = await require('./scratch/qa-review').main({ iteration: 1 });
+        const score    = qaResult?.overallScore ?? 0;
+        console.log(`\n[Studio QA] Score: ${score}/100${score >= qaThreshold ? ' ✓ Passed' : ` (below ${qaThreshold} threshold — continuing in studio mode)`}`);
+        if (score < qaThreshold) {
+          fs.writeFileSync(
+            path.join(versionedDir, 'recording-qa-warning.json'),
+            JSON.stringify({
+              bestScore: score, threshold: qaThreshold,
+              message:   `Studio mode: QA score ${score}/${qaThreshold} — informational only, no re-record`,
+              advancedAt: new Date().toISOString(),
+            }, null, 2)
+          );
+        }
+      } catch (err) {
+        console.warn(`[qa] Studio QA check failed: ${err.message} — continuing`);
+      }
+
+      writePipelineProgress('record');
+      writePipelineProgress('qa');
+      timer.endStage('record+qa');
+
+    } else {
+    // ── Auto / manual Playwright recording (existing refinement loop) ──────────
 
     if (manualRecord) {
       console.log('\n[Orchestrator] MANUAL_RECORD mode: one human-driven recording pass, no QA refinement loop.');
@@ -1003,11 +1132,16 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
             path.join(versionedDir, 'recording.webm'),
             bestRecording
           );
-          // Also save the matching step-timing.json for this iteration
+          // Also save the matching step-timing.json and plaid-link-timing.json for this iteration
           const timingSource = path.join(versionedDir, 'step-timing.json');
           const timingBackup = path.join(versionedDir, `step-timing-iter${iter}.json`);
           if (fs.existsSync(timingSource)) {
             fs.copyFileSync(timingSource, timingBackup);
+          }
+          const plaidTimingSource = path.join(versionedDir, 'plaid-link-timing.json');
+          const plaidTimingBackup = path.join(versionedDir, `plaid-link-timing-iter${iter}.json`);
+          if (fs.existsSync(plaidTimingSource)) {
+            fs.copyFileSync(plaidTimingSource, plaidTimingBackup);
           }
         } catch (copyErr) {
           console.warn(`[Orchestrator] Could not copy best recording: ${copyErr.message}`);
@@ -1045,6 +1179,12 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
           fs.copyFileSync(timingBackup, path.join(versionedDir, 'step-timing.json'));
           console.log(`[Orchestrator] Restored matching step-timing (iteration ${iterMatch[1]})`);
         }
+        // Also restore the matching plaid-link-timing.json so post-process cuts align with the recording
+        const plaidTimingBackup = path.join(versionedDir, `plaid-link-timing-iter${iterMatch[1]}.json`);
+        if (fs.existsSync(plaidTimingBackup)) {
+          fs.copyFileSync(plaidTimingBackup, path.join(versionedDir, 'plaid-link-timing.json'));
+          console.log(`[Orchestrator] Restored matching plaid-link-timing (iteration ${iterMatch[1]})`);
+        }
       }
       console.log(`[Orchestrator] Restored best recording (score: ${bestScore})`);
     }
@@ -1071,12 +1211,21 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
 
       if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
         await promptContinue(`[QA] Best score ${bestScore}/${qaThreshold} — below threshold.`);
+      } else {
+        // Auto-approve pipelines must not silently produce unusable demos.
+        // All QA iterations are exhausted — halt so a human can investigate.
+        throw new Error(
+          `CRITICAL: QA_BELOW_THRESHOLD — best score ${bestScore}/${qaThreshold} after all ` +
+          `recording iterations. Re-run from --from=build to fix the build before proceeding.`
+        );
       }
     }
 
     writePipelineProgress('record');
     if (bestScore > 0) writePipelineProgress('qa');
     timer.endStage('record+qa');
+
+    } // end else (non-studio Playwright path)
   }
 
   // Stage: figma-review (optional — only runs when FIGMA_REVIEW=true)
@@ -1105,8 +1254,12 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
           qaReportFile: path.join(versionedDir, 'figma-feedback.json'),
         });
         // Re-record with the refined app
-        console.log('[Orchestrator] Re-recording with Figma-refined app...');
-        await require('./scratch/record-local').main({ iteration: 'figma' });
+        if (recordMode === 'studio') {
+          console.log('[figma-review] Studio mode — skipping automated re-record. Re-run with --record-mode=studio --from=record to capture manually.');
+        } else {
+          console.log('[Orchestrator] Re-recording with Figma-refined app...');
+          await require('./scratch/record-local').main({ iteration: 'figma' });
+        }
       }
     }, timer);
   }
@@ -1176,6 +1329,40 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
         }
       }
 
+      // ── Plaid sub-step minimum screen duration validation ──────────────────
+      // Runs immediately after post-process writes processed-step-timing.json.
+      // Each Plaid Link sub-step screen must be ≥ MIN_PLAID_SCREEN_MS (2000ms) in the
+      // processed video, counting both the raw durationMs AND any freezeMs extension
+      // that post-process-recording.js tagged onto the window.
+      // Fail before voiceover so a bad recording doesn't waste ElevenLabs TTS calls.
+      const MIN_PLAID_SCREEN_MS = 2000;
+      const procTimingValidPath = path.join(versionedDir, 'processed-step-timing.json');
+      if (fs.existsSync(procTimingValidPath)) {
+        try {
+          const pt = JSON.parse(fs.readFileSync(procTimingValidPath, 'utf8'));
+          const shortScreens = (pt.plaidStepWindows || []).filter(w => {
+            return (w.durationMs + (w.freezeMs || 0)) < MIN_PLAID_SCREEN_MS;
+          });
+          if (shortScreens.length > 0) {
+            const details = shortScreens.map(w => {
+              const eff = w.durationMs + (w.freezeMs || 0);
+              return `  "${w.stepId}": ${eff}ms effective (raw ${w.durationMs}ms + ${w.freezeMs || 0}ms freeze)`;
+            }).join('\n');
+            throw new Error(
+              `CRITICAL: Plaid screen(s) below ${MIN_PLAID_SCREEN_MS}ms minimum:\n${details}\n` +
+              `Re-run from --from=post-process with a larger --max-institution value or re-record.`
+            );
+          }
+          const windows = pt.plaidStepWindows || [];
+          if (windows.length > 0) {
+            console.log(`[post-process] Plaid screen duration validation: ${windows.length} screen(s) ≥ ${MIN_PLAID_SCREEN_MS}ms ✓`);
+          }
+        } catch (err) {
+          if (err.message.startsWith('CRITICAL:')) throw err;
+          console.warn(`[post-process] Could not validate Plaid screen durations: ${err.message}`);
+        }
+      }
+
       // Write a default sync-map.json if one doesn't already exist.
       // sync-map.json holds SYNC_MAP_S segments (speed/freeze) that tell both the
       // voiceover generator and Remotion how to align audio with the composed video.
@@ -1203,6 +1390,25 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
     }, timer);
   }
 
+  // Coverage check — narration coverage: % of script steps/words that made it into voiceover manifest.
+  if (STAGES.indexOf('coverage-check') >= startIdx) {
+    await runStage('coverage-check', async () => {
+      const { main } = require('./scratch/scratch/coverage-check.js');
+      await main();
+    }, timer);
+  }
+
+  // Stage: auto-gap — intelligent inter-scene timing.
+  // Compares narration duration + recommended gap vs raw video scene duration per step.
+  // Where video exceeds narration+gap, writes speed sync-map entries to compress the video.
+  // Gap amounts are context-aware: 500ms (Plaid Link), 1000ms (default), 1500ms (intro),
+  // 2000ms (API insight), 2500ms (outcome/reveal). resync-audio must run after this.
+  if (STAGES.indexOf('auto-gap') >= startIdx) {
+    await runStage('auto-gap', async () => {
+      await require('../auto-gap').main();
+    }, timer);
+  }
+
   // Stage 6a: resync-audio — re-stitches voiceover.mp3 using sync-map.json inverse mapping.
   // Runs automatically after voiceover. Also the entry point when the user edits sync-map.json
   // or changes any speed/freeze window after voiceover was already generated.
@@ -1224,6 +1430,24 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
         cwd:  PROJECT_ROOT,
         env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
       });
+    }, timer);
+  }
+
+  // Stage: embed-sync — audio-video alignment detection via multimodal embeddings (Phase 1).
+  // Gracefully skips when VERTEX_AI_PROJECT_ID is absent — non-critical.
+  if (STAGES.indexOf('embed-sync') >= startIdx) {
+    await runStage('embed-sync', async () => {
+      const embedSyncResult = await require('../embed-sync').main();
+      // If corrections were auto-applied to sync-map.json, re-run resync-audio so the
+      // stitched voiceover.mp3 reflects the updated segment timings before render.
+      if (embedSyncResult?.autoApplied) {
+        console.log('[embed-sync] Auto-applied sync corrections — re-running resync-audio...');
+        execSync('node scripts/resync-audio.js', {
+          stdio: 'inherit',
+          cwd:   PROJECT_ROOT,
+          env:   { ...process.env, PIPELINE_RUN_DIR: versionedDir },
+        });
+      }
     }, timer);
   }
 
@@ -1336,6 +1560,18 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
     }, timer);
   }
 
+  // Stage: ai-suggest-overlays — Gemini overlay suggestion engine (graceful skip if no credentials)
+  if (STAGES.indexOf('ai-suggest-overlays') >= startIdx) {
+    await runStage('ai-suggest-overlays', async () => {
+      const hasKey = process.env.GOOGLE_API_KEY || process.env.VERTEX_AI_PROJECT_ID;
+      if (!hasKey) {
+        console.log('[ai-suggest-overlays] No credentials (GOOGLE_API_KEY / VERTEX_AI_PROJECT_ID) — skipping.');
+        return;
+      }
+      await require('./scratch/ai-suggest-overlays').main();
+    }, timer);
+  }
+
   // Stage 7: render
   if (STAGES.indexOf('render') >= startIdx) {
     await runStage('render', async () => {
@@ -1394,7 +1630,7 @@ async function runScratchPipeline({ startIdx, noTouchup, versionedDir, timer }) 
 
       const outFile = path.join(versionedDir, 'demo-scratch.mp4');
       execSync(
-        `npx remotion render remotion/index.js DemoScratch "${outFile}" --props="${propsFile}" --timeout=120000`,
+        `npx remotion render remotion/index.js DemoScratch "${outFile}" --props="${propsFile}" --timeout=120000 --log=warn`,
         { stdio: 'inherit', cwd: PROJECT_ROOT }
       );
     }, timer);
@@ -1487,7 +1723,7 @@ async function runEnhancePipeline({ startIdx, noTouchup, versionedDir, timer }) 
 
       const outFile = path.join(versionedDir, 'demo-enhance.mp4');
       execSync(
-        `npx remotion render remotion/index.js DemoEnhance "${outFile}" --props="${propsFile}" --timeout=120000`,
+        `npx remotion render remotion/index.js DemoEnhance "${outFile}" --props="${propsFile}" --timeout=120000 --log=warn`,
         { stdio: 'inherit', cwd: PROJECT_ROOT }
       );
     }, timer);
@@ -1652,7 +1888,7 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const { mode: cliMode, fromStage, noTouchup } = parseArgs();
+  const { mode: cliMode, fromStage, noTouchup, recordMode } = parseArgs();
 
   console.log('');
   console.log('='.repeat(60));
@@ -1746,7 +1982,11 @@ async function main() {
   fs.mkdirSync(versionedDir, { recursive: true });
 
   // Dispatch to the correct pipeline
-  const pipelineArgs = { startIdx, noTouchup, versionedDir, promptText, timer };
+  const pipelineArgs = { startIdx, noTouchup, versionedDir, promptText, timer, recordMode };
+
+  if (recordMode === 'studio') {
+    console.log(`[Orchestrator] Record mode: STUDIO (human-driven via our-recorder)`);
+  }
 
   if (mode === 'scratch') {
     await runScratchPipeline(pipelineArgs);

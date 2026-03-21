@@ -45,7 +45,9 @@ const {
   interpolate,
   spring,
   useVideoConfig,
+  useRemotionEnvironment,
 } = require('remotion');
+const { useMemo } = require('react');
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const PLAID_BLACK = '#0d1117';
@@ -57,8 +59,8 @@ const FONT_STACK  = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-ser
 // Set to past end-of-video to effectively disable the Remotion-level cut.
 // All editing is handled by ffmpeg in post-process-recording.js. The sync map
 // below handles any remaining speed/freeze adjustments within Remotion.
-const CUT_START_S    = 143.0;   // past end of processed video (142.3s) — no cut
-const CUT_END_S      = 143.0;
+const CUT_START_S    = 32.567;  // comp frame 977 — start of removed range
+const CUT_END_S      = 48.233;  // comp frame 1447 — first frame after removed range (977–1446 inclusive, 470 frames)
 
 // ── Sync map ──────────────────────────────────────────────────────────────────
 // Edit these entries to tune audio/video alignment.
@@ -81,6 +83,124 @@ const SYNC_MAP_S = [
   { compStart: 37.0, compEnd: 47.5, videoStart: 47.5, mode: 'freeze' },
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ANIMATION TOOLKIT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── useSpring — spring value starting from a given frame ──────────────────────
+// Returns a spring that starts at `atFrame` and settles to 1.0.
+// offset: add a constant to the settled value (e.g. offset=1 → value goes 1→2).
+//
+//   const scale = useSpring(relFrame, fps, { offset: 1 }); // 1.0 → 2.0
+//   const opacity = useSpring(relFrame, fps);               // 0.0 → 1.0
+function useSpring(frame, fps, {
+  atFrame   = 0,
+  damping   = 14,
+  stiffness = 120,
+  mass      = 1,
+  offset    = 0,    // added to the spring value (spring settles at 1+offset)
+} = {}) {
+  const local  = frame - atFrame;
+  if (local < 0) return offset;          // before atFrame: return offset (= 0+offset)
+  const value1 = spring({ frame: local, fps, config: { damping, stiffness, mass } });
+  const value2 = offset;                 // exactly the pattern you shared: value1 + value2
+  return value1 + value2;               // total: offset → 1+offset
+}
+
+// ── useSpringScale — spring scale starting at 1 ───────────────────────────────
+// Convenience: like useSpring(offset=1) but named for clarity.
+//   const scale = useSpringScale(relFrame, fps); // 1.0 → 2.0
+//   const scale = useSpringScale(relFrame, fps, { target: 1.08 }); // 1.0 → 1.08
+function useSpringScale(frame, fps, { atFrame = 0, target = 2, damping = 14, stiffness = 120, mass = 1 } = {}) {
+  const local = frame - atFrame;
+  if (local < 0) return 1;
+  // spring goes 0→1; map to 1→target
+  const t = spring({ frame: local, fps, config: { damping, stiffness, mass } });
+  return 1 + t * (target - 1);
+}
+
+// ── SceneTransition — spring-powered enter/exit for any scene content ─────────
+// Wraps children with a configurable spring entrance.
+//   type: 'fade-up' | 'fade-down' | 'fade-left' | 'fade-right' | 'scale' | 'fade'
+//
+// Usage in a step:
+//   <SceneTransition relFrame={relFrame} fps={fps} durationFrames={durationFrames} type="fade-up">
+//     <MyContent />
+//   </SceneTransition>
+function SceneTransition({ relFrame, fps, durationFrames, type = 'fade-up', atFrame = 0, exitFrames = 15, children }) {
+  const enterSpring = useSpring(relFrame, fps, { atFrame, damping: 16, stiffness: 140 });
+  const opacity     = interpolate(relFrame, [atFrame, atFrame + 12, durationFrames - exitFrames, durationFrames], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+
+  let transform = '';
+  if (type === 'fade-up')    transform = `translateY(${interpolate(enterSpring, [0, 1], [40, 0])}px)`;
+  if (type === 'fade-down')  transform = `translateY(${interpolate(enterSpring, [0, 1], [-40, 0])}px)`;
+  if (type === 'fade-left')  transform = `translateX(${interpolate(enterSpring, [0, 1], [60, 0])}px)`;
+  if (type === 'fade-right') transform = `translateX(${interpolate(enterSpring, [0, 1], [-60, 0])}px)`;
+  if (type === 'scale')      transform = `scale(${useSpringScale(relFrame, fps, { atFrame, target: 1, damping: 18, stiffness: 160 })})`;
+  if (type === 'fade')       transform = '';
+
+  return (
+    <div style={{ opacity, transform, pointerEvents: 'none' }}>
+      {children}
+    </div>
+  );
+}
+
+// ── SplitMarker — visual marker at a specific video time for debug/review ─────
+// Renders a labelled teal bar at a given composition second (visible in Studio only).
+//   <SplitMarker atSecond={13.0} label="Plaid Link start" frame={frame} fps={fps} />
+function SplitMarker({ atSecond, label, frame, fps }) {
+  const { isStudio } = useRemotionEnvironment();
+  if (!isStudio) return null;                          // never appears in final render
+  const atF    = Math.round(atSecond * fps);
+  const dist   = Math.abs(frame - atF);
+  if (dist > fps * 0.5) return null;                  // visible ±0.5s around the mark
+  const opacity = interpolate(dist, [0, fps * 0.4], [1, 0], { extrapolateRight: 'clamp' });
+  return (
+    <div style={{
+      position: 'absolute', top: 0, left: 0, right: 0,
+      height: 4, background: PLAID_TEAL, opacity,
+      boxShadow: `0 0 12px ${PLAID_TEAL}`,
+      pointerEvents: 'none', zIndex: 9999,
+    }}>
+      {label && (
+        <div style={{
+          position: 'absolute', top: 6, left: 12,
+          background: PLAID_TEAL, color: '#fff',
+          fontSize: 11, fontFamily: FONT_STACK, fontWeight: 700,
+          padding: '2px 8px', borderRadius: 4, whiteSpace: 'nowrap', opacity,
+        }}>{label}</div>
+      )}
+    </div>
+  );
+}
+
+// ── VideoSegmentOverlay — highlight a video time range in Studio ──────────────
+// Tints the screen for a composition range. Studio-only.
+//   <VideoSegmentOverlay fromS={13} toS={37} label="1.3× speed" color="rgba(0,166,126,0.12)" frame={frame} fps={fps} />
+function VideoSegmentOverlay({ fromS, toS, label, color = 'rgba(0,166,126,0.08)', frame, fps }) {
+  const { isStudio } = useRemotionEnvironment();
+  if (!isStudio) return null;
+  const fromF = Math.round(fromS * fps);
+  const toF   = Math.round(toS   * fps);
+  if (frame < fromF || frame >= toF) return null;
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: color, pointerEvents: 'none', zIndex: 9998,
+    }}>
+      {label && (
+        <div style={{
+          position: 'absolute', top: 12, right: 16,
+          background: 'rgba(0,0,0,0.6)', color: PLAID_TEAL,
+          fontSize: 11, fontFamily: FONT_STACK, fontWeight: 700,
+          padding: '3px 10px', borderRadius: 4, border: `1px solid ${PLAID_TEAL}`,
+        }}>{label}</div>
+      )}
+    </div>
+  );
+}
+
 // ── Reusable fade helper ───────────────────────────────────────────────────────
 function useFade(frame, inStart, inEnd, outStart, outEnd) {
   return interpolate(
@@ -88,6 +208,227 @@ function useFade(frame, inStart, inEnd, outStart, outEnd) {
     [inStart, inEnd, outStart, outEnd],
     [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MOUSE TRAIL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Pure helper — returns { xFrac, yFrac, opacity } of the virtual cursor at any
+ * given frame, by spring-interpolating between consecutive click events.
+ *
+ * Safe to call N times per render (spring() is a pure function, not a hook).
+ */
+function getCursorPos(events, frame, fps) {
+  if (!events || events.length === 0) return null;
+
+  const first = events[0];
+  const last  = events[events.length - 1];
+
+  // Outside the visible window entirely
+  if (frame < first.atFrame - 24 || frame > last.stepEndF + 20) return null;
+
+  // Locate the segment: previous click (already happened) + next click (upcoming)
+  let prev = null;
+  let next = null;
+  for (let i = 0; i < events.length; i++) {
+    if (frame >= events[i].atFrame) prev = events[i];
+    else { next = events[i]; break; }
+  }
+
+  let xFrac, yFrac, opacity;
+
+  if (!prev) {
+    // Approaching first click from above-screen
+    const t = interpolate(frame, [first.atFrame - 24, first.atFrame], [0, 1],
+      { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+    xFrac = first.xFrac;  yFrac = first.yFrac;  opacity = t;
+  } else if (!next) {
+    // After last click — hold position, then fade at step end
+    const fadeStart = prev.atFrame + 20;
+    xFrac = prev.xFrac;  yFrac = prev.yFrac;
+    opacity = interpolate(frame, [fadeStart, last.stepEndF],
+      [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  } else {
+    // Moving: spring from prev click position toward next click position
+    const elapsed = Math.max(0, frame - prev.atFrame);
+    const t = Math.min(1, spring({ frame: elapsed, fps,
+      config: { damping: 22, stiffness: 70, mass: 1.2 } }));
+    xFrac = prev.xFrac + (next.xFrac - prev.xFrac) * t;
+    yFrac = prev.yFrac + (next.yFrac - prev.yFrac) * t;
+    opacity = 1;
+  }
+
+  return { xFrac, yFrac, opacity: Math.max(0, Math.min(1, opacity)) };
+}
+
+/**
+ * MouseTrail — ghost cursor that smoothly travels between click positions.
+ *
+ * Renders:
+ *   • Outer ring + inner dot cursor at current position
+ *   • TRAIL_LEN ghost dots trailing behind, fading and shrinking with distance
+ *
+ * Enabled automatically for any step with a `clickRipple`.
+ * Disable per-step with `"mouseTrail": false` in demo-script.json.
+ */
+function MouseTrail({ steps, frame, fps }) {
+  const events = useMemo(() => (steps || [])
+    .filter(s => s.clickRipple && s.mouseTrail !== false)
+    .map(s => ({
+      xFrac:    s.clickRipple.xFrac,
+      yFrac:    s.clickRipple.yFrac,
+      atFrame:  (s.startFrame ?? 0) + (s.clickRipple.atFrame ?? 15),
+      stepEndF: s.endFrame ?? (s.startFrame ?? 0) + 300,
+    }))
+    .sort((a, b) => a.atFrame - b.atFrame),
+  [steps]);
+
+  if (events.length < 1) return null;
+
+  const cur = getCursorPos(events, frame, fps);
+  if (!cur || cur.opacity <= 0.01) return null;
+
+  const TRAIL_LEN   = 7;
+  const TRAIL_DELAY = 4;   // frames between each ghost dot
+  const CURSOR_R    = 14;  // outer ring radius (comp pixels)
+
+  const trailDots = [];
+  for (let i = 1; i <= TRAIL_LEN; i++) {
+    const past = getCursorPos(events, frame - i * TRAIL_DELAY, fps);
+    if (!past || past.opacity <= 0.01) continue;
+
+    const trailOpacity = cur.opacity * interpolate(i, [1, TRAIL_LEN + 1], [0.45, 0.03]);
+    const trailR       = interpolate(i, [1, TRAIL_LEN + 1], [10, 4]);
+
+    trailDots.push(
+      <div key={i} style={{
+        position:      'absolute',
+        left:          `${past.xFrac * 100}%`,
+        top:           `${past.yFrac * 100}%`,
+        width:          trailR * 2,
+        height:         trailR * 2,
+        borderRadius:   '50%',
+        background:     PLAID_TEAL,
+        transform:      'translate(-50%, -50%)',
+        opacity:        trailOpacity,
+        pointerEvents: 'none',
+      }} />
+    );
+  }
+
+  return (
+    <AbsoluteFill style={{ pointerEvents: 'none' }}>
+      {trailDots}
+
+      {/* Cursor: outer ring */}
+      <div style={{
+        position:     'absolute',
+        left:         `${cur.xFrac * 100}%`,
+        top:          `${cur.yFrac * 100}%`,
+        width:         CURSOR_R * 2,
+        height:        CURSOR_R * 2,
+        borderRadius:  '50%',
+        border:        `2.5px solid ${PLAID_TEAL}`,
+        transform:     'translate(-50%, -50%)',
+        opacity:        cur.opacity * 0.9,
+        pointerEvents: 'none',
+        boxShadow:     `0 0 8px rgba(0,166,126,0.5)`,
+      }} />
+
+      {/* Cursor: inner dot */}
+      <div style={{
+        position:     'absolute',
+        left:         `${cur.xFrac * 100}%`,
+        top:          `${cur.yFrac * 100}%`,
+        width:         7,
+        height:        7,
+        borderRadius:  '50%',
+        background:    PLAID_TEAL,
+        transform:     'translate(-50%, -50%)',
+        opacity:        cur.opacity,
+        pointerEvents: 'none',
+        boxShadow:     `0 0 4px rgba(0,166,126,0.8)`,
+      }} />
+    </AbsoluteFill>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPOTLIGHT PULSE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * SpotlightPulse — radial vignette that focuses attention on the active click target.
+ *
+ * Renders a dark overlay with a transparent "spotlight hole" around the target:
+ *   • Springs in at step start (hole grows from 0 to full radius)
+ *   • Gently oscillates (±18px) using sin wave — feels alive, not static
+ *   • Smoothly crossfades between steps (no hard cut)
+ *   • Fades out at step end
+ *
+ * Config per step in demo-script.json:
+ *   "spotlight": { "xFrac": 0.5, "yFrac": 0.5, "radius": 300, "intensity": 0.55 }
+ *   OR auto-derived from clickRipple (default).
+ *   Disable per-step with "spotlight": false.
+ *
+ * Radius and position are in composition pixel space (2880×1800).
+ */
+function SpotlightPulse({ steps, frame, fps }) {
+  // Collect steps that have spotlight active
+  const targets = useMemo(() => (steps || [])
+    .filter(s => s.spotlight !== false && (s.spotlight || s.clickRipple))
+    .map(s => {
+      const cfg = (typeof s.spotlight === 'object' && s.spotlight) || {};
+      return {
+        xFrac:     cfg.xFrac     ?? s.clickRipple?.xFrac     ?? 0.5,
+        yFrac:     cfg.yFrac     ?? s.clickRipple?.yFrac     ?? 0.5,
+        radius:    cfg.radius    ?? 300,
+        intensity: cfg.intensity ?? 0.52,
+        startF:    s.startFrame ?? 0,
+        endF:      s.endFrame   ?? (s.startFrame ?? 0) + 300,
+      };
+    }),
+  [steps]);
+
+  if (targets.length === 0) return null;
+
+  // Find the active target at this frame
+  const active = targets.find(t => frame >= t.startF && frame < t.endF);
+  if (!active) return null;
+
+  const relFrame  = frame - active.startF;
+  const durFrames = active.endF - active.startF;
+
+  // Spring entrance (0→1 over ~20 frames)
+  const enterT = Math.min(1, spring({ frame: relFrame, fps,
+    config: { damping: 20, stiffness: 90, mass: 1 } }));
+
+  // Gentle heartbeat pulse — sin wave, period ~50 frames (~1.7s at 30fps)
+  const pulse = Math.sin(relFrame * 0.125) * 18;
+
+  // Fade out over last 20 frames of step
+  const fadeOpacity = interpolate(relFrame,
+    [0, 10, durFrames - 20, durFrames],
+    [0, 1, 1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+
+  const radius      = active.radius * enterT + pulse * enterT;
+  const featherSize = 140;                           // gradient feather width
+  const innerR      = Math.max(0, radius);
+  const outerR      = innerR + featherSize;
+  const intensity   = active.intensity * fadeOpacity;
+
+  const xPct = active.xFrac * 100;
+  const yPct = active.yFrac * 100;
+
+  return (
+    <AbsoluteFill style={{
+      background:     `radial-gradient(circle at ${xPct}% ${yPct}%, transparent ${innerR}px, rgba(0,0,0,${intensity.toFixed(3)}) ${outerR}px)`,
+      pointerEvents: 'none',
+    }} />
   );
 }
 
@@ -510,8 +851,7 @@ function buildSyncSegments(fps, cutStartF, cutEndF, totalFrames, syncMapProp) {
 //   playbackRate prop on OffthreadVideo controls speed.
 const { Freeze } = require('remotion');
 
-function SyncedVideo({ src, videoStyle, zoomStep, frame, fps, cutStartF, cutEndF, totalFrames, syncMap }) {
-  const segments = buildSyncSegments(fps, cutStartF, cutEndF, totalFrames, syncMap);
+function SyncedVideo({ src, videoStyle, zoomStep, frame, fps, cutStartF, cutEndF, totalFrames, segments }) {
 
   // Split segments into Zone A (before cut) and Zone B (after cut)
   const zoneA = [];
@@ -621,9 +961,20 @@ function SyncedVideo({ src, videoStyle, zoomStep, frame, fps, cutStartF, cutEndF
 const ScratchComposition = ({ steps = [], voiceoverFile = 'voiceover.mp3', hasVoiceover = true, cutFrames = [], syncMap = [] }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  const { isStudio } = useRemotionEnvironment();
 
   const cutStartF = Math.round(CUT_START_S * fps);
   const cutEndF   = Math.round(CUT_END_S   * fps);
+
+  // Studio uses 1440×900 H.264 preview (fast scrubbing); render uses full 2880×1800.
+  const videoSrc = isStudio ? 'recording-studio.mp4' : 'recording.mp4';
+
+  // Memoize sync segments — only rebuilds when fps/cut/syncMap change, not every frame.
+  const segments = useMemo(
+    () => buildSyncSegments(fps, cutStartF, cutEndF, durationInFrames, syncMap),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fps, cutStartF, cutEndF, durationInFrames, syncMap.length]
+  );
 
   // Find the step that has a zoomPunch active at this frame
   const zoomStep = steps.find(s =>
@@ -632,10 +983,13 @@ const ScratchComposition = ({ steps = [], voiceoverFile = 'voiceover.mp3', hasVo
     frame < (s.endFrame ?? (s.startFrame ?? 0) + 300)
   );
 
-  // Audio ducking: dip 15% for 20 frames centered on each click ripple
-  const clickFrames = steps
-    .filter(s => s.clickRipple)
-    .map(s => (s.startFrame ?? 0) + (s.clickRipple.atFrame ?? 15));
+  // Memoize click frames — only rebuilds when steps change, not every frame.
+  const clickFrames = useMemo(
+    () => steps
+      .filter(s => s.clickRipple)
+      .map(s => (s.startFrame ?? 0) + (s.clickRipple.atFrame ?? 15)),
+    [steps]
+  );
 
   const volume = clickFrames.reduce((vol, cf) => {
     const dist = Math.abs(frame - cf);
@@ -651,7 +1005,7 @@ const ScratchComposition = ({ steps = [], voiceoverFile = 'voiceover.mp3', hasVo
 
       {/* ── Base video layer: cut + sync adjustments ── */}
       <SyncedVideo
-        src="recording.webm"
+        src={videoSrc}
         videoStyle={videoStyle}
         zoomStep={zoomStep}
         frame={frame}
@@ -659,21 +1013,50 @@ const ScratchComposition = ({ steps = [], voiceoverFile = 'voiceover.mp3', hasVo
         cutStartF={cutStartF}
         cutEndF={cutEndF}
         totalFrames={durationInFrames}
-        syncMap={syncMap}
+        segments={segments}
       />
 
       {/* ── Voiceover audio (plays continuously, unaffected by video cut) ── */}
       {hasVoiceover && <Audio src={staticFile(voiceoverFile)} volume={volume} />}
 
-      {/* ── Overlay layer: callouts, ripples, and badges for each step ── */}
-      {steps.map((step, i) => (
-        <AbsoluteFill key={step.id || i} style={{ pointerEvents: 'none' }}>
-          {renderStepOverlays(step, frame)}
-        </AbsoluteFill>
-      ))}
+      {/* ── Spotlight vignette — behind cursor trail and callouts ── */}
+      <SpotlightPulse steps={steps} frame={frame} fps={fps} />
+
+      {/* ── Mouse trail — above spotlight, below callouts ── */}
+      <MouseTrail steps={steps} frame={frame} fps={fps} />
+
+      {/* ── Overlay layer: each step's overlays are scoped to its Sequence window ── */}
+      {steps.map((step, i) => {
+        const sf = step.startFrame ?? 0;
+        const ef = step.endFrame ?? sf + 300;
+        if (ef <= sf) return null;
+        return (
+          <Sequence key={step.id || i} from={sf} durationInFrames={ef - sf}>
+            <AbsoluteFill style={{ pointerEvents: 'none' }}>
+              {renderStepOverlays(step, frame)}
+            </AbsoluteFill>
+          </Sequence>
+        );
+      })}
 
       {/* ── Cross-dissolve on hard cuts ── */}
       <CrossDissolve frame={frame} cutFrames={cutFrames} />
+
+      {/* ── Studio-only: sync map segment overlays + split markers ── */}
+      {syncMap.map((seg, i) => (
+        <VideoSegmentOverlay
+          key={`seg-${i}`}
+          fromS={seg.compStart}
+          toS={seg.compEnd}
+          label={seg.mode === 'freeze' ? '⏸ freeze' : seg.mode === 'speed' ? `${seg.speed ?? 1}× speed` : null}
+          color={seg.mode === 'freeze' ? 'rgba(251,191,36,0.08)' : seg.mode === 'speed' ? 'rgba(0,166,126,0.08)' : null}
+          frame={frame}
+          fps={fps}
+        />
+      ))}
+      {syncMap.map((seg, i) => (
+        <SplitMarker key={`split-${i}`} atSecond={seg.compStart} label={i === 0 ? `cut ${i + 1}` : null} frame={frame} fps={fps} />
+      ))}
 
     </AbsoluteFill>
   );

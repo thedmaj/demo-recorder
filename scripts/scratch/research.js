@@ -433,7 +433,7 @@ async function runResearch(context, productSlug) {
     process.stdout.write(`[Research loop ${iteration}] Calling Claude...`);
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-opus-4-6',
       max_tokens: 4096,
       system,
       tools: TOOLS,

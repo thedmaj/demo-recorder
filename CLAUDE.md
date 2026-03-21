@@ -14,7 +14,7 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 - Confident, precise, outcome-focused. Never apologetic or jargon-heavy.
 - Lead with customer value, not technical implementation details.
 - Use active voice. "Plaid verifies the document in real time" not "the document is verified."
-- Quantify value where possible: "94/100 Trust Index", "verified in under 3 seconds."
+- Quantify value where possible: "Signal score 12 — ACCEPT", "verified in under 3 seconds."
 - Never use: "simply", "just", "unfortunately", "robust", "seamless" (overused).
 - Approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth",
   "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".
@@ -43,8 +43,8 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 - A named persona with a specific, relatable use case
 - 8–14 steps, 2–3 minutes total duration
 - Narration of 20–35 words per step (fits ~8–12s of speech at 150 wpm)
-- A climactic "reveal" moment (Trust Index score, instant approval, matched data, etc.)
-- Quantified outcomes ("94/100 Trust Index", "verified in 2.4 seconds")
+- A climactic "reveal" moment (Signal ACCEPT score, instant approval, matched identity, etc.)
+- Quantified outcomes ("Signal score 12 — ACCEPT", "verified in 2.4 seconds")
 - A clear CTA or outcome in the final screen
 
 ### Anti-patterns to avoid:
@@ -104,33 +104,57 @@ Plaid.create({
 });
 ```
 
-### Plaid Link Recording Behavior (CORRECTED — OOPIF Limitation)
+### Plaid Link Recording Behavior
 
-Playwright's `recordVideo` **does NOT capture cross-origin iframes (OOPIFs)** in headless mode.
-The real Plaid Link modal (served from `cdn.plaid.com`) is an OOPIF and does NOT appear in video.
-CDP screenshots (`page.screenshot()`) DO capture OOPIFs — this is why BrowserAgent can see Plaid
-but the video frame extraction shows only the host page.
+Recording uses `headless: false` which captures cross-origin iframes (OOPIFs) via the GPU compositor.
+The real Plaid Link modal (`cdn.plaid.com`) **IS visible** in the recorded video.
+**Do NOT build simulated Plaid Link step divs** — the real SDK modal is the video experience.
 
-**Architecture: Dual-track**
-- **Video (visible)**: Simulated Plaid Link UI built as same-origin HTML within the host page
-- **Background**: Real Plaid SDK runs silently; automation interacts with it via CDP frameLocator
+**Architecture: Single real-SDK step**
+- The demo script has ONE Plaid Link step with `"plaidPhase": "launch"` — no sub-steps
+- The host app has a button that calls `window._plaidHandler.open()` — no simulated overlay divs
+- The real Plaid SDK modal appears as an iframe over the host page during the entire flow
+- `record-local.js` uses CDP frameLocator to automate the real iframe (phone → OTP → institution → account)
+- When `onSuccess` fires, the host app advances to the first post-link step
 
-**Build agent instructions:**
-- Build a pixel-perfect SIMULATED Plaid Link modal for each Plaid Link step (consent, search, credentials, account selection, success)
-- The simulation must show the **actual institution selected in Plaid Link**. Institution name and account details come from the `onSuccess` metadata — store on `window._plaidInstitutionName`, `window._plaidAccountName`, `window._plaidAccountMask` and read these variables everywhere in the host app. Never hardcode any bank name.
-- For the connected bank logo: use a generic Heroicons `building-library` SVG. Never fetch or hardcode any bank logo.
-- Set `window._plaidLinkComplete = true` from the success step's goToStep handler (don't wait for real onSuccess alone)
-- Pre-populate all post-Link API responses with sandbox data
-- The real SDK still initializes (`Plaid.create()`) for token exchange, but the simulated UI is the video experience
+**Build agent instructions (no-capture mode):**
+- Do NOT build step divs for link-consent, link-otp, link-account-select, link-success, or any Plaid screens
+- The Plaid Link button (`data-testid="link-external-account-btn"`) MUST be inside the initiate-link step div
+- Button onclick: `if (window._plaidHandler) window._plaidHandler.open();` — no goToStep call
+- `window._plaidLinkComplete = true` is set ONLY in `onSuccess` — NEVER in a goToStep handler
+- `onSuccess` stores institution/account metadata: `window._plaidInstitutionName`, `window._plaidAccountName`, `window._plaidAccountMask` — use these in post-link steps, never hardcode bank names
+- Pre-populate all post-link API responses with sandbox data
+- The initiate-link step in `demo-script.json` MUST have `"plaidPhase": "launch"`
+- The playwright-script for this step: ONE entry with `action:"click"`, `target:"[data-testid=\"link-external-account-btn\"]"`, `waitMs: 120000`
+  - NEVER split into a goToStep entry + click entry — this causes duplicate `markStep` calls
+
+**Plaid Link demo-script structure:**
+- Single Plaid Link step (e.g. `"id": "wf-link-launch"`, `"plaidPhase": "launch"`)
+- Narration covers entire flow in ≤35 words: consent → OTP → institution → account → success
+- Duration 18–22 seconds (covers the visible Remember Me flow after post-processing cuts loading gaps)
+
+**Plaid Link narration boundary rule (REQUIRED):**
+The step immediately BEFORE the Plaid Link step must end its narration with the user action
+that triggers the modal (e.g., "...she taps Link Your Bank." or "...she clicks Add External Account.").
+The Plaid Link step narration must begin describing content VISIBLE INSIDE the modal — never
+the act of opening it. This ensures the voiceover is synced to what is on screen:
+
+- ✅ Pre-Plaid-Link step: "...Chime explains the process and Berta taps Link Your Bank."
+- ✅ Plaid Link step: "Recognized as a returning user, she confirms with a one-time code, selects her checking account, and connects in seconds."
+- ❌ Plaid Link step: "Plaid Link opens. Berta taps..." — DO NOT narrate the trigger in the Plaid Link step
+- ❌ Plaid Link step: "She clicks the button and Plaid Link opens..." — same violation
+
+Reason: The Plaid Link SDK takes 0.5–1s to load after the button click. Narration that starts
+with "Plaid Link opens" or "she taps..." plays while the screen is still transitioning, creating
+a storyboard mismatch where audio precedes the visual it describes.
 
 **Recording behavior:**
-- Institution: Defaults to **First Platypus Bank** (standard auth, not OAuth)
-- The "Save with Plaid" phone screen at real Plaid flow completion is auto-dismissed by recording script
-- `window._plaidLinkComplete = true` must be set in BOTH `onSuccess` AND the success step goToStep handler
+- Institution: Defaults to **First Platypus Bank** / Remember Me flow (non-OAuth)
+- The "Save with Plaid" phone screen is auto-dismissed by the recording script
 
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
-- Plaid Signal ACH transaction risk scores: 0–99 (higher = lower return risk). Realistic demo values: 82–97. Do NOT use the term "Trust Index" — it is not a Plaid product name.
+- Plaid Signal ACH transaction risk scores: 0–99 (higher = HIGHER return risk — higher score means more likely to result in ACH return/failure). Realistic demo values for ACCEPT scenarios: 5–20 (low risk). Do NOT use scores 82–97 — those represent high-risk transactions that should receive REVIEW or REROUTE, not ACCEPT. Do NOT use the term "Trust Index" — it is not a Plaid product name.
 - Identity verification statuses: `active`, `success`, `failed`, `pending_review`
 - Never show API error responses in main demo flows
 - Realistic but idealized data only (no 100/100 scores, no instant < 1s responses)

@@ -1,0 +1,13 @@
+{
+  "name": "eval-recorder",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio remotion/index.ts --props=adapter-config.json --port=4001"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.434",
+    "@remotion/studio": "4.0.434",
+    "express": "^4.18.0",
+    "remotion": "4.0.434"
+  }
+}

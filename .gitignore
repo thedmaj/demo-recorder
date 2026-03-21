@@ -7,3 +7,5 @@ public/*.mp3
 .DS_Store
 EXIT*
 .claude/scheduled_tasks.lock
+credentials/
+brand/*.json

@@ -8,7 +8,7 @@
  *         out/step-timing.json    (required)
  *         out/demo-script.json    (required)
  *         inputs/prompt.txt       (optional — explicit effect requests)
- * Calls:  claude-sonnet-4-6 (no extended thinking)
+ * Calls:  claude-opus-4-6 (no extended thinking)
  * Writes: out/overlay-plan.json
  *
  * Usage:
@@ -144,12 +144,12 @@ async function main() {
     }
   }
 
-  console.log('[overlay-plan] Calling claude-sonnet-4-6 for overlay planning...');
+  console.log('[overlay-plan] Calling claude-opus-4-6 for overlay planning...');
 
   const prompt = buildPrompt(videoAnalysis, stepTiming, demoScript, promptTxt);
 
   const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: 'claude-opus-4-6',
     max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
   });

@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plaid Demo Pipeline — Developer Guide</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0d1117;
+  --bg2: #0a1628;
+  --card: rgba(255,255,255,0.04);
+  --card-border: rgba(255,255,255,0.08);
+  --teal: #00A67E;
+  --teal-dim: rgba(0,166,126,0.15);
+  --teal-border: rgba(0,166,126,0.35);
+  --text: #e6edf3;
+  --muted: rgba(255,255,255,0.45);
+  --dim: rgba(255,255,255,0.2);
+  --opus: #a78bfa;
+  --sonnet: #60a5fa;
+  --haiku: #34d399;
+  --elevenlabs: #fb923c;
+  --google: #4285f4;
+  --playwright: #22c55e;
+  --ffmpeg: #f87171;
+  --none: #94a3b8;
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "SF Mono", "Fira Code", Consolas, monospace;
+}
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+/* ── Layout ── */
+.page { max-width: 1100px; margin: 0 auto; padding: 0 24px 80px; }
+
+/* ── Nav ── */
+#topnav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(13,17,23,0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--card-border);
+  padding: 0 24px;
+}
+.nav-inner {
+  max-width: 1100px; margin: 0 auto;
+  display: flex; align-items: center; gap: 4px;
+  height: 48px; overflow-x: auto;
+}
+.nav-inner a {
+  text-decoration: none; color: var(--muted); font-size: 13px;
+  padding: 4px 10px; border-radius: 6px; white-space: nowrap;
+  transition: all 0.15s;
+}
+.nav-inner a:hover { color: var(--text); background: var(--card); }
+.nav-logo { font-weight: 700; color: var(--teal); margin-right: 12px; font-size: 14px; }
+
+/* ── Hero ── */
+.hero {
+  padding: 64px 0 40px;
+  border-bottom: 1px solid var(--card-border);
+  margin-bottom: 48px;
+}
+.hero-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--teal-dim); border: 1px solid var(--teal-border);
+  border-radius: 20px; padding: 4px 14px;
+  font-size: 12px; font-weight: 600; color: var(--teal);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  margin-bottom: 16px;
+}
+.hero h1 { font-size: 38px; font-weight: 700; line-height: 1.15; letter-spacing: -0.02em; margin-bottom: 16px; }
+.hero h1 span { color: var(--teal); }
+.hero p { font-size: 16px; color: var(--muted); max-width: 640px; line-height: 1.7; margin-bottom: 28px; }
+.hero-stats { display: flex; gap: 32px; flex-wrap: wrap; }
+.stat { text-align: center; }
+.stat-val { font-size: 28px; font-weight: 700; color: var(--teal); line-height: 1; }
+.stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+/* ── Section headings ── */
+.section { margin-bottom: 56px; }
+h2 {
+  font-size: 22px; font-weight: 700; margin-bottom: 6px;
+  display: flex; align-items: center; gap: 10px;
+}
+h2 .section-num {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--teal-dim); border: 1px solid var(--teal-border);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: var(--teal); flex-shrink: 0;
+}
+.section-desc { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+
+/* ── Quick ref table ── */
+.ref-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ref-table th {
+  text-align: left; padding: 8px 12px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--card-border);
+}
+.ref-table td {
+  padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.04);
+  vertical-align: middle;
+}
+.ref-table tr:hover td { background: rgba(255,255,255,0.02); }
+.ref-table a { color: var(--teal); text-decoration: none; }
+.ref-table a:hover { text-decoration: underline; }
+
+/* ── Model badges ── */
+.model-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+}
+.m-opus    { background: rgba(167,139,250,0.15); color: var(--opus);   border: 1px solid rgba(167,139,250,0.3); }
+.m-sonnet  { background: rgba(96,165,250,0.15);  color: var(--sonnet); border: 1px solid rgba(96,165,250,0.3); }
+.m-haiku   { background: rgba(52,211,153,0.15);  color: var(--haiku);  border: 1px solid rgba(52,211,153,0.3); }
+.m-el      { background: rgba(251,146,60,0.15);  color: var(--elevenlabs); border: 1px solid rgba(251,146,60,0.3); }
+.m-google  { background: rgba(66,133,244,0.15);  color: var(--google); border: 1px solid rgba(66,133,244,0.3); }
+.m-pw      { background: rgba(34,197,94,0.15);   color: var(--playwright); border: 1px solid rgba(34,197,94,0.3); }
+.m-ffmpeg  { background: rgba(248,113,113,0.15); color: var(--ffmpeg); border: 1px solid rgba(248,113,113,0.3); }
+.m-none    { background: rgba(148,163,184,0.1);  color: var(--none);   border: 1px solid rgba(148,163,184,0.2); }
+
+/* ── Stage badges ── */
+.badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 4px;
+}
+.b-req  { background: rgba(0,166,126,0.12); color: var(--teal); border: 1px solid var(--teal-border); }
+.b-opt  { background: rgba(251,146,60,0.1); color: var(--elevenlabs); border: 1px solid rgba(251,146,60,0.3); }
+.b-man  { background: rgba(96,165,250,0.1); color: var(--sonnet); border: 1px solid rgba(96,165,250,0.3); }
+
+/* ── Mermaid container ── */
+.mermaid-wrap {
+  background: rgba(10,14,22,0.8);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 24px;
+  overflow-x: auto;
+  margin-bottom: 16px;
+}
+.mermaid-wrap .mermaid { min-width: 500px; }
+.diagram-caption {
+  font-size: 12px; color: var(--muted); text-align: center; margin-top: 8px;
+}
+
+/* ── Stage cards ── */
+.stage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .stage-grid { grid-template-columns: 1fr; } }
+.stage-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.stage-card:hover { border-color: rgba(255,255,255,0.15); }
+.stage-card.highlight { border-color: var(--teal-border); }
+
+.stage-header {
+  padding: 14px 16px;
+  display: flex; align-items: flex-start; gap: 10px;
+  cursor: pointer; user-select: none;
+}
+.stage-num {
+  width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0;
+  background: var(--teal-dim); border: 1px solid var(--teal-border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: var(--teal);
+}
+.stage-title { flex: 1; }
+.stage-title strong { font-size: 14px; font-weight: 600; display: block; margin-bottom: 4px; }
+.stage-title .stage-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.stage-expand { color: var(--muted); font-size: 12px; margin-left: auto; padding-top: 2px; transition: transform 0.15s; }
+.stage-card.open .stage-expand { transform: rotate(90deg); }
+
+.stage-body { display: none; padding: 0 16px 16px; border-top: 1px solid var(--card-border); }
+.stage-card.open .stage-body { display: block; }
+
+.io-row { display: flex; gap: 8px; margin: 12px 0; }
+.io-box {
+  flex: 1; background: rgba(255,255,255,0.03); border: 1px solid var(--card-border);
+  border-radius: 8px; padding: 10px 12px;
+}
+.io-box .io-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 6px; }
+.io-box .io-item { font-size: 12px; color: var(--dim); font-family: var(--mono); margin-bottom: 2px; }
+.io-box .io-item span { color: var(--text); }
+
+.pseudo-block {
+  background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 12px 14px; margin-top: 10px;
+  font-size: 12px; font-family: var(--mono); color: rgba(255,255,255,0.55);
+  line-height: 1.7;
+}
+.pseudo-block .comment { color: #6b7280; }
+.pseudo-block .keyword { color: var(--teal); }
+.pseudo-block .string { color: var(--opus); }
+.pseudo-block .fn { color: var(--sonnet); }
+
+.tip-box {
+  background: rgba(0,166,126,0.06); border: 1px solid var(--teal-border);
+  border-radius: 8px; padding: 10px 14px; margin-top: 10px;
+  font-size: 12px; color: rgba(255,255,255,0.6);
+}
+.tip-box strong { color: var(--teal); }
+
+.warn-box {
+  background: rgba(248,113,113,0.06); border: 1px solid rgba(248,113,113,0.3);
+  border-radius: 8px; padding: 10px 14px; margin-top: 10px;
+  font-size: 12px; color: rgba(255,255,255,0.6);
+}
+.warn-box strong { color: var(--ffmpeg); }
+
+/* ── Loop diagrams ── */
+.loop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 800px) { .loop-grid { grid-template-columns: 1fr; } }
+
+/* ── File timeline ── */
+.file-timeline { position: relative; }
+.file-timeline::before {
+  content: ''; position: absolute; left: 110px; top: 0; bottom: 0;
+  width: 2px; background: var(--card-border);
+}
+.ft-row {
+  display: flex; align-items: flex-start; gap: 20px;
+  padding: 10px 0;
+}
+.ft-stage {
+  width: 90px; text-align: right; flex-shrink: 0;
+  font-size: 11px; font-weight: 600; color: var(--teal);
+  padding-top: 2px;
+}
+.ft-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  background: var(--teal); border: 2px solid var(--bg);
+  margin-top: 4px; position: relative; z-index: 1;
+  box-shadow: 0 0 8px rgba(0,166,126,0.4);
+}
+.ft-files { flex: 1; display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.ft-file {
+  font-size: 11px; font-family: var(--mono); color: var(--dim);
+  background: rgba(255,255,255,0.04); border: 1px solid var(--card-border);
+  border-radius: 4px; padding: 2px 7px;
+}
+.ft-file.new { color: var(--teal); border-color: var(--teal-border); background: var(--teal-dim); }
+
+/* ── Vibe coder section ── */
+.vibe-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+@media (max-width: 700px) { .vibe-grid { grid-template-columns: 1fr; } }
+.vibe-card {
+  background: var(--card); border: 1px solid var(--card-border);
+  border-radius: 12px; padding: 20px;
+}
+.vibe-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+.vibe-card p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.vibe-card code {
+  font-family: var(--mono); font-size: 11px;
+  background: rgba(0,166,126,0.1); color: var(--teal);
+  border-radius: 3px; padding: 1px 5px;
+}
+
+/* ── Env var table ── */
+.env-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.env-table th {
+  text-align: left; padding: 8px 12px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--card-border);
+}
+.env-table td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+.env-table code { font-family: var(--mono); font-size: 11px; color: var(--teal); }
+.env-table .req-dot { color: var(--ffmpeg); font-weight: 700; }
+.env-table .opt-dot { color: var(--elevenlabs); font-weight: 700; }
+
+/* ── Kbd ── */
+kbd {
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px; padding: 2px 6px; font-family: var(--mono);
+  font-size: 11px; color: var(--text);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+/* ── Divider ── */
+hr { border: none; border-top: 1px solid var(--card-border); margin: 48px 0; }
+</style>
+</head>
+<body>
+
+<nav id="topnav">
+  <div class="nav-inner">
+    <span class="nav-logo">◈ Pipeline Guide</span>
+    <a href="#overview">Overview</a>
+    <a href="#quickref">Stages</a>
+    <a href="#pipeline-flow">Flow</a>
+    <a href="#stage-details">Details</a>
+    <a href="#loops">Loops</a>
+    <a href="#artifacts">Artifacts</a>
+    <a href="#vibe">Vibe Coding</a>
+    <a href="#env">Env Vars</a>
+  </div>
+</nav>
+
+<div class="page">
+
+<!-- ── Hero ── -->
+<div class="hero" id="overview">
+  <div class="hero-tag">◈ Plaid Demo Pipeline</div>
+  <h1>How <span>automated demos</span><br>get built from a single prompt</h1>
+  <p>A fully automated video production pipeline: one text prompt goes in, a polished product demo video comes out. This guide explains every stage, which AI models are used, how to modify things, and where to intervene manually.</p>
+  <div class="hero-stats">
+    <div class="stat"><div class="stat-val">21</div><div class="stat-label">Pipeline stages</div></div>
+    <div class="stat"><div class="stat-val">6</div><div class="stat-label">AI models used</div></div>
+    <div class="stat"><div class="stat-val">15–20</div><div class="stat-label">Minutes end-to-end</div></div>
+    <div class="stat"><div class="stat-val">3</div><div class="stat-label">Max QA iterations</div></div>
+  </div>
+</div>
+
+<!-- ── Quick ref ── -->
+<div class="section" id="quickref">
+  <h2><span class="section-num">1</span>All Stages at a Glance</h2>
+  <p class="section-desc">Every stage in execution order. Click a stage name to jump to its detail card below.</p>
+  <table class="ref-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Stage</th>
+        <th>Model / Tool</th>
+        <th>Key Output</th>
+        <th>Type</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td><a href="#s-research">research</a></td><td><span class="model-badge m-sonnet">Sonnet 4.6</span></td><td>product-research.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>2</td><td><a href="#s-ingest">ingest</a></td><td><span class="model-badge m-none">CLI / Node</span></td><td>ingested-inputs.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>3</td><td><a href="#s-brand">brand-extract</a></td><td><span class="model-badge m-haiku">Haiku 4.5</span> <span class="model-badge m-none">Brandfetch</span></td><td>brand/&lt;slug&gt;.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>4</td><td><a href="#s-script">script</a></td><td><span class="model-badge m-opus">Opus 4.6</span></td><td>demo-script.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>5</td><td><a href="#s-critique">script-critique</a></td><td><span class="model-badge m-haiku">Haiku 4.5</span></td><td>critique report</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>5b</td><td><a href="#s-validate">embed-validate</a></td><td><span class="model-badge m-google">Vertex AI</span></td><td>script-validate-report.json</td><td><span class="badge b-opt">optional</span></td></tr>
+      <tr><td>6</td><td><a href="#s-build">build</a></td><td><span class="model-badge m-sonnet">Sonnet 4.6</span> <span class="model-badge m-opus">Opus 4.6</span></td><td>scratch-app/index.html</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>6b</td><td>— manual preview —</td><td><span class="model-badge m-none">Human</span></td><td>approval to record</td><td><span class="badge b-man">manual</span></td></tr>
+      <tr><td>7</td><td><a href="#s-record">record</a></td><td><span class="model-badge m-pw">Playwright</span></td><td>recording.webm</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>8</td><td><a href="#s-qa">qa</a></td><td><span class="model-badge m-sonnet">Sonnet Vision</span></td><td>qa-report-N.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>9</td><td><a href="#s-figma">figma-review</a></td><td><span class="model-badge m-sonnet">Sonnet Vision</span></td><td>figma-review.json</td><td><span class="badge b-opt">optional</span></td></tr>
+      <tr><td>10</td><td><a href="#s-postprocess">post-process</a></td><td><span class="model-badge m-ffmpeg">FFmpeg</span></td><td>recording-processed.webm</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>11</td><td><a href="#s-voiceover">voiceover</a></td><td><span class="model-badge m-el">ElevenLabs</span> <span class="model-badge m-ffmpeg">FFmpeg</span></td><td>voiceover.mp3</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>12</td><td>coverage-check</td><td><span class="model-badge m-none">Node</span></td><td>coverage-report.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>13</td><td><a href="#s-autogap">auto-gap</a></td><td><span class="model-badge m-none">Node</span></td><td>sync-map.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>14</td><td>resync-audio</td><td><span class="model-badge m-ffmpeg">FFmpeg</span></td><td>voiceover.mp3 (updated)</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>14b</td><td>embed-sync</td><td><span class="model-badge m-google">Vertex AI</span></td><td>embed-sync-report.json</td><td><span class="badge b-opt">optional</span></td></tr>
+      <tr><td>15</td><td>audio-qa</td><td><span class="model-badge m-none">ffmpeg silence</span></td><td>audio-qa-report.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>16</td><td><a href="#s-overlays">ai-suggest-overlays</a></td><td><span class="model-badge m-google">Gemini 2.0</span></td><td>overlay-suggestions.json</td><td><span class="badge b-opt">optional</span></td></tr>
+      <tr><td>17</td><td><a href="#s-render">render</a></td><td><span class="model-badge m-none">Remotion</span></td><td>demo-scratch.mp4</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>18</td><td>ppt</td><td><span class="model-badge m-haiku">Haiku 4.5</span></td><td>demo-summary.pptx</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>19</td><td><a href="#s-touchup">touchup</a></td><td><span class="model-badge m-sonnet">Sonnet 4.6</span></td><td>Remotion JSX edits</td><td><span class="badge b-man">manual</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Pipeline flow diagram ── -->
+<div class="section" id="pipeline-flow">
+  <h2><span class="section-num">2</span>Pipeline Flow</h2>
+  <p class="section-desc">The full end-to-end flow from input prompt to rendered video. Orange = optional stages.</p>
+
+  <div class="mermaid-wrap">
+    <div class="mermaid">
+flowchart TD
+  A(["`**inputs/**
+  prompt.txt
+  screenshots/
+  videos/`"]) --> R[research\nSonnet 4.6]
+  R --> I[ingest\nNode]
+  I --> B[brand-extract\nHaiku 4.5]
+  B --> S[script\nOpus 4.6]
+  S --> SC[script-critique\nHaiku 4.5]
+  SC --> EV([embed-validate\nVertex AI]):::opt
+  SC --> BUILD[build\nSonnet → Opus]
+  EV --> BUILD
+  BUILD --> PREV[/Manual Preview\nArrow keys to step/]:::manual
+  PREV --> REC[record\nPlaywright]
+  REC --> QA[qa\nSonnet Vision]
+  QA -->|score ≥ 80| PP[post-process\nFFmpeg]
+  QA -->|score < 80\niter < 3| BUILD
+  PP --> VO[voiceover\nElevenLabs]
+  VO --> AQA[audio-qa\nffmpeg silence]
+  AQA --> AG[auto-gap\nNode]
+  AG --> RA[resync-audio\nFFmpeg]
+  RA --> ES([embed-sync\nVertex AI]):::opt
+  RA --> AIOV([ai-suggest-overlays\nGemini 2.0]):::opt
+  ES --> RENDER[render\nRemotion]
+  AIOV --> RENDER
+  RENDER --> PPT[ppt\nHaiku 4.5]
+  PPT --> TU[/touchup\nSonnet 4.6\nManual/]:::manual
+  TU --> OUT(["`**demo-scratch.mp4**
+  demo-summary.pptx`"])
+
+  classDef opt fill:#1a2030,stroke:#f97316,stroke-width:1.5px,color:#fb923c
+  classDef manual fill:#0f1e35,stroke:#60a5fa,stroke-width:1.5px,color:#93c5fd
+  classDef default fill:#0f1e2e,stroke:#1e3a5f,color:#94a3b8
+    </div>
+  </div>
+  <p class="diagram-caption">Orange = optional (gracefully skipped if credentials absent) · Blue = manual pause points</p>
+
+  <div style="margin-top:20px">
+    <div class="mermaid-wrap">
+      <div class="mermaid">
+flowchart LR
+  subgraph "Run once"
+    R1[npm run demo] --> FULL[Full pipeline\nresearch → render]
+  end
+  subgraph "Restart from stage"
+    R2["npm run demo -- --from=build"] --> FROM[Picks up from\nbuild stage]
+  end
+  subgraph "Dashboard UI"
+    R3["localhost:4040"] --> DASH[Visual pipeline control\nNarration editing\nQA review\nStoryboard]
+  end
+      </div>
+    </div>
+    <p class="diagram-caption">Three ways to run: full, partial restart, or dashboard UI</p>
+  </div>
+</div>
+
+<!-- ── Stage details ── -->
+<div class="section" id="stage-details">
+  <h2><span class="section-num">3</span>Stage Details</h2>
+  <p class="section-desc">Click any card to expand inputs, outputs, prompt logic, and tips for modifying each stage.</p>
+
+  <div class="stage-grid">
+
+    <!-- Research -->
+    <div class="stage-card" id="s-research">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">1</div>
+        <div class="stage-title">
+          <strong>research</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-sonnet">Sonnet 4.6</span>
+            <span class="model-badge m-none">AskBill MCP</span>
+            <span class="model-badge m-none">Glean MCP</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>inputs/prompt.txt</span></div>
+            <div class="io-item"><span>inputs/plaid-value-props.md</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>product-research.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Claude uses MCP tool calls in a loop to query internal knowledge bases until it has gathered enough product context, API docs, and approved messaging.</p>
+        <div class="pseudo-block">
+<span class="comment">// Tool-use agentic loop</span>
+<span class="keyword">while</span> (<span class="fn">notEnoughInfo</span>()) {
+  <span class="fn">askBill</span>(<span class="string">"What does [product] do?"</span>)
+  <span class="fn">searchGlean</span>(<span class="string">"[product] value props, pricing"</span>)
+  <span class="fn">searchGlean</span>(<span class="string">"customer use cases"</span>)
+}
+<span class="fn">writeFile</span>(<span class="string">"product-research.json"</span>)
+        </div>
+        <div class="tip-box"><strong>To modify:</strong> Edit <code>inputs/prompt.txt</code> — add product name, target persona, key features to highlight. The more specific, the better the script.</div>
+      </div>
+    </div>
+
+    <!-- Ingest -->
+    <div class="stage-card" id="s-ingest">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">2</div>
+        <div class="stage-title">
+          <strong>ingest</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-none">Node.js</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>inputs/scripts/*.md</span></div>
+            <div class="io-item"><span>inputs/screenshots/*.png</span></div>
+            <div class="io-item"><span>inputs/videos/*.mp4</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>ingested-inputs.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);">Reads any reference material you provide — screenshots, existing scripts, sample videos — and packages them into a single context bundle for the script stage.</p>
+        <div class="tip-box"><strong>To modify:</strong> Drop files into <code>inputs/</code> subdirectories. Screenshots become visual reference, markdown files become text context.</div>
+      </div>
+    </div>
+
+    <!-- Brand Extract -->
+    <div class="stage-card" id="s-brand">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">3</div>
+        <div class="stage-title">
+          <strong>brand-extract</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-haiku">Haiku 4.5</span>
+            <span class="model-badge m-none">Brandfetch API</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>Brand URL in prompt.txt</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>brand/&lt;slug&gt;.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);">Fetches brand colours, typography, logo, and motion guidelines from Brandfetch. Falls back to Playwright CSS extraction if Brandfetch misses anything. Haiku normalises the result.</p>
+        <div class="pseudo-block">
+<span class="comment">// brand/chime.json structure</span>
+{
+  colors: { primary, background, text },
+  fonts: { heading, body },
+  logo: { url, svg },
+  promptInstructions: <span class="string">"Left-aligned nav, green CTAs…"</span>
+}
+        </div>
+        <div class="tip-box"><strong>To modify:</strong> Brand JSON is re-generated every run. To override brand colours, add a <code>promptInstructions</code> override in the prompt file.</div>
+      </div>
+    </div>
+
+    <!-- Script -->
+    <div class="stage-card highlight" id="s-script">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">4</div>
+        <div class="stage-title">
+          <strong>script</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-opus">Opus 4.6</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>ingested-inputs.json</span></div>
+            <div class="io-item"><span>product-research.json</span></div>
+            <div class="io-item"><span>brand/&lt;slug&gt;.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>demo-script.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">The most important stage. Opus generates the full demo script: 8–14 steps, narration (20–35 words each), visual state descriptions, Plaid Link phases, timing, and API response data.</p>
+        <div class="pseudo-block">
+<span class="comment">// demo-script.json structure per step</span>
+{
+  id: <span class="string">"signal-insight"</span>,
+  label: <span class="string">"Signal — ACH Risk Score"</span>,
+  narration: <span class="string">"Plaid Signal scores the transaction…"</span>,
+  durationMs: <span class="string">10000</span>,
+  visualState: <span class="string">"Dark screen, teal gauge showing score 7…"</span>,
+  interaction: { type: <span class="string">"wait"</span>, target: <span class="string">"signal-card"</span> },
+  apiResponse: { score: <span class="string">7</span>, recommendation: <span class="string">"ACCEPT"</span> },
+  plaidPhase: <span class="string">""</span>
+}
+        </div>
+        <div class="tip-box"><strong>To modify:</strong> Edit <code>demo-script.json</code> directly and run <code>--from=build</code>. Change narration text, add/remove steps, adjust <code>durationMs</code> for timing. The dashboard narration editor does this visually.</div>
+        <div class="warn-box"><strong>Constraints:</strong> Narration must be 20–35 words per step. Signal scores 5–20 = ACCEPT. Never use "Trust Index". Include exactly one step with <code>plaidPhase: "launch"</code> for Plaid Link.</div>
+      </div>
+    </div>
+
+    <!-- Script critique -->
+    <div class="stage-card" id="s-critique">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">5</div>
+        <div class="stage-title">
+          <strong>script-critique</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-haiku">Haiku 4.5</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>demo-script.json</span></div>
+            <div class="io-item"><span>inputs/plaid-value-props.md</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>critique report (log)</span></div>
+            <div class="io-item"><span>claim-check-flags.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);">Haiku reviews the script for: word count violations, brand voice issues, unapproved claims, missing Plaid Link step structure. A separate claim-check mini-stage cross-references against approved value props.</p>
+        <div class="tip-box"><strong>To modify:</strong> Edit <code>inputs/plaid-value-props.md</code> to update approved messaging. Add new claims to the approved list before script generation.</div>
+      </div>
+    </div>
+
+    <!-- embed-validate -->
+    <div class="stage-card" id="s-validate">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">5b</div>
+        <div class="stage-title">
+          <strong>embed-validate</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-google">Vertex AI Embeddings</span>
+            <span class="badge b-opt">optional</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <p style="font-size:13px;color:var(--muted);">Uses Vertex AI text embeddings to semantically validate that each step's narration is coherent with its visual state description — catches cases where text and visuals describe different things.</p>
+        <div class="tip-box"><strong>To enable:</strong> Set <code>VERTEX_AI_PROJECT_ID</code> in <code>.env</code>. Automatically skipped if not set.</div>
+      </div>
+    </div>
+
+    <!-- Build -->
+    <div class="stage-card highlight" id="s-build">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">6</div>
+        <div class="stage-title">
+          <strong>build</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-sonnet">Sonnet 4.6 (arch)</span>
+            <span class="model-badge m-opus">Opus 4.6 (gen)</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>demo-script.json</span></div>
+            <div class="io-item"><span>brand/&lt;slug&gt;.json</span></div>
+            <div class="io-item"><span>qa-report.json (on retry)</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>scratch-app/index.html</span></div>
+            <div class="io-item"><span>scratch-app/playwright-script.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Generates a fully interactive single-page HTML demo app styled with the brand's design system. Each step is a <code>data-testid="step-{id}"</code> div. Also generates a Playwright automation script.</p>
+        <div class="pseudo-block">
+<span class="comment">// DOM contract (enforced by validator)</span>
+&lt;<span class="keyword">div</span> data-testid=<span class="string">"step-{id}"</span> class=<span class="string">"step"</span>&gt; ... &lt;/div&gt;
+
+<span class="fn">window.goToStep</span> = (id) => { <span class="comment">/* show step div */</span> }
+<span class="fn">window.getCurrentStep</span> = () => { <span class="comment">/* return active step id */</span> }
+
+<span class="comment">// Each step has full-viewport layout, branded design,</span>
+<span class="comment">// data-testid on all interactive elements,</span>
+<span class="comment">// pre-populated API response data from demo-script.json</span>
+        </div>
+        <div class="tip-box"><strong>On QA failure:</strong> Failed step screenshots (base64) are injected into the next build prompt. Opus sees exactly what was wrong and fixes it.</div>
+        <div class="warn-box"><strong>Hard rules:</strong> Steps must never have <code>style="display:flex"</code> inline (breaks hidden state). All <code>data-testid</code> values must be unique. <code>goToStep</code> must exist at page load.</div>
+      </div>
+    </div>
+
+    <!-- Record -->
+    <div class="stage-card" id="s-record">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">7</div>
+        <div class="stage-title">
+          <strong>record</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-pw">Playwright</span>
+            <span class="model-badge m-haiku">Haiku Vision (Plaid)</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>scratch-app/index.html</span></div>
+            <div class="io-item"><span>playwright-script.json</span></div>
+            <div class="io-item"><span>Plaid sandbox API</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>recording.webm</span></div>
+            <div class="io-item"><span>step-timing.json</span></div>
+            <div class="io-item"><span>click-coords.json</span></div>
+            <div class="io-item"><span>plaid-link-timing.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Playwright runs headless=false at 1440×900 (deviceScaleFactor: 2 → 2880×1800 video). Records every step, fires real Plaid Link SDK, captures timestamps per step.</p>
+        <div class="pseudo-block">
+<span class="comment">// For each step in playwright-script.json:</span>
+<span class="fn">goToStep</span>(stepId)
+<span class="fn">waitForTimeout</span>(dwellMs)
+<span class="fn">recordTimestamp</span>(stepId, <span class="string">"start"</span>)
+
+<span class="comment">// For plaidPhase: "launch":</span>
+<span class="fn">clickButton</span>(<span class="string">"link-external-account-btn"</span>)
+<span class="fn">automateRealPlaidSdkViaCDP</span>()  <span class="comment">// frameLocator</span>
+<span class="fn">waitFor</span>(<span class="string">"_plaidLinkComplete"</span>)
+        </div>
+        <div class="tip-box"><strong>Manual recording:</strong> Set <code>MANUAL_RECORD=true</code> — the pipeline pauses at the preview step and you drive the recording manually with arrow keys.</div>
+      </div>
+    </div>
+
+    <!-- QA -->
+    <div class="stage-card" id="s-qa">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">8</div>
+        <div class="stage-title">
+          <strong>qa</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-sonnet">Sonnet 4.6 Vision</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>recording.webm</span></div>
+            <div class="io-item"><span>step-timing.json</span></div>
+            <div class="io-item"><span>demo-script.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>qa-report-N.json</span></div>
+            <div class="io-item"><span>qa-frames/*.png</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Extracts start/mid/end frames for each step, sends them to Sonnet Vision with the expected <code>visualState</code> from the script. Scores each step 0–100. Passes at ≥80.</p>
+        <div class="pseudo-block">
+<span class="keyword">for</span> step in steps:
+  frames = <span class="fn">extractFrames</span>(step.start, step.mid, step.end)
+  score = <span class="fn">sonnetVision</span>(frames, step.visualState)
+  <span class="keyword">if</span> score &lt; 80:
+    failures.push({ step, score, frames })
+
+<span class="keyword">if</span> failures &amp;&amp; iter &lt; 3:
+  <span class="fn">triggerBuildRefinement</span>(failures)
+        </div>
+        <div class="tip-box"><strong>Threshold:</strong> Change <code>QA_PASS_THRESHOLD</code> in <code>.env</code> (default 80). View results in the dashboard QA tab — each step frame is shown with score.</div>
+      </div>
+    </div>
+
+    <!-- Figma review -->
+    <div class="stage-card" id="s-figma">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">9</div>
+        <div class="stage-title">
+          <strong>figma-review</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-sonnet">Sonnet Vision</span>
+            <span class="badge b-opt">optional</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <p style="font-size:13px;color:var(--muted);">Compares QA frames against Figma design files. Sonnet Vision identifies deviations from design specs and writes feedback to figma-review.json. Only runs if <code>FIGMA_REVIEW=true</code>.</p>
+        <div class="tip-box"><strong>To enable:</strong> Set <code>FIGMA_REVIEW=true</code> in <code>.env</code> and ensure Figma MCP is connected.</div>
+      </div>
+    </div>
+
+    <!-- Post-process -->
+    <div class="stage-card" id="s-postprocess">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">10</div>
+        <div class="stage-title">
+          <strong>post-process</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-ffmpeg">FFmpeg</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>recording.webm (~197s)</span></div>
+            <div class="io-item"><span>plaid-link-timing.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>recording-processed.webm (~141s)</span></div>
+            <div class="io-item"><span>processed-step-timing.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);">Cuts out loading/waiting gaps from the Plaid Link flow using timestamps from <code>plaid-link-timing.json</code>. Typically trims ~56 seconds from a 197s recording.</p>
+        <div class="pseudo-block">
+<span class="comment">// keepRanges: sections of video to keep</span>
+keepRanges = <span class="fn">buildFromTimings</span>(plaidLinkTimings)
+<span class="comment">// e.g. keep: [0–35s, 37–40s, 42–197s]</span>
+<span class="fn">ffmpegConcat</span>(recording, keepRanges) → processed
+        </div>
+      </div>
+    </div>
+
+    <!-- Voiceover -->
+    <div class="stage-card" id="s-voiceover">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">11</div>
+        <div class="stage-title">
+          <strong>voiceover</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-el">ElevenLabs</span>
+            <span class="model-badge m-ffmpeg">FFmpeg</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>demo-script.json (narrations)</span></div>
+            <div class="io-item"><span>processed-step-timing.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>audio/vo_*.mp3 (per step)</span></div>
+            <div class="io-item"><span>audio/voiceover.mp3</span></div>
+            <div class="io-item"><span>voiceover-manifest.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Each step's narration is sent to ElevenLabs individually. Audio clips are QA'd for stutter/freeze (silence ≥150ms), regenerated if bad, then stitched together with ffmpeg.</p>
+        <div class="pseudo-block">
+<span class="comment">// Settings</span>
+model: <span class="string">"eleven_multilingual_v2"</span>
+format: <span class="string">"mp3_44100_192"</span>  <span class="comment">// 192kbps 44.1kHz</span>
+stability: <span class="string">0.75</span>, similarity_boost: <span class="string">0.90</span>
+
+<span class="keyword">for</span> step in steps:
+  mp3 = <span class="fn">elevenlabs.tts</span>(step.narration, voice)
+  <span class="keyword">if</span> <span class="fn">hasStutter</span>(mp3): <span class="fn">regenerate</span>()
+  clips.push(mp3)
+<span class="fn">ffmpegConcat</span>(clips) → voiceover.mp3
+        </div>
+        <div class="tip-box"><strong>To modify voice:</strong> Set <code>ELEVENLABS_VOICE_ID</code> in <code>.env</code>. Check available voices at <code>/api/elevenlabs/voices</code> in the dashboard.</div>
+      </div>
+    </div>
+
+    <!-- Auto-gap -->
+    <div class="stage-card" id="s-autogap">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">13</div>
+        <div class="stage-title">
+          <strong>auto-gap</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-none">Node.js</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>voiceover-manifest.json</span></div>
+            <div class="io-item"><span>processed-step-timing.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>sync-map.json</span></div>
+            <div class="io-item"><span>auto-gap-report.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);">Calculates the optimal speed/freeze adjustment for each step so video duration matches audio duration. Produces a sync-map that Remotion uses during render.</p>
+        <div class="tip-box"><strong>Fine-tune timing:</strong> Use the dashboard "Timing" tab to view and manually override individual step speeds. Changes go into <code>sync-map.json</code>.</div>
+      </div>
+    </div>
+
+    <!-- AI overlays -->
+    <div class="stage-card" id="s-overlays">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">16</div>
+        <div class="stage-title">
+          <strong>ai-suggest-overlays</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-google">Gemini 2.0 Flash</span>
+            <span class="badge b-opt">optional</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>qa-frames/*.png</span></div>
+            <div class="io-item"><span>demo-script.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>overlay-suggestions.json</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);">Gemini vision reviews each frame and suggests Remotion overlay enhancements: zoom punches, lower thirds, badge callouts, stat counters. Suggestions shown in dashboard for approval.</p>
+        <div class="tip-box"><strong>To enable:</strong> Set <code>GOOGLE_API_KEY</code> or <code>VERTEX_AI_PROJECT_ID</code>. Apply individual suggestions or all at once from the dashboard.</div>
+      </div>
+    </div>
+
+    <!-- Render -->
+    <div class="stage-card highlight" id="s-render">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">17</div>
+        <div class="stage-title">
+          <strong>render</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-none">Remotion + Chromium</span>
+            <span class="badge b-req">required</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <div class="io-row">
+          <div class="io-box">
+            <div class="io-label">Inputs</div>
+            <div class="io-item"><span>recording-processed.webm</span></div>
+            <div class="io-item"><span>voiceover.mp3</span></div>
+            <div class="io-item"><span>remotion-props.json</span></div>
+            <div class="io-item"><span>sync-map.json</span></div>
+          </div>
+          <div class="io-box">
+            <div class="io-label">Outputs</div>
+            <div class="io-item"><span>demo-scratch.mp4</span></div>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Remotion composites the processed video + voiceover + all overlays (zoom punches, lower thirds, click ripples, captions, cross-dissolves). Output: H.264, 2880×1800, ~22MB.</p>
+        <div class="pseudo-block">
+<span class="comment">// ScratchComposition.jsx layers (bottom to top):</span>
+1. OffthreadVideo (recording-processed.webm)
+2. Audio (voiceover.mp3 with sync-map speed)
+3. CrossDissolve (6-frame black at cut boundaries)
+4. ClickRipple (teal ring at click coordinates)
+5. ZoomPunch (1.08× at click origin, 50% peak)
+6. LowerThird (API endpoint + narration text)
+7. BadgeCallout (outcome moments only)
+8. StatCounter (plaid-outcome step only)
+        </div>
+        <div class="tip-box"><strong>To edit overlays:</strong> Edit <code>remotion-props.json</code> directly or use the Remotion Studio at <code>localhost:3000</code>. The touchup stage also hot-reloads overlay changes.</div>
+      </div>
+    </div>
+
+    <!-- Touchup -->
+    <div class="stage-card" id="s-touchup">
+      <div class="stage-header" onclick="toggle(this)">
+        <div class="stage-num">19</div>
+        <div class="stage-title">
+          <strong>touchup</strong>
+          <div class="stage-meta">
+            <span class="model-badge m-sonnet">Sonnet 4.6</span>
+            <span class="badge b-man">manual</span>
+          </div>
+        </div>
+        <span class="stage-expand">▶</span>
+      </div>
+      <div class="stage-body">
+        <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">Interactive refinement stage. Sonnet can edit <code>remotion-props.json</code> in response to natural language instructions while Remotion Studio shows a live preview. You describe what to change; Sonnet applies it.</p>
+        <div class="pseudo-block">
+<span class="string">"Move the lower third on step 3 to the top-right"</span>
+  → Sonnet patches remotion-props.json
+  → Remotion Studio hot-reloads
+  → You see the change live
+        </div>
+        <div class="tip-box"><strong>Also manual:</strong> You can edit <code>remotion-props.json</code> directly, trim clips in Remotion Studio, or adjust captions by clicking words in the canvas.</div>
+      </div>
+    </div>
+
+  </div><!-- /stage-grid -->
+</div>
+
+<!-- ── Iteration loops ── -->
+<div class="section" id="loops">
+  <h2><span class="section-num">4</span>Iteration &amp; Retry Loops</h2>
+  <p class="section-desc">Three loops run automatically. Understanding them helps you know when and why the pipeline repeats steps.</p>
+
+  <div class="loop-grid">
+    <div>
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--muted)">QA → Build → Record refinement loop</h3>
+      <div class="mermaid-wrap">
+        <div class="mermaid">
+sequenceDiagram
+  participant B as Build<br/>(Opus)
+  participant R as Record<br/>(Playwright)
+  participant Q as QA<br/>(Sonnet Vision)
+
+  B->>R: index.html
+  R->>Q: recording.webm<br/>step-timing.json
+  Q->>Q: Extract 3 frames<br/>per step, score each
+
+  alt All steps ≥ 80
+    Q-->>B: ✓ Pass → continue
+  else Failures found (iter 1–2)
+    Q->>B: failed frames (base64)<br/>+ score + visual diff
+    B->>B: Re-generate HTML<br/>with QA context injected
+    B->>R: Refined index.html
+  else iter = 3
+    Q-->>B: ⚠ Warning, continue anyway
+  end
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--muted)">Research tool-use loop</h3>
+      <div class="mermaid-wrap">
+        <div class="mermaid">
+sequenceDiagram
+  participant C as Claude Sonnet
+  participant A as AskBill MCP
+  participant G as Glean MCP
+
+  C->>A: What does [product] do?
+  A-->>C: API docs, feature list
+  C->>G: [product] customer ROI
+  G-->>C: Case studies, stats
+  C->>A: What are the sandbox limits?
+  A-->>C: Rate limits, credentials
+  Note over C: Enough context?
+  C-->>C: Write product-research.json
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--muted)">Audio stutter regeneration loop</h3>
+      <div class="mermaid-wrap">
+        <div class="mermaid">
+sequenceDiagram
+  participant E as ElevenLabs
+  participant AQ as Audio QA
+  participant FF as FFmpeg
+
+  E->>AQ: vo_step-N.mp3
+  AQ->>AQ: silencedetect<br/>noise=-40dB d=0.15
+
+  alt No internal silence
+    AQ->>FF: ✓ clip accepted
+  else Silence ≥ 150ms (stutter)
+    AQ->>E: Regenerate clip
+    E->>AQ: new vo_step-N.mp3
+  end
+  FF->>FF: ffmpeg concat all clips<br/>→ voiceover.mp3
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--muted)">Manual intervention points</h3>
+      <div class="mermaid-wrap">
+        <div class="mermaid">
+flowchart TD
+  A[Pipeline running] --> B{Stage complete}
+  B -->|SCRATCH_AUTO_APPROVE=true| C[Auto-continue]
+  B -->|SCRATCH_AUTO_APPROVE=false| D[/Pause for human/]
+  D --> E{Decision}
+  E -->|Enter| F[Continue]
+  E -->|Edit script| G[Edit demo-script.json]
+  E -->|Re-run stage| H["--from=STAGE"]
+  G --> F
+  H --> B
+
+  style D fill:#0f1e35,stroke:#60a5fa,color:#93c5fd
+  style G fill:#0f1e35,stroke:#60a5fa,color:#93c5fd
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Artifacts ── -->
+<div class="section" id="artifacts">
+  <h2><span class="section-num">5</span>File Artifacts — What Exists When</h2>
+  <p class="section-desc">Each stage writes sentinel files. The pipeline checks these to detect completion and enable restarts.</p>
+
+  <div class="file-timeline">
+    <div class="ft-row">
+      <div class="ft-stage">research</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">product-research.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">ingest</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">ingested-inputs.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">brand-extract</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">brand/&lt;slug&gt;.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">script</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">demo-script.json</span>
+        <span class="ft-file">product-research.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">script-critique</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">claim-check-flags.json</span>
+        <span class="ft-file">demo-script.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">build</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">scratch-app/index.html</span>
+        <span class="ft-file new">playwright-script.json</span>
+        <span class="ft-file new">build-frames/*.png</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">record</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">recording.webm</span>
+        <span class="ft-file new">step-timing.json</span>
+        <span class="ft-file new">click-coords.json</span>
+        <span class="ft-file new">plaid-link-timing.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">qa</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">qa-report-1.json</span>
+        <span class="ft-file new">qa-frames/*.png</span>
+        <span class="ft-file">recording.webm</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">post-process</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">recording-processed.webm</span>
+        <span class="ft-file new">processed-step-timing.json</span>
+        <span class="ft-file new">post-process-summary.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">voiceover</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">audio/vo_*.mp3</span>
+        <span class="ft-file new">audio/voiceover.mp3</span>
+        <span class="ft-file new">voiceover-manifest.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">auto-gap</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">sync-map.json</span>
+        <span class="ft-file new">auto-gap-report.json</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">render</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">remotion-props.json</span>
+        <span class="ft-file new">demo-scratch.mp4 ✓</span>
+      </div>
+    </div>
+    <div class="ft-row">
+      <div class="ft-stage">ppt</div>
+      <div class="ft-dot"></div>
+      <div class="ft-files">
+        <span class="ft-file new">demo-summary.pptx ✓</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:24px;padding:16px;background:var(--card);border:1px solid var(--card-border);border-radius:10px;font-size:13px;color:var(--muted);">
+    <strong style="color:var(--text)">All files live in:</strong>
+    <code style="font-family:var(--mono);font-size:12px;color:var(--teal);">out/demos/YYYY-MM-DD-&lt;product&gt;-vN/</code>
+    &nbsp;·&nbsp;
+    <code style="font-family:var(--mono);font-size:12px;color:var(--teal);">out/latest/</code> symlinks to the most recent run.
+    To restart from any stage: <code style="font-family:var(--mono);font-size:12px;color:var(--teal);">npm run demo -- --from=&lt;stage&gt;</code>
+  </div>
+</div>
+
+<!-- ── Vibe coding ── -->
+<div class="section" id="vibe">
+  <h2><span class="section-num">6</span>Vibe Coder Guide</h2>
+  <p class="section-desc">The most common ways to modify the pipeline without deep code changes.</p>
+
+  <div class="vibe-grid">
+    <div class="vibe-card">
+      <h3>🎬 Change the demo story</h3>
+      <p>Edit <code>inputs/prompt.txt</code> and run <code>npm run demo</code>. Include: product name, target persona, key features, tone. More specificity = better script. The prompt also supports a Brand URL for design extraction.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>✏️ Tweak narration</h3>
+      <p>Open the dashboard at <code>localhost:4040</code> → Storyboard tab. Edit any step's narration inline and regenerate just that voice clip. Or edit <code>demo-script.json</code> and run <code>--from=voiceover</code>.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>🎨 Change visual style</h3>
+      <p>Edit <code>scratch-app/index.html</code> directly via the "Demo Apps" launcher in the dashboard. Select an element and describe the change. AI applies it in css/element mode (fast). Or run <code>--from=build</code> with updated brand JSON.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>✂️ Trim a clip</h3>
+      <p>Run <code>npm run eval-recorder</code> to open Remotion Studio at <code>localhost:4001</code>. Drag the trim handles on any scene. Or in the main Remotion Studio (<code>localhost:3000</code>), set <code>startOffset</code> / <code>endOffset</code> in frames (30fps).</p>
+    </div>
+    <div class="vibe-card">
+      <h3>📊 Add/edit overlays</h3>
+      <p>Dashboard → "AI Overlay Suggestions" to see Gemini's suggestions. Or edit <code>remotion-props.json</code> directly. ZoomPunch, LowerThird, BadgeCallout, StatCounter are the available overlay types. Touchup stage does this via chat.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>🔁 Re-record one step</h3>
+      <p>Edit the step's <code>playwright-script.json</code> entry, then run <code>--from=record</code>. Set <code>MANUAL_RECORD=true</code> to drive the recording yourself. The dashboard shows step-level QA scores so you know which step failed.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>🔊 Change the voice</h3>
+      <p>Set <code>ELEVENLABS_VOICE_ID</code> in <code>.env</code>. Browse voices at <code>localhost:4040/api/elevenlabs/voices</code>. Then run <code>--from=voiceover</code> to regenerate all clips.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>⏱ Fix audio/video sync</h3>
+      <p>Dashboard → "Timing" tab shows per-step speed multipliers from <code>sync-map.json</code>. Drag sliders to adjust. Or manually edit <code>sync-map.json</code> and run <code>--from=resync-audio</code> then <code>--from=render</code>.</p>
+    </div>
+    <div class="vibe-card">
+      <h3>🤖 Understand a prompt</h3>
+      <p>All LLM prompts live in <code>scripts/scratch/utils/prompt-templates.js</code>. Each function returns the exact text sent to the model. This is where DOM contract rules, brand voice guidelines, and Plaid Link instructions are defined.</p>
+    </div>
+  </div>
+
+  <div style="margin-top:24px;padding:20px;background:var(--card);border:1px solid var(--teal-border);border-radius:12px;">
+    <h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:var(--teal)">Quick restart cheatsheet</h3>
+    <table style="width:100%;font-size:13px;border-collapse:collapse;">
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run demo</td>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);color:var(--muted)">Full pipeline from scratch (research → render)</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run demo -- --from=script</td>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);color:var(--muted)">Re-generate script (keeps existing research)</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run demo -- --from=build</td>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);color:var(--muted)">Re-build app (after manual script edits)</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run demo -- --from=record</td>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);color:var(--muted)">Re-record video (same app HTML)</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run demo -- --from=voiceover</td>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);color:var(--muted)">Re-generate audio (after narration edits)</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run demo -- --from=render</td>
+        <td style="padding:6px 12px;border-bottom:1px solid var(--card-border);color:var(--muted)">Re-render video (after overlay or sync edits)</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;font-family:var(--mono);color:var(--teal);white-space:nowrap">npm run dashboard</td>
+        <td style="padding:6px 12px;color:var(--muted)">Open visual pipeline dashboard at localhost:4040</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<!-- ── Env vars ── -->
+<div class="section" id="env">
+  <h2><span class="section-num">7</span>Environment Variables</h2>
+  <p class="section-desc">All config lives in <code style="font-family:var(--mono);color:var(--teal)">.env</code> at the project root. Editable via the dashboard Config tab.</p>
+
+  <table class="env-table">
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>Required</th>
+        <th>Purpose</th>
+        <th>Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ANTHROPIC_API_KEY</code></td><td><span class="req-dot">●</span> required</td><td>All Claude API calls (research, script, build, QA, touchup)</td><td>—</td></tr>
+      <tr><td><code>ELEVENLABS_API_KEY</code></td><td><span class="req-dot">●</span> required</td><td>Text-to-speech voiceover generation</td><td>—</td></tr>
+      <tr><td><code>PLAID_CLIENT_ID</code></td><td><span class="req-dot">●</span> required</td><td>Plaid sandbox API authentication</td><td>—</td></tr>
+      <tr><td><code>PLAID_SECRET</code></td><td><span class="req-dot">●</span> required</td><td>Plaid sandbox API authentication</td><td>—</td></tr>
+      <tr><td><code>PLAID_LINK_LIVE</code></td><td><span class="opt-dot">○</span> optional</td><td>Use real Plaid Link SDK (vs. simulated). Required for actual Plaid modal in recording.</td><td>false</td></tr>
+      <tr><td><code>SCRATCH_AUTO_APPROVE</code></td><td><span class="opt-dot">○</span> optional</td><td>Skip all human confirmation prompts. Set true for fully automated runs.</td><td>true</td></tr>
+      <tr><td><code>MANUAL_RECORD</code></td><td><span class="opt-dot">○</span> optional</td><td>Pause before recording so you can drive it manually (arrow keys).</td><td>false</td></tr>
+      <tr><td><code>QA_PASS_THRESHOLD</code></td><td><span class="opt-dot">○</span> optional</td><td>Minimum QA score (0–100) to pass without refinement.</td><td>80</td></tr>
+      <tr><td><code>MAX_REFINEMENT_ITERATIONS</code></td><td><span class="opt-dot">○</span> optional</td><td>How many build→record→QA loops before giving up.</td><td>3</td></tr>
+      <tr><td><code>ELEVENLABS_VOICE_ID</code></td><td><span class="opt-dot">○</span> optional</td><td>ElevenLabs voice to use for narration.</td><td>default</td></tr>
+      <tr><td><code>FIGMA_REVIEW</code></td><td><span class="opt-dot">○</span> optional</td><td>Enable Figma design comparison stage.</td><td>false</td></tr>
+      <tr><td><code>VERTEX_AI_PROJECT_ID</code></td><td><span class="opt-dot">○</span> optional</td><td>Enables embed-validate and embed-sync stages (Vertex AI multimodal embeddings).</td><td>—</td></tr>
+      <tr><td><code>GOOGLE_API_KEY</code></td><td><span class="opt-dot">○</span> optional</td><td>Enables ai-suggest-overlays via Gemini 2.0 Flash.</td><td>—</td></tr>
+      <tr><td><code>BRANDFETCH_API_KEY</code></td><td><span class="opt-dot">○</span> optional</td><td>Fetches brand assets from Brandfetch. Falls back to CSS extraction if absent.</td><td>—</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Model guide ── -->
+<div class="section">
+  <h2><span class="section-num">8</span>Model Selection Rationale</h2>
+  <p class="section-desc">Why each model was chosen for each task.</p>
+
+  <div class="stage-grid">
+    <div class="vibe-card">
+      <h3><span class="model-badge m-opus" style="margin-right:8px">Opus 4.6</span> Script &amp; App Build</h3>
+      <p>The two stages that require the most reasoning and creative output. Script generation must follow a complex narrative arc with brand voice rules. App build must produce valid DOM-contract HTML with full JS in one shot. Opus's larger context window and reasoning handle both reliably.</p>
+    </div>
+    <div class="vibe-card">
+      <h3><span class="model-badge m-sonnet" style="margin-right:8px">Sonnet 4.6</span> QA Vision, Research, Touchup</h3>
+      <p>Vision tasks (QA frame scoring, Figma review) need strong multi-modal reasoning but don't require Opus-level creativity. Research benefits from Sonnet's balance of speed and quality for agentic tool-use loops. Touchup needs reliable instruction-following for props editing.</p>
+    </div>
+    <div class="vibe-card">
+      <h3><span class="model-badge m-haiku" style="margin-right:8px">Haiku 4.5</span> Critique, Brand, PPT</h3>
+      <p>Fast, cheap tasks: script quality-checking, brand JSON normalisation, PowerPoint slide generation. These are classification/extraction tasks where speed matters more than deep reasoning. Haiku is also used for the AI demo app editor in css/element mode for sub-3-second responses.</p>
+    </div>
+    <div class="vibe-card">
+      <h3><span class="model-badge m-el" style="margin-right:8px">ElevenLabs</span> Voice</h3>
+      <p>eleven_multilingual_v2 at 192kbps/44.1kHz produces the most natural-sounding narration. stability: 0.75 prevents stutter artifacts that lower values introduce. Per-clip generation (not full concatenation) enables targeted regeneration of just the bad clips.</p>
+    </div>
+    <div class="vibe-card">
+      <h3><span class="model-badge m-google" style="margin-right:8px">Gemini 2.0</span> Overlays</h3>
+      <p>Overlay suggestion requires simultaneous analysis of video frames + structured demo data. Gemini 2.0 Flash's multimodal capabilities and native video understanding make it well-suited here. Gracefully skipped if Google credentials aren't available.</p>
+    </div>
+    <div class="vibe-card">
+      <h3><span class="model-badge m-pw" style="margin-right:8px">Playwright</span> Recording</h3>
+      <p>headless: false enables GPU compositor for capturing cross-origin iframes (real Plaid Link modal). CDP (Chrome DevTools Protocol) via frameLocator bypasses z-index for automating the Plaid SDK directly. devtools=true enables HiDPI recording at native 2× resolution.</p>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<div style="text-align:center;color:var(--muted);font-size:12px;padding-bottom:40px;">
+  Plaid Demo Pipeline · Auto-generated guide ·
+  <span style="color:var(--teal)">Open in browser without a server</span> ·
+  Last updated: March 2026
+</div>
+
+</div><!-- /page -->
+
+<script>
+// Mermaid init
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'dark',
+  themeVariables: {
+    background: '#0d1117',
+    primaryColor: '#0f1e2e',
+    primaryBorderColor: '#1e3a5f',
+    primaryTextColor: '#94a3b8',
+    lineColor: '#2d4a6e',
+    secondaryColor: '#0a1628',
+    tertiaryColor: '#0a1220',
+    noteBkgColor: '#0f1e2e',
+    noteTextColor: '#94a3b8',
+    activationBkgColor: '#0f1e2e',
+    activationBorderColor: '#00A67E',
+    actorBkg: '#0f1e2e',
+    actorBorder: '#1e3a5f',
+    actorTextColor: '#e6edf3',
+    actorLineColor: '#2d4a6e',
+    signalColor: '#00A67E',
+    signalTextColor: '#e6edf3',
+    labelBoxBkgColor: '#0a1628',
+    labelBoxBorderColor: '#1e3a5f',
+    labelTextColor: '#94a3b8',
+    loopTextColor: '#94a3b8',
+    noteBorderColor: '#1e3a5f',
+    fontSize: '13px',
+  },
+  flowchart: { curve: 'basis', htmlLabels: true },
+  sequence: { actorFontSize: 12, messageFontSize: 12, noteFontSize: 11, mirrorActors: false },
+});
+
+// Stage card toggle
+function toggle(header) {
+  const card = header.closest('.stage-card');
+  card.classList.toggle('open');
+}
+
+// Smooth-scroll active nav on scroll
+const sections = document.querySelectorAll('[id]');
+const navLinks = document.querySelectorAll('#topnav a[href^="#"]');
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      navLinks.forEach(a => a.style.color = '');
+      const active = document.querySelector(`#topnav a[href="#${e.target.id}"]`);
+      if (active) active.style.color = '#00A67E';
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

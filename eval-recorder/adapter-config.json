@@ -1,0 +1,129 @@
+{
+  "runId": "2026-03-14-layer-v4",
+  "recordingFile": "recording.mp4",
+  "voiceoverFile": "voiceover.mp3",
+  "captionsFile": "captions.json",
+  "fps": 30,
+  "steps": [
+    {
+      "id": "dashboard",
+      "label": "Chime Dashboard — Berta's Checking Overview",
+      "narration": "Berta logs into her Chime account and sees her Checking balance ending in 4829. She wants to fund it from an external bank account — today that takes seconds, not days.",
+      "durationMs": 12008,
+      "videoStartMs": 0,
+      "videoEndMs": 12008,
+      "audioStartMs": 0,
+      "audioEndMs": 12008,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "transfers",
+      "label": "Transfers — Move Money Options",
+      "narration": "Berta navigates to Transfers, where she can move money between Chime accounts or add a new external bank for funding. ",
+      "durationMs": 7224,
+      "videoStartMs": 12008,
+      "videoEndMs": 19232,
+      "audioStartMs": 12008,
+      "audioEndMs": 19232,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "add-external-account",
+      "label": "Add External Account — Link Your Bank",
+      "narration": "Berta taps Add External Account. Chime explains she can link a bank to transfer funds and offers a single call to action: Link Your Bank.",
+      "durationMs": 8848,
+      "videoStartMs": 19232,
+      "videoEndMs": 28080,
+      "audioStartMs": 19232,
+      "audioEndMs": 28080,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "plaid-link",
+      "label": "Plaid Link — Remember Me Returning User Flow",
+      "narration": "Plaid Link opens. Berta is recognized as a returning user via Remember Me, confirms her identity with a one-time code, selects her checking account, and connects in seconds.",
+      "durationMs": 19294,
+      "videoStartMs": 28080,
+      "videoEndMs": 47374,
+      "audioStartMs": 28080,
+      "audioEndMs": 47374,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "post-link-success",
+      "label": "Chime — External Account Linked",
+      "narration": "Back in Chime, a new external account card appears with linked bank details populated directly from the Plaid connection. No manual entry, no micro-deposits, no waiting.",
+      "durationMs": 11135,
+      "videoStartMs": 47374,
+      "videoEndMs": 58509,
+      "audioStartMs": 47374,
+      "audioEndMs": 58509,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "auth-insight",
+      "label": "Plaid Auth — Account and Routing Numbers Retrieved",
+      "narration": "The Plaid Auth API retrieves verified account and routing numbers directly from the bank so Chime can initiate ACH transfers, covering over 98% of U.S. depository accounts.",
+      "durationMs": 13419,
+      "videoStartMs": 58509,
+      "videoEndMs": 71928,
+      "audioStartMs": 58509,
+      "audioEndMs": 71928,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "identity-match-insight",
+      "label": "Plaid Identity Match — Ownership Verification",
+      "narration": "Plaid Identity Match compares Chime's KYC record for Berta Charleson against the bank's Alberta Bobbeth Charleson. The name matching algorithm returns a confident 80 — no false rejection despite the nickname variation.",
+      "durationMs": 15800,
+      "videoStartMs": 71928,
+      "videoEndMs": 87728,
+      "audioStartMs": 71928,
+      "audioEndMs": 87728,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "signal-insight",
+      "label": "Plaid Signal — ACH Return Risk Evaluation",
+      "narration": "Plaid Signal evaluates ACH return risk in real time using over 1,000 unique risk factors. Bank-initiated risk scores 7, customer-initiated scores 12 — result: ACCEPT for instant funding.",
+      "durationMs": 15935,
+      "videoStartMs": 87728,
+      "videoEndMs": 103663,
+      "audioStartMs": 87728,
+      "audioEndMs": 103663,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "funds-available",
+      "label": "Chime — Funds Available Instantly",
+      "narration": "Berta sees confirmation in her Chime app: funds are available instantly from her linked external account. No micro-deposits, no three-day wait — account funded in seconds.",
+      "durationMs": 12004,
+      "videoStartMs": 103663,
+      "videoEndMs": 115667,
+      "audioStartMs": 103663,
+      "audioEndMs": 115667,
+      "startOffset": 0,
+      "endOffset": 0
+    },
+    {
+      "id": "closing-summary",
+      "label": "Plaid — Account Funding Value Summary",
+      "narration": "Auth provides the rails. Identity Match confirms ownership. Signal assesses return risk. Chime users who link with Plaid are 3.2x more likely to fund their accounts.",
+      "durationMs": 11168,
+      "videoStartMs": 115667,
+      "videoEndMs": 126835,
+      "audioStartMs": 115667,
+      "audioEndMs": 126835,
+      "startOffset": 0,
+      "endOffset": 0
+    }
+  ]
+}

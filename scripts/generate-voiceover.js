@@ -365,10 +365,10 @@ function stitchAudio(clips, outputPath) {
         `ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t ${(gapMs / 1000).toFixed(3)} -q:a 9 -acodec libmp3lame "${silenceFile}" -y`,
         { stdio: 'pipe' }
       );
-      lines.push(`file '${silenceFile}'`);
+      lines.push(`file '${path.resolve(silenceFile)}'`);
     }
 
-    lines.push(`file '${clip.audioFile}'`);
+    lines.push(`file '${path.resolve(clip.audioFile)}'`);
     cursor = clip.startMs + Math.round(clip.audioDurationMs);
   }
 
@@ -422,6 +422,34 @@ async function main() {
     stepTimings = remapStepTimingsToProcessed(stepTimings, processedTiming);
     const totalS = (processedTiming.totalProcessedMs / 1000).toFixed(1);
     console.log(`Remapped ${stepTimings.length} step timings to processed video (${totalS}s total)\n`);
+
+    // Inject Plaid Link sub-step timing synthesized by post-process-recording.js.
+    // These steps (link-consent, link-otp, link-account-select, link-success) are not
+    // in step-timing.json because the recording treats the Plaid flow as one block.
+    // post-process-recording.js computes their processed-space windows from plaid-link-timing.json.
+    const plaidWindows = processedTiming.plaidStepWindows || [];
+    if (plaidWindows.length > 0) {
+      // Load label/narration for these steps from demo-script.json
+      const scriptSteps = {};
+      if (fs.existsSync(path.join(OUT_DIR, 'demo-script.json'))) {
+        const ds = JSON.parse(fs.readFileSync(path.join(OUT_DIR, 'demo-script.json'), 'utf8'));
+        for (const s of (ds.steps || [])) scriptSteps[s.id] = s;
+      }
+      const existingIds = new Set(stepTimings.map(s => s.id));
+      for (const w of plaidWindows) {
+        if (existingIds.has(w.stepId)) continue; // already present
+        const ds = scriptSteps[w.stepId] || {};
+        stepTimings.push({
+          id:       w.stepId,
+          label:    ds.label || w.stepId,
+          startMs:  w.startMs,
+          endMs:    w.endMs,
+        });
+      }
+      // Re-sort by startMs so clips are stitched in timeline order
+      stepTimings.sort((a, b) => a.startMs - b.startMs);
+      console.log(`Injected ${plaidWindows.length} Plaid Link sub-step timing window(s) — total steps: ${stepTimings.length}\n`);
+    }
   } else {
     console.warn('⚠ No processed-step-timing.json found — voiceover will sync to raw recording positions.');
     console.warn('  Run the post-process stage first: npm run post-process\n');

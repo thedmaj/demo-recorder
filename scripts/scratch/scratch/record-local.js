@@ -119,11 +119,28 @@ function markStep(stepId, label) {
 
 const plaidLinkTimings = {};
 
-function markPlaidStep(key) {
+// Plaid phase key → demo-script step ID (for storyboard/QA frame mapping)
+const PLAID_PHASE_TO_STEP_ID = {
+  'phone-submitted':       'link-consent',
+  'otp-screen':            'link-otp',
+  'institution-list-shown':'link-account-select',
+  'link-complete':         'link-success',
+};
+
+function markPlaidStep(key, page) {
   if (!recordingStartMs) return;
   const secs = (Date.now() - recordingStartMs) / 1000;
   plaidLinkTimings[key] = secs;
   console.log(`  [PlaidTiming] ${key} = ${secs.toFixed(2)}s`);
+  // Take a CDP screenshot for storyboard/QA — captures the real Plaid iframe
+  if (page && PLAID_PHASE_TO_STEP_ID[key]) {
+    const stepId   = PLAID_PHASE_TO_STEP_ID[key];
+    const frameDir = path.join(OUT_DIR, 'plaid-frames');
+    if (!fs.existsSync(frameDir)) fs.mkdirSync(frameDir, { recursive: true });
+    page.screenshot({ path: path.join(frameDir, `${stepId}-mid.png`) })
+      .then(() => console.log(`  [PlaidFrames] Saved ${stepId}-mid.png`))
+      .catch(e  => console.warn(`  [PlaidFrames] Screenshot failed for ${stepId}: ${e.message}`));
+  }
 }
 
 // ── Action executor ───────────────────────────────────────────────────────────
@@ -245,9 +262,27 @@ function getPlaidLinkFrame(page) {
 async function plaidLinkWaitReady(page) {
   console.log('  [Plaid Link] Waiting for Link iframe to appear...');
   const iframeSelector = 'iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]';
-  // Use state:'visible' — Plaid.create() creates a hidden iframe immediately; we need
-  // the UI to actually be open (handler.open() called) before running CDP automation.
-  await page.waitForSelector(iframeSelector, { state: 'visible', timeout: 30000 });
+  // Use state:'attached' — the Plaid iframe may be CSS-hidden (display:none) even after
+  // handler.open() is called until Plaid's animation plays. CDP frameLocator can still
+  // interact with attached-but-hidden iframes directly. Wait for attached, then attempt
+  // to make it visible by removing any hiding CSS before proceeding.
+  await page.waitForSelector(iframeSelector, { state: 'attached', timeout: 30000 });
+  // Force-show the Plaid iframe if it's CSS-hidden — Plaid's CSS sometimes keeps it
+  // display:none until the first screen renders, but we need CDP access immediately.
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.style.setProperty('display', 'block', 'important');
+      el.style.setProperty('visibility', 'visible', 'important');
+      el.style.setProperty('opacity', '1', 'important');
+      // Also ensure the Plaid overlay container is visible
+      const overlay = el.closest('[id*="plaid-link-overlay"], [class*="plaid-link"]') || el.parentElement;
+      if (overlay && overlay !== el) {
+        overlay.style.setProperty('display', 'block', 'important');
+        overlay.style.setProperty('visibility', 'visible', 'important');
+      }
+    }
+  }, iframeSelector).catch(() => {});
   // Inject event tracking before first screen interaction
   await injectPlaidEventTracking(page);
   // Wait for iframe content to initialize and first screen to render
@@ -375,7 +410,7 @@ async function plaidSelectSavedInstitution(page) {
 
   // Wait for the saved institution list to load
   await frame.locator('ul li').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
-  markPlaidStep('institution-list-shown');
+  markPlaidStep('institution-list-shown', page);
 
   // Dwell 2 seconds so the viewer sees the institution list before selection.
   // Do NOT scroll — Tartan Bank is always visible at the top of the list.
@@ -727,8 +762,10 @@ async function plaidLinkSelectAccount(page) {
  * advanced past any intermediate Plaid Link step. This prevents a race condition where
  * onSuccess fires (setting the flag) before goToStep has been called to advance the UI.
  *
- * Throws PLAID_LINK_TIMEOUT if not resolved within 45s, aborting the recording.
+ * Throws PLAID_LINK_TIMEOUT if not resolved within 90s, aborting the recording.
  * Takes a diagnostic screenshot on timeout for post-mortem analysis.
+ * 90s allows for Remember Me flow where onSuccess can fire 50-60s after CDP automation
+ * completes (the SDK processes the saved session internally before calling onSuccess).
  */
 async function plaidLinkWaitSuccess(page) {
   console.log('  [Plaid Link] Waiting for Link completion (window._plaidLinkComplete)...');
@@ -739,7 +776,7 @@ async function plaidLinkWaitSuccess(page) {
     console.warn('[Record] WARNING: window.getCurrentStep not defined — DOM contract violation. Will wait for _plaidLinkComplete only, which may advance recording prematurely.');
   }
 
-  const TIMEOUT_MS = 45000;
+  const TIMEOUT_MS = 90000;  // 90s — accommodates Remember Me flow (onSuccess fires late)
   // Intermediate step IDs that indicate Link is still in progress
   const PLAID_LINK_INTERMEDIATE_STEPS = [
     'step-link-consent', 'step-link-otp', 'step-link-account-select',
@@ -814,14 +851,18 @@ async function plaidLinkDismissSaveScreen(page) {
 const PLAID_LINK_STEP_PATTERNS = [
   // launch: step where the Plaid Link iframe actually opens (NOT token-creation loading steps)
   // Deliberately excludes "link-token" to avoid matching "link-token-creation" loading screens
-  { pattern: /launch[-_]?plaid[-_]?link|connect[-_]?bank|add[-_]?external|open[-_]?link|initiate[-_]?link|plaid[-_]?link[-_]?open|link[-_]?open|link[-_]?launch|plaid.*opens?$/i,
+  // NOTE: 'add-external-account' is intentionally NOT matched here — it is a navigation
+  // precursor step (calls goToStep), not the actual Plaid launch. Only the explicit
+  // plaid-link step (with plaidPhase:'launch' in demo-script.json) should trigger launch.
+  { pattern: /launch[-_]?plaid[-_]?link|connect[-_]?bank|open[-_]?link|initiate[-_]?link|plaid[-_]?link[-_]?open|link[-_]?open|link[-_]?launch|plaid.*opens?$/i,
     phase: 'launch' },
   // Matches both "search-institution" and "institution-search" orderings
   { pattern: /institution[-_]?search|search[-_]?.*(?:institution|bank)|select[-_]?.*(?:institution|bank)/i,
     phase: 'search-select' },
   // Matches: plaid-link-chase-auth, oauth-step, login, credentials, etc.
-  // Anchors "-auth$" with $ to avoid matching api-auth-get (which has "-get-response" after auth)
-  { pattern: /oauth|consent|authorize|credential|login|sign[-_]?in|[-_]auth(?:entication|enticate)?$/i,
+  // Anchors "-auth$" with lookbehind for "link" or "plaid" to avoid matching "insight-auth",
+  // "plaid-auth-insight", "api-auth-get" etc. Only Plaid Link auth/credentials steps should match.
+  { pattern: /oauth|consent(?!.*insight)|authorize|credential|login|sign[-_]?in|(?:link|plaid)[-_]auth(?:entication|enticate)?$/i,
     phase: 'credentials' },
   { pattern: /select[-_]?.*account|choose[-_]?.*account|link[-_]?account/i,
     phase: 'select-account' },
@@ -870,9 +911,21 @@ async function executePlaidLinkPhase(page, phase) {
     // ── Vision-based agent path ────────────────────────────────────────────
     switch (phase) {
       case 'launch': {
+        // Wait for _plaidHandler to be initialized — the link token fetch is async and
+        // the handler is only set after Plaid.create() is called with the fetched token.
+        // Clicking the button while _plaidHandler is null silently does nothing.
+        console.log('  [Plaid Link] Waiting for _plaidHandler to be initialized (link token)...');
+        await page.waitForFunction(
+          () => window._plaidHandler != null && typeof window._plaidHandler.open === 'function',
+          null,
+          { timeout: 20000 }
+        ).catch(() => {
+          console.warn('  [Plaid Link] _plaidHandler not ready after 20s — proceeding anyway');
+        });
+
         // Wait for the link token to be ready and button to appear (up to 12s)
         await page.waitForSelector(
-          '[data-testid="link-external-account-btn"], [data-testid*="connect-bank"], [data-testid*="open-link"]',
+          '[data-testid="link-external-account-btn"], [data-testid*="btn-link"], [data-testid="btn-link-bank"], [data-testid*="connect-bank"], [data-testid*="open-link"]',
           { state: 'visible', timeout: 12000 }
         ).catch(() => {});
         await page.waitForTimeout(500);
@@ -880,22 +933,27 @@ async function executePlaidLinkPhase(page, phase) {
         // Click the button to trigger initiateLink()
         const visionClicked = await agent.visionClick(page,
           'Find the button that opens Plaid Link or links a bank account. ' +
-          'It may say "Connect a bank", "Add external account", "Link External Account", "Connect", or similar. ' +
-          'It is on the main Wells Fargo app page. Click this button.',
+          'It may say "Connect a bank", "Add external account", "Link External Account", "Link Bank Account", "Add Bank", or similar. ' +
+          'It is a prominent action button on the current app page. Click this button.',
           { retries: 4, waitAfterMs: 1500 }
         );
         if (!visionClicked) {
           // CSS fallback: direct selector click when vision can't find the button
           const cssSelectors = [
             '[data-testid="link-external-account-btn"]',
+            '[data-testid="btn-link-bank"]',
+            '[data-testid*="btn-link"]',
             '[data-testid*="connect-bank"]',
             '[data-testid*="open-link"]',
             '[data-testid*="link-account"]',
             'button[onclick*="openPlaidLink"]',
             'button[onclick*="initiateLink"]',
+            'button[onclick*="_plaidHandler"]',
             'button:has-text("Link External Account")',
             'button:has-text("Connect a bank")',
             'button:has-text("Add External")',
+            'button:has-text("Link Bank")',
+            'button:has-text("Add Bank")',
           ];
           let cssFallbackClicked = false;
           for (const sel of cssSelectors) {
@@ -909,7 +967,7 @@ async function executePlaidLinkPhase(page, phase) {
               }
             } catch (_) {}
           }
-          // Last resort: call openPlaidLink() or handler.open() directly via JS
+          // Last resort: call handler.open() directly — _plaidHandler is guaranteed initialized above
           if (!cssFallbackClicked) {
             const jsFallbackResult = await page.evaluate(() => {
               if (typeof window.openPlaidLink === 'function') {
@@ -987,7 +1045,7 @@ async function executePlaidLinkPhase(page, phase) {
             const phone = _sandboxConfig?.phone || '+14155550011';
             await phoneInput.fill(phone);
             await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
-            markPlaidStep('phone-submitted');
+            markPlaidStep('phone-submitted', page);
             console.log('  [Plaid Link] Phone filled — auto-submitted');
           } else {
             // Phone input not found — try the "Continue without phone number" skip link
@@ -1011,7 +1069,7 @@ async function executePlaidLinkPhase(page, phase) {
           for (const otpSel of otpSelectors) {
             const otpInput = frame.locator(otpSel).first();
             if (await otpInput.isVisible({ timeout: otpSel.includes('inputmode') ? 8000 : 2000 }).catch(() => false)) {
-              markPlaidStep('otp-screen');
+              markPlaidStep('otp-screen', page);
               const otp = _sandboxConfig?.otp || '123456';
               await otpInput.fill(otp);
               await page.waitForTimeout(800);
@@ -1204,7 +1262,7 @@ async function executePlaidLinkPhase(page, phase) {
         // onSuccess also calls goToStep(firstPostLinkStep) to advance the app.
         console.log('  [Plaid Link] Waiting for _plaidLinkComplete (real onSuccess)...');
         await plaidLinkWaitSuccess(page);
-        markPlaidStep('link-complete');
+        markPlaidStep('link-complete', page);
         // CRITICAL: destroy the Plaid iframe so it does not overlay post-link steps in the recording.
         // The Plaid SDK iframe persists in the DOM after onSuccess unless handler.destroy() is called.
         await page.evaluate(() => {
@@ -1233,24 +1291,46 @@ async function executePlaidLinkPhase(page, phase) {
   // ── CSS-selector fallback path (when ANTHROPIC_API_KEY is unavailable) ──
   switch (phase) {
     case 'launch':
-      await page.waitForTimeout(1000);
+      // Wait for _plaidHandler before clicking — link token fetch is async
+      await page.waitForFunction(
+        () => window._plaidHandler != null && typeof window._plaidHandler.open === 'function',
+        null,
+        { timeout: 20000 }
+      ).catch(() => {
+        console.warn('  [Plaid Link] CSS path: _plaidHandler not ready after 20s — proceeding anyway');
+      });
+      await page.waitForTimeout(500);
       try {
         const btnSelectors = [
+          '[data-testid="link-external-account-btn"]',
+          '[data-testid="btn-link-bank"]',
+          '[data-testid*="btn-link"]',
           '[data-testid*="connect"] button',
           '[data-testid*="link"] button',
           '[data-testid*="add-external"] button',
+          'button[onclick*="_plaidHandler"]',
           'button:has-text("Connect")',
           'button:has-text("Add External")',
           'button:has-text("Link Account")',
+          'button:has-text("Link Bank")',
           'button:has-text("Open Link")',
         ];
+        let btnClicked = false;
         for (const sel of btnSelectors) {
           const btn = page.locator(sel).first();
           if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
             await btn.click({ timeout: 5000 });
             console.log(`  [Plaid Link] Clicked launch button: ${sel}`);
+            btnClicked = true;
             break;
           }
+        }
+        if (!btnClicked) {
+          // JS fallback — _plaidHandler guaranteed initialized above
+          await page.evaluate(() => {
+            if (window._plaidHandler) window._plaidHandler.open();
+          }).catch(() => {});
+          console.log('  [Plaid Link] CSS path JS fallback: called _plaidHandler.open()');
         }
       } catch (err) {
         console.warn(`  [Plaid Link] Could not click launch button: ${err.message}`);
@@ -1552,12 +1632,14 @@ function postProcessRecording(rawPath, outPath) {
   const tmpOut = outPath + '.tmp.webm';
 
   try {
+    // Use simple frame duplication (fps filter) instead of motion interpolation.
+    // minterpolate is orders of magnitude slower and not worth the quality gain for demo videos.
     execSync(
       `ffmpeg -i "${rawPath}" ` +
-      `-filter:v "minterpolate='mi_mode=mci:mc_mode=aobmc:vsbmc=1:fps=${TARGET_FPS}'" ` +
-      `-c:v libvpx-vp9 -crf 18 -b:v 0 ` +
+      `-vf fps=${TARGET_FPS} ` +
+      `-c:v libvpx-vp9 -crf 18 -b:v 0 -cpu-used 4 ` +
       `-y "${tmpOut}"`,
-      { stdio: 'pipe', timeout: 300000 }
+      { stdio: 'pipe', timeout: 900000 }
     );
 
     if (fs.existsSync(tmpOut)) {
@@ -1923,6 +2005,8 @@ async function main(opts = {}) {
     const budget = (waitMs || 5000) + OVERRUN_GRACE_MS;
     _stepOverrunTimer = setTimeout(async () => {
       console.warn(`[Record] Step "${stepId}" overran budget (${budget}ms) — auto-advancing to "${nextStepId}"`);
+      // Destroy any open Plaid modal before advancing so it doesn't overlay subsequent steps.
+      await page.evaluate(`if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }`).catch(() => {});
       await page.evaluate(`window.goToStep && window.goToStep('${nextStepId}')`).catch(() => {});
     }, budget);
   }
@@ -2008,17 +2092,42 @@ async function main(opts = {}) {
     ].join(';');
     document.body.appendChild(sandboxCover);
 
-    // Override goToStep to suppress LINK EVENTS panel visibility.
-    // The generated goToStep often calls eventsPanel.classList.add('visible') —
-    // we patch it to strip that class back out after every call.
+    // Override goToStep to:
+    // 1. Suppress LINK EVENTS panel visibility (developer artifact)
+    // 2. Auto-show API response panel when a step has pre-populated response data.
+    //    The panel is hidden by default but should be visible for API insight steps.
     const origGoToStep = window.goToStep;
     if (origGoToStep) {
       window.goToStep = function(id) {
         origGoToStep(id);
-        const panel = document.getElementById('link-events-panel');
-        if (panel) {
-          panel.classList.remove('visible');
-          panel.style.setProperty('display', 'none', 'important');
+        // Suppress link-events-panel (always)
+        const eventsPanel = document.getElementById('link-events-panel');
+        if (eventsPanel) {
+          eventsPanel.classList.remove('visible');
+          eventsPanel.style.setProperty('display', 'none', 'important');
+        }
+        // Auto-show api-response-panel for insight steps (by ID pattern) or steps with data
+        const apiPanel = document.getElementById('api-response-panel');
+        if (apiPanel) {
+          const isInsightStep = /insight|api.?response|plaid.?result|plaid.?data/i.test(id);
+          // Check both _stepApiResponses (app-set) and _recordApiResponses (record-local-injected)
+          const appData    = window._stepApiResponses    && window._stepApiResponses[id];
+          const recordData = window._recordApiResponses  && window._recordApiResponses[id];
+          const data       = appData || recordData;
+          if (isInsightStep || data) {
+            // Populate JSON panel content if data available
+            if (data && typeof window._showApiPanelStub === 'function') {
+              window._showApiPanelStub(data);
+            } else {
+              // Fallback: just make panel visible without content
+              apiPanel.style.display = 'flex';
+              apiPanel.classList.add('visible', 'expanded', 'open', 'active');
+            }
+          } else {
+            // Hide panel between non-insight steps
+            apiPanel.style.setProperty('display', 'none', 'important');
+            apiPanel.classList.remove('visible', 'expanded', 'open', 'active');
+          }
         }
       };
     }
@@ -2027,6 +2136,23 @@ async function main(opts = {}) {
     // The real Plaid SDK opens its cross-origin iframe.
     // CDP frameLocator automation (in executePlaidLinkPhase 'launch') interacts with it.
   })()`).catch(e => console.warn('[Record] CSS/goToStep patch warning:', e.message));
+
+  // Inject API response data from demo-script into the browser context.
+  // This allows the goToStep override to call _showApiPanelStub(data) for insight steps
+  // even when the build agent didn't wire up the goToStep handlers correctly.
+  const _apiResponsesByStep = {};
+  for (const step of (demoScript.steps || [])) {
+    if (step.apiResponse && step.apiResponse.response) {
+      _apiResponsesByStep[step.id] = step.apiResponse.response;
+    }
+  }
+  if (Object.keys(_apiResponsesByStep).length > 0) {
+    await page.evaluate(
+      (apiResponses) => { window._recordApiResponses = apiResponses; },
+      _apiResponsesByStep
+    ).catch(e => console.warn('[Record] API response injection warning:', e.message));
+    console.log(`[Record] Injected API responses for ${Object.keys(_apiResponsesByStep).length} steps`);
+  }
 
   // Brief pause for the app to fully initialize
   await page.waitForTimeout(1000);
@@ -2054,7 +2180,18 @@ async function main(opts = {}) {
     // Arm overrun watchdog for this step
     const _nextEntry = playwrightScript.steps[_si + 1];
     const _nextStepId = _nextEntry ? (_nextEntry.stepId || _nextEntry.id) : null;
-    const _isLaunch = PLAID_LINK_LIVE && matchPlaidLinkPhase(stepId) === 'launch';
+    // _isLaunch: also check plaidPhaseMap (explicit "plaidPhase":"launch" in demo-script.json)
+    // and the click-target regex so the overrun timer is never armed for Plaid launch steps
+    // regardless of step ID naming (e.g. "chime-link-entry" wouldn't match the regex alone).
+    const _clickIsLaunch = PLAID_LINK_LIVE &&
+      !plaidPhaseMap[stepId] && !matchPlaidLinkPhase(stepId) &&
+      stepEntry.action === 'click' &&
+      (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i);
+    const _isLaunch = PLAID_LINK_LIVE && (
+      matchPlaidLinkPhase(stepId) === 'launch' ||
+      plaidPhaseMap[stepId] === 'launch' ||
+      !!_clickIsLaunch
+    );
     armStepOverrun(page, stepId, stepEntry.waitMs, _nextStepId, _isLaunch);
 
     // ── Live Plaid Link override ──────────────────────────────────────────
@@ -2074,7 +2211,7 @@ async function main(opts = {}) {
       // the standard naming patterns but represent the same action.
       let plaidLaunchStepId = null; // step ID to goToStep before executing launch
       if (!plaidPhase && stepEntry.action === 'click' &&
-          (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn/i)) {
+          (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)) {
         plaidPhase = 'launch';
         // For synthetic click steps (e.g. "wf-link-initiate-click"), there's no corresponding
         // HTML div. Prefer:
@@ -2099,7 +2236,27 @@ async function main(opts = {}) {
         await page.waitForTimeout(500);
 
         // Execute the real Plaid Link iframe actions for this phase
-        await executePlaidLinkPhase(page, plaidPhase);
+        try {
+          await executePlaidLinkPhase(page, plaidPhase);
+        } catch (plaidErr) {
+          console.warn(`  [Plaid Link] Phase "${plaidPhase}" failed: ${plaidErr.message}`);
+        }
+
+        // Ensure the Plaid modal is closed before advancing — if onSuccess fired, destroy()
+        // was already called. If the automation timed out, we must force-close it here so
+        // the modal doesn't overlay all subsequent steps in the recording.
+        if (plaidPhase === 'launch') {
+          const closed = await page.evaluate(`
+            (function() {
+              if (window._plaidHandler) {
+                try { window._plaidHandler.destroy(); } catch(e) {}
+                return true;
+              }
+              return false;
+            })()
+          `).catch(() => false);
+          if (closed) console.log('  [Plaid Link] Ensured Plaid modal closed after launch phase.');
+        }
 
         // Add any additional wait from the step entry
         if (stepEntry.waitMs) {

@@ -25,6 +25,30 @@ const ENV_WHITELIST = new Set([
   'PLAID_LAYER_TEMPLATE_ID', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_OUTPUT_FORMAT',
 ]);
 
+// ── Overlay suggestion patch helper ──────────────────────────────────────────
+/**
+ * Deep-merges a suggestion patch into a remotion-props step entry.
+ * - Array fields (callouts): appends items rather than replacing
+ * - Nested objects (zoomPunch): merges fields
+ * - action=remove: deletes the key named by the patch key
+ */
+function deepMergePatch(stepEntry, patch, action) {
+  if (!stepEntry || !patch) return stepEntry || {};
+  const result = Object.assign({}, stepEntry);
+  for (const [key, val] of Object.entries(patch)) {
+    if (action === 'remove') {
+      delete result[key];
+    } else if (Array.isArray(val) && Array.isArray(result[key])) {
+      result[key] = [...result[key], ...val];
+    } else if (val && typeof val === 'object' && result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])) {
+      result[key] = Object.assign({}, result[key], val);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 // ── Pipeline state ────────────────────────────────────────────────────────────
 let activeProcess = null;
 let logBuffer = [];
@@ -32,8 +56,9 @@ const logClients = new Set();
 
 const PIPELINE_STAGES = [
   'research', 'ingest', 'brand-extract', 'script', 'script-critique',
+  'embed-script-validate',
   /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
-  'voiceover', 'resync-audio', 'audio-qa', 'render', 'ppt', 'touchup',
+  'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'render', 'ppt', 'touchup',
 ];
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -168,7 +193,8 @@ const STAGE_ARTIFACTS = [
   ['ingest',          'product-context.json'],
   ['brand-extract',   'demo-script.json'],   // brand is prereq; script existence implies it ran
   ['script',          'demo-script.json'],
-  ['script-critique',     'demo-script.json'],       // critique updates script in-place; use same sentinel
+  ['script-critique',       'demo-script.json'],       // critique updates script in-place; use same sentinel
+  ['embed-script-validate', 'script-validate-report.json'],
   // ['plaid-link-capture',  'plaid-link-screens/manifest.json'],  // DISABLED
   ['build',               'scratch-app/index.html'],
   ['record',          'recording.webm'],
@@ -176,9 +202,13 @@ const STAGE_ARTIFACTS = [
   ['figma-review',    'figma-review.json'],
   ['post-process',    'recording-processed.webm'],
   ['voiceover',       'voiceover-manifest.json'],
+  ['coverage-check',  'coverage-report.json'],
+  ['auto-gap',        'auto-gap-report.json'],
   ['resync-audio',    'voiceover-manifest.json'],  // resync updates manifest in-place (adds resyncedAt)
-  ['audio-qa',        'audio-qa-report.json'],
-  ['render',          'demo-scratch.mp4'],
+  ['embed-sync',      'embed-sync-report.json'],
+  ['audio-qa',              'audio-qa-report.json'],
+  ['ai-suggest-overlays',   'overlay-suggestions.json'],
+  ['render',                'demo-scratch.mp4'],
   ['ppt',             'demo-summary.pptx'],
   ['touchup',         'touchup-complete.json'],
 ];
@@ -437,8 +467,13 @@ app.get('/api/runs/:runId/frames/:filename', (req, res) => {
       return res.status(400).json({ error: 'Invalid filename' });
     }
     const dir = getRunDir(runId);
-    // Check qa-frames first, then build-frames
+    // Check qa-frames first, then plaid-frames (CDP screenshots for Plaid Link steps), then build-frames
     let filePath = path.join(dir, 'qa-frames', filename);
+    if (!fs.existsSync(filePath)) {
+      // For Plaid Link steps the qa-frames file IS the CDP screenshot (copied there by qa-review.js),
+      // but if qa hasn't run yet, serve directly from plaid-frames/.
+      filePath = path.join(dir, 'plaid-frames', filename);
+    }
     if (!fs.existsSync(filePath)) {
       filePath = path.join(dir, 'build-frames', filename);
     }
@@ -680,6 +715,152 @@ app.post('/api/runs/:runId/script', (req, res) => {
   }
 });
 
+// ── Sync-map read/write ────────────────────────────────────────────────────────
+// GET  /api/runs/:runId/sync-map  → { segments: [...] }
+// POST /api/runs/:runId/sync-map-segment  { compStart, compEnd, videoStart, mode, speed?, _reason? }
+//   Appends or updates a segment in sync-map.json, then sorts by compStart.
+
+app.get('/api/runs/:runId/sync-map', (req, res) => {
+  try {
+    const dir = getRunDir(req.params.runId);
+    const p   = path.join(dir, 'sync-map.json');
+    if (!fs.existsSync(p)) return res.json({ segments: [] });
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    // sync-map.json is an array of segments
+    const segments = Array.isArray(raw) ? raw : (raw.segments || []);
+    res.json({ segments });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/runs/:runId/sync-map-segment', (req, res) => {
+  try {
+    const { compStart, compEnd, videoStart, mode = 'freeze', speed, _reason } = req.body;
+    if (compStart == null || compEnd == null || compEnd <= compStart) {
+      return res.status(400).json({ error: 'compStart and compEnd required; compEnd must be > compStart' });
+    }
+    const dir = getRunDir(req.params.runId);
+    const p   = path.join(dir, 'sync-map.json');
+    let rawFile = {};
+    let segments = [];
+    if (fs.existsSync(p)) {
+      rawFile = JSON.parse(fs.readFileSync(p, 'utf8'));
+      segments = Array.isArray(rawFile) ? rawFile : (rawFile.segments || []);
+      if (Array.isArray(rawFile)) rawFile = {};
+    }
+    const newSeg = { compStart, compEnd, videoStart: videoStart ?? compStart, mode };
+    if (speed != null) newSeg.speed = speed;
+    if (_reason) newSeg._reason = _reason;
+
+    // Remove any existing segment that starts at the same compStart
+    segments = segments.filter(s => Math.abs(s.compStart - compStart) > 0.01);
+    segments.push(newSeg);
+    segments.sort((a, b) => a.compStart - b.compStart);
+
+    const out = { ...(rawFile._comment ? { _comment: rawFile._comment } : {}), segments };
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), 'utf8');
+    fs.renameSync(tmp, p);
+    res.json({ ok: true, segmentCount: segments.length });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Step reorder ──────────────────────────────────────────────────────────────
+// POST /api/runs/:runId/reorder-steps  { stepIds: ['id1','id2',...] }
+// Rewrites demo-script.json steps array to match the new order.
+app.post('/api/runs/:runId/reorder-steps', (req, res) => {
+  try {
+    const { stepIds } = req.body;
+    if (!Array.isArray(stepIds) || stepIds.length === 0) {
+      return res.status(400).json({ error: 'stepIds array is required' });
+    }
+    const dir = getRunDir(req.params.runId);
+    const scriptPath = path.join(dir, 'demo-script.json');
+    if (!fs.existsSync(scriptPath)) return res.status(404).json({ error: 'Script not found' });
+
+    const script = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+    const byId = Object.fromEntries((script.steps || []).map(s => [s.id, s]));
+
+    // Validate all IDs exist
+    const missing = stepIds.filter(id => !byId[id]);
+    if (missing.length > 0) return res.status(400).json({ error: `Unknown step IDs: ${missing.join(', ')}` });
+
+    script.steps = stepIds.map(id => byId[id]);
+
+    const tmpPath = scriptPath + '.tmp';
+    fs.writeFileSync(tmpPath, JSON.stringify(script, null, 2), 'utf8');
+    fs.renameSync(tmpPath, scriptPath);
+
+    res.json({ ok: true, stepCount: script.steps.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Remotion Studio launcher (B4) ─────────────────────────────────────────────
+
+app.post('/api/runs/:runId/open-studio', (req, res) => {
+  try {
+    const dir       = getRunDir(req.params.runId);
+    const propsFile = path.join(dir, 'remotion-props.json');
+    if (!fs.existsSync(propsFile)) {
+      return res.status(404).json({ error: 'remotion-props.json not found for this run — render stage must complete first.' });
+    }
+
+    const studioArgs = ['remotion', 'studio', 'remotion/index.js', `--props=${propsFile}`];
+    spawn('npx', studioArgs, {
+      cwd:      PROJECT_ROOT,
+      detached: true,
+      stdio:    'ignore',
+    }).unref();
+
+    res.json({ ok: true, url: 'http://localhost:3000', propsFile: path.relative(PROJECT_ROOT, propsFile) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Rebuild remotion-props.json on demand ─────────────────────────────────────
+// Runs scripts/build-remotion-props.js for the run, then writes remotion-props.json.
+// Called after sync-map edits so Remotion Studio hot-reloads without a full render.
+
+app.post('/api/runs/:runId/rebuild-props', (req, res) => {
+  try {
+    const dir    = getRunDir(req.params.runId);
+    const script = path.join(PROJECT_ROOT, 'scripts', 'build-remotion-props.js');
+
+    let stdout = '';
+    try {
+      stdout = require('child_process').execSync(
+        `node "${script}" --runDir="${dir}"`,
+        { cwd: PROJECT_ROOT, timeout: 30000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
+      );
+    } catch (execErr) {
+      const msg = (execErr.stderr || execErr.stdout || execErr.message || '').toString().slice(0, 400);
+      return res.status(500).json({ error: 'build-remotion-props failed: ' + msg });
+    }
+
+    // Parse the __RESULT__ summary line emitted by the script
+    const resultMatch = stdout.match(/__RESULT__(\{.+\})/);
+    const summary = resultMatch ? JSON.parse(resultMatch[1]) : {};
+
+    res.json({ ok: true, ...summary });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── Studio recording status ───────────────────────────────────────────────────
+
+app.get('/api/runs/:runId/studio-status', (req, res) => {
+  try {
+    const statusFile = path.join(getRunDir(req.params.runId), 'studio-record-status.json');
+    if (!fs.existsSync(statusFile)) return res.json(null);
+    res.json(JSON.parse(fs.readFileSync(statusFile, 'utf8')));
+  } catch (_) {
+    res.json(null);
+  }
+});
+
 // ── Pipeline runner ───────────────────────────────────────────────────────────
 
 app.get('/api/pipeline/stages', (req, res) => {
@@ -688,8 +869,19 @@ app.get('/api/pipeline/stages', (req, res) => {
 
 app.post('/api/pipeline/run', (req, res) => {
   try {
-    if (activeProcess !== null) {
-      return res.status(409).json({ error: 'Already running' });
+    // If activeProcess is set but has already exited, clear the stale reference
+    if (activeProcess !== null && activeProcess.exitCode !== null) {
+      activeProcess = null;
+    }
+
+    const { force } = req.body || {};
+    if (activeProcess !== null && !force) {
+      return res.status(409).json({ error: 'Already running', pid: activeProcess.pid });
+    }
+    // force=true: kill the existing process and start fresh
+    if (activeProcess !== null && force) {
+      try { activeProcess.kill('SIGTERM'); } catch (_) {}
+      activeProcess = null;
     }
 
     const { fromStage, noTouchup, resumeRunId } = req.body || {};
@@ -875,6 +1067,238 @@ Rewrite the narration following this direction. Rules:
   }
 });
 
+// ── Brand profile for a run ───────────────────────────────────────────────────
+// GET /api/runs/:runId/brand
+// Returns the brand profile (colors, typography, mode) for the run.
+app.get('/api/runs/:runId/brand', (req, res) => {
+  try {
+    const dir = getRunDir(req.params.runId);
+    const brandDir = path.join(PROJECT_ROOT, 'brand');
+    let brandProfile = null;
+    let brandSlug = null;
+
+    const ingestedInputs = safeReadJson(path.join(dir, 'ingested-inputs.json'));
+    if (ingestedInputs && Array.isArray(ingestedInputs.texts)) {
+      const promptFile = ingestedInputs.texts.find(t => t.filename === 'prompt.txt');
+      if (promptFile && promptFile.content) {
+        const m = promptFile.content.match(/Brand URL:\s*https?:\/\/(?:www\.)?([^./\s]+)/i);
+        if (m) brandSlug = m[1].toLowerCase();
+      }
+    }
+
+    const brandFile = brandSlug && fs.existsSync(path.join(brandDir, `${brandSlug}.json`))
+      ? path.join(brandDir, `${brandSlug}.json`)
+      : path.join(brandDir, 'default.json');
+
+    if (fs.existsSync(brandFile)) {
+      brandProfile = JSON.parse(fs.readFileSync(brandFile, 'utf8'));
+    }
+
+    if (!brandProfile) return res.json({ slug: 'default', mode: 'dark', bgPrimary: '#0d1117', accentCta: '#00A67E', textPrimary: '#ffffff', font: 'system-ui', insightBg: '#0d1117', insightAccent: '#00A67E' });
+
+    res.json({
+      slug: brandProfile.slug || brandSlug || 'default',
+      mode: brandProfile.mode || 'dark',
+      bgPrimary: brandProfile.colors?.bgPrimary || '#0d1117',
+      accentCta: brandProfile.colors?.accentCta || '#00A67E',
+      textPrimary: brandProfile.colors?.textPrimary || '#ffffff',
+      font: brandProfile.typography?.fontHeading || brandProfile.typography?.fontBody || 'system-ui',
+      insightBg: brandProfile.sidePanels?.bg || '#0d1117',
+      insightAccent: brandProfile.colors?.accentCta || '#00A67E',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Generate new step (Claude Haiku) ─────────────────────────────────────────
+// POST /api/runs/:runId/generate-step
+// body: { sceneType: 'demo'|'slide', description, insertAfterId? }
+app.post('/api/runs/:runId/generate-step', async (req, res) => {
+  try {
+    const { sceneType, description, insertAfterId } = req.body;
+    if (!sceneType || !description) return res.status(400).json({ error: 'sceneType and description required' });
+
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'ANTHROPIC_API_KEY not set' });
+
+    const dir = getRunDir(req.params.runId);
+    const script = safeReadJson(path.join(dir, 'demo-script.json'));
+    if (!script) return res.status(404).json({ error: 'demo-script.json not found' });
+
+    const steps = script.steps || [];
+    const product = script.product || req.params.runId;
+    const persona = script.persona || 'the user';
+    const personaFirst = (persona.split(' ')[0] || 'the user');
+    const stepContext = steps.map((s, i) => `${i + 1}. [${s.id}] "${s.label}": ${(s.narration || '').slice(0, 80)}`).join('\n');
+    const isSlide = sceneType === 'slide';
+
+    // ── Resolve brand JSON for this run ──────────────────────────────────────
+    // Strategy: extract brand slug from ingested prompt.txt "Brand URL:" line,
+    // then match against brand/<slug>.json. Falls back to brand/default.json.
+    let brandProfile = null;
+    try {
+      const brandDir = path.join(PROJECT_ROOT, 'brand');
+      const ingestedInputs = safeReadJson(path.join(dir, 'ingested-inputs.json'));
+      let brandSlug = null;
+
+      // Extract Brand URL from ingested prompt.txt content
+      if (ingestedInputs && Array.isArray(ingestedInputs.texts)) {
+        const promptFile = ingestedInputs.texts.find(t => t.filename === 'prompt.txt');
+        if (promptFile && promptFile.content) {
+          const brandUrlMatch = promptFile.content.match(/Brand URL:\s*https?:\/\/(?:www\.)?([^./\s]+)/i);
+          if (brandUrlMatch) brandSlug = brandUrlMatch[1].toLowerCase();
+        }
+      }
+
+      // Try to load brand/<slug>.json, fallback to default.json
+      const brandFile = brandSlug && fs.existsSync(path.join(brandDir, `${brandSlug}.json`))
+        ? path.join(brandDir, `${brandSlug}.json`)
+        : path.join(brandDir, 'default.json');
+
+      if (fs.existsSync(brandFile)) {
+        brandProfile = JSON.parse(fs.readFileSync(brandFile, 'utf8'));
+      }
+    } catch (_e) { /* brand lookup best-effort */ }
+
+    // Build brand context strings for prompt injection
+    const brandMode = brandProfile?.mode || 'dark';
+    const brandBg = brandProfile?.colors?.bgPrimary || '#0d1117';
+    const brandAccent = brandProfile?.colors?.accentCta || '#00A67E';
+    const brandTextPrimary = brandProfile?.colors?.textPrimary || '#ffffff';
+    const brandFont = brandProfile?.typography?.fontHeading || brandProfile?.typography?.fontBody || 'system-ui';
+    const brandInstructions = brandProfile?.promptInstructions || '';
+    const brandSlugLabel = brandProfile?.slug || 'plaid';
+
+    // For slide/insight screens: always dark regardless of brand mode
+    const insightBg = brandProfile?.sidePanels?.bg || '#0d1117';
+    const insightAccent = brandProfile?.colors?.accentCta || '#00A67E';
+
+    // Parse CSS vars from built app if it exists (most accurate — these are in the video)
+    let cssVars = {};
+    try {
+      const appHtml = path.join(dir, 'scratch-app', 'index.html');
+      if (fs.existsSync(appHtml)) {
+        const html = fs.readFileSync(appHtml, 'utf8');
+        const rootMatch = html.match(/:root\s*\{([^}]+)\}/);
+        if (rootMatch) {
+          rootMatch[1].split(';').forEach(decl => {
+            const [prop, val] = decl.split(':').map(s => s.trim());
+            if (prop && val) cssVars[prop] = val;
+          });
+        }
+      }
+    } catch (_e) { /* best-effort */ }
+
+    // Use CSS vars if available, fall back to brand JSON
+    const demoBg = cssVars['--bg'] || brandBg;
+    const demoAccent = cssVars['--primary'] || brandAccent;
+    const demoText = cssVars['--text-primary'] || brandTextPrimary;
+    const demoHeadingFont = cssVars['--heading-font'] || brandFont;
+
+    const slideStyleDesc = isSlide
+      ? `SLIDE — Plaid insight overlay screen (always dark, matches ${brandSlugLabel} demo's insight screens).
+Background: ${insightBg}. Accent color: ${insightAccent} (${brandSlugLabel} brand color).
+White body text on dark. Brand accent used for: header bottom border, badge colors, highlighted values.
+Glassmorphism data cards: rgba(255,255,255,0.06) bg, rgba(255,255,255,0.1) border.
+Must visually match existing insight steps: auth-insight, identity-match-insight, signal-insight.`
+      : `DEMO — navigates the real product UI (${brandSlugLabel} host app). App CSS: bg=${demoBg}, accent=${demoAccent}, text=${demoText}, font: ${demoHeadingFont}.`;
+
+    const slideVisualStatePrompt = isSlide
+      ? `Dark insight screen (bg ${insightBg}). Header bar with endpoint label in ${insightAccent}. Left: heading in white + body text + data cards (rgba(255,255,255,0.06) bg). Right: api-response-panel JSON. ${insightAccent}-colored badges/highlights. No ${brandSlugLabel} host app branding.`
+      : `What the user sees on screen in the ${brandSlugLabel} host app (bg=${demoBg}, accent=${demoAccent}): UI elements, state, content visible at this step.`;
+
+    const prompt = `You are generating a new step for a Plaid product demo video storyboard.
+
+Product: ${product}
+Persona: ${persona}
+Scene type: ${slideStyleDesc}
+
+Existing steps:
+${stepContext}
+
+Insert after: ${insertAfterId || '(end of sequence)'}
+
+New step description: "${description}"
+
+Generate a single JSON object. Return ONLY valid JSON — no explanation, no markdown fences.
+
+Required fields:
+{
+  "id": "kebab-case-id (3-4 words max)",
+  "label": "Human-readable title (3-6 words)",
+  "narration": "20-35 words. Active voice, outcome-focused. No: simply/just/seamless/robust. Lead with value. Use ${personaFirst}'s name.",
+  "durationMs": <10000–18000>,
+  "visualState": "${slideVisualStatePrompt}",
+  ${isSlide
+    ? '"apiResponse": { "endpoint": "product/method", "display": "expand" },'
+    : '"interaction": { "type": "click|wait|scroll", "target": "data-testid-of-element" },'}
+  "plaidPhase": ${isSlide ? '"insight"' : 'null'}
+}
+
+Brand voice rules: active voice ("Plaid verifies" not "is verified"), quantify outcomes, persona name = ${personaFirst}.`;
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey });
+    const message = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = (message.content[0]?.text || '').trim();
+    const jsonStr = (raw.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, raw])[1].trim();
+    const step = JSON.parse(jsonStr);
+    res.json({
+      step,
+      sceneType,
+      brand: brandProfile ? {
+        slug: brandProfile.slug,
+        mode: brandMode,
+        bgPrimary: brandBg,
+        accentCta: brandAccent,
+        textPrimary: brandTextPrimary,
+        font: brandFont,
+      } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/runs/:runId/insert-step
+// body: { step: {...}, insertAfterId? }
+app.post('/api/runs/:runId/insert-step', (req, res) => {
+  try {
+    const { step, insertAfterId } = req.body;
+    if (!step || !step.id) return res.status(400).json({ error: 'step with id required' });
+
+    const dir = getRunDir(req.params.runId);
+    const scriptPath = path.join(dir, 'demo-script.json');
+    const script = safeReadJson(scriptPath);
+    if (!script) return res.status(404).json({ error: 'demo-script.json not found' });
+
+    const steps = script.steps || [];
+    // Deduplicate id
+    if (steps.some(s => s.id === step.id)) step.id = step.id + '-new';
+
+    let insertIdx = steps.length;
+    if (insertAfterId) {
+      const idx = steps.findIndex(s => s.id === insertAfterId);
+      if (idx >= 0) insertIdx = idx + 1;
+    }
+    steps.splice(insertIdx, 0, step);
+    script.steps = steps;
+
+    const tmp = scriptPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
+    fs.renameSync(tmp, scriptPath);
+    res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Human feedback export/read ────────────────────────────────────────────────
 
 const FEEDBACK_FILE = path.join(INPUTS_DIR, 'build-feedback.md');
@@ -988,6 +1412,145 @@ app.get('/api/runs/:runId/timing', (req, res) => {
     });
 
     res.json({ steps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Auto-gap report & overrides ──────────────────────────────────────────────
+
+app.get('/api/runs/:runId/auto-gap', (req, res) => {
+  try {
+    const dir = getRunDir(req.params.runId);
+    const reportPath = path.join(dir, 'auto-gap-report.json');
+    if (!fs.existsSync(reportPath)) return res.json({});
+    res.json(safeReadJson(reportPath) || {});
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/runs/:runId/auto-gap-overrides', (req, res) => {
+  try {
+    const { overrides } = req.body;
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+      return res.status(400).json({ error: 'overrides must be an object' });
+    }
+    // Validate each entry has a numeric gapMs
+    for (const [stepId, val] of Object.entries(overrides)) {
+      if (!val || typeof val.gapMs !== 'number' || val.gapMs < 0) {
+        return res.status(400).json({ error: `Invalid gapMs for step '${stepId}' — must be a non-negative number` });
+      }
+    }
+    const dir = getRunDir(req.params.runId);
+    const overridesPath = path.join(dir, 'auto-gap-overrides.json');
+    const tmp = overridesPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(overrides, null, 2), 'utf8');
+    fs.renameSync(tmp, overridesPath);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AI Overlay Suggestions ────────────────────────────────────────────────────
+
+app.get('/api/runs/:runId/overlay-suggestions', (req, res) => {
+  try {
+    const dir  = getRunDir(req.params.runId);
+    const file = path.join(dir, 'overlay-suggestions.json');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'overlay-suggestions.json not found' });
+    const data = safeReadJson(file);
+    if (!data) return res.status(500).json({ error: 'Could not parse overlay-suggestions.json' });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/runs/:runId/apply-suggestion', (req, res) => {
+  try {
+    const { stepId, suggestionIndex } = req.body || {};
+    if (!stepId || typeof suggestionIndex !== 'number') {
+      return res.status(400).json({ error: 'stepId and suggestionIndex are required' });
+    }
+
+    const dir = getRunDir(req.params.runId);
+
+    // Load suggestions
+    const suggestionsFile = path.join(dir, 'overlay-suggestions.json');
+    const suggestions = safeReadJson(suggestionsFile);
+    if (!suggestions) return res.status(404).json({ error: 'overlay-suggestions.json not found' });
+    const stepEntry = suggestions.steps?.[stepId];
+    if (!stepEntry?.suggestions?.[suggestionIndex]) {
+      return res.status(404).json({ error: `Suggestion ${suggestionIndex} not found for step ${stepId}` });
+    }
+    const suggestion = stepEntry.suggestions[suggestionIndex];
+
+    // Load remotion-props
+    const propsFile = path.join(dir, 'remotion-props.json');
+    const props = safeReadJson(propsFile);
+    if (!props) return res.status(404).json({ error: 'remotion-props.json not found' });
+
+    // Apply patch via deep-merge
+    // deepMergePatch defined at top of server.js
+    const current = props.scratchSteps?.[stepId] || {};
+    const updated = deepMergePatch(current, suggestion.patch, suggestion.action);
+    if (!props.scratchSteps) props.scratchSteps = {};
+    props.scratchSteps[stepId] = updated;
+
+    // Atomic write
+    const tmp = propsFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(props, null, 2));
+    fs.renameSync(tmp, propsFile);
+
+    res.json({ ok: true, appliedPatch: suggestion.patch, updatedStep: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/runs/:runId/apply-all-suggestions', (req, res) => {
+  try {
+    const minConfidence = parseFloat(req.body?.minConfidence ?? 0.85);
+
+    const dir = getRunDir(req.params.runId);
+
+    // Load suggestions
+    const suggestionsFile = path.join(dir, 'overlay-suggestions.json');
+    const suggestions = safeReadJson(suggestionsFile);
+    if (!suggestions) return res.status(404).json({ error: 'overlay-suggestions.json not found' });
+
+    // Load remotion-props
+    const propsFile = path.join(dir, 'remotion-props.json');
+    const props = safeReadJson(propsFile);
+    if (!props) return res.status(404).json({ error: 'remotion-props.json not found' });
+    if (!props.scratchSteps) props.scratchSteps = {};
+
+    // deepMergePatch defined at top of server.js
+    let applied = 0;
+    let skipped = 0;
+    const appliedStepIds = [];
+
+    for (const [stepId, entry] of Object.entries(suggestions.steps || {})) {
+      if (!entry?.suggestions?.length) continue;
+      let stepApplied = false;
+      for (const suggestion of entry.suggestions) {
+        if (suggestion.confidence < minConfidence) { skipped++; continue; }
+        const current = props.scratchSteps[stepId] || {};
+        props.scratchSteps[stepId] = deepMergePatch(current, suggestion.patch, suggestion.action);
+        applied++;
+        stepApplied = true;
+      }
+      if (stepApplied) appliedStepIds.push(stepId);
+    }
+
+    // Atomic write
+    const tmp = propsFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(props, null, 2));
+    fs.renameSync(tmp, propsFile);
+
+    res.json({ applied, skipped, stepIds: appliedStepIds });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1213,6 +1776,60 @@ app.post('/api/studio/start', (req, res) => {
   }
 });
 
+// ── our-recorder project config + studio-advance proxy ───────────────────────
+
+const OUR_RECORDER_ROOT    = process.env.OUR_RECORDER_ROOT    || '/Users/dmajetic/Claude Test/our-recorder';
+const OUR_RECORDER_PROJECT = process.env.OUR_RECORDER_PROJECT || 'my-video';
+const MANUAL_RECORD_PORT   = 3739;
+
+app.get('/api/studio/our-recorder-project', (req, res) => {
+  const projectDir = path.join(OUR_RECORDER_ROOT, 'public', OUR_RECORDER_PROJECT);
+  res.json({
+    root:    OUR_RECORDER_ROOT,
+    project: OUR_RECORDER_PROJECT,
+    dir:     projectDir,
+    exists:  fs.existsSync(projectDir),
+  });
+});
+
+app.post('/api/studio/our-recorder-project', (req, res) => {
+  // Allowed to override only the project subfolder name (not root) at runtime.
+  const { project } = req.body || {};
+  if (!project || typeof project !== 'string' || project.includes('..') || project.includes('/')) {
+    return res.status(400).json({ error: 'Invalid project name' });
+  }
+  // We can't mutate the module-level const, so just return what would be used.
+  // The actual value is read from .env — tell the user to set OUR_RECORDER_PROJECT in .env.
+  const projectDir = path.join(OUR_RECORDER_ROOT, 'public', project);
+  res.json({ ok: true, project, dir: projectDir, note: 'Set OUR_RECORDER_PROJECT in .env and restart to persist.' });
+});
+
+app.post('/api/studio/advance', (req, res) => {
+  // Proxy to manual-record.js HTTP advance endpoint on MANUAL_RECORD_PORT
+  const http = require('http');
+  const postData = JSON.stringify({});
+  const options = {
+    hostname: '127.0.0.1',
+    port: MANUAL_RECORD_PORT,
+    path: '/studio-advance',
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
+    timeout: 3000,
+  };
+  const proxyReq = http.request(options, (proxyRes) => {
+    let body = '';
+    proxyRes.on('data', chunk => { body += chunk; });
+    proxyRes.on('end', () => {
+      try { res.json(JSON.parse(body)); } catch (_) { res.json({ ok: true }); }
+    });
+  });
+  proxyReq.on('error', (err) => {
+    res.status(502).json({ error: 'manual-record not running: ' + err.message });
+  });
+  proxyReq.write(postData);
+  proxyReq.end();
+});
+
 // ── Recording status ──────────────────────────────────────────────────────────
 
 app.get('/api/recording/status', (req, res) => {
@@ -1248,8 +1865,358 @@ app.get('/api/recording/status', (req, res) => {
   }
 });
 
+// ── Demo App Launcher ─────────────────────────────────────────────────────────
+
+const demoAppServers = new Map(); // runId → { url, port, server }
+const DEMO_APP_BASE_PORT = 3750;
+const DEMO_APP_OVERLAY_FILE = path.join(__dirname, 'public', 'ai-overlay.js');
+
+const DEMO_MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg',
+};
+
+async function launchDemoAppServer(runId) {
+  if (demoAppServers.has(runId)) return demoAppServers.get(runId);
+
+  const scratchAppDir = path.join(DEMOS_DIR, runId, 'scratch-app');
+  if (!fs.existsSync(path.join(scratchAppDir, 'index.html'))) {
+    throw new Error(`No built app found for run: ${runId}`);
+  }
+
+  const demoApp = express();
+  demoApp.use(express.json({ limit: '10mb' }));
+  demoApp.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    next();
+  });
+
+  // Serve AI overlay script
+  demoApp.get('/__ai-overlay.js', (req, res) => {
+    try {
+      res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+      res.end(fs.readFileSync(DEMO_APP_OVERLAY_FILE, 'utf8'));
+    } catch (_) { res.status(404).end('// overlay not found'); }
+  });
+
+  // Plaid API proxy routes (only when live mode enabled)
+  if (process.env.PLAID_LINK_LIVE === 'true') {
+    let _plaid = null;
+    const getPlaid = () => { if (!_plaid) _plaid = require('../scratch/utils/plaid-backend'); return _plaid; };
+    demoApp.options('/api/*', (req, res) => res.status(204).end());
+    demoApp.post('/api/create-link-token', async (req, res) => {
+      try { res.json(await getPlaid().createLinkToken(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/exchange-public-token', async (req, res) => {
+      try { res.json(await getPlaid().exchangePublicToken(req.body.public_token)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/auth-get', async (req, res) => {
+      try { res.json(await getPlaid().getAuth(req.body.access_token)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/identity-match', async (req, res) => {
+      try { res.json(await getPlaid().getIdentityMatch(req.body.access_token, req.body.legal_name)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/signal-evaluate', async (req, res) => {
+      try { res.json(await getPlaid().evaluateSignal(req.body.access_token, req.body.account_id, req.body.amount)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+  }
+
+  // Root — inject overlay globals + script tag
+  demoApp.get('/', (req, res) => {
+    try {
+      let html = fs.readFileSync(path.join(scratchAppDir, 'index.html'), 'utf8');
+      const inject = `<script>window.__DEMO_RUN_ID__=${JSON.stringify(runId)};window.__DASHBOARD_ORIGIN__='http://localhost:${PORT}';</script><script src="/__ai-overlay.js" defer></script>`;
+      html = html.includes('</body>') ? html.replace('</body>', inject + '\n</body>') : html + inject;
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(html);
+    } catch (e) { res.status(500).end(`Error: ${e.message}`); }
+  });
+
+  // Static files
+  demoApp.use(express.static(scratchAppDir));
+
+  // Find an available port
+  let port = DEMO_APP_BASE_PORT;
+  const usedPorts = new Set(Array.from(demoAppServers.values()).map(s => s.port));
+  while (usedPorts.has(port)) port++;
+
+  const server = await new Promise((resolve, reject) => {
+    const s = demoApp.listen(port, '127.0.0.1', () => resolve(s)).once('error', reject);
+  });
+
+  const url = `http://localhost:${port}`;
+  const entry = { url, port, server };
+  demoAppServers.set(runId, entry);
+  console.log(`[DemoApp] ${runId} → ${url}`);
+  return entry;
+}
+
+// CORS for demo-app routes (overlay calls from port 3750 → 4040 are cross-origin)
+app.use('/api/demo-apps', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
+
+app.get('/api/demo-apps', (req, res) => {
+  try {
+    const apps = safeReaddir(DEMOS_DIR)
+      .filter(d => {
+        try {
+          return fs.statSync(path.join(DEMOS_DIR, d)).isDirectory() &&
+            fs.existsSync(path.join(DEMOS_DIR, d, 'scratch-app/index.html'));
+        } catch (_) { return false; }
+      })
+      .sort().reverse()
+      .map(runId => ({
+        runId,
+        running: demoAppServers.has(runId),
+        url: demoAppServers.get(runId)?.url || null,
+        port: demoAppServers.get(runId)?.port || null,
+      }));
+    res.json({ apps });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/demo-apps/launch', async (req, res) => {
+  try {
+    const { runId } = req.body;
+    if (!runId) return res.status(400).json({ error: 'runId required' });
+    const entry = await launchDemoAppServer(runId);
+    res.json({ url: entry.url, port: entry.port });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/demo-apps/:runId/stop', async (req, res) => {
+  try {
+    const { runId } = req.params;
+    const entry = demoAppServers.get(runId);
+    if (!entry) return res.status(404).json({ error: 'Server not running' });
+    await new Promise((resolve, reject) => entry.server.close(e => e ? reject(e) : resolve()));
+    demoAppServers.delete(runId);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── AI edit helpers ───────────────────────────────────────────────────────────
+
+const CSS_KEYWORDS = /\b(font|color|background|border|radius|padding|margin|size|spacing|shadow|opacity|weight|button|icon|badge|card|text|heading|label|link|hover|gradient|gap|flex|align|justify|width|height|display|transition|animation|cursor|outline|ring|accent|teal|dark|light|bright|bold|italic|rounded|pill|style)\b/i;
+const STRUCTURAL_KEYWORDS = /\b(add|remove|delete|insert|create|new step|new screen|move|reorder|rename|duplicate|hide|show step)\b/i;
+
+/** Extract all <style>…</style> blocks from HTML. Returns { css, ranges } */
+function extractStyleBlocks(html) {
+  const blocks = [];
+  const re = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    blocks.push({ start: m.index, end: m.index + m[0].length, inner: m[1], full: m[0] });
+  }
+  return blocks;
+}
+
+/** Splice updated CSS back into the original HTML (replaces first <style> block content). */
+function spliceCSS(html, blocks, newCss) {
+  if (!blocks.length) return html;
+  const b = blocks[0];
+  return html.slice(0, b.start) + `<style>\n${newCss}\n</style>` + html.slice(b.end);
+}
+
+/** Extract CSS rules relevant to a set of class names / id. */
+function extractRelevantCSS(allCss, classNames, elementId) {
+  const selectors = [...classNames, ...(elementId ? [`#${elementId}`] : [])];
+  if (!selectors.length) return allCss.slice(0, 4000); // fallback: first 4KB
+  const lines = allCss.split('\n');
+  const relevant = [];
+  let inBlock = false;
+  let depth = 0;
+  let currentSelector = '';
+  for (const line of lines) {
+    const opens = (line.match(/\{/g) || []).length;
+    const closes = (line.match(/\}/g) || []).length;
+    if (!inBlock) {
+      const isMatch = selectors.some(s => line.includes(s)) ||
+        line.match(/^[^{]*\{/) && selectors.some(s => line.includes('.' + s) || line.includes('#' + s));
+      if (opens > closes || (opens > 0 && isMatch)) {
+        inBlock = true;
+        currentSelector = line;
+        relevant.push(line);
+        depth = opens - closes;
+        continue;
+      }
+    }
+    if (inBlock) {
+      relevant.push(line);
+      depth += opens - closes;
+      if (depth <= 0) { inBlock = false; depth = 0; }
+    }
+  }
+  return relevant.join('\n') || allCss.slice(0, 4000);
+}
+
+/** Detect which edit mode to use based on message + context. */
+function detectEditMode(message, selectedElementHtml) {
+  if (STRUCTURAL_KEYWORDS.test(message)) return 'full';
+  if (CSS_KEYWORDS.test(message) && !STRUCTURAL_KEYWORDS.test(message)) {
+    return selectedElementHtml ? 'element-css' : 'css';
+  }
+  return selectedElementHtml ? 'element' : 'full';
+}
+
+app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
+  try {
+    const { runId } = req.params;
+    const { message, selectedElementHtml, selectedElementSelector, conversationHistory } = req.body;
+    const appHtmlPath = path.join(DEMOS_DIR, runId, 'scratch-app/index.html');
+    if (!fs.existsSync(appHtmlPath)) return res.status(404).json({ error: 'App HTML not found' });
+
+    const currentHtml = fs.readFileSync(appHtmlPath, 'utf8');
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const mode = detectEditMode(message, selectedElementHtml);
+    const styleBlocks = extractStyleBlocks(currentHtml);
+    const allCss = styleBlocks.map(b => b.inner).join('\n');
+
+    let systemPrompt, userContent, maxTokens, responseHandler;
+
+    if (mode === 'css') {
+      // Send only CSS — Claude returns only updated CSS
+      systemPrompt = `You are editing the CSS of a Plaid demo app.
+Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
+Respond with ONLY the raw updated CSS content — no <style> tags, no HTML, no explanation.`;
+      userContent = `Request: ${message}\n\nCurrent CSS:\n${allCss}`;
+      maxTokens = 4000;
+      responseHandler = (text) => {
+        const newHtml = spliceCSS(currentHtml, styleBlocks, text.trim());
+        return { newHtml, valid: true };
+      };
+
+    } else if (mode === 'element-css') {
+      // Send selected element + relevant CSS rules only
+      const classNames = (selectedElementHtml.match(/class="([^"]+)"/g) || [])
+        .flatMap(m => m.replace(/class="/, '').replace(/"$/, '').split(/\s+/));
+      const idMatch = selectedElementHtml.match(/id="([^"]+)"/);
+      const elementId = idMatch ? idMatch[1] : null;
+      const relevantCss = extractRelevantCSS(allCss, classNames, elementId);
+
+      systemPrompt = `You are editing CSS for a specific element in a Plaid demo app.
+Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
+Respond with ONLY the complete updated CSS — no <style> tags, no HTML, no explanation.
+Include ALL the original CSS rules plus your changes (do not drop unrelated rules).`;
+      userContent = [
+        `Selected element: ${selectedElementHtml.slice(0, 500)}`,
+        selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        `Request: ${message}`,
+        `\nRelevant CSS:\n${relevantCss}`,
+        `\nFull CSS (for reference — return the full updated version):\n${allCss}`,
+      ].filter(Boolean).join('\n\n');
+      maxTokens = 6000;
+      responseHandler = (text) => {
+        const newHtml = spliceCSS(currentHtml, styleBlocks, text.trim());
+        return { newHtml, valid: true };
+      };
+
+    } else if (mode === 'element') {
+      // Send element HTML + its CSS + minimal skeleton — Claude returns only the updated element outerHTML
+      const classNames = (selectedElementHtml.match(/class="([^"]+)"/g) || [])
+        .flatMap(m => m.replace(/class="/, '').replace(/"$/, '').split(/\s+/));
+      const relevantCss = extractRelevantCSS(allCss, classNames, null);
+
+      systemPrompt = `You are editing a specific HTML element in a Plaid demo app.
+Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
+Respond with ONLY the updated outerHTML of the element — no surrounding tags, no explanation.
+Preserve all data-testid attributes and event handlers (onclick etc).`;
+      userContent = [
+        `Element to edit:\n${selectedElementHtml}`,
+        selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        `Request: ${message}`,
+        `\nRelevant CSS for context:\n${relevantCss}`,
+      ].filter(Boolean).join('\n\n');
+      maxTokens = 4000;
+      responseHandler = (text) => {
+        const updated = text.trim();
+        // Replace the element in the full HTML by its outerHTML
+        const escaped = selectedElementHtml.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const newHtml = currentHtml.replace(new RegExp(escaped.slice(0, 200)), updated);
+        const valid = newHtml !== currentHtml;
+        return { newHtml: valid ? newHtml : currentHtml, valid };
+      };
+
+    } else {
+      // Full mode — send entire HTML
+      systemPrompt = `You are an expert frontend developer editing a Plaid demo web application.
+The app is a single-file HTML demo showing a Plaid product flow.
+Respond with ONLY the complete updated HTML — no explanation, no markdown fences.
+Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
+Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigation.`;
+      userContent = [
+        selectedElementHtml ? `Selected element:\n${selectedElementHtml.slice(0, 1000)}` : '',
+        selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        `Request: ${message}`,
+        `\nCurrent HTML:\n${currentHtml}`,
+      ].filter(Boolean).join('\n\n');
+      maxTokens = 16000;
+      responseHandler = (text) => {
+        const newHtml = text.trim();
+        const valid = newHtml.includes('<html') || newHtml.includes('<!DOCTYPE') || newHtml.includes('<body');
+        return { newHtml, valid };
+      };
+    }
+
+    // Build message list (lightweight history only)
+    const messages = [];
+    if (Array.isArray(conversationHistory)) {
+      for (const turn of conversationHistory) {
+        if (turn.role && typeof turn.content === 'string' && turn.content.length < 500) {
+          messages.push(turn);
+        }
+      }
+    }
+    messages.push({ role: 'user', content: userContent });
+
+    // Use Haiku for css/element modes (fast, cheap) — Opus for full structural edits
+    const model = (mode === 'full') ? 'claude-opus-4-6' : 'claude-haiku-4-5-20251001';
+    console.log(`[AI Edit] mode=${mode} model=${model} tokens≈${Math.round(userContent.length / 4)} run=${runId}`);
+
+    const response = await client.messages.create({
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages,
+    });
+
+    // Reject truncated responses before touching the file
+    if (response.stop_reason === 'max_tokens') {
+      return res.status(500).json({ error: `Response was truncated (hit max_tokens=${maxTokens}). File not modified. Try a more specific request or use element-pick to scope the change.` });
+    }
+
+    const { newHtml, valid } = responseHandler(response.content[0].text);
+
+    if (!valid) {
+      return res.status(500).json({ error: 'AI response could not be applied cleanly', mode, preview: response.content[0].text.slice(0, 300) });
+    }
+
+    // Backup before overwriting
+    fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
+    fs.writeFileSync(appHtmlPath, newHtml, 'utf8');
+    res.json({ ok: true, reply: `Done (${mode} mode) — changes written.` });
+  } catch (err) {
+    console.error('[AI Edit]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ──────────────────────────────────────────────────────────────
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '::', () => {
   console.log(`Dashboard running at http://localhost:${PORT}`);
 });

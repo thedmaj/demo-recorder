@@ -265,9 +265,9 @@ Key insight to narrate: despite the email mismatch (score 0) and the nickname va
 - link-events-panel: hidden throughout (developer artifact, never shown in recordings)
 
 ## Icons
-- **Never use Markdown-style emoji or Unicode symbols as icons** (no ✅, ❌, 🔒, →, ✓, etc.)
-- Use Heroicons (https://heroicons.com) for all iconography where brand-specific icons are not available
-- Load via CDN: `<script src="https://unpkg.com/heroicons@2/dist/heroicons.js"></script>` or inline SVG from the Heroicons library
-- Prefer the outline style for UI chrome and the solid style for filled/active states
-- Brand logos (Chime, Plaid) must use the actual SVG logo — do not substitute with a generic icon
-- Chime logo: use `brand.logo` from `brand/chime.json`. If `brand.logo.svgOrEmoji` is a URL, render as `<img>`; if it is an inline SVG string, inject it directly. If the field is an emoji or absent, fall back to a Heroicons SVG appropriate to the use case (e.g. `building-library` for a bank/financial institution) — never render emoji as a logo substitute.
+- **ABSOLUTE RULE: Zero emoji anywhere in the generated HTML.** No Unicode emoji, no Markdown-style symbols — nothing from ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ 🛡 🔑 or any other emoji/symbol character.
+- **All icons MUST be Heroicons SVG** (https://heroicons.com). Use inline SVG paths or load via CDN. Outline style for UI chrome; solid style for filled/active states.
+- CDN: `<script src="https://unpkg.com/heroicons@2/dist/heroicons.js"></script>`
+- If Heroicons does not have the exact icon needed, use the closest semantic Heroicons match. Never substitute an emoji.
+- Brand logos (Chime, Plaid) must use the actual SVG logo from brand JSON — do not substitute with an emoji or generic character.
+- Chime logo: use `brand.logo` from `brand/chime.json`. If it is a URL, render as `<img src="...">`. If it is an inline SVG string, inject it directly. If absent, fall back to a Heroicons `building-library` SVG outline — never an emoji.

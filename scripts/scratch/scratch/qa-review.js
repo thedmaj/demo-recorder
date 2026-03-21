@@ -1,4 +1,5 @@
 'use strict';
+/* eslint-disable no-unused-vars */
 /**
  * qa-review.js
  * Extracts step-boundary frames, runs Claude vision per step,
@@ -25,7 +26,8 @@ const fs                = require('fs');
 const path              = require('path');
 const { spawnSync }     = require('child_process');
 
-const { buildQAReviewPrompt } = require('../utils/prompt-templates');
+const { buildQAReviewPrompt }  = require('../utils/prompt-templates');
+const { screenSteps }          = require('../utils/embed-qa-screener');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -38,7 +40,7 @@ const FRAMES_DIR     = path.join(OUT_DIR, 'qa-frames');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const QA_MODEL          = 'claude-sonnet-4-6';
+const QA_MODEL          = 'claude-opus-4-6';
 const QA_MAX_TOKENS     = 2048;
 const QA_PASS_THRESHOLD = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
 const PLAID_LINK_LIVE   = process.env.PLAID_LINK_LIVE === 'true' || process.env.PLAID_LINK_LIVE === '1';
@@ -131,11 +133,28 @@ function extractStepFrames(timingSteps) {
     ];
 
     const stepFrames = [];
-    for (const spec of frameSpecs) {
-      const outputPath = path.join(FRAMES_DIR, spec.filename);
-      const ok = extractFrame(RECORDING_FILE, spec.time, outputPath);
-      if (ok) {
-        stepFrames.push({ label: spec.label, path: outputPath });
+
+    // For Plaid Link sub-steps: prefer CDP screenshots from plaid-frames/ directory.
+    // These capture the real Plaid iframe (which recordVideo may not capture cleanly
+    // when step windows are very short after post-processing). The mid-frame screenshot
+    // is taken by record-local.js at each phase transition via markPlaidStep().
+    const plaidFramesDir = path.join(OUT_DIR, 'plaid-frames');
+    const cdpMidPath     = path.join(plaidFramesDir, `${stepId}-mid.png`);
+    if (PLAID_SIM_STEP_PATTERN.test(stepId) && fs.existsSync(cdpMidPath)) {
+      // Copy the CDP screenshot to qa-frames/ under all three frame names for consistency
+      for (const spec of frameSpecs) {
+        const outputPath = path.join(FRAMES_DIR, spec.filename);
+        fs.copyFileSync(cdpMidPath, outputPath);
+        stepFrames.push({ label: spec.label, path: outputPath, _source: 'cdp-screenshot' });
+      }
+      console.log(`[QA] Step ${stepId}: using CDP screenshot (plaid-frames/${stepId}-mid.png)`);
+    } else {
+      for (const spec of frameSpecs) {
+        const outputPath = path.join(FRAMES_DIR, spec.filename);
+        const ok = extractFrame(RECORDING_FILE, spec.time, outputPath);
+        if (ok) {
+          stepFrames.push({ label: spec.label, path: outputPath });
+        }
       }
     }
 
@@ -291,7 +310,33 @@ async function main(opts = {}) {
   const totalFrames = stepFrames.reduce((n, s) => n + s.frames.length, 0);
   console.log(`[QA] Extracted ${totalFrames} frames across ${stepFrames.length} steps`);
 
-  // ── Step 2: Per-step Claude review ────────────────────────────────────────
+  // ── Step 2: Embedding pre-screening (Phase 2) ────────────────────────────
+  // For steps where the mid-frame visually matches the visualState description,
+  // assign a provisional 90/100 score and skip the Sonnet vision call (~60% savings).
+  // Gracefully no-ops when VERTEX_AI_PROJECT_ID is absent.
+  const screenInputs = stepFrames.map(({ stepId, frames }) => ({
+    stepId,
+    frames,
+    step: stepMap[stepId] || {},
+  })).filter(({ step }) => step.id);
+
+  let screenResults = new Map();
+  if (process.env.VERTEX_AI_PROJECT_ID) {
+    console.log('[QA] Running embedding pre-screening (Phase 2)...');
+    try {
+      screenResults = await screenSteps(screenInputs);
+      const screenedCount = [...screenResults.values()].filter(r => r.screened).length;
+      if (screenedCount > 0) {
+        console.log(`[QA] Pre-screened ${screenedCount}/${screenInputs.length} step(s) via embeddings — skipping Sonnet for these.`);
+      } else {
+        console.log('[QA] Embedding pre-screening: no steps met threshold — all steps will be reviewed by Sonnet.');
+      }
+    } catch (err) {
+      console.warn(`[QA] Embedding pre-screening failed (${err.message}) — falling back to full Sonnet review.`);
+    }
+  }
+
+  // ── Step 3: Per-step Claude review ────────────────────────────────────────
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   const stepResults  = [];
@@ -329,17 +374,23 @@ async function main(opts = {}) {
     // Match legacy "link-launch" / "wf-link-launch" IDs and any step whose NEXT step is
     // a Plaid Link sim step — that step contains the actual Plaid SDK auth flow.
     const nextStepIsPlaidSim = nextStepObj && PLAID_SIM_STEP_PATTERN.test(nextStepObj.id);
+    const stepObj = demoScript.steps.find(s => s.id === stepId);
     const isLivePlaidLaunchStep = PLAID_LINK_LIVE
       && stepTiming
       && stepTiming.durationMs >= LIVE_PLAID_LAUNCH_DURATION_THRESHOLD_MS
-      && (/link.?launch/i.test(stepId) || nextStepIsPlaidSim);
+      && (/link.?launch/i.test(stepId) || nextStepIsPlaidSim || stepObj?.plaidPhase === 'launch');
 
-    const isLivePlaidSimStep = PLAID_LINK_LIVE && PLAID_SIM_STEP_PATTERN.test(stepId);
+    // When CDP screenshots exist for a Plaid Link sub-step, use them for full vision review
+    // instead of auto-scoring. CDP screenshots capture the real Plaid iframe accurately.
+    const plaidFramesDir     = path.join(OUT_DIR, 'plaid-frames');
+    const hasCdpScreenshot   = PLAID_SIM_STEP_PATTERN.test(stepId)
+      && fs.existsSync(path.join(plaidFramesDir, `${stepId}-mid.png`));
+    const isLivePlaidSimStep = PLAID_LINK_LIVE && PLAID_SIM_STEP_PATTERN.test(stepId) && !hasCdpScreenshot;
 
     if (isLivePlaidLaunchStep || isLivePlaidSimStep) {
       const autoNote = isLivePlaidLaunchStep
         ? `Auto-scored: LIVE Plaid flow step (${Math.round(stepTiming.durationMs / 1000)}s). Frame-content scoring skipped — real Plaid SDK auth flow occupies this segment.`
-        : `Auto-scored: LIVE Plaid sim step (${stepId}). Frame timing unreliable for short CDP-driven steps.`;
+        : `Auto-scored: LIVE Plaid sim step (${stepId}). No CDP screenshot available — frame timing unreliable.`;
       const result = {
         stepId,
         score: 85,
@@ -352,6 +403,25 @@ async function main(opts = {}) {
       allStepScores[stepId] = result.score;
       const label = isLivePlaidLaunchStep ? 'LIVE-PLAID-AUTO' : 'LIVE-PLAID-SIM-AUTO';
       console.log(`[QA] Step ${stepId}: 85/100 [${label}]`);
+      continue;
+    }
+
+    // ── Embedding pre-screen check ───────────────────────────────────────────
+    const screenResult = screenResults.get(stepId);
+    if (screenResult?.screened) {
+      const result = {
+        stepId,
+        score:          screenResult.score,
+        issues:         [],
+        suggestions:    [],
+        critical:       false,
+        _embedScreened: true,
+        _embeddingSimilarity: screenResult.similarity,
+        _note:          `Pre-screened: embedding similarity ${screenResult.similarity} ≥ threshold — skipped Sonnet review`,
+      };
+      stepResults.push(result);
+      allStepScores[stepId] = result.score;
+      console.log(`[QA] Step ${stepId}: ${result.score}/100 [EMBED-SCREENED sim=${screenResult.similarity}]`);
       continue;
     }
 
@@ -368,7 +438,7 @@ async function main(opts = {}) {
     }
   }
 
-  // ── Step 3: Aggregate results ─────────────────────────────────────────────
+  // ── Step 4: Aggregate results ─────────────────────────────────────────────
   const scores = Object.values(allStepScores);
   const overallScore = scores.length > 0
     ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
@@ -389,7 +459,7 @@ async function main(opts = {}) {
     allStepScores,
   };
 
-  // ── Step 4: Write report ───────────────────────────────────────────────────
+  // ── Step 5: Write report ───────────────────────────────────────────────────
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const reportPath = path.join(OUT_DIR, `qa-report-${iteration}.json`);
   fs.writeFileSync(reportPath, JSON.stringify(qaReport, null, 2));

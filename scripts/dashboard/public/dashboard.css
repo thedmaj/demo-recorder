@@ -1187,8 +1187,30 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   border-radius: 8px;
   padding: 16px 16px 16px 16px;
   margin-bottom: 12px;
-  transition: border-left-color 0.12s;
+  transition: border-left-color 0.12s, opacity 0.15s, transform 0.1s;
+  cursor: default;
 }
+.step-card.dragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+}
+.step-card.drag-over {
+  border-color: rgba(0, 166, 126, 0.7);
+  border-left-color: rgba(0, 166, 126, 0.9);
+  background: rgba(0, 166, 126, 0.07);
+}
+.step-drag-handle {
+  font-size: 18px;
+  color: rgba(255,255,255,0.25);
+  cursor: grab;
+  padding: 0 8px 0 0;
+  margin-top: 2px;
+  user-select: none;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.step-drag-handle:hover { color: rgba(255,255,255,0.6); }
+.step-drag-handle:active { cursor: grabbing; }
 
 .step-card.has-issues {
   border-left-color: rgba(251, 191, 36, 0.6);
@@ -1208,6 +1230,45 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   align-items: center;
   justify-content: center;
   position: relative;
+}
+
+/* Plaid Link step placeholder — shown when no qa-frame exists (real SDK modal = no host-page PNG) */
+.step-thumb.plaid-link-thumb {
+  border-color: rgba(0,166,126,0.35);
+  background: linear-gradient(135deg, rgba(0,166,126,0.08), rgba(0,166,126,0.04));
+  cursor: default;
+}
+.step-thumb.plaid-link-thumb:hover::after { display: none; }
+
+.thumb-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  color: rgba(255,255,255,0.3);
+  font-size: 11px;
+}
+
+.thumb-plaid-link {
+  color: rgba(255,255,255,0.55) !important;
+}
+.plaid-link-icon {
+  margin-bottom: 2px;
+}
+.plaid-link-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #00A67E;
+  letter-spacing: 0.02em;
+}
+.plaid-link-sublabel {
+  font-size: 9px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .frame-source-badge {
@@ -2321,6 +2382,73 @@ pre.json-preview {
   color: rgba(255, 255, 255, 0.30);
 }
 
+/* ── Narration-to-video alignment timeline ──────────────────────────────── */
+.sb-align-timeline {
+  position: relative;
+  height: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  margin: 8px 0 4px;
+  overflow: hidden;
+  display: flex;
+}
+.sb-align-narr {
+  height: 100%;
+  background: #00A67E;
+  border-radius: 4px 0 0 4px;
+  transition: width 0.25s ease;
+  flex-shrink: 0;
+}
+.sb-align-gap {
+  height: 100%;
+  background: rgba(255, 255, 255, 0.18);
+  flex-shrink: 0;
+}
+.sb-align-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.sb-align-stat {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.38);
+  white-space: nowrap;
+}
+.sb-align-gap-stat   { color: rgba(255, 255, 255, 0.25); }
+.sb-align-vid-stat   { color: rgba(255, 255, 255, 0.38); }
+.sb-align-speed-stat { color: rgba(0, 166, 126, 0.7); font-weight: 600; }
+.sb-align-speed-warn { color: rgba(251, 146, 60, 0.85); }
+
+/* ── Per-step speed control ─────────────────────────────────────────────── */
+.sb-speed-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.sb-speed-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.40);
+  white-space: nowrap;
+  min-width: 36px;
+}
+.sb-speed-input {
+  width: 72px !important;
+  padding: 3px 6px !important;
+  font-size: 12px !important;
+  height: 26px !important;
+}
+.sb-speed-preview {
+  font-size: 11px;
+  color: rgba(0, 166, 126, 0.75);
+  white-space: nowrap;
+  min-width: 48px;
+  transition: color 0.2s;
+}
+.sb-speed-preview.sb-speed-preview-warn { color: rgba(251, 146, 60, 0.85); }
+
 /* ── Storyboard Feedback & AI Rewrite ────────────────────────────────────── */
 
 .sb-feedback-header .card-header {
@@ -2438,4 +2566,347 @@ pre.json-preview {
 .sb-rewrite-accept-actions {
   display: flex;
   gap: 6px;
+}
+
+/* ── Scene Timing (auto-gap) table ─────────────────────────────────────────── */
+
+.gap-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.gap-table th {
+  text-align: left;
+  padding: 4px 8px;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+
+.gap-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+}
+
+.gap-table tr:last-child td {
+  border-bottom: none;
+}
+
+.gap-table tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gap-cell-step {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gap-cell-num {
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.gap-cell-input {
+  white-space: nowrap;
+}
+
+.gap-cell-action {
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+}
+
+/* ── Video timeline editor ─────────────────────────────────────────────────── */
+.tl-track {
+  position: relative;
+  height: 56px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: crosshair;
+  user-select: none;
+}
+.tl-steps-row {
+  display: flex;
+  height: 28px;
+  width: 100%;
+}
+.tl-step {
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid rgba(0,0,0,0.25);
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  min-width: 0;
+  transition: opacity 0.1s;
+}
+.tl-step:hover { opacity: 1 !important; filter: brightness(1.15); }
+.tl-step-label {
+  font-size: 9px;
+  color: rgba(255,255,255,0.85);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.tl-segments-row {
+  position: relative;
+  height: 28px;
+  width: 100%;
+}
+.tl-segment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border-radius: 2px;
+}
+.tl-seg-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.8);
+}
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: rgba(255,255,255,0.6);
+  pointer-events: none;
+  transition: left 0.05s;
+}
+
+/* ── AI Overlay Suggestions Panel ─────────────────────────────────────────── */
+.suggestion-panel {
+  margin-top: 28px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-top: 20px;
+}
+.suggestion-loading {
+  color: rgba(255,255,255,0.45);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.suggestion-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.suggestion-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+.suggestion-count-badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(0,166,126,0.15);
+  color: #00A67E;
+  font-weight: 600;
+}
+.suggestion-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.suggestion-card {
+  display: flex;
+  gap: 14px;
+  padding: 14px;
+  background: rgba(255,255,255,0.04);
+  border-left: 3px solid rgba(0,166,126,0.5);
+  border-radius: 8px;
+  transition: border-color 0.2s, opacity 0.2s;
+}
+.suggestion-card.applied {
+  border-left-color: #22c55e;
+  background: rgba(34,197,94,0.05);
+}
+.suggestion-card.dismissed {
+  display: none;
+}
+.suggestion-frame {
+  width: 120px;
+  height: 75px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.05);
+}
+.suggestion-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.suggestion-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.suggestion-step-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.8);
+}
+.suggestion-type-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.65);
+  font-family: monospace;
+}
+.suggestion-confidence {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+.suggestion-confidence.high {
+  background: rgba(0,166,126,0.2);
+  color: #00A67E;
+}
+.suggestion-confidence.med {
+  background: rgba(255,200,0,0.2);
+  color: #ffc800;
+}
+.suggestion-confidence.low {
+  background: rgba(255,255,255,0.1);
+  color: #999;
+}
+.suggestion-reasoning {
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+  line-height: 1.5;
+}
+.suggestion-patch-preview {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.suggestion-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ── Add Step modal ─────────────────────────────────────────────────────────── */
+.add-step-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.add-step-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+}
+.add-step-panel {
+  position: relative;
+  z-index: 1;
+  background: #0f1923;
+  border: 1px solid rgba(0, 166, 126, 0.3);
+  border-radius: 12px;
+  padding: 24px;
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.add-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.add-step-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #ffffff;
+}
+.add-step-field {
+  margin-bottom: 16px;
+}
+.scene-type-toggle {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 6px;
+}
+.scene-type-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.scene-type-btn.active {
+  background: rgba(0,166,126,0.18);
+  border-color: rgba(0,166,126,0.55);
+  color: #00A67E;
+  font-weight: 600;
+}
+.scene-type-btn:hover:not(.active) {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.75);
+}
+.add-step-scene-desc {
+  font-size: 11px;
+  color: rgba(255,255,255,0.38);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+.add-step-actions,
+.add-step-preview-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+.add-step-preview-label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  margin-bottom: 12px;
+}
+.add-step-preview-grid {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.add-step-preview-key {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  text-align: right;
 }

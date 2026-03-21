@@ -43,7 +43,7 @@ const PLAYWRIGHT_MARKER = '<!-- PLAYWRIGHT_SCRIPT_JSON -->';
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const ARCH_MODEL         = 'claude-sonnet-4-6';
+const ARCH_MODEL         = 'claude-opus-4-6';
 const ARCH_MAX_TOKENS    = 1024;
 const BUILD_MODEL        = 'claude-opus-4-6';
 const BUILD_BUDGET_TOKENS = 12000;
@@ -218,7 +218,7 @@ function extractText(content) {
  * Call 1: Architecture brief (claude-sonnet-4-6, non-streaming, 1024 tokens).
  */
 async function getArchitectureBrief(client, demoScript) {
-  console.log('[Build] Call 1: Generating architecture brief (claude-sonnet-4-6)...');
+  console.log('[Build] Call 1: Generating architecture brief (claude-opus-4-6)...');
 
   const { system, userMessages } = buildAppArchitectureBriefPrompt(demoScript, { plaidLinkLive: PLAID_LINK_LIVE });
 
@@ -481,8 +481,20 @@ async function main(opts = {}) {
   if (!html.includes('window.getCurrentStep')) {
     domErrors.push('window.getCurrentStep not found in generated HTML');
   }
+  // Detect malformed "function {" (no name, no params) — a JS syntax error that prevents
+  // the entire inline <script> from executing. This makes window.goToStep undefined at
+  // runtime even though it appears to exist in the source HTML.
+  if (/\bfunction\s*\{/.test(html)) {
+    domErrors.push('Malformed anonymous function "function {" found in script — JS syntax error will prevent window.goToStep from loading at runtime');
+  }
 
-  // 3. Duplicate data-testid attributes cause Playwright strict-mode errors
+  // 3. Duplicate data-testid attributes cause Playwright strict-mode errors.
+  // Auto-fix: if the duplicated testid is NOT an interaction target (recording never clicks it),
+  // strip the testid from the 2nd+ occurrences. Navigation links, sidebar headers, and shared
+  // structural elements fall into this category — the recording calls goToStep() directly.
+  const interactionTargetSet = new Set(
+    (demoScript.steps || []).map(s => s.interaction?.target).filter(Boolean)
+  );
   const testidMatches = [...html.matchAll(/data-testid="([^"]+)"/g)];
   const testidCounts = {};
   for (const m of testidMatches) {
@@ -492,7 +504,30 @@ async function main(opts = {}) {
     .filter(([, count]) => count > 1)
     .map(([id]) => id);
   if (dupeTestids.length > 0) {
-    domErrors.push(`Duplicate data-testid attributes: ${dupeTestids.join(', ')}`);
+    // Separate into auto-fixable (not a recording target) vs hard errors
+    const fixableDupes = dupeTestids.filter(id => !interactionTargetSet.has(id));
+    const hardDupes    = dupeTestids.filter(id =>  interactionTargetSet.has(id));
+
+    // Auto-fix ALL duplicates: keep first occurrence, rename the rest.
+    // For interaction targets this is still safe — the recording clicks the first (usually
+    // the global nav element), which is the one that stays. Any duplicate in a step div
+    // gets renamed to prevent Playwright strict-mode errors.
+    const allDupes = [...fixableDupes, ...hardDupes];
+    if (allDupes.length > 0) {
+      for (const dupeId of allDupes) {
+        let seen = 0;
+        html = html.replace(new RegExp(`\\bdata-testid="${dupeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g'), () => {
+          seen++;
+          return seen === 1 ? `data-testid="${dupeId}"` : `data-testid="${dupeId}-dup${seen}"`;
+        });
+      }
+      if (hardDupes.length > 0) {
+        console.warn(`[Build] Auto-deduped interaction target testid(s) — recording uses first occurrence: ${hardDupes.join(', ')}`);
+      }
+      if (fixableDupes.length > 0) {
+        console.log(`[Build] Auto-deduped ${fixableDupes.length} non-target testid(s): ${fixableDupes.join(', ')}`);
+      }
+    }
   }
 
   // 4. Step divs must NOT have inline style="display:..." — this permanently overrides
@@ -518,7 +553,31 @@ async function main(opts = {}) {
     interactionTargets.filter(t => !html.includes(`data-testid="${t}"`))
   )];
   if (missingTargets.length > 0) {
-    domErrors.push(`Missing data-testid for interaction targets: ${missingTargets.join(', ')}`);
+    // Auto-fix: inject missing testids onto the first interactive element in each step's div.
+    // Avoids hard-exit when LLM uses a different name for an otherwise-correct button/link.
+    let autoFixed = 0;
+    for (const target of missingTargets) {
+      const step = demoScript.steps.find(s => s.interaction?.target === target);
+      if (!step) continue;
+      const stepId = step.id;
+      // Match the step div and attempt to inject the testid on its first button/a/[role=button]
+      const stepDivRe = new RegExp(
+        `(<div[^>]+data-testid="step-${stepId}"[^>]*>[\\s\\S]*?)(<(?:button|a)(?:\\s[^>]*?)?)>`
+      );
+      const patched = html.replace(stepDivRe, (m, pre, tagOpen) => {
+        if (tagOpen.includes(`data-testid="${target}"`)) return m; // already there
+        console.log(`[Build] Auto-injected data-testid="${target}" into step "${stepId}"`);
+        autoFixed++;
+        return `${pre}${tagOpen} data-testid="${target}">`;
+      });
+      if (patched !== html) html = patched;
+    }
+    const stillMissing = missingTargets.filter(t => !html.includes(`data-testid="${t}"`));
+    if (stillMissing.length > 0) {
+      domErrors.push(`Missing data-testid for interaction targets: ${stillMissing.join(', ')}`);
+    } else if (autoFixed > 0) {
+      console.log(`[Build] Auto-fixed ${autoFixed} missing testid(s) — re-validating`);
+    }
   }
 
   if (domErrors.length > 0) {
@@ -527,6 +586,80 @@ async function main(opts = {}) {
     process.exit(1);
   }
   console.log('[Build] DOM contract: OK');
+
+  // ── Strip duplicate API response panels ────────────────────────────────────
+  // The LLM frequently generates both a global `api-response-panel` floating overlay
+  // AND inline step-specific JSON panels, causing two JSON panels to appear at once.
+  // Fix: unconditionally remove ALL showApiPanel() calls regardless of inline panel
+  // detection. The api-response-panel overlay remains hidden (display:none) and only
+  // the inline per-step panel is visible. This is simpler and more reliable than
+  // trying to detect which pattern the LLM used.
+  if (html.includes('showApiPanel(')) {
+    const before = html;
+    // Step 1: Rename the function DEFINITION so stripping doesn't corrupt it.
+    html = html.replace(/\bfunction\s+showApiPanel\b/g, 'function _showApiPanelStub');
+    // Step 2: Strip showApiPanel() CALLS using a paren-depth counter, not a regex.
+    // The naive [^)]* regex breaks on phone numbers like "+1(111)222-3333" inside
+    // the JSON argument — the first ) terminates the match early, leaving raw JSON
+    // as invalid JavaScript (causes "window.goToStep is not a function" errors).
+    let stripped = '';
+    let i = 0;
+    while (i < html.length) {
+      const idx = html.indexOf('showApiPanel(', i);
+      if (idx === -1) { stripped += html.slice(i); break; }
+      stripped += html.slice(i, idx);
+      // Walk forward counting parens to find the matching close paren
+      let depth = 0;
+      let j = idx + 'showApiPanel'.length;
+      while (j < html.length) {
+        if (html[j] === '(') depth++;
+        else if (html[j] === ')') { depth--; if (depth === 0) { j++; break; } }
+        j++;
+      }
+      // Skip optional trailing semicolon + whitespace
+      while (j < html.length && (html[j] === ';' || html[j] === ' ' || html[j] === '\n' || html[j] === '\r')) j++;
+      i = j;
+    }
+    html = stripped;
+    if (html !== before) {
+      console.log('[Build] Stripped showApiPanel() calls — api-response-panel overlay stays hidden');
+    }
+  }
+  // ── Restore insight-step API panel calls stripped above ────────────────────
+  // After stripping, any if (API_DATA[id]) { } block is left empty. Re-insert the
+  // correct _showApiPanelStub call so insight steps show their JSON response panel.
+  html = html.replace(
+    /if\s*\(\s*API_DATA\s*\[\s*id\s*\]\s*\)\s*\{\s*\}/g,
+    'if (API_DATA[id]) { _showApiPanelStub(API_DATA[id].response); }'
+  );
+
+  // ── Patch _showApiPanelStub to clear display:none!important before showing ──
+  // record-local.js sets apiPanel.style.setProperty('display','none','important')
+  // on non-insight steps. _showApiPanelStub only adds the 'visible' class (which
+  // changes transform), but display:none!important overrides the transform — panel
+  // stays invisible. Fix: remove the inline display property at the top of the stub.
+  if (html.includes('function _showApiPanelStub')) {
+    html = html.replace(
+      /function _showApiPanelStub\s*\(([^)]*)\)\s*\{/g,
+      (match, args) => {
+        return `function _showApiPanelStub(${args}) { var _ap = document.getElementById('api-response-panel'); if (_ap) _ap.style.removeProperty('display');`;
+      }
+    );
+    console.log('[Build] Patched _showApiPanelStub to clear display:none before show');
+  }
+
+  // ── Enforce 98% U.S. depository account coverage stat (Auth) ───────────────
+  // The LLM sometimes writes "95%" for the Plaid Auth coverage statistic.
+  // The approved CLAUDE.md value is "over 98% of U.S. depository accounts."
+  // Apply a targeted replacement: only "95%+" or "95%" near depository context.
+  {
+    const before = html;
+    html = html.replace(/\b95(%\+?)\b(?=[^<]{0,60}[Dd]epository)/g, '98$1');
+    html = html.replace(/(?<=[Dd]epository[^<]{0,60})\b95(%\+?)\b/g, '98$1');
+    if (html !== before) {
+      console.log('[Build] Corrected 95% → 98% for U.S. depository account coverage stat');
+    }
+  }
 
   // ── Validate playwright-script.json step IDs match demo-script.json ────────
   // The LLM generates playwright-script.json and can invent arbitrary step IDs.

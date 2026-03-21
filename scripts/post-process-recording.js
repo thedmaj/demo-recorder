@@ -24,9 +24,9 @@
  *   --otp-keep N       Seconds of OTP screen to keep after detection  (default: 2.5)
  *   --success-keep N   Seconds of success screen to keep              (default: 4.0)
  *   --phone-tail N     Seconds after phone-submitted to include       (default: 0.5)
- *   --max-institution N  Hard cap on institution list section in output (default: 4.0)
+ *   --max-institution N  Hard cap on institution list section in output (default: 5.0)
  *                        Section is split (list-appear | account+confirm) to fit within N seconds.
- *                        Use 5.0 for non-Remember-Me flows with more screens. RULE: ≤4s default.
+ *                        Must be ≥ 4.7s so each sub-part gets MIN_PLAID_SCREEN_MS (2s) minimum.
  *   --dry-run          Print ffmpeg command without executing
  *   --preview          Open result in default player after processing
  */
@@ -58,8 +58,16 @@ const OTP_KEEP     = parseFloat(getArg('--otp-keep',       '2.5'));
 const SUCCESS_KEEP = parseFloat(getArg('--success-keep',   '4.0'));
 const PHONE_TAIL   = parseFloat(getArg('--phone-tail',     '0.5'));
 // Institution list hard cap: entire list→confirm section must fit within this many seconds.
-// RULE: ≤4s for Remember Me (Tartan Bank). ≤5s for any other Plaid Link flow.
-const MAX_INST_S   = parseFloat(getArg('--max-institution', '4.0'));
+// Must be ≥ 2×MIN_PLAID_SCREEN_S + LEAD_IN + TAIL = 2+2+0.2+0.5 = 4.7s.
+// Default raised to 5.0s so each of the two sub-parts (list-appear, account+confirm)
+// gets at least MIN_PLAID_SCREEN_S seconds of visible screen time.
+const MAX_INST_S   = parseFloat(getArg('--max-institution', '5.0'));
+
+// Minimum processed-video duration per Plaid Link sub-step screen (milliseconds).
+// Screens shorter than this get a freezeMs tag; orchestrator injects a Remotion freeze.
+// Phantom windows (< MIN_EMIT_MS) are transitions, not real screens — don't emit them.
+const MIN_PLAID_SCREEN_MS = 2000;
+const MIN_EMIT_MS         = 500;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -150,6 +158,27 @@ if (schemaWarnings > 0) {
 checkFfmpeg();
 const totalDuration = getVideoDuration(INPUT_PATH);
 
+// ── Validate timestamps against recording duration ─────────────────────────
+// Timestamps from plaid-link-timing.json may be from a different recording
+// iteration if the best recording was restored without updating plaid-link-timing.
+// Warn loudly and null out any timestamps that exceed the recording length.
+{
+  const staleKeys = [];
+  for (const key of Object.keys(T)) {
+    if (T[key] > totalDuration + 1.0) {  // 1s tolerance for encoder rounding
+      staleKeys.push(`${key}=${T[key].toFixed(2)}s`);
+      delete T[key];
+    }
+  }
+  if (staleKeys.length > 0) {
+    console.warn(`\n  ⚠ [PostProcess] STALE TIMING DETECTED — timestamps beyond recording duration (${totalDuration.toFixed(2)}s):`);
+    console.warn(`  ⚠   ${staleKeys.join(', ')}`);
+    console.warn(`  ⚠   These keys have been nulled. Range 4 (success+app) will use fallback.`);
+    console.warn(`  ⚠   Root cause: plaid-link-timing.json is from a different recording iteration.`);
+    console.warn(`  ⚠   Fix: ensure plaid-link-timing-iterN.json is restored with the best recording.\n`);
+  }
+}
+
 console.log('\n[PostProcess] Step timing:');
 for (const t of timings) {
   const offset = t.recordingOffsetS != null ? t.recordingOffsetS.toFixed(2) + 's' : 'N/A';
@@ -238,11 +267,13 @@ if (T['otp-screen'] != null) {
       addKeep(listStart - LEAD_IN, confirmEnd, 'institution → confirm');
     } else {
       // Split to fit within MAX_INST_S:
-      //   LIST_PART_S  = 40% of budget (min 1.2s) — list + bank click visible
-      //   CONFIRM_PART_S = remaining budget    — account screen + confirm click
-      const budget        = MAX_INST_S - LEAD_IN - TAIL;  // content seconds available
-      const LIST_PART_S   = Math.max(1.2, budget * 0.40);
-      const CONFIRM_PART_S = budget - LIST_PART_S;
+      //   LIST_PART_S    = 40% of budget (min MIN_PLAID_SCREEN_S) — list + bank click visible
+      //   CONFIRM_PART_S = remaining budget (min MIN_PLAID_SCREEN_S) — account + confirm click
+      // With MAX_INST_S=5.0: budget=4.3s → LIST=max(2.0,1.72)=2.0s, CONFIRM=2.3s ✓
+      const budget         = MAX_INST_S - LEAD_IN - TAIL;  // content seconds available
+      const MIN_PART_S     = MIN_PLAID_SCREEN_MS / 1000;
+      const LIST_PART_S    = Math.max(MIN_PART_S, budget * 0.40);
+      const CONFIRM_PART_S = Math.max(MIN_PART_S, budget - LIST_PART_S);
 
       addKeep(listStart - LEAD_IN, listStart + LIST_PART_S,          'institution list (capped)');
       addKeep(confirmEnd - TAIL - CONFIRM_PART_S, confirmEnd,         'account → confirm (capped)');
@@ -270,7 +301,9 @@ if (T['otp-screen'] != null) {
     ? T['link-complete']                           // exact moment success panel appears
     : T['confirm-clicked'] != null
       ? T['confirm-clicked'] + 10                  // fallback: guess ~10s after confirm
-      : null;
+      : T['otp-filled'] != null
+        ? T['otp-filled'] + 20                     // fallback: ~20s after OTP filled covers typical Remember Me completion
+        : totalDuration - SUCCESS_KEEP;            // last-resort: keep only the tail of the recording
   if (successStart != null) {
     addKeep(
       Math.min(successStart, totalDuration - SUCCESS_KEEP),
@@ -339,14 +372,98 @@ console.log(`  Input:  ${totalDuration.toFixed(2)}s  →  Output est: ${keptTota
     return entry;
   });
 
+  // ── Synthesize processed step timing for Plaid Link sub-steps ──────────────
+  // The 4 Plaid Link steps (link-consent, link-otp, link-account-select, link-success)
+  // are not in step-timing.json (they're covered by the launch step's single block).
+  // Map each phase timestamp from plaid-link-timing.json to processed-video coordinates
+  // so generate-voiceover.js can assign narration to them and QA can find their frames.
+  //
+  // Phase → step ID mapping (matches PLAID_PHASE_TO_STEP_ID in record-local.js):
+  //   phone-submitted        → link-consent        (phone consent visible)
+  //   otp-screen             → link-otp            (OTP input visible)
+  //   institution-list-shown → link-account-select (institution list visible)
+  //   link-complete          → link-success        (success state)
+  //
+  // Each window runs from the phase start to the next phase start (or link-complete + 1s).
+
+  function rawToProcessedMs(rawS) {
+    // Convert a raw-recording timestamp (seconds) to processed-video time (ms).
+    // Clamps to the nearest keep range boundary if the timestamp falls in a cut section.
+    let cumulative = 0;
+    for (const r of mappedRanges) {
+      if (rawS >= r.rawStart && rawS <= r.rawEnd) {
+        return Math.round((cumulative + (rawS - r.rawStart)) * 1000);
+      }
+      if (rawS < r.rawStart) {
+        // Falls in a cut section before this range — snap to range start
+        return Math.round(cumulative * 1000);
+      }
+      cumulative += (r.rawEnd - r.rawStart);
+    }
+    return Math.round(cumulative * 1000); // past all ranges
+  }
+
+  const plaidStepWindows = [];
+  const phaseMap = [
+    { phase: 'phone-submitted',        stepId: 'link-consent',       nextPhase: 'otp-screen' },
+    { phase: 'otp-screen',             stepId: 'link-otp',           nextPhase: 'institution-list-shown' },
+    { phase: 'institution-list-shown', stepId: 'link-account-select',nextPhase: 'confirm-clicked' },
+    { phase: 'link-complete',          stepId: 'link-success',       nextPhase: null },
+  ];
+
+  for (const { phase, stepId, nextPhase } of phaseMap) {
+    if (T[phase] == null) continue;
+    const rawStartS = T[phase];
+    // link-success has no nextPhase — use at least MIN_PLAID_SCREEN_S of footage.
+    // In normal flows there are 90+ seconds of raw video after link-complete, so
+    // this never hits the end of recording.
+    const rawEndS = nextPhase && T[nextPhase] != null
+      ? T[nextPhase]
+      : rawStartS + Math.max(MIN_PLAID_SCREEN_MS / 1000, SUCCESS_KEEP);
+    const startMs = rawToProcessedMs(rawStartS);
+    const endMs   = rawToProcessedMs(rawEndS);
+    const durationMs = endMs - startMs;
+
+    // Phantom windows: the two raw timestamps are nearly simultaneous (< MIN_EMIT_MS apart
+    // in processed space). In Remember Me flow, phone-submitted ≈ otp-screen — the phone
+    // screen WAS visible for many seconds before phone-submitted fired, so this is a
+    // measurement artifact, not a real 10ms screen. Don't emit as a sub-step window.
+    if (durationMs < MIN_EMIT_MS) {
+      console.log(`  [PostProcess] ${stepId}: ${durationMs}ms processed window — phantom transition, skipping`);
+      continue;
+    }
+
+    const window = { stepId, startMs, endMs, durationMs, rawStartS, rawEndS };
+
+    // Minimum screen duration enforcement:
+    // If the processed window is shorter than MIN_PLAID_SCREEN_MS, tag it with freezeMs.
+    // orchestrator.js buildRemotionProps() will inject a Remotion freeze segment to pad
+    // the screen to the minimum before the next cut fires.
+    if (durationMs < MIN_PLAID_SCREEN_MS) {
+      window.freezeMs = MIN_PLAID_SCREEN_MS - durationMs;
+      console.warn(`  [PostProcess] ${stepId}: ${durationMs}ms < ${MIN_PLAID_SCREEN_MS}ms minimum — adding ${window.freezeMs}ms Remotion freeze`);
+    }
+
+    plaidStepWindows.push(window);
+  }
+
   const processedTimingPath = path.join(path.dirname(OUTPUT_PATH), 'processed-step-timing.json');
   fs.writeFileSync(processedTimingPath, JSON.stringify({
     totalProcessedMs: Math.round(keptTotal * 1000),
     keepRanges:       mappedRanges,
+    plaidStepWindows, // Processed-space timing for Plaid Link sub-steps
   }, null, 2));
   console.log(`\n[PostProcess] Wrote processed-step-timing.json`);
   for (const r of mappedRanges) {
     console.log(`  [${r.processedStart.toFixed(2)}s → ${r.processedEnd.toFixed(2)}s]  "${r.label}"  (raw ${r.rawStart.toFixed(2)}s–${r.rawEnd.toFixed(2)}s)`);
+  }
+  if (plaidStepWindows.length > 0) {
+    console.log(`\n[PostProcess] Plaid Link sub-step windows (processed-space):`);
+    for (const w of plaidStepWindows) {
+      const effectiveMs = w.durationMs + (w.freezeMs || 0);
+      const freezeNote  = w.freezeMs ? `  +${w.freezeMs}ms freeze → ${effectiveMs}ms effective` : '';
+      console.log(`  ${w.stepId.padEnd(25)} ${(w.startMs/1000).toFixed(2)}s → ${(w.endMs/1000).toFixed(2)}s  (${w.durationMs}ms)${freezeNote}`);
+    }
   }
 }
 
@@ -432,4 +549,4 @@ console.log('\n[PostProcess] Done. To preview:');
 console.log(`  open "${OUTPUT_PATH}"`);
 console.log('\n[PostProcess] Tune keep windows:');
 console.log(`  --otp-keep ${OTP_KEEP}  --success-keep ${SUCCESS_KEEP}  --phone-tail ${PHONE_TAIL}  --max-institution ${MAX_INST_S}`);
-console.log('  (institution rule: ≤4s default, ≤5s max for any Plaid Link flow)\n');
+console.log(`  (institution rule: ≥${MIN_PLAID_SCREEN_MS/1000}s per screen, default MAX_INST_S=${MAX_INST_S}s)\n`);

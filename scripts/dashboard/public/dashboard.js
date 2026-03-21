@@ -15,8 +15,9 @@
   // Stage list for progress bar
   const STAGES = [
     'research', 'ingest', 'brand-extract', 'script', 'script-critique',
+    'embed-script-validate',
     /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
-    'voiceover', 'resync-audio', 'audio-qa', 'render', 'ppt', 'touchup'
+    'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'ai-suggest-overlays', 'render', 'ppt', 'touchup'
   ];
 
   // ── Utilities ──────────────────────────────────────────────────────────────
@@ -25,20 +26,36 @@
   const _toastQueue = [];
   let _toastActive = false;
 
-  function showToast(msg, type = 'success', duration = 3500) {
-    _toastQueue.push({ msg, type, duration });
+  function showToast(msg, type = 'success', opts = {}) {
+    // opts can be a number (legacy duration) or { duration, action, onClick }
+    const options = typeof opts === 'number' ? { duration: opts } : opts;
+    const duration = options.duration || 3500;
+    _toastQueue.push({ msg, type, duration, action: options.action, onClick: options.onClick });
     if (!_toastActive) _processToastQueue();
   }
 
   function _processToastQueue() {
     if (_toastQueue.length === 0) { _toastActive = false; return; }
     _toastActive = true;
-    const { msg, type, duration } = _toastQueue.shift();
+    const { msg, type, duration, action, onClick } = _toastQueue.shift();
     const toast = document.getElementById('toast');
     if (!toast) { _toastActive = false; return; }
 
-    toast.innerHTML = `<span class="toast-msg">${esc(msg)}</span><div class="toast-progress-bar"></div>`;
+    const actionHtml = action
+      ? `<button class="toast-action-btn" style="margin-left:12px;padding:2px 10px;font-size:12px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);border-radius:4px;cursor:pointer;color:inherit">${esc(action)}</button>`
+      : '';
+    toast.innerHTML = `<span class="toast-msg">${esc(msg)}</span>${actionHtml}<div class="toast-progress-bar"></div>`;
     toast.className = 'toast-visible toast-' + type;
+
+    if (action && onClick) {
+      toast.querySelector('.toast-action-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearTimeout(toast._timer);
+        toast.className = '';
+        setTimeout(_processToastQueue, 220);
+        onClick();
+      });
+    }
 
     // Animate progress bar
     const bar = toast.querySelector('.toast-progress-bar');
@@ -98,6 +115,41 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(text || res.statusText);
+    }
+    return res.json();
+  }
+
+  /**
+   * Start a pipeline run, handling the "already running" 409 gracefully.
+   * On 409: shows a confirm dialog offering force-restart (kills current process).
+   * Returns the server response, or throws if user declines or another error occurs.
+   */
+  async function runPipeline(opts) {
+    const res = await fetch('/api/pipeline/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    if (res.status === 409) {
+      const confirmed = window.confirm(
+        'A pipeline run is already in progress.\n\nForce-stop it and start this run instead?'
+      );
+      if (!confirmed) throw new Error('Cancelled — pipeline already running');
+      // Retry with force flag
+      const res2 = await fetch('/api/pipeline/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...opts, force: true }),
+      });
+      if (!res2.ok) {
+        const text = await res2.text().catch(() => res2.statusText);
+        throw new Error(text || res2.statusText);
+      }
+      return res2.json();
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
       throw new Error(text || res.statusText);
@@ -241,6 +293,7 @@
     if (tabName === 'config') loadConfig();
     if (tabName === 'pipeline') loadPipeline();
     if (tabName === 'valueprop') loadValueProps();
+    if (tabName === 'demo-apps') loadDemoApps();
   }
 
   // ── Overview Tab ───────────────────────────────────────────────────────────
@@ -460,7 +513,7 @@
           overviewResyncBtn.disabled = true;
           overviewResyncBtn.textContent = 'Starting…';
           try {
-            await apiPost('/api/pipeline/run', { fromStage: 'resync-audio', resumeRunId: currentRunId });
+            await runPipeline( { fromStage: 'resync-audio', resumeRunId: currentRunId });
             showToast('Resync audio started', 'success');
             switchTab('pipeline');
             setPipelineRunning(true);
@@ -479,7 +532,7 @@
           resumeBtn.disabled = true;
           resumeBtn.textContent = 'Starting…';
           try {
-            await apiPost('/api/pipeline/run', {
+            await runPipeline( {
               fromStage: nextStage,
               resumeRunId: currentRunId,
             });
@@ -766,20 +819,24 @@
     _stepVisualNotes = {};
 
     try {
-      const [scriptData, qaData, framesData, timingData] = await Promise.allSettled([
+      const [scriptData, qaData, framesData, timingData, autoGapData, syncMapData] = await Promise.allSettled([
         api('/api/runs/' + currentRunId + '/script'),
         api('/api/runs/' + currentRunId + '/qa'),
         api('/api/runs/' + currentRunId + '/frames'),
         api('/api/runs/' + currentRunId + '/timing'),
+        api('/api/runs/' + currentRunId + '/auto-gap'),
+        api('/api/runs/' + currentRunId + '/sync-map'),
       ]);
 
       const script    = scriptData.status  === 'fulfilled' ? scriptData.value  : null;
       const qa        = qaData.status      === 'fulfilled' ? qaData.value      : null;
+      const syncMapSegs = syncMapData.status === 'fulfilled' ? (syncMapData.value.segments || []) : [];
       const framesVal  = framesData.status === 'fulfilled' ? framesData.value : {};
       // Server returns { files, source } or legacy plain array
       const framesList  = Array.isArray(framesVal) ? framesVal : (framesVal.files || []);
       const framesSource = Array.isArray(framesVal) ? 'qa-frames' : (framesVal.source || 'qa-frames');
       const timingSteps = timingData.status === 'fulfilled' ? (timingData.value.steps || []) : [];
+      const autoGapReport = autoGapData.status === 'fulfilled' ? autoGapData.value : null;
 
       if (!script || !script.steps) {
         el.innerHTML = '<div class="empty-state">No demo script found for this run.</div>';
@@ -818,6 +875,16 @@
       // Build stepId → timing flags map
       const timingMap = {};
       timingSteps.forEach(t => { timingMap[t.id] = t; });
+
+      // Build stepId → auto-gap info map (narrationMs, videoDurationMs, gapMs, speed, compStartMs, compEndMs)
+      const gapMap = {};
+      if (autoGapReport && autoGapReport.steps) {
+        autoGapReport.steps.forEach(s => { gapMap[s.stepId] = s; });
+      }
+
+      // Build compStart (rounded to 2dp) → sync-map segment map for speed lookups
+      const syncSegByCompStart = {};
+      syncMapSegs.forEach(s => { syncSegByCompStart[s.compStart.toFixed(2)] = s; });
 
       // Compute topic-bleed flags: does step[N]'s narration contain keywords from step[N+1]?
       const STOPWORDS = new Set([
@@ -875,6 +942,10 @@
           ? (framesSource === 'build-frames' ? 'Build preview' : 'QA frame')
           : null;
 
+        // Detect Plaid Link steps — these run the real SDK modal (cross-origin iframe)
+        // so no host-page QA frame is available. Show a branded placeholder instead.
+        const isPlaidLinkStep = step.plaidPhase === 'launch' || /link.?launch/i.test(sid);
+
         // ── Timing callouts ──
         const callouts = [];
         const SILENCE_THRESHOLD_MS = 3000;
@@ -910,30 +981,94 @@
             ${c.icon} ${esc(c.label)}
           </span>`).join('');
 
-        // Timing bar: show audio vs video duration proportionally
+        // ── Narration-to-video alignment timeline ──────────────────────────────
         let timingBarHtml = '';
-        if (timing.videoDurationMs && timing.audioDurationMs) {
+        const gapInfo = gapMap[sid];
+        if (gapInfo) {
+          const compDurMs = gapInfo.compEndMs - gapInfo.compStartMs;
+          const narrPct   = compDurMs > 0 ? Math.min(100, (gapInfo.narrationMs / compDurMs) * 100).toFixed(1) : 0;
+          const gapPct    = compDurMs > 0 ? Math.min(100 - parseFloat(narrPct), (gapInfo.gapMs / compDurMs) * 100).toFixed(1) : 0;
+          const narrS     = (gapInfo.narrationMs / 1000).toFixed(1);
+          const vidS      = (gapInfo.videoDurationMs / 1000).toFixed(1);
+          const compS     = (compDurMs / 1000).toFixed(1);
+          const gapS      = (gapInfo.gapMs / 1000).toFixed(1);
+          // Speed: prefer sync-map entry (may be a manual override) over auto-gap calculated speed
+          const compStartKey = (gapInfo.compStartMs / 1000).toFixed(2);
+          const syncSeg   = syncSegByCompStart[compStartKey];
+          const dispSpeed = syncSeg ? syncSeg.speed : gapInfo.speed;
+          const speedLabel = dispSpeed ? dispSpeed.toFixed(2) + '×' : '1.00×';
+          const isTooFast  = gapInfo.action === 'warn-too-fast';
+          timingBarHtml = `
+            <div class="sb-align-timeline" title="Narration ${narrS}s + ${gapS}s gap = ${compS}s comp | Video: ${vidS}s at ${speedLabel}">
+              <div class="sb-align-narr" style="width:${narrPct}%"></div>
+              <div class="sb-align-gap"  style="width:${gapPct}%"></div>
+            </div>
+            <div class="sb-align-meta">
+              <span class="sb-align-stat">🎙 ${narrS}s</span>
+              <span class="sb-align-stat sb-align-gap-stat">+${gapS}s gap</span>
+              <span class="sb-align-stat sb-align-vid-stat">🎬 ${vidS}s</span>
+              <span class="sb-align-stat sb-align-speed-stat ${isTooFast ? 'sb-align-speed-warn' : ''}">${speedLabel}</span>
+            </div>`;
+        } else if (timing.videoDurationMs && timing.audioDurationMs) {
+          // Fallback: legacy audio/video bar
           const vidS = (timing.videoDurationMs / 1000).toFixed(1);
           const audS = (timing.audioDurationMs  / 1000).toFixed(1);
           const audioPct = Math.min(100, (timing.audioDurationMs / timing.videoDurationMs) * 100).toFixed(1);
           timingBarHtml = `
             <div class="sb-timing-bar" title="Audio: ${audS}s / Video: ${vidS}s">
               <div class="sb-timing-audio" style="width:${audioPct}%"></div>
-              <div class="sb-timing-labels">
-                <span>🔊 ${audS}s</span><span>🎬 ${vidS}s</span>
-              </div>
+              <div class="sb-timing-labels"><span>🔊 ${audS}s</span><span>🎬 ${vidS}s</span></div>
+            </div>`;
+        }
+
+        // ── Per-step speed control ───────────────────────────────────────────
+        let speedControlHtml = '';
+        if (gapInfo) {
+          const compStartKey = (gapInfo.compStartMs / 1000).toFixed(2);
+          const syncSeg      = syncSegByCompStart[compStartKey];
+          const curSpeed     = syncSeg ? syncSeg.speed : (gapInfo.speed || 1.0);
+          const videoStart   = syncSeg ? syncSeg.videoStart : (gapInfo.compStartMs / 1000);
+          const vidDurS      = gapInfo.videoDurationMs / 1000;
+          const previewS     = (vidDurS / curSpeed).toFixed(1);
+          speedControlHtml = `
+            <div class="sb-speed-control">
+              <span class="sb-speed-label">Speed</span>
+              <input type="number" class="sb-speed-input config-input"
+                value="${curSpeed.toFixed(3)}" min="0.1" max="5.0" step="0.05"
+                data-step-id="${esc(sid)}"
+                data-comp-start="${(gapInfo.compStartMs / 1000).toFixed(3)}"
+                data-video-start="${videoStart}"
+                data-video-dur="${vidDurS}">
+              <span class="sb-speed-preview" id="sb-speed-preview-${esc(sid)}">→ ${previewS}s</span>
+              <button class="btn btn-sm btn-secondary sb-speed-apply-btn" data-step-id="${esc(sid)}">Apply</button>
+              <button class="btn btn-sm btn-secondary sb-rerender-btn" data-step-id="${esc(sid)}" title="Re-render video with updated speed">↻ Re-render</button>
             </div>`;
         }
 
         const hasCallouts = callouts.length > 0;
 
         return `
-          <div class="step-card ${hasIssues ? 'has-issues' : ''} ${hasCallouts ? 'has-callouts' : ''}" data-step-id="${esc(sid)}">
-            <div class="step-thumb">
+          <div class="step-card ${hasIssues ? 'has-issues' : ''} ${hasCallouts ? 'has-callouts' : ''}" data-step-id="${esc(sid)}" draggable="true">
+            <div class="step-drag-handle" title="Drag to reorder">⠿</div>
+            <div class="step-thumb ${isPlaidLinkStep && !midFrameUrl ? 'plaid-link-thumb' : ''}">
               ${midFrameUrl
                 ? `<img src="${midFrameUrl}" alt="${esc(sid)}" onerror="this.style.display='none'">
                    <span class="frame-source-badge">${esc(frameSourceLabel)}</span>`
-                : '<div class="thumb-placeholder">No frame</div>'}
+                : isPlaidLinkStep
+                  ? `<div class="thumb-placeholder thumb-plaid-link">
+                       <div class="plaid-link-icon">
+                         <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+                           <rect width="28" height="28" rx="6" fill="rgba(0,166,126,0.15)"/>
+                           <rect x="6" y="6" width="6" height="6" rx="1" fill="#00A67E"/>
+                           <rect x="16" y="6" width="6" height="6" rx="1" fill="#00A67E" opacity="0.7"/>
+                           <rect x="6" y="16" width="6" height="6" rx="1" fill="#00A67E" opacity="0.7"/>
+                           <rect x="16" y="16" width="6" height="6" rx="1" fill="#00A67E" opacity="0.4"/>
+                         </svg>
+                       </div>
+                       <span class="plaid-link-label">Plaid Link</span>
+                       <span class="plaid-link-sublabel">Real SDK modal</span>
+                     </div>`
+                  : '<div class="thumb-placeholder">No frame</div>'}
             </div>
             <div class="step-info">
               <div class="step-header">
@@ -944,6 +1079,7 @@
               </div>
               ${calloutsHtml ? `<div class="sb-callouts">${calloutsHtml}</div>` : ''}
               ${timingBarHtml}
+              ${speedControlHtml}
               <textarea class="narration-area" data-step-id="${esc(sid)}">${esc(step.narration || '')}</textarea>
               <div class="word-count ${wcClass}">${wc} / 35 words</div>
               <div class="step-actions">
@@ -1039,6 +1175,10 @@
         <div class="sb-action-bar" id="sb-action-bar">
           <div class="sb-action-bar-left">
             <span class="sb-rec-status" id="sb-recording-status"></span>
+            <button id="sb-add-step-btn" class="btn btn-sm btn-secondary"
+              title="Generate a new step with AI — demo scene or insight slide">
+              ✦ Add Step
+            </button>
           </div>
           <div class="sb-action-bar-right">
             <button id="sb-continue-btn" class="btn btn-sm sb-continue-btn" style="display:none"
@@ -1055,7 +1195,125 @@
           </div>
         </div>`;
 
-      el.innerHTML = actionBarHtml + captureBannerHtml + feedbackHeaderHtml + `<div class="storyboard-grid">${cardsHtml}</div>`;
+      // ── Scene Timing (auto-gap) section ──
+      let sceneTiming = null;
+      if (autoGapReport && autoGapReport.steps && autoGapReport.steps.length > 0) {
+        const ACTION_ICONS = { clip: '&#9986;', freeze: '&#9208;', ok: '&#10003;', 'warn-too-fast': '&#9888;' };
+        const rowsHtml = autoGapReport.steps.map(s => {
+          const actionIcon = ACTION_ICONS[s.action] || '';
+          const narS  = s.narrationMs != null    ? (s.narrationMs    / 1000).toFixed(1) : '–';
+          const vidS  = s.videoDurationMs != null ? (s.videoDurationMs / 1000).toFixed(1) : '–';
+          const gapS  = s.gapMs != null           ? (s.gapMs           / 1000).toFixed(1) : '0.0';
+          return `<tr data-gap-step="${esc(s.stepId)}">
+            <td class="gap-cell-step">${esc(s.stepId)}</td>
+            <td class="gap-cell-num">${esc(narS)}s</td>
+            <td class="gap-cell-num">${esc(vidS)}s</td>
+            <td class="gap-cell-input">
+              <input type="number" class="config-input gap-override-input" min="0" max="30" step="0.1"
+                data-step-id="${esc(s.stepId)}" value="${esc(gapS)}"
+                style="width:70px;padding:3px 6px;font-size:12px${s.isOverridden ? ';background:rgba(251,191,36,0.18);border-color:rgba(251,191,36,0.6)' : ''}">
+            </td>
+            <td class="gap-cell-action" title="${esc(s.action || '')}">${actionIcon} ${esc(s.action || '–')}</td>
+          </tr>`;
+        }).join('');
+        sceneTiming = `
+          <div class="card" id="scene-timing-card">
+            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer" id="scene-timing-toggle">
+              <div class="card-title" style="margin:0">Scene Timing</div>
+              <span id="scene-timing-chevron" style="font-size:11px;color:rgba(255,255,255,0.45)">&#9660; collapse</span>
+            </div>
+            <div id="scene-timing-body">
+              <p class="config-desc" style="margin:8px 0 10px">Gap = time between narration end and next scene. Override to fine-tune freezes or clips. Apply restarts from <code>auto-gap</code>.</p>
+              <div style="overflow-x:auto">
+                <table class="gap-table">
+                  <thead>
+                    <tr>
+                      <th>Step</th>
+                      <th>Narration</th>
+                      <th>Video</th>
+                      <th>Gap (s)</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>
+              <div style="margin-top:10px;display:flex;align-items:center;gap:12px">
+                <button type="button" class="btn btn-primary btn-sm" id="apply-gap-btn">Apply Timing</button>
+                <span id="gap-apply-status" style="font-size:11px;color:rgba(255,255,255,0.4)"></span>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      const reorderBannerHtml = `
+        <div id="sb-reorder-banner" style="display:none;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;margin-bottom:10px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.4);border-radius:8px">
+          <span style="font-size:13px;color:#fbbf24">⇅ Scene order changed — save and rebuild to apply.</span>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn btn-sm btn-secondary" id="sb-reorder-discard-btn">Discard</button>
+            <button type="button" class="btn btn-sm btn-primary" id="sb-reorder-save-btn">Save Order &amp; Rebuild</button>
+          </div>
+        </div>`;
+
+      // ── Video timeline editor ────────────────────────────────────────────────
+      const totalCompS = script.steps.reduce((sum, s) => sum + (s.durationMs || 0), 0) / 1000;
+      const timelineHtml = totalCompS > 0 ? (() => {
+        const stepBars = script.steps.map((s, i) => {
+          const pct = ((s.durationMs || 0) / (totalCompS * 1000) * 100).toFixed(2);
+          const colors = ['#00A67E','#00875F','#006B4C','#00A67E','#34d399'];
+          const bg = colors[i % colors.length];
+          return `<div class="tl-step" style="width:${pct}%;background:${bg};opacity:0.85"
+            title="${esc(s.id)} — ${((s.durationMs||0)/1000).toFixed(1)}s">
+            <span class="tl-step-label">${esc(s.id)}</span>
+          </div>`;
+        }).join('');
+
+        const segmentMarkers = syncMapSegs.map(seg => {
+          const leftPct = (seg.compStart / totalCompS * 100).toFixed(2);
+          const widthPct = ((seg.compEnd - seg.compStart) / totalCompS * 100).toFixed(2);
+          const isFreeze = seg.mode === 'freeze';
+          const isSpeed  = seg.mode === 'speed';
+          const bg = isFreeze ? 'rgba(251,191,36,0.35)' : isSpeed ? 'rgba(0,166,126,0.3)' : 'transparent';
+          const border = isFreeze ? '2px solid rgba(251,191,36,0.7)' : isSpeed ? '2px solid rgba(0,166,126,0.7)' : 'none';
+          const label = isFreeze ? '⏸' : isSpeed ? `${seg.speed}×` : '';
+          return `<div class="tl-segment" style="left:${leftPct}%;width:${widthPct}%;background:${bg};border:${border}" title="${esc(seg._reason || seg.mode)}">
+            <span class="tl-seg-label">${label}</span>
+          </div>`;
+        }).join('');
+
+        return `
+          <div class="card" id="tl-editor-card">
+            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+              <div class="card-title" style="margin:0">Video Timeline</div>
+              <span style="font-size:11px;color:rgba(255,255,255,0.35)">${totalCompS.toFixed(1)}s total · ${syncMapSegs.length} segment${syncMapSegs.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div style="margin-bottom:6px;font-size:11px;color:rgba(255,255,255,0.35)">Steps (proportional) — yellow = freeze · teal = speed adjustment</div>
+            <div class="tl-track" id="tl-track">
+              <div class="tl-steps-row">${stepBars}</div>
+              <div class="tl-segments-row">${segmentMarkers}</div>
+              <div class="tl-playhead" id="tl-playhead" style="left:0%"></div>
+            </div>
+            <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+              <button type="button" class="btn btn-sm btn-secondary" id="tl-add-split-btn" title="Click a position on the timeline above, then click here to add a freeze segment at that point">+ Add Freeze Segment</button>
+              <button type="button" class="btn btn-sm btn-secondary" id="tl-open-studio-btn">▶ Open in Remotion Studio</button>
+              <span id="tl-cursor-time" style="font-size:11px;color:rgba(255,255,255,0.4);margin-left:4px"></span>
+            </div>
+            <div id="tl-split-form" style="display:none;margin-top:10px;padding:10px;background:rgba(255,255,255,0.04);border-radius:6px">
+              <div style="font-size:12px;margin-bottom:8px;color:rgba(255,255,255,0.6)">New freeze segment:</div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <label style="font-size:12px">From <input type="number" id="tl-split-from" class="config-input" style="width:70px" step="0.1" min="0"> s</label>
+                <label style="font-size:12px">To <input type="number" id="tl-split-to" class="config-input" style="width:70px" step="0.1" min="0"> s</label>
+                <button type="button" class="btn btn-sm btn-primary" id="tl-split-save-btn">Save to sync-map.json</button>
+                <button type="button" class="btn btn-sm btn-secondary" id="tl-split-cancel-btn">Cancel</button>
+              </div>
+            </div>
+          </div>`;
+      })() : '';
+
+      el.innerHTML = actionBarHtml + captureBannerHtml + reorderBannerHtml + feedbackHeaderHtml + timelineHtml + (sceneTiming || '') + `<div class="storyboard-grid" id="storyboard-grid">${cardsHtml}</div>` + '<div id="ai-suggestions-panel" class="suggestion-panel"></div>';
+
+      // Load AI overlay suggestions (async, non-blocking)
+      loadOverlaySuggestions();
 
       // Capture screenshots button
       const captureBtn = document.getElementById('capture-screenshots-btn');
@@ -1075,12 +1333,205 @@
         });
       }
 
+      // ── Drag-and-drop step reordering ──────────────────────────────────────────
+      (function initDragReorder() {
+        const grid = document.getElementById('storyboard-grid');
+        const banner = document.getElementById('sb-reorder-banner');
+        if (!grid || !banner) return;
+
+        let dragSrc = null;
+
+        grid.addEventListener('dragstart', e => {
+          const card = e.target.closest('.step-card');
+          if (!card) return;
+          dragSrc = card;
+          card.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', card.dataset.stepId);
+        });
+
+        grid.addEventListener('dragover', e => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          const card = e.target.closest('.step-card');
+          if (card && card !== dragSrc) {
+            grid.querySelectorAll('.step-card').forEach(c => c.classList.remove('drag-over'));
+            card.classList.add('drag-over');
+          }
+        });
+
+        grid.addEventListener('dragleave', e => {
+          const card = e.target.closest('.step-card');
+          if (card) card.classList.remove('drag-over');
+        });
+
+        grid.addEventListener('drop', e => {
+          e.preventDefault();
+          const target = e.target.closest('.step-card');
+          if (!target || target === dragSrc || !dragSrc) return;
+          target.classList.remove('drag-over');
+
+          // Reorder in DOM
+          const cards = [...grid.querySelectorAll('.step-card')];
+          const srcIdx = cards.indexOf(dragSrc);
+          const tgtIdx = cards.indexOf(target);
+          if (srcIdx < tgtIdx) {
+            target.after(dragSrc);
+          } else {
+            target.before(dragSrc);
+          }
+          banner.style.display = 'flex';
+        });
+
+        grid.addEventListener('dragend', e => {
+          grid.querySelectorAll('.step-card').forEach(c => {
+            c.classList.remove('dragging');
+            c.classList.remove('drag-over');
+          });
+          dragSrc = null;
+        });
+
+        // Discard: reload storyboard to restore original order
+        document.getElementById('sb-reorder-discard-btn')?.addEventListener('click', () => {
+          banner.style.display = 'none';
+          loadStoryboard();
+        });
+
+        // Save & Rebuild: persist new order to demo-script.json then trigger rebuild
+        document.getElementById('sb-reorder-save-btn')?.addEventListener('click', async () => {
+          const saveBtn = document.getElementById('sb-reorder-save-btn');
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Saving…';
+          try {
+            const stepIds = [...grid.querySelectorAll('.step-card')].map(c => c.dataset.stepId);
+            await apiPost('/api/runs/' + currentRunId + '/reorder-steps', { stepIds });
+            showToast('Step order saved to demo-script.json', 'success');
+            banner.style.display = 'none';
+            // Trigger rebuild+record with updated script
+            const rebuildBtn = document.getElementById('sb-rebuild-record-btn');
+            if (rebuildBtn) rebuildBtn.click();
+          } catch (err) {
+            showToast('Reorder failed: ' + err.message, 'error');
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save Order & Rebuild';
+          }
+        });
+      })();
+
+      // ── Timeline editor interactivity ──────────────────────────────────────────
+      (function initTimeline() {
+        const track = document.getElementById('tl-track');
+        const cursorLabel = document.getElementById('tl-cursor-time');
+        const splitForm = document.getElementById('tl-split-form');
+        if (!track) return;
+
+        // Show cursor time on hover
+        track.addEventListener('mousemove', e => {
+          const rect = track.getBoundingClientRect();
+          const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          const secs = (pct * totalCompS).toFixed(2);
+          if (cursorLabel) cursorLabel.textContent = secs + 's';
+          const ph = document.getElementById('tl-playhead');
+          if (ph) ph.style.left = (pct * 100).toFixed(2) + '%';
+        });
+        track.addEventListener('mouseleave', () => {
+          if (cursorLabel) cursorLabel.textContent = '';
+        });
+
+        // Click timeline to pre-fill split form
+        track.addEventListener('click', e => {
+          const rect = track.getBoundingClientRect();
+          const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          const secs = parseFloat((pct * totalCompS).toFixed(2));
+          const fromInput = document.getElementById('tl-split-from');
+          const toInput   = document.getElementById('tl-split-to');
+          if (fromInput) fromInput.value = secs;
+          if (toInput)   toInput.value   = Math.min(totalCompS, parseFloat((secs + 2).toFixed(2)));
+          if (splitForm) splitForm.style.display = '';
+        });
+
+        document.getElementById('tl-add-split-btn')?.addEventListener('click', () => {
+          if (splitForm) splitForm.style.display = splitForm.style.display === 'none' ? '' : 'none';
+        });
+        document.getElementById('tl-split-cancel-btn')?.addEventListener('click', () => {
+          if (splitForm) splitForm.style.display = 'none';
+        });
+
+        document.getElementById('tl-split-save-btn')?.addEventListener('click', async () => {
+          const fromS = parseFloat(document.getElementById('tl-split-from')?.value || '0');
+          const toS   = parseFloat(document.getElementById('tl-split-to')?.value || '0');
+          if (isNaN(fromS) || isNaN(toS) || toS <= fromS) {
+            showToast('Invalid range: "To" must be greater than "From"', 'error'); return;
+          }
+          try {
+            await apiPost('/api/runs/' + currentRunId + '/sync-map-segment', {
+              compStart: fromS, compEnd: toS, mode: 'freeze',
+              videoStart: fromS,
+              _reason: `Manual freeze added via timeline editor`,
+            });
+            showToast(`Freeze segment added ${fromS}s → ${toS}s — re-run from resync-audio to apply`, 'success');
+            if (splitForm) splitForm.style.display = 'none';
+            loadStoryboard();
+          } catch (err) {
+            showToast('Failed to save segment: ' + err.message, 'error');
+          }
+        });
+
+        // Open in Studio
+        document.getElementById('tl-open-studio-btn')?.addEventListener('click', async () => {
+          try {
+            await apiPost('/api/runs/' + currentRunId + '/open-studio', {});
+            showToast('Remotion Studio opening…', 'success');
+          } catch (err) { showToast(err.message, 'error'); }
+        });
+      })();
+
+      // Scene Timing — collapsible toggle
+      document.getElementById('scene-timing-toggle')?.addEventListener('click', () => {
+        const body = document.getElementById('scene-timing-body');
+        const chevron = document.getElementById('scene-timing-chevron');
+        if (!body) return;
+        const hidden = body.style.display === 'none';
+        body.style.display = hidden ? '' : 'none';
+        if (chevron) chevron.innerHTML = hidden ? '&#9660; collapse' : '&#9658; expand';
+      });
+
+      // Scene Timing — Apply Timing button
+      document.getElementById('apply-gap-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('apply-gap-btn');
+        const statusEl = document.getElementById('gap-apply-status');
+        setBtnLoading(btn, true, 'Saving…');
+        if (statusEl) statusEl.textContent = '';
+
+        const overrides = {};
+        el.querySelectorAll('.gap-override-input[data-step-id]').forEach(input => {
+          const sid = input.dataset.stepId;
+          const val = parseFloat(input.value);
+          if (sid && !isNaN(val) && val >= 0) {
+            overrides[sid] = { gapMs: Math.round(val * 1000) };
+          }
+        });
+
+        try {
+          await apiPost('/api/runs/' + currentRunId + '/auto-gap-overrides', { overrides });
+          if (statusEl) statusEl.textContent = '✓ Saved — restarting auto-gap…';
+          await runPipeline( { fromStage: 'auto-gap', resumeRunId: currentRunId });
+          showToast('Gap overrides saved — pipeline restarting from auto-gap', 'success');
+          setPipelineRunning(true);
+          switchTab('pipeline');
+        } catch (e) {
+          showToast('Failed: ' + e.message, 'error');
+          if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+          setBtnLoading(btn, false);
+        }
+      });
+
       // Storyboard action bar: Record
       document.getElementById('sb-record-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('sb-record-btn');
         setBtnLoading(btn, true, 'Starting…');
         try {
-          await apiPost('/api/pipeline/run', { fromStage: 'record', resumeRunId: currentRunId });
+          await runPipeline( { fromStage: 'record', resumeRunId: currentRunId });
           showToast('Recording started', 'success');
           setPipelineRunning(true);
           switchTab('pipeline');
@@ -1097,7 +1548,7 @@
         const exported = await exportFeedback(true);
         setBtnLoading(btn, true, 'Starting build…');
         try {
-          await apiPost('/api/pipeline/run', { fromStage: 'build', resumeRunId: currentRunId });
+          await runPipeline( { fromStage: 'build', resumeRunId: currentRunId });
           showToast('Rebuild + record pipeline started', 'success');
           setPipelineRunning(true);
           switchTab('pipeline');
@@ -1164,6 +1615,83 @@
         });
       });
 
+      // Speed control — live preview
+      el.querySelectorAll('.sb-speed-input').forEach(input => {
+        input.addEventListener('input', () => {
+          const speed = parseFloat(input.value);
+          const vidDur = parseFloat(input.dataset.videoDur) || 0;
+          const preview = document.getElementById('sb-speed-preview-' + input.dataset.stepId);
+          if (preview) {
+            if (speed > 0 && vidDur > 0) {
+              preview.textContent = '→ ' + (vidDur / speed).toFixed(1) + 's';
+              preview.classList.toggle('sb-speed-preview-warn', speed > 2.5);
+            } else {
+              preview.textContent = '→ –';
+            }
+          }
+        });
+      });
+
+      // Speed control — apply to sync-map
+      el.querySelectorAll('.sb-speed-apply-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const sid = btn.dataset.stepId;
+          const input = el.querySelector(`.sb-speed-input[data-step-id="${sid}"]`);
+          if (!input) return;
+          const speed     = parseFloat(input.value);
+          const compStart = parseFloat(input.dataset.compStart);
+          const videoStart = parseFloat(input.dataset.videoStart);
+          const vidDur    = parseFloat(input.dataset.videoDur);
+          if (!speed || speed <= 0 || isNaN(compStart) || isNaN(vidDur)) {
+            return showToast('Invalid speed value', 'error');
+          }
+          const newCompEnd = parseFloat((compStart + vidDur / speed).toFixed(3));
+          setBtnLoading(btn, true, 'Saving…');
+          try {
+            await apiPost('/api/runs/' + currentRunId + '/sync-map-segment', {
+              compStart,
+              compEnd: newCompEnd,
+              videoStart,
+              mode: 'speed',
+              speed,
+              _reason: `manual: ${speed.toFixed(3)}× speed override set from dashboard`,
+            });
+            // Update the speed badge in the alignment timeline
+            const card = btn.closest('.step-card');
+            if (card) {
+              card.querySelectorAll('.sb-align-speed-stat').forEach(el => {
+                el.textContent = speed.toFixed(2) + '×';
+                el.classList.toggle('sb-align-speed-warn', speed > 2.5);
+              });
+            }
+            // Rebuild remotion-props.json so Remotion Studio hot-reloads instantly
+            try {
+              await apiPost('/api/runs/' + currentRunId + '/rebuild-props', {});
+              showToast(
+                `${sid}: speed → ${speed.toFixed(2)}×. Props rebuilt — Studio updated. Click ↻ Re-render when ready.`,
+                'success',
+                { duration: 5000 }
+              );
+            } catch (_e) {
+              showToast(`${sid}: speed → ${speed.toFixed(2)}×. Sync-map saved (props rebuild failed).`, 'success');
+            }
+            await loadStoryboard();
+          } catch (e) {
+            showToast('Failed to save: ' + e.message, 'error');
+          } finally {
+            setBtnLoading(btn, false);
+          }
+        });
+      });
+
+      // Re-render button — triggers render stage from current sync-map
+      el.querySelectorAll('.sb-rerender-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          showToast('Re-render started — this takes 2–3 min. Check the Pipeline log for progress.', 'success', { duration: 5000 });
+          await runPipeline({ fromStage: 'render', resumeRunId: currentRunId });
+        });
+      });
+
       // Toggle issues
       el.querySelectorAll('.toggle-issues-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1198,7 +1726,7 @@
         const exported = await exportFeedback(true);
         if (!exported) return;
         try {
-          await apiPost('/api/pipeline/run', { fromStage: 'build', resumeRunId: currentRunId });
+          await runPipeline( { fromStage: 'build', resumeRunId: currentRunId });
           showToast('Refinement pipeline started from build stage', 'success');
           switchTab('pipeline');
         } catch (e) {
@@ -1257,6 +1785,229 @@
           const result = document.getElementById('sb-rewrite-result-' + sid);
           if (result) result.style.display = 'none';
         });
+      });
+
+      // ── Add Step modal ────────────────────────────────────────────────────────
+      // Remove any existing modal, then build a fresh one with current step list
+      document.getElementById('add-step-modal')?.remove();
+      const stepOptions = script.steps.map(s =>
+        `<option value="${esc(s.id)}">${esc(s.id)} — ${esc((s.label || '').slice(0, 40))}</option>`
+      ).join('') + '<option value="">End of sequence</option>';
+
+      const addStepModal = document.createElement('div');
+      addStepModal.id = 'add-step-modal';
+      addStepModal.className = 'add-step-modal';
+      addStepModal.style.display = 'none';
+      addStepModal.innerHTML = `
+        <div class="add-step-backdrop"></div>
+        <div class="add-step-panel">
+          <div class="add-step-header">
+            <span class="add-step-title">✦ Add New Step</span>
+            <button id="add-step-close-btn" class="btn btn-sm" style="background:transparent;border:none;color:rgba(255,255,255,0.5);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
+          </div>
+
+          <div class="add-step-form" id="add-step-form">
+            <div class="add-step-field">
+              <label class="config-label">Insert after</label>
+              <select id="add-step-after" class="config-input" style="width:100%">${stepOptions}</select>
+            </div>
+            <div class="add-step-field">
+              <label class="config-label">Scene type</label>
+              <div class="scene-type-toggle">
+                <button type="button" class="scene-type-btn active" data-type="demo">Demo Scene</button>
+                <button type="button" class="scene-type-btn" data-type="slide">Slide</button>
+              </div>
+              <p class="add-step-scene-desc" id="add-step-desc-demo">App screen — product UI navigates to this step. Persona takes an action or sees a result.</p>
+              <p class="add-step-scene-desc" id="add-step-desc-slide" style="display:none">Insight overlay — styled to match this demo's brand design system. Matches existing insight screens (header bar, data table, glassmorphism panels).</p>
+            </div>
+            <div class="add-step-field">
+              <label class="config-label">What should this step show?</label>
+              <textarea id="add-step-description" class="narration-area" rows="3"
+                placeholder="e.g. 'Show the funded account balance after the transfer completes' or 'Slide explaining how Plaid Layer reduces drop-off by 30%'"></textarea>
+            </div>
+            <div class="add-step-actions">
+              <button id="add-step-generate-btn" class="btn btn-primary">✦ Generate</button>
+              <button id="add-step-cancel-btn" class="btn btn-secondary">Cancel</button>
+            </div>
+          </div>
+
+          <div id="add-step-preview" style="display:none">
+            <div class="add-step-preview-label">Generated step — review and edit before inserting:</div>
+            <div class="add-step-preview-grid">
+              <span class="add-step-preview-key">ID</span>       <input class="config-input" id="preview-step-id" style="width:100%">
+              <span class="add-step-preview-key">Label</span>    <input class="config-input" id="preview-step-label" style="width:100%">
+              <span class="add-step-preview-key">Duration</span> <input class="config-input" id="preview-step-dur" type="number" min="5000" max="30000" step="500" style="width:100px">
+            </div>
+            <label class="config-label" style="margin-top:10px">Narration</label>
+            <textarea id="preview-step-narration" class="narration-area" rows="3"></textarea>
+            <div id="preview-word-count" class="word-count" style="margin-bottom:8px"></div>
+            <label class="config-label">Visual state / slide description</label>
+            <textarea id="preview-step-visual" class="narration-area" rows="3"></textarea>
+            <div class="add-step-preview-actions">
+              <button id="add-step-accept-btn" class="btn btn-primary">✓ Insert into Script</button>
+              <button id="add-step-regenerate-btn" class="btn btn-secondary">↺ Regenerate</button>
+              <button id="add-step-back-btn" class="btn btn-secondary">← Back</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(addStepModal);
+
+      // Modal state
+      let _addStepSceneType = 'demo';
+      let _generatedStep = null;
+      let _lastBrand = null; // brand profile returned by last generate-step call
+
+      async function openAddStepModal() {
+        addStepModal.style.display = 'flex';
+        document.getElementById('add-step-description')?.focus();
+        // Eagerly fetch brand to pre-populate slide description
+        try {
+          const brand = await api('/api/runs/' + currentRunId + '/brand');
+          if (brand && brand.slug !== 'default') {
+            _lastBrand = brand;
+            const slideDesc = document.getElementById('add-step-desc-slide');
+            if (slideDesc) {
+              slideDesc.textContent = `Insight slide — ${brand.slug} design system (${brand.mode} mode, bg ${brand.bgPrimary}, accent ${brand.accentCta}). Matches existing insight screens.`;
+            }
+          }
+        } catch (_e) { /* best-effort */ }
+      }
+      function closeAddStepModal() {
+        addStepModal.style.display = 'none';
+        document.getElementById('add-step-form').style.display = '';
+        const previewEl = document.getElementById('add-step-preview');
+        previewEl.style.display = 'none';
+        previewEl.style.background = '';
+        previewEl.style.borderLeft = '';
+        previewEl.style.color = '';
+        document.getElementById('add-step-description').value = '';
+        _lastBrand = null;
+      }
+
+      document.getElementById('sb-add-step-btn')?.addEventListener('click', openAddStepModal);
+      document.getElementById('add-step-close-btn').addEventListener('click', closeAddStepModal);
+      document.getElementById('add-step-cancel-btn').addEventListener('click', closeAddStepModal);
+      document.getElementById('add-step-back-btn').addEventListener('click', () => {
+        document.getElementById('add-step-form').style.display = '';
+        document.getElementById('add-step-preview').style.display = 'none';
+      });
+      addStepModal.querySelector('.add-step-backdrop').addEventListener('click', closeAddStepModal);
+
+      // Scene type toggle
+      addStepModal.querySelectorAll('.scene-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          addStepModal.querySelectorAll('.scene-type-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          _addStepSceneType = btn.dataset.type;
+          document.getElementById('add-step-desc-demo').style.display = _addStepSceneType === 'demo' ? '' : 'none';
+          document.getElementById('add-step-desc-slide').style.display = _addStepSceneType === 'slide' ? '' : 'none';
+          // Reset slide description to default when switching away
+          if (_addStepSceneType !== 'slide') {
+            const slideDesc = document.getElementById('add-step-desc-slide');
+            if (slideDesc) slideDesc.textContent = 'Insight overlay — styled to match this demo\'s brand design system. Matches existing insight screens (header bar, data table, glassmorphism panels).';
+          }
+        });
+      });
+
+      // Narration word count in preview
+      document.getElementById('preview-step-narration').addEventListener('input', function () {
+        const wc = this.value.trim().split(/\s+/).filter(Boolean).length;
+        const el = document.getElementById('preview-word-count');
+        if (el) {
+          el.textContent = wc + ' / 35 words';
+          el.className = 'word-count ' + (wc > 35 ? 'over' : wc > 30 ? 'warn' : '');
+        }
+      });
+
+      // Generate
+      async function runGenerate() {
+        const description = document.getElementById('add-step-description').value.trim();
+        if (!description) return showToast('Enter a description first', 'error');
+        const insertAfterId = document.getElementById('add-step-after').value || undefined;
+        const btn = document.getElementById('add-step-generate-btn');
+        setBtnLoading(btn, true, 'Generating…');
+        try {
+          const result = await apiPost('/api/runs/' + currentRunId + '/generate-step', {
+            sceneType: _addStepSceneType,
+            description,
+            insertAfterId,
+          });
+          _generatedStep = result.step;
+          _lastBrand = result.brand || null;
+
+          // Populate preview
+          document.getElementById('preview-step-id').value        = _generatedStep.id || '';
+          document.getElementById('preview-step-label').value     = _generatedStep.label || '';
+          document.getElementById('preview-step-dur').value       = _generatedStep.durationMs || 12000;
+          document.getElementById('preview-step-narration').value = _generatedStep.narration || '';
+          document.getElementById('preview-step-visual').value    = _generatedStep.visualState || '';
+          document.getElementById('preview-step-narration').dispatchEvent(new Event('input'));
+
+          // Apply brand styling to slide preview
+          const previewEl = document.getElementById('add-step-preview');
+          if (_addStepSceneType === 'slide' && _lastBrand) {
+            previewEl.style.background = _lastBrand.bgPrimary || '';
+            previewEl.style.borderLeft = `3px solid ${_lastBrand.accentCta || '#00A67E'}`;
+            previewEl.style.color = _lastBrand.mode === 'light' ? '#111' : '#fff';
+            // Update slide description with actual brand colors
+            const slideDesc = document.getElementById('add-step-desc-slide');
+            if (slideDesc) {
+              slideDesc.textContent = `Insight slide — ${_lastBrand.slug || 'brand'} design system (${_lastBrand.mode} mode, bg ${_lastBrand.bgPrimary}, accent ${_lastBrand.accentCta}). Matches existing insight screens.`;
+            }
+          } else {
+            previewEl.style.background = '';
+            previewEl.style.borderLeft = '';
+            previewEl.style.color = '';
+          }
+
+          document.getElementById('add-step-form').style.display = 'none';
+          previewEl.style.display = '';
+        } catch (e) {
+          showToast('Generation failed: ' + e.message, 'error');
+        } finally {
+          setBtnLoading(btn, false);
+        }
+      }
+
+      document.getElementById('add-step-generate-btn').addEventListener('click', runGenerate);
+      document.getElementById('add-step-description').addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runGenerate();
+      });
+      document.getElementById('add-step-regenerate-btn').addEventListener('click', () => {
+        document.getElementById('add-step-form').style.display = '';
+        document.getElementById('add-step-preview').style.display = 'none';
+        runGenerate();
+      });
+
+      // Accept — insert into script
+      document.getElementById('add-step-accept-btn').addEventListener('click', async () => {
+        if (!_generatedStep) return;
+        // Apply any edits from preview fields
+        _generatedStep.id          = document.getElementById('preview-step-id').value.trim() || _generatedStep.id;
+        _generatedStep.label       = document.getElementById('preview-step-label').value.trim() || _generatedStep.label;
+        _generatedStep.narration   = document.getElementById('preview-step-narration').value.trim() || _generatedStep.narration;
+        _generatedStep.visualState = document.getElementById('preview-step-visual').value.trim() || _generatedStep.visualState;
+        _generatedStep.durationMs  = parseInt(document.getElementById('preview-step-dur').value) || _generatedStep.durationMs;
+        const insertAfterId = document.getElementById('add-step-after').value || undefined;
+        const btn = document.getElementById('add-step-accept-btn');
+        setBtnLoading(btn, true, 'Inserting…');
+        try {
+          const result = await apiPost('/api/runs/' + currentRunId + '/insert-step', {
+            step: _generatedStep,
+            insertAfterId,
+          });
+          showToast(
+            `Step "${_generatedStep.id}" inserted (#${result.insertedAt + 1} of ${result.totalSteps}). Re-run Build → Record → Render to add it to the video.`,
+            'success',
+            { duration: 6000, action: 'Re-run Build', onClick: () => runPipeline({ fromStage: 'build', resumeRunId: currentRunId }) }
+          );
+          closeAddStepModal();
+          loadStoryboard(); // refresh
+        } catch (e) {
+          showToast('Insert failed: ' + e.message, 'error');
+        } finally {
+          setBtnLoading(btn, false);
+        }
       });
 
     } catch (e) {
@@ -1384,6 +2135,203 @@
     }
   }
 
+  // ── AI Overlay Suggestions ─────────────────────────────────────────────────
+
+  async function loadOverlaySuggestions() {
+    const panel = document.getElementById('ai-suggestions-panel');
+    if (!panel || !currentRunId) return;
+
+    panel.innerHTML = '<div class="suggestion-loading">Loading AI suggestions…</div>';
+
+    let data;
+    try {
+      data = await api('/api/runs/' + currentRunId + '/overlay-suggestions');
+    } catch (err) {
+      if (err.message && err.message.includes('404')) {
+        // Stage not run yet
+        panel.innerHTML = renderSuggestionsNotRun();
+      } else {
+        panel.innerHTML = '';
+      }
+      bindSuggestionPanelEvents(panel);
+      return;
+    }
+
+    if (data.skipped) {
+      panel.innerHTML = renderSuggestionsNotRun('No credentials configured (GOOGLE_API_KEY / VERTEX_AI_PROJECT_ID)');
+      bindSuggestionPanelEvents(panel);
+      return;
+    }
+
+    if (data.warning) {
+      panel.innerHTML = renderSuggestionsNotRun(data.warning);
+      bindSuggestionPanelEvents(panel);
+      return;
+    }
+
+    const totalSuggestions = data.totalSuggestions || 0;
+    if (totalSuggestions === 0) {
+      panel.innerHTML = `
+        <div class="suggestion-panel-header">
+          <span class="suggestion-panel-title">AI Overlay Suggestions</span>
+          <span class="suggestion-count-badge" style="background:rgba(34,197,94,0.2);color:#22c55e">No changes suggested ✓</span>
+        </div>`;
+      return;
+    }
+
+    // Build suggestion cards
+    const steps = data.steps || {};
+    let cardsHtml = '';
+    for (const [stepId, entry] of Object.entries(steps)) {
+      if (!entry?.suggestions?.length) continue;
+      entry.suggestions.forEach((s, idx) => {
+        const confClass = s.confidence >= 0.85 ? 'high' : s.confidence >= 0.70 ? 'med' : 'low';
+        const confPct   = Math.round(s.confidence * 100);
+        const midFrame  = `/api/runs/${currentRunId}/frames/${stepId}-mid.png`;
+        const patchPreview = buildPatchPreview(s.patch);
+        cardsHtml += `
+          <div class="suggestion-card" data-step-id="${escHtml(stepId)}" data-suggestion-index="${idx}" id="scard-${escHtml(stepId)}-${idx}">
+            <img class="suggestion-frame" src="${midFrame}" alt="${escHtml(stepId)}" onerror="this.style.display='none'">
+            <div class="suggestion-body">
+              <div class="suggestion-meta">
+                <span class="suggestion-step-label">${escHtml(stepId)}</span>
+                <span class="suggestion-type-badge">${escHtml(s.type)} · ${escHtml(s.action)}</span>
+                <span class="suggestion-confidence ${confClass}">${confPct}%</span>
+              </div>
+              <div class="suggestion-reasoning">${escHtml(s.reasoning || '')}</div>
+              <div class="suggestion-patch-preview">${escHtml(patchPreview)}</div>
+              <div class="suggestion-actions">
+                <button class="btn btn-sm btn-primary suggestion-apply-btn" data-step-id="${escHtml(stepId)}" data-idx="${idx}">Apply</button>
+                <button class="btn btn-sm suggestion-dismiss-btn" data-card-id="scard-${escHtml(stepId)}-${idx}">Dismiss</button>
+              </div>
+            </div>
+          </div>`;
+      });
+    }
+
+    const highConfCount = countHighConfSuggestions(steps, 0.85);
+    panel.innerHTML = `
+      <div class="suggestion-panel-header">
+        <span class="suggestion-panel-title">AI Overlay Suggestions</span>
+        <span class="suggestion-count-badge">${totalSuggestions} suggestion${totalSuggestions !== 1 ? 's' : ''}</span>
+        ${highConfCount > 0 ? `<button class="btn btn-sm btn-primary" id="apply-all-suggestions-btn">Apply All (≥85%)</button>` : ''}
+        <button class="btn btn-sm" id="run-suggestions-btn">Re-run</button>
+      </div>
+      <div class="suggestion-cards">${cardsHtml}</div>`;
+
+    bindSuggestionPanelEvents(panel);
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function buildPatchPreview(patch) {
+    if (!patch) return '';
+    const keys = Object.keys(patch).slice(0, 3);
+    return keys.map(k => {
+      const v = patch[k];
+      if (typeof v === 'object') return `${k}: {…}`;
+      return `${k}: ${v}`;
+    }).join(', ');
+  }
+
+  function countHighConfSuggestions(steps, threshold) {
+    let count = 0;
+    for (const entry of Object.values(steps)) {
+      for (const s of (entry?.suggestions || [])) {
+        if (s.confidence >= threshold) count++;
+      }
+    }
+    return count;
+  }
+
+  function renderSuggestionsNotRun(reason) {
+    const msg = reason || 'Stage not run yet';
+    return `
+      <div class="suggestion-panel-header">
+        <span class="suggestion-panel-title">AI Overlay Suggestions</span>
+        <span class="suggestion-count-badge" style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.45)">${escHtml(msg)}</span>
+        <button class="btn btn-sm btn-primary" id="run-suggestions-btn">Run Now</button>
+      </div>`;
+  }
+
+  function bindSuggestionPanelEvents(panel) {
+    // Run / Re-run button
+    const runBtn = panel.querySelector('#run-suggestions-btn');
+    if (runBtn) {
+      runBtn.addEventListener('click', async () => {
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running…';
+        try {
+          await runPipeline( { fromStage: 'ai-suggest-overlays', resumeRunId: currentRunId });
+          showToast('Suggestion stage started — check Pipeline tab for progress', 'success');
+          switchTab('pipeline');
+          setPipelineRunning(true);
+        } catch (e) {
+          showToast('Failed to start: ' + e.message, 'error');
+          runBtn.disabled = false;
+          runBtn.textContent = 'Run Now';
+        }
+      });
+    }
+
+    // Apply All button
+    const applyAllBtn = panel.querySelector('#apply-all-suggestions-btn');
+    if (applyAllBtn) {
+      applyAllBtn.addEventListener('click', async () => {
+        applyAllBtn.disabled = true;
+        applyAllBtn.textContent = 'Applying…';
+        try {
+          const result = await apiPost('/api/runs/' + currentRunId + '/apply-all-suggestions', { minConfidence: 0.85 });
+          showToast(`Applied ${result.applied} suggestion(s) — click Re-render to see changes`, 'success');
+          // Mark applied cards
+          panel.querySelectorAll('.suggestion-card').forEach(card => {
+            const stepId = card.dataset.stepId;
+            if (result.stepIds && result.stepIds.includes(stepId)) {
+              card.classList.add('applied');
+            }
+          });
+          applyAllBtn.textContent = `Applied ${result.applied}`;
+        } catch (e) {
+          showToast('Apply all failed: ' + e.message, 'error');
+          applyAllBtn.disabled = false;
+          applyAllBtn.textContent = 'Apply All (≥85%)';
+        }
+      });
+    }
+
+    // Individual Apply buttons
+    panel.querySelectorAll('.suggestion-apply-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const stepId = btn.dataset.stepId;
+        const idx    = parseInt(btn.dataset.idx, 10);
+        btn.disabled = true;
+        btn.textContent = 'Applying…';
+        try {
+          await apiPost('/api/runs/' + currentRunId + '/apply-suggestion', { stepId, suggestionIndex: idx });
+          showToast('Applied — click Re-render to see changes', 'success');
+          const card = document.getElementById(`scard-${stepId}-${idx}`);
+          if (card) card.classList.add('applied');
+          btn.textContent = 'Applied ✓';
+        } catch (e) {
+          showToast('Apply failed: ' + e.message, 'error');
+          btn.disabled = false;
+          btn.textContent = 'Apply';
+        }
+      });
+    });
+
+    // Dismiss buttons
+    panel.querySelectorAll('.suggestion-dismiss-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const card = document.getElementById(btn.dataset.cardId);
+        if (card) card.classList.add('dismissed');
+      });
+    });
+  }
+
   // ── Pipeline Tab ───────────────────────────────────────────────────────────
 
   async function loadPipeline() {
@@ -1425,6 +2373,7 @@
           <button id="run-from-btn" class="btn btn-secondary">Run from Stage</button>
           <button id="run-refinement-pipeline-btn" class="btn btn-secondary" title="Export storyboard feedback then re-run from build stage">✦ Run Refinement</button>
           <button id="resync-audio-btn" class="btn btn-secondary" title="Re-stitch voiceover audio at composition-space timings (no TTS calls)">⟳ Resync Audio</button>
+          <button id="open-studio-btn" class="btn btn-secondary" title="Open Remotion Studio pre-loaded with this run's props (requires render stage to have completed)">▶ Open in Studio</button>
           <button id="kill-btn" class="btn btn-danger">Kill</button>
         </div>
         <div style="margin-top:12px">
@@ -1434,6 +2383,15 @@
         </div>
         <div class="stage-progress" style="margin-top:16px" id="stage-progress-bar">${stagePills}</div>
         <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:4px" id="stage-label"></div>
+        <div id="studio-status-panel" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(0,166,126,0.10);border:1px solid rgba(0,166,126,0.35);border-radius:6px;font-size:13px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="width:8px;height:8px;border-radius:50%;background:#00A67E;display:inline-block;animation:pulse 1.4s infinite"></span>
+            <strong style="color:#00A67E">Studio Recording</strong>
+            <span id="studio-phase-badge" style="font-size:11px;color:rgba(255,255,255,0.5)"></span>
+          </div>
+          <div id="studio-status-message" style="color:rgba(255,255,255,0.8);margin-bottom:4px"></div>
+          <div id="studio-step-counter" style="color:rgba(255,255,255,0.5);font-size:11px"></div>
+        </div>
       </div>
 
       <div class="card" id="stdin-card">
@@ -1497,7 +2455,7 @@
       const noTouchup = document.getElementById('no-touchup-check').checked;
       setBtnLoading(btn, true, 'Starting…');
       try {
-        await apiPost('/api/pipeline/run', { noTouchup });
+        await runPipeline( { noTouchup });
         showToast('Pipeline started', 'success');
         setPipelineRunning(true);
       } catch (e) {
@@ -1513,7 +2471,7 @@
       const noTouchup = document.getElementById('no-touchup-check').checked;
       setBtnLoading(btn, true, 'Starting…');
       try {
-        await apiPost('/api/pipeline/run', { fromStage, noTouchup, resumeRunId: currentRunId });
+        await runPipeline( { fromStage, noTouchup, resumeRunId: currentRunId });
         showToast(`Pipeline started from ${fromStage}`, 'success');
         setPipelineRunning(true);
       } catch (e) {
@@ -1526,11 +2484,28 @@
     document.getElementById('run-refinement-pipeline-btn')?.addEventListener('click', async () => {
       const noTouchup = document.getElementById('no-touchup-check').checked;
       try {
-        await apiPost('/api/pipeline/run', { fromStage: 'build', noTouchup, resumeRunId: currentRunId });
+        await runPipeline( { fromStage: 'build', noTouchup, resumeRunId: currentRunId });
         showToast('Refinement started from build stage', 'success');
         setPipelineRunning(true);
       } catch (e) {
         showToast('Failed: ' + e.message, 'error');
+      }
+    });
+
+    // Open in Studio — launches Remotion Studio pre-loaded with this run's remotion-props.json (B4)
+    document.getElementById('open-studio-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('open-studio-btn');
+      if (!currentRunId) { showToast('No run selected', 'error'); return; }
+      setBtnLoading(btn, true, 'Opening…');
+      try {
+        const result = await apiPost(`/api/runs/${currentRunId}/open-studio`, {});
+        showToast('Remotion Studio launching at http://localhost:3000', 'success');
+        // Open the Studio URL in a new tab after a short delay for it to start
+        setTimeout(() => window.open('http://localhost:3000', '_blank'), 2500);
+      } catch (e) {
+        showToast('Failed: ' + e.message, 'error');
+      } finally {
+        setBtnLoading(btn, false);
       }
     });
 
@@ -1539,7 +2514,7 @@
       const btn = document.getElementById('resync-audio-btn');
       setBtnLoading(btn, true, 'Resyncing…');
       try {
-        await apiPost('/api/pipeline/run', { fromStage: 'resync-audio', resumeRunId: currentRunId });
+        await runPipeline( { fromStage: 'resync-audio', resumeRunId: currentRunId });
         showToast('Resync audio started', 'success');
         setPipelineRunning(true);
       } catch (e) {
@@ -1627,12 +2602,14 @@
 
     // Detect when orchestrator is waiting for ENTER — show Continue button
     const needsEnter = lower.includes('press enter') || lower.includes('waiting for continue signal') ||
-                       lower.includes('click "▶ continue"');
+                       lower.includes('click "▶ continue"') ||
+                       lower.includes('[studio: awaiting-input]');
     const pipelineDone = lower.includes('pipeline exited') || lower.includes('[pipeline error');
     if (needsEnter) showContinueButton(true);
     if (pipelineDone) {
       showContinueButton(false);
       setPipelineRunning(false);
+      stopStudioStatusPolling();
       // Refresh overview timeline after a brief delay so pipeline-progress.json is written
       setTimeout(() => { if (currentTab === 'overview') loadOverview(); }, 1500);
     }
@@ -1708,7 +2685,9 @@
     const runFromBtn  = document.getElementById('run-from-btn');
     const refineBtn   = document.getElementById('run-refinement-pipeline-btn');
     const resyncBtn   = document.getElementById('resync-audio-btn');
+    const studioBtn   = document.getElementById('open-studio-btn');
     const killBtn     = document.getElementById('kill-btn');
+    if (studioBtn) studioBtn.disabled = running;
     const statusBadge = document.getElementById('pipeline-status-badge');
     if (runBtn)     runBtn.disabled     = running;
     if (runFromBtn) runFromBtn.disabled = running;
@@ -1751,6 +2730,105 @@
     const label = document.getElementById('stage-label');
     if (label) label.textContent = 'Running: ' + stageName;
     _activeStageIndex = idx;
+
+    // Show studio status panel when record+qa stage becomes active
+    const isRecordStage = stageName === 'record+qa' || stageName === 'record';
+    if (isRecordStage && currentRunId) {
+      startStudioStatusPolling();
+    } else {
+      stopStudioStatusPolling();
+    }
+  }
+
+  // ── Studio recording status panel ──────────────────────────────────────────
+
+  let _studioStatusInterval = null;
+
+  const STUDIO_PHASE_LABELS = {
+    idle:        '—',
+    setup:       'Phase 1 of 3: Setup',
+    recording:   'Phase 2 of 3: Navigate',
+    'file-ready': 'Phase 2 of 3: File Detected',
+    saving:      'Phase 3 of 3: Save',
+    processing:  'Processing…',
+    done:        'Complete ✓',
+    error:       'Error',
+  };
+
+  function updateStudioStatusPanel(status) {
+    const panel   = document.getElementById('studio-status-panel');
+    const badge   = document.getElementById('studio-phase-badge');
+    const msg     = document.getElementById('studio-status-message');
+    const counter = document.getElementById('studio-step-counter');
+    if (!panel) return;
+
+    if (!status || status.phase === 'done' || status.phase === 'idle') {
+      panel.style.display = 'none';
+      // Remove file-ready confirm button if present
+      const existing = document.getElementById('studio-file-ready-confirm');
+      if (existing) existing.remove();
+      return;
+    }
+
+    panel.style.display = 'block';
+    if (badge)   badge.textContent   = STUDIO_PHASE_LABELS[status.phase] || status.phase;
+    if (msg)     msg.textContent     = status.message || '';
+    if (counter) {
+      const s = status.stepCount || 0, t = status.totalSteps || 0;
+      counter.textContent = (t > 0 && s > 0) ? `Steps captured: ${s} / ${t}` : '';
+    }
+
+    // Show "Confirm & Continue" button when file auto-detected
+    let confirmRow = document.getElementById('studio-file-ready-confirm');
+    if (status.phase === 'file-ready') {
+      if (!confirmRow) {
+        confirmRow = document.createElement('div');
+        confirmRow.id = 'studio-file-ready-confirm';
+        confirmRow.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+        confirmRow.innerHTML = `
+          <span id="studio-detected-file" style="font-size:12px;color:rgba(255,255,255,0.65);font-family:monospace;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button id="studio-advance-btn" style="background:#00A67E;color:#fff;border:none;border-radius:5px;padding:6px 16px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">
+            ✓ Confirm &amp; Continue
+          </button>`;
+        panel.appendChild(confirmRow);
+        document.getElementById('studio-advance-btn')?.addEventListener('click', async () => {
+          const btn = document.getElementById('studio-advance-btn');
+          if (btn) { btn.disabled = true; btn.textContent = 'Advancing…'; }
+          try {
+            await apiPost('/api/studio/advance', {});
+            showToast('Pipeline advancing…', 'success');
+          } catch (e) {
+            showToast('Advance failed: ' + e.message, 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '✓ Confirm & Continue'; }
+          }
+        });
+      }
+      const fileEl = document.getElementById('studio-detected-file');
+      if (fileEl && status.detectedFile) fileEl.textContent = '📁 ' + status.detectedFile.split('/').pop();
+    } else {
+      if (confirmRow) confirmRow.remove();
+    }
+  }
+
+  function startStudioStatusPolling() {
+    if (_studioStatusInterval) return;
+    _studioStatusInterval = setInterval(async () => {
+      if (!currentRunId) return;
+      try {
+        const status = await api('/api/runs/' + currentRunId + '/studio-status');
+        updateStudioStatusPanel(status);
+        if (status && status.phase === 'done') stopStudioStatusPolling();
+      } catch (_) {}
+    }, 2000);
+  }
+
+  function stopStudioStatusPolling() {
+    if (_studioStatusInterval) {
+      clearInterval(_studioStatusInterval);
+      _studioStatusInterval = null;
+    }
+    const panel = document.getElementById('studio-status-panel');
+    if (panel) panel.style.display = 'none';
   }
 
   // ── FS Watch SSE ───────────────────────────────────────────────────────────
@@ -2324,6 +3402,112 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  // ── Demo Apps ────────────────────────────────────────────────────────────────
+
+  async function loadDemoApps() {
+    const el = document.getElementById('demo-apps-content');
+    if (!el) return;
+    el.innerHTML = '<div class="empty-state">Loading…</div>';
+    try {
+      const data = await api('/api/demo-apps');
+      renderDemoApps(data.apps || []);
+    } catch (err) {
+      el.innerHTML = `<div class="empty-state">Error: ${esc(err.message)}</div>`;
+    }
+  }
+
+  function renderDemoApps(apps) {
+    const el = document.getElementById('demo-apps-content');
+    if (!el) return;
+
+    if (!apps.length) {
+      el.innerHTML = '<div class="empty-state">No built demo apps found.<br>Run the pipeline through the <strong>build</strong> stage to create one.</div>';
+      return;
+    }
+
+    el.innerHTML = `
+      <div style="padding:24px">
+        <h2 style="margin:0 0 6px;font-size:18px">Built Demo Apps</h2>
+        <p style="margin:0 0 20px;color:rgba(255,255,255,0.5);font-size:13px">
+          Launch an app to preview it with live Plaid Link and the AI edit overlay.
+        </p>
+        <div id="demo-apps-list" style="display:flex;flex-direction:column;gap:10px"></div>
+      </div>
+    `;
+
+    const list = document.getElementById('demo-apps-list');
+    apps.forEach(app => {
+      const card = document.createElement('div');
+      card.dataset.runId = app.runId;
+      card.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;display:flex;align-items:center;gap:12px';
+
+      const statusDot = app.running
+        ? '<span style="width:8px;height:8px;border-radius:50%;background:#00A67E;flex-shrink:0;display:inline-block;box-shadow:0 0 6px #00A67E"></span>'
+        : '<span style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.2);flex-shrink:0;display:inline-block"></span>';
+
+      const portBadge = app.running && app.port
+        ? `<span style="font-size:11px;color:rgba(255,255,255,0.35);margin-left:6px">:${app.port}</span>`
+        : '';
+
+      card.innerHTML = `
+        ${statusDot}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(app.runId)}</div>
+          ${app.running && app.url
+            ? `<a href="${esc(app.url)}" target="_blank" style="font-size:11px;color:#00A67E;text-decoration:none">${esc(app.url)}</a>`
+            : `<span style="font-size:11px;color:rgba(255,255,255,0.3)">Not running</span>`
+          }
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          ${app.running
+            ? `<button class="demo-app-open-btn" data-url="${esc(app.url)}" style="padding:5px 12px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">Open ↗</button>
+               <button class="demo-app-stop-btn" data-run="${esc(app.runId)}" style="padding:5px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer">Stop</button>`
+            : `<button class="demo-app-launch-btn" data-run="${esc(app.runId)}" style="padding:5px 14px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Launch</button>`
+          }
+        </div>
+      `;
+      list.appendChild(card);
+    });
+
+    // Launch buttons
+    list.querySelectorAll('.demo-app-launch-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const runId = btn.dataset.run;
+        setBtnLoading(btn, true, 'Starting…');
+        try {
+          const result = await apiPost('/api/demo-apps/launch', { runId });
+          window.open(result.url, '_blank');
+          showToast(`App launched at ${result.url}`, 'success');
+          setTimeout(loadDemoApps, 400);
+        } catch (err) {
+          showToast(`Failed to launch: ${err.message}`, 'error');
+          setBtnLoading(btn, false, 'Launch');
+        }
+      });
+    });
+
+    // Stop buttons
+    list.querySelectorAll('.demo-app-stop-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const runId = btn.dataset.run;
+        setBtnLoading(btn, true, 'Stopping…');
+        try {
+          await apiPost(`/api/demo-apps/${runId}/stop`, {});
+          showToast('Server stopped', 'success');
+          setTimeout(loadDemoApps, 300);
+        } catch (err) {
+          showToast(`Failed to stop: ${err.message}`, 'error');
+          setBtnLoading(btn, false, 'Stop');
+        }
+      });
+    });
+
+    // Open buttons
+    list.querySelectorAll('.demo-app-open-btn').forEach(btn => {
+      btn.addEventListener('click', () => window.open(btn.dataset.url, '_blank'));
+    });
   }
 
   // ── Lightbox ────────────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ const COMPOSITION_FILES = {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const TOUCHUP_MODEL      = 'claude-sonnet-4-6';
+const TOUCHUP_MODEL      = 'claude-opus-4-6';
 const TOUCHUP_MAX_TOKENS = 8192;
 
 // ── CLI arg parsing ───────────────────────────────────────────────────────────
@@ -269,11 +269,20 @@ function runFinalRender(composition) {
 async function main({ composition = 'DemoScratch' } = {}) {
   const compositionFile = resolveCompositionFile(composition);
 
-  // Launch Remotion Studio
-  console.log('[Touchup] Launching Remotion Studio...');
+  // Launch Remotion Studio — pass --props so Studio opens with the real demo loaded,
+  // not blank defaults. Human can immediately scrub to any frame without waiting.
+  const propsFile     = path.join(OUT_DIR, 'remotion-props.json');
+  const studioArgs    = ['remotion', 'studio', 'remotion/index.js'];
+  if (fs.existsSync(propsFile)) {
+    studioArgs.push(`--props=${propsFile}`);
+    console.log('[Touchup] Launching Remotion Studio with demo props...');
+  } else {
+    console.log('[Touchup] Launching Remotion Studio (no remotion-props.json found — using defaults)...');
+  }
+
   const studioProcess = spawn(
     'npx',
-    ['remotion', 'studio', 'remotion/index.js'],
+    studioArgs,
     {
       stdio:    ['ignore', 'inherit', 'inherit'],
       detached: false,

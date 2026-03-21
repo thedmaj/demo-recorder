@@ -152,8 +152,9 @@ function renderBrandBlock(brand) {
 
   // Logo
   if (logo.wordmark) {
-    const icon = logo.svgOrEmoji ? `${logo.svgOrEmoji} ` : '';
-    lines.push(`    Logo:              ${icon}"${logo.wordmark}" — color ${logo.color || c.accentCta}, ` +
+    // Only pass SVG URL/string to the build agent, never emoji characters from svgOrEmoji
+    const svgVal = logo.svgOrEmoji && !logo.svgOrEmoji.match(/\p{Emoji}/u) ? `${logo.svgOrEmoji} ` : '';
+    lines.push(`    Logo:              ${svgVal}"${logo.wordmark}" — color ${logo.color || c.accentCta}, ` +
       `${logo.fontSize}/${logo.fontWeight}, letter-spacing ${logo.letterSpacing || 'normal'}`);
   }
 
@@ -295,7 +296,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
     `- Confident, precise, outcome-focused. Never apologetic or jargon-heavy.\n` +
     `- Lead with customer value, not technical implementation details.\n` +
     `- Use active voice: "Plaid verifies the document in real time" not "the document is verified."\n` +
-    `- Quantify value where possible: "94/100 Trust Index", "verified in under 3 seconds."\n` +
+    `- Quantify value where possible: "Signal score 12 — ACCEPT", "verified in under 3 seconds."\n` +
     `- Never use: "simply", "just", "unfortunately", "robust", "seamless".\n` +
     `- Use only approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth", ` +
     `"Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".\n\n` +
@@ -453,12 +454,30 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `      ],\n` +
       `      "apiResponse": {},\n` +
       `      "visualState": "<brief description of what the screen shows at this step>",\n` +
-      `      "plaidPhase": "<launch|credentials|select-account|success|omit if not a Plaid Link step>"\n` +
+      `      "plaidPhase": "<launch — use ONLY this value, see rule below>"\n` +
       `    }\n` +
       `  ],\n` +
       `  "ctaText": "<string>",\n` +
       `  "ctaOutcome": "<string>"\n` +
-      `}`,
+      `}\n\n` +
+      `PLAID LINK STEP RULE (CRITICAL — non-negotiable):\n` +
+      `When the demo includes Plaid Link, use EXACTLY ONE step for the entire Plaid flow.\n` +
+      `Set "plaidPhase": "launch" on that step. Do NOT create separate sub-steps for\n` +
+      `consent, OTP, institution selection, account selection, or success screens.\n` +
+      `The recording automation handles those internally via CDP iframe automation.\n` +
+      `The single step's narration (≤35 words) must cover all Plaid story beats:\n` +
+      `e.g. "Plaid Link opens, Berta selects her bank account via Remember Me OTP,\n` +
+      `and the connection completes in seconds — no credentials required."\n\n` +
+      `ACCURACY RULES (CRITICAL — confirmed via Plaid internal docs):\n` +
+      `- Signal scores 0–99: HIGHER score = HIGHER ACH return risk (more likely to fail).\n` +
+      `  ACCEPT scenarios use low scores (5–20). NEVER use 82–97 for ACCEPT — those are high risk.\n` +
+      `  Approved demo values: bank_initiated_return_risk 7, consumer_initiated_return_risk 12, result "ACCEPT".\n` +
+      `- Auth coverage: "over 95% of U.S. depository accounts" — use this exact phrasing.\n` +
+      `- Signal risk factors: "over 1,000 unique risk factors" — use this exact phrasing.\n` +
+      `- Identity Match terminology: use "name matching algorithm" NOT "fuzzy matching".\n` +
+      `- Chime proof point: "Chime users who link with Plaid are 3.2x more likely to fund their accounts".\n` +
+      `  Do NOT use unconfirmed % uplift stats (e.g. "65% conversion uplift").\n` +
+      `- Latency claims: "in real time" is safe. "under one second" is unverified — avoid.`,
   });
 
   return {
@@ -569,9 +588,24 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `      document.addEventListener('keydown',function(e){if(e.key==='ArrowRight'||e.key==='ArrowDown')_nav(1);else if(e.key==='ArrowLeft'||e.key==='ArrowUp')_nav(-1);});\n` +
     `      document.addEventListener('click',function(e){if(e.target.closest('button,input,select,textarea,a,[role="button"],[role="link"]'))return;_nav(1);});\n` +
     `    })();\n` +
-    `- Side panels (always present):\n` +
-    `    <div id="link-events-panel"  data-testid="link-events-panel"  class="side-panel">\n` +
-    `    <div id="api-response-panel" data-testid="api-response-panel" class="side-panel">\n` +
+    `- Side panels (always present, always hidden by default — display:none):\n` +
+    `    <div id="link-events-panel"  data-testid="link-events-panel"  class="side-panel" style="display:none">\n` +
+    `    <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none">\n` +
+    `  link-events-panel: developer artifact — NEVER shown in any step. Always display:none.\n` +
+    `ICONS — ABSOLUTE RULE:\n` +
+    `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
+    `    Not ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ or any other emoji/symbol character.\n` +
+    `  - ALL icons must be Heroicons SVG (https://heroicons.com). Use inline SVG paths or load via CDN:\n` +
+    `    <script src="https://unpkg.com/heroicons@2/dist/heroicons.js"></script>\n` +
+    `  - Outline style for UI chrome; solid style for active/filled states.\n` +
+    `  - If Heroicons lacks the exact icon, use the closest semantic Heroicons match — never emoji.\n` +
+    `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses.\n` +
+    `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
+    `    - It slides in from the right as a glassmorphism overlay.\n` +
+    `    - CRITICAL: Do NOT create any inline JSON display panels inside step divs.\n` +
+    `      No "insight-right", no "auth-json-panel", no "-json-panel" divs of any kind.\n` +
+    `      Every step div shows ONLY the customer-facing demo screen — zero raw JSON in the layout.\n` +
+    `      Raw API JSON lives exclusively in api-response-panel. One panel. No duplicates.\n` +
     `- All interactive elements must have data-testid attributes in kebab-case that match\n` +
     `  the interaction.target field in demo-script.json exactly.\n` +
     `- Plaid Link event names to use verbatim:\n` +
@@ -781,7 +815,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `8. POST-LINK STEPS: Hard-code realistic sandbox data:\n` +
           `   - auth/get: account "934816720281", routing "021000021"\n` +
           `   - identity/match: legal_name 97, phone_number 92, email_address 90, address 88\n` +
-          `   - signal/evaluate: score 91, risk_tier "LOW"`,
+          `   - signal/evaluate: score 7 (bank-initiated), score 12 (customer-initiated), result "ACCEPT"\n` +
+          `     CRITICAL: Signal 0–99 where higher = HIGHER ACH return risk. Scores 5–20 = low risk = ACCEPT.\n` +
+          `     NEVER use scores 82–97 — those are high-risk and would receive REVIEW/REROUTE.`,
       });
 
       // Inject captured screenshots as visual reference
@@ -811,6 +847,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         text:
           `## LIVE PLAID LINK MODE\n\n` +
           `The real Plaid Link SDK renders its own modal UI — do NOT build simulated Plaid step divs.\n` +
+          `The recording uses headless:false which captures the real Plaid iframe in the video.\n` +
           `Your step list goes directly from the initiate-link step to the post-link customer UI steps.\n\n` +
           `Follow these rules precisely:\n\n` +
           `1. SCRIPT TAG: Add <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
@@ -825,6 +862,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `       token: data.link_token,\n` +
           `       onSuccess: function(public_token, metadata) {\n` +
           `         window._plaidPublicToken = public_token;\n` +
+          `         window._plaidInstitutionName = metadata.institution ? metadata.institution.name : '';\n` +
+          `         window._plaidAccountName = metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].name : '';\n` +
+          `         window._plaidAccountMask = metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].mask : '';\n` +
           `         window._plaidLinkComplete = true;\n` +
           `         if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }\n` +
           `         window.goToStep('<FIRST_POST_LINK_STEP_ID>');\n` +
@@ -841,22 +881,29 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `   (data-testid="link-external-account-btn") MUST be inside the initiate-link step div.\n` +
           `   Clicking it runs: if (window._plaidHandler) window._plaidHandler.open();\n` +
           `   Do NOT call goToStep — the Plaid SDK opens its own iframe modal immediately.\n\n` +
-          `4. NO SIMULATED PLAID STEPS: Do NOT build step divs for institution search, credentials,\n` +
+          `4. NO SIMULATED PLAID STEPS: Do NOT build step divs for institution search, OTP, credentials,\n` +
           `   account selection, or a Plaid success screen. The real SDK handles all of that inside\n` +
           `   its own cross-origin iframe. The recording automation interacts with the iframe directly.\n\n` +
           `5. POST-LINK STEPS: Hard-code realistic sandbox data in the post-link step divs:\n` +
           `   - auth/get: account "934816720281", routing "021000021", wire routing "021000021"\n` +
           `   - identity/match: legal_name 97, phone_number 92, email_address 90, address 88\n` +
-          `   - signal/evaluate: trust_index 91, risk_tier "LOW", customer_initiated_return_risk 8,\n` +
-          `     bank_initiated_return_risk 4\n\n` +
-          `6. COMPLETION FLAG: window._plaidLinkComplete = true is set only in onSuccess.\n` +
+          `   - signal/evaluate: bank_initiated_return_risk { score: 7 }, consumer_initiated_return_risk { score: 12 },\n` +
+          `     result "ACCEPT" (CRITICAL: Signal 0–99, higher = HIGHER risk. 5–20 = ACCEPT. NEVER use 82–97.)\n\n` +
+          `6. COMPLETION FLAG: window._plaidLinkComplete = true is set ONLY in onSuccess.\n` +
           `   The recording waits for this flag before advancing past the initiate-link step.\n` +
-          `   Do not set it anywhere else.\n\n` +
+          `   NEVER set _plaidLinkComplete anywhere else — doing so causes the recording to advance\n` +
+          `   before Plaid completes and the institution/account screens will not be captured.\n\n` +
           `7. LINK EVENTS: The link-events-panel is a developer artifact — NEVER visible in recordings.\n\n` +
-          `8. PLAYWRIGHT SCRIPT: For the initiate-link step use action "click" on\n` +
-          `   [data-testid="link-external-account-btn"] with waitMs 45000.\n` +
-          `   The recording handles the real Plaid flow internally and waits for _plaidLinkComplete.\n` +
-          `   Do NOT include playwright steps for institution search, credentials, or account selection.`,
+          `8. PLAYWRIGHT SCRIPT — CRITICAL RULES:\n` +
+          `   a. The initiate-link step in demo-script.json MUST have "plaidPhase": "launch".\n` +
+          `      This tells record-local.js it is the Plaid launch step (disables the overrun timer).\n` +
+          `   b. The playwright-script entry for this step must be a SINGLE action:\n` +
+          `      { "id": "<initiate-link-step-id>", "action": "click",\n` +
+          `        "target": "[data-testid=\\"link-external-account-btn\\"]", "waitMs": 120000 }\n` +
+          `      Do NOT split into a goToStep entry + a click entry — that creates duplicate markStep\n` +
+          `      calls and corrupts the step-timing.json. One entry, one click, one markStep.\n` +
+          `   c. Do NOT include playwright steps for institution search, credentials, or account selection.\n` +
+          `      The recording automation handles those internally via CDP iframe automation.`,
       });
 
       // Plaid Link reference screenshots — DISABLED (plaid-link-capture stage off)
@@ -1160,7 +1207,7 @@ function buildOverlayPlanPrompt(demoScript, videoAnalysis) {
     `then produce an overlay plan.\n\n` +
     `Available overlay types:\n` +
     `- zoom_punch:      Zoom into a specific region to highlight a value or element\n` +
-    `- callout_badge:   Floating label pointing to a UI element (e.g. "Trust Index 94/100")\n` +
+    `- callout_badge:   Floating label pointing to a UI element (e.g. "Signal ACCEPT — score 12")\n` +
     `- lower_third:     Title card at the bottom of screen (persona name, step label)\n` +
     `- highlight_box:   Animated rectangle around a specific element\n` +
     `- annotation_text: Short floating text annotation (max 8 words)\n\n` +
@@ -1220,7 +1267,10 @@ function buildScriptCritiquePrompt(demoScript, productResearch) {
     `Accuracy:\n` +
     `- Product names must match approved list: "Plaid Identity Verification (IDV)", ` +
     `"Plaid Instant Auth", "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets"\n` +
-    `- Metric values must be realistic (Trust Index 82–97, not 100/100)\n` +
+    `- Signal scores must be realistic low-risk values (5–20 for ACCEPT scenarios, never 82–97)\n` +
+    `- Auth coverage stat: "over 95% of U.S. depository accounts" (not "95% or more")\n` +
+    `- Identity Match terminology: "name matching algorithm" (not "fuzzy matching")\n` +
+    `- Chime proof point: "3.2x more likely to fund their accounts" (not unconfirmed % uplift stats)\n` +
     `- No API error responses in the main flow\n` +
     `- Verify terminology against the product research below\n\n` +
     `Anti-patterns (flag each occurrence):\n` +
