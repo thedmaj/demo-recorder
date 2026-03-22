@@ -2219,6 +2219,248 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
   }
 });
 
+// ── Timeline editor page ──────────────────────────────────────────────────────
+
+app.get('/timeline', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'timeline.html'));
+});
+
+// ── GET /api/runs/:runId/timeline-data ────────────────────────────────────────
+// Returns combined timeline data: step labels+narration, video timestamps,
+// narration durations, and existing sync map.
+app.get('/api/runs/:runId/timeline-data', (req, res) => {
+  try {
+    const dir = getRunDir(req.params.runId);
+    if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Run not found' });
+
+    // 1. demo-script.json — step labels + narration
+    const script = safeReadJson(path.join(dir, 'demo-script.json'));
+    if (!script || !script.steps) {
+      return res.status(404).json({ error: 'demo-script.json not found or has no steps' });
+    }
+
+    // 2. Video timestamps — prefer processed-step-timing.json, fall back to step-timing.json
+    const processedTimingPath = path.join(dir, 'processed-step-timing.json');
+    const rawTimingPath       = path.join(dir, 'step-timing.json');
+
+    let timingData  = null;
+    let timingSource = null;
+
+    if (fs.existsSync(processedTimingPath)) {
+      timingData   = safeReadJson(processedTimingPath);
+      timingSource = 'processed';
+    } else if (fs.existsSync(rawTimingPath)) {
+      timingData   = safeReadJson(rawTimingPath);
+      timingSource = 'raw';
+    }
+
+    // Normalise timing into [{id, recordingOffsetS, durationS}]
+    // Format A (object): { steps: [{id, recordingOffsetS, durationS}] }
+    // Format B (array):  [{step, recordingOffsetS}]
+    let timingSteps = null;
+    if (timingData) {
+      if (Array.isArray(timingData)) {
+        timingSteps = timingData.map(t => ({
+          id:              t.step || t.id,
+          recordingOffsetS: t.recordingOffsetS,
+          durationS:       t.durationS || null,
+        }));
+      } else if (timingData.steps && Array.isArray(timingData.steps)) {
+        timingSteps = timingData.steps.map(t => ({
+          id:              t.id || t.step,
+          recordingOffsetS: t.recordingOffsetS,
+          durationS:       t.durationS || null,
+        }));
+      }
+    }
+
+    // Build a map from stepId → {videoStart, videoEnd}
+    const timingMap = {};
+    if (timingSteps) {
+      // Infer durations: step i ends where step i+1 starts; last step uses durationS if present
+      for (let i = 0; i < timingSteps.length; i++) {
+        const cur  = timingSteps[i];
+        const next = timingSteps[i + 1];
+        const videoStart = cur.recordingOffsetS;
+        let   videoEnd;
+        if (cur.durationS != null) {
+          videoEnd = videoStart + cur.durationS;
+        } else if (next) {
+          videoEnd = next.recordingOffsetS;
+        } else {
+          // Last step — try to get total duration from the recording file
+          videoEnd = null;
+        }
+        timingMap[cur.id] = { videoStart, videoEnd };
+      }
+    }
+
+    // Compute total video duration (use last step's end, or ffprobe the recording file)
+    let videoDuration = null;
+    const stepIds = script.steps.map(s => s.id);
+
+    if (timingSteps && timingSteps.length > 0) {
+      const lastTiming = timingSteps[timingSteps.length - 1];
+      const lastStepId = lastTiming.id;
+      const lastEntry  = timingMap[lastStepId];
+      if (lastEntry && lastEntry.videoEnd != null) {
+        videoDuration = lastEntry.videoEnd;
+      } else {
+        // Try ffprobe on the recording file
+        const recFile = fs.existsSync(path.join(dir, 'recording-processed.webm'))
+          ? path.join(dir, 'recording-processed.webm')
+          : (fs.existsSync(path.join(dir, 'recording.webm')) ? path.join(dir, 'recording.webm') : null);
+        if (recFile) {
+          try {
+            const dur = execSync(
+              `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${recFile}"`,
+              { encoding: 'utf8', timeout: 10000 }
+            ).trim();
+            videoDuration = parseFloat(dur) || null;
+          } catch (_) { /* ffprobe unavailable */ }
+        }
+        // Fill in last step's videoEnd
+        if (videoDuration != null && lastEntry) {
+          lastEntry.videoEnd = videoDuration;
+        }
+      }
+    }
+
+    // 3. Narration durations — prefer voiceover-manifest.json, fall back to ffprobe
+    const manifestPath = path.join(dir, 'voiceover-manifest.json');
+    const manifest     = safeReadJson(manifestPath);
+    const narrationMap = {}; // stepId → { durationS, startMs? }
+
+    if (manifest && Array.isArray(manifest.clips)) {
+      for (const clip of manifest.clips) {
+        const id  = clip.stepId || clip.id;
+        const dur = clip.durationMs != null ? clip.durationMs / 1000 : null;
+        if (id && dur != null) {
+          narrationMap[id] = { durationS: dur, startMs: clip.startMs || null };
+        }
+      }
+    } else {
+      // Fall back: ffprobe individual vo_*.mp3 files
+      const audioDir = path.join(dir, 'audio');
+      if (fs.existsSync(audioDir)) {
+        const mp3Files = safeReaddir(audioDir).filter(f => /^vo_.*\.mp3$/i.test(f));
+        for (const f of mp3Files) {
+          // Extract step ID from filename: vo_{stepId}.mp3
+          const m = f.match(/^vo_(.+)\.mp3$/i);
+          if (!m) continue;
+          const stepId = m[1];
+          try {
+            const durStr = execSync(
+              `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${path.join(audioDir, f)}"`,
+              { encoding: 'utf8', timeout: 8000 }
+            ).trim();
+            const dur = parseFloat(durStr);
+            if (!isNaN(dur)) narrationMap[stepId] = { durationS: dur, startMs: null };
+          } catch (_) { /* ignore */ }
+        }
+      }
+    }
+
+    // 4. Existing sync-map.json
+    const syncMap = safeReadJson(path.join(dir, 'sync-map.json')) || { segments: [] };
+    if (Array.isArray(syncMap)) {
+      // Normalise legacy array format
+    }
+
+    // 5. Build output steps array
+    const outSteps = script.steps.map(step => {
+      const timing    = timingMap[step.id] || {};
+      const narration = narrationMap[step.id] || {};
+
+      // narrationOffset: from manifest startMs relative to step videoStart
+      let narrationOffset = 0;
+      if (narration.startMs != null && timing.videoStart != null) {
+        narrationOffset = (narration.startMs / 1000) - timing.videoStart;
+        narrationOffset = Math.max(0, narrationOffset);
+      }
+
+      return {
+        id:              step.id,
+        label:           step.label || step.id,
+        narration:       step.narration || '',
+        videoStart:      timing.videoStart   ?? null,
+        videoEnd:        timing.videoEnd     ?? null,
+        narrationDur:    narration.durationS ?? 0,
+        narrationOffset,
+      };
+    });
+
+    res.json({
+      runId:         req.params.runId,
+      videoDuration: videoDuration || null,
+      timingSource:  timingSource || null,
+      steps:         outSteps,
+      syncMap:       Array.isArray(syncMap)
+        ? { segments: syncMap }
+        : (syncMap.segments ? syncMap : { segments: [] }),
+    });
+  } catch (err) {
+    console.error('[timeline-data]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/runs/:runId/sync-map-update ─────────────────────────────────────
+// Replaces all non-_autoGap manual segments in sync-map.json with the ones
+// provided in the request body, then re-sorts by compStart.
+app.post('/api/runs/:runId/sync-map-update', (req, res) => {
+  try {
+    const { segments } = req.body || {};
+    if (!Array.isArray(segments)) {
+      return res.status(400).json({ error: 'segments array is required' });
+    }
+
+    const dir       = getRunDir(req.params.runId);
+    const syncPath  = path.join(dir, 'sync-map.json');
+
+    // Load existing sync map (may be array or {segments:[...]})
+    let existing = { segments: [] };
+    if (fs.existsSync(syncPath)) {
+      const raw = safeReadJson(syncPath);
+      if (Array.isArray(raw)) {
+        existing = { segments: raw };
+      } else if (raw && Array.isArray(raw.segments)) {
+        existing = raw;
+      }
+    }
+
+    // Keep only _autoGap entries from the existing map
+    const autoGapSegs = (existing.segments || []).filter(s => s._autoGap === true);
+
+    // Validate incoming segments (basic sanity)
+    for (const seg of segments) {
+      if (seg.compStart == null || seg.compEnd == null || seg.compEnd <= seg.compStart) {
+        return res.status(400).json({
+          error: `Invalid segment: compStart=${seg.compStart} compEnd=${seg.compEnd}`,
+        });
+      }
+    }
+
+    // Merge and sort
+    const merged = [...autoGapSegs, ...segments];
+    merged.sort((a, b) => a.compStart - b.compStart);
+
+    const out = {
+      ...(existing._comment ? { _comment: existing._comment } : {}),
+      segments: merged,
+    };
+
+    const tmp = syncPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), 'utf8');
+    fs.renameSync(tmp, syncPath);
+
+    res.json({ ok: true, count: segments.length });
+  } catch (err) {
+    console.error('[sync-map-update]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Start server ──────────────────────────────────────────────────────────────
 
 app.listen(PORT, '::', () => {

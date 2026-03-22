@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Timeline Editor — Demo Recorder</title>
+<style>
+  /* ── Reset & base ────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:           #0d1117;
+    --bg2:          #0a1628;
+    --bg3:          #111827;
+    --teal:         #00A67E;
+    --teal-dim:     rgba(0,166,126,0.45);
+    --teal-bg:      rgba(0,166,126,0.12);
+    --text:         #ffffff;
+    --text2:        rgba(255,255,255,0.65);
+    --text3:        rgba(255,255,255,0.35);
+    --border:       rgba(255,255,255,0.1);
+
+    /* segment colours */
+    --vid-bg:       #1e3a8a;
+    --vid-border:   #3b82f6;
+    --vid-freeze-bg:    #0f2155;
+    --aud-bg:       #064e3b;
+    --aud-border:   #00A67E;
+    --aud-over-bg:  #7f1d1d;
+    --aud-over-border: #f87171;
+
+    --ruler-h:      28px;
+    --track-h:      52px;
+    --track-gap:    8px;
+    --handle-w:     8px;
+    --header-h:     56px;
+    --status-h:     32px;
+  }
+
+  body {
+    font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  /* ── Header ──────────────────────────────────────────────────────── */
+  #header {
+    height: var(--header-h);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 18px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #run-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
+  }
+
+  #header .sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+
+  #zoom-label { color: var(--text2); font-size: 12px; white-space: nowrap; }
+  #zoom-slider {
+    -webkit-appearance: none;
+    width: 120px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  #zoom-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--teal);
+    cursor: pointer;
+  }
+  #zoom-val {
+    color: var(--teal);
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 30px;
+  }
+
+  #total-dur { color: var(--text2); font-size: 12px; white-space: nowrap; }
+
+  .hdr-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--teal-dim);
+    background: var(--teal-bg);
+    color: var(--teal);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .hdr-btn:hover { background: rgba(0,166,126,0.22); border-color: var(--teal); }
+  .hdr-btn:active { opacity: 0.8; }
+  .hdr-btn.secondary {
+    border-color: rgba(59,130,246,0.4);
+    background: rgba(59,130,246,0.1);
+    color: #60a5fa;
+  }
+  .hdr-btn.secondary:hover { background: rgba(59,130,246,0.18); }
+
+  #spacer { flex: 1; }
+
+  /* ── Timeline container ───────────────────────────────────────────── */
+  #tl-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Ruler + tracks share the same scrollable X container */
+  #tl-scroll {
+    flex: 1;
+    overflow-x: scroll;
+    overflow-y: auto;
+    position: relative;
+  }
+  #tl-scroll::-webkit-scrollbar { height: 10px; }
+  #tl-scroll::-webkit-scrollbar-track { background: var(--bg3); }
+  #tl-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+
+  #tl-inner {
+    position: relative;
+    min-height: calc(var(--ruler-h) + (var(--track-h) * 2) + var(--track-gap) + 40px);
+    /* width set dynamically */
+  }
+
+  /* ── Time ruler ───────────────────────────────────────────────────── */
+  #ruler {
+    position: sticky;
+    top: 0;
+    height: var(--ruler-h);
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    z-index: 20;
+    overflow: hidden;
+    /* width matches tl-inner */
+  }
+  #ruler canvas { display: block; }
+
+  /* ── Track labels (left column, fixed) ───────────────────────────── */
+  #track-labels {
+    position: absolute;
+    left: 0;
+    top: var(--ruler-h);
+    width: 0; /* labels are positioned absolutely within tl-inner */
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  /* ── Track area ───────────────────────────────────────────────────── */
+  #tracks {
+    position: absolute;
+    top: var(--ruler-h);
+    left: 0;
+    right: 0;
+    bottom: 0;
+    /* width set dynamically */
+  }
+
+  .track-row {
+    position: absolute;
+    height: var(--track-h);
+    left: 0;
+    right: 0;
+    background: rgba(255,255,255,0.02);
+    border-bottom: 1px solid var(--border);
+  }
+  .track-row.vid-row { top: 8px; }
+  .track-row.aud-row { top: calc(8px + var(--track-h) + var(--track-gap)); }
+
+  .track-label {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 5;
+    background: rgba(13,17,23,0.8);
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  /* ── Segments ─────────────────────────────────────────────────────── */
+  .seg {
+    position: absolute;
+    height: calc(var(--track-h) - 8px);
+    top: 4px;
+    border-radius: 5px;
+    border: 1.5px solid;
+    cursor: default;
+    user-select: none;
+    transition: box-shadow 0.1s;
+    overflow: visible;
+    min-width: 4px;
+  }
+  .seg.selected {
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.8);
+    z-index: 15 !important;
+  }
+
+  /* Video segment */
+  .seg-vid {
+    background: var(--vid-bg);
+    border-color: var(--vid-border);
+    z-index: 4;
+  }
+  /* Freeze extension (hatched dark blue) */
+  .seg-freeze {
+    background: repeating-linear-gradient(
+      -45deg,
+      var(--vid-freeze-bg),
+      var(--vid-freeze-bg) 4px,
+      rgba(30,58,138,0.35) 4px,
+      rgba(30,58,138,0.35) 8px
+    );
+    border-color: rgba(59,130,246,0.5);
+    border-style: dashed;
+    z-index: 3;
+    border-radius: 0 5px 5px 0;
+  }
+  /* Audio segment */
+  .seg-aud {
+    background: var(--aud-bg);
+    border-color: var(--aud-border);
+    z-index: 4;
+  }
+  /* Audio overrun */
+  .seg-aud-over {
+    background: var(--aud-over-bg);
+    border-color: var(--aud-over-border);
+    border-left: none;
+    border-radius: 0 5px 5px 0;
+    z-index: 5;
+  }
+
+  /* Segment label */
+  .seg-label {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.85);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    max-width: calc(100% - 24px);
+  }
+
+  /* Resize handles */
+  .handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--handle-w);
+    cursor: col-resize;
+    z-index: 10;
+    border-radius: 3px;
+  }
+  .handle-left  { left: 0; border-radius: 5px 0 0 5px; }
+  .handle-right { right: 0; border-radius: 0 5px 5px 0; }
+  .handle:hover { background: rgba(255,255,255,0.18); }
+
+  /* Audio drag handle (full bar, no resize) */
+  .seg-aud { cursor: grab; }
+  .seg-aud:active { cursor: grabbing; }
+
+  /* ── Playhead ─────────────────────────────────────────────────────── */
+  #playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: rgba(251,191,36,0.9);
+    pointer-events: none;
+    z-index: 30;
+    display: none;
+  }
+  #playhead::before {
+    content: '';
+    position: absolute;
+    top: -4px; left: -5px;
+    border: 6px solid transparent;
+    border-top-color: rgba(251,191,36,0.9);
+    border-bottom: none;
+  }
+
+  /* ── Tooltip ──────────────────────────────────────────────────────── */
+  #tooltip {
+    position: fixed;
+    z-index: 1000;
+    background: rgba(10,22,40,0.97);
+    border: 1px solid var(--teal-dim);
+    border-radius: 8px;
+    padding: 10px 14px;
+    pointer-events: none;
+    display: none;
+    max-width: 340px;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  }
+  #tooltip .tt-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--teal);
+    margin-bottom: 4px;
+  }
+  #tooltip .tt-narration {
+    font-size: 11px;
+    color: var(--text2);
+    line-height: 1.5;
+    word-wrap: break-word;
+    margin-bottom: 6px;
+    max-height: 72px;
+    overflow: hidden;
+  }
+  #tooltip .tt-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text2);
+    border-top: 1px solid var(--border);
+    padding-top: 5px;
+    margin-top: 5px;
+  }
+  #tooltip .tt-key { color: var(--text3); }
+  #tooltip .tt-val { color: var(--text); font-weight: 600; }
+  #tooltip .tt-warn { color: #f87171; font-weight: 600; }
+
+  /* ── Status bar ───────────────────────────────────────────────────── */
+  #status-bar {
+    height: var(--status-h);
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 0 18px;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text3);
+  }
+  #status-bar span { white-space: nowrap; }
+  #status-cursor { color: var(--text2); }
+  #status-sel { color: var(--text2); }
+  #status-msg { color: var(--teal); }
+
+  /* ── Loading/error overlay ────────────────────────────────────────── */
+  #overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(13,17,23,0.92);
+    z-index: 500;
+    flex-direction: column;
+    gap: 12px;
+  }
+  #overlay.hidden { display: none; }
+  #overlay .ov-msg { font-size: 16px; color: var(--text2); }
+  #overlay .ov-sub { font-size: 13px; color: var(--text3); max-width: 420px; text-align: center; line-height: 1.6; }
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid var(--border);
+    border-top-color: var(--teal);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────────────────── -->
+<div id="header">
+  <div id="run-name">Loading…</div>
+  <div class="sep"></div>
+  <span id="zoom-label">Zoom</span>
+  <input id="zoom-slider" type="range" min="0.5" max="4" step="0.1" value="1" />
+  <span id="zoom-val">1.0×</span>
+  <div class="sep"></div>
+  <span id="total-dur">— s total</span>
+  <div id="spacer"></div>
+  <button class="hdr-btn secondary" id="btn-rebuild" title="Rebuild remotion-props.json">Rebuild Props</button>
+  <button class="hdr-btn" id="btn-save">Save Sync Map</button>
+</div>
+
+<!-- ── Timeline scroll area ─────────────────────────────────────────────── -->
+<div id="tl-wrapper">
+  <div id="tl-scroll">
+    <div id="tl-inner">
+      <canvas id="ruler"></canvas>
+      <div id="tracks">
+        <div class="track-row vid-row"><span class="track-label">VIDEO</span></div>
+        <div class="track-row aud-row"><span class="track-label">AUDIO</span></div>
+      </div>
+      <div id="playhead"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Status bar ────────────────────────────────────────────────────────── -->
+<div id="status-bar">
+  <span id="status-cursor">cursor: —</span>
+  <span id="status-sel">selected: —</span>
+  <span id="status-msg"></span>
+</div>
+
+<!-- ── Tooltip ───────────────────────────────────────────────────────────── -->
+<div id="tooltip">
+  <div class="tt-label" id="tt-label"></div>
+  <div class="tt-narration" id="tt-narration"></div>
+  <div class="tt-row" id="tt-rows"></div>
+</div>
+
+<!-- ── Loading overlay ───────────────────────────────────────────────────── -->
+<div id="overlay">
+  <div class="spinner"></div>
+  <div class="ov-msg">Loading timeline…</div>
+  <div class="ov-sub" id="ov-sub"></div>
+</div>
+
+<script>
+'use strict';
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const PX_PER_SEC_BASE = 80;  // pixels per second at 1× zoom
+const VID_TRACK_TOP   = 8;   // px below ruler
+const AUD_TRACK_TOP   = 8 + 52 + 8;  // below video track
+const TRACK_H         = 44;  // rendered segment height
+const TRACK_PAD       = 4;   // top/bottom padding inside track row
+
+// ── State ────────────────────────────────────────────────────────────────────
+let runId     = null;
+let data      = null;   // raw API response
+let steps     = [];     // processed step objects
+let zoom      = 1.0;
+let totalDur  = 0;      // seconds
+let selected  = null;   // { type:'vid'|'aud', idx }
+let dirty     = false;
+
+// Drag state
+let drag = null;
+/*  drag = {
+      type:    'vid-right' | 'vid-left' | 'aud-move',
+      idx:     stepIndex,
+      startX:  pageX at mousedown,
+      origVal: original value (comp_duration or narration_offset),
+    }
+*/
+
+// ── DOM refs ─────────────────────────────────────────────────────────────────
+const $tl       = document.getElementById('tl-inner');
+const $scroll   = document.getElementById('tl-scroll');
+const $tracks   = document.getElementById('tracks');
+const $ruler    = document.getElementById('ruler');
+const $tip      = document.getElementById('tooltip');
+const $overlay  = document.getElementById('overlay');
+const $ovSub    = document.getElementById('ov-sub');
+const $runName  = document.getElementById('run-name');
+const $totalDur = document.getElementById('total-dur');
+const $zoomSl   = document.getElementById('zoom-slider');
+const $zoomVal  = document.getElementById('zoom-val');
+const $statusCursor = document.getElementById('status-cursor');
+const $statusSel    = document.getElementById('status-sel');
+const $statusMsg    = document.getElementById('status-msg');
+const $btnSave      = document.getElementById('btn-save');
+const $btnRebuild   = document.getElementById('btn-rebuild');
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+function fmt(s) {
+  if (s == null) return '—';
+  return s.toFixed(2) + 's';
+}
+function pxPerSec() { return PX_PER_SEC_BASE * zoom; }
+function toPx(s)   { return s * pxPerSec(); }
+function fromPx(px){ return px / pxPerSec(); }
+
+function showStatus(msg, ttl = 3000) {
+  $statusMsg.textContent = msg;
+  if (ttl > 0) setTimeout(() => { $statusMsg.textContent = ''; }, ttl);
+}
+
+// ── URL param ─────────────────────────────────────────────────────────────────
+(function parseUrl() {
+  const p = new URLSearchParams(window.location.search);
+  runId = p.get('run') || '';
+})();
+
+// ── Load data ────────────────────────────────────────────────────────────────
+async function loadData() {
+  if (!runId) {
+    showOverlay('No run ID', 'Add ?run=RUNID to the URL to load a timeline.');
+    return;
+  }
+  showOverlay('Loading…', '');
+  try {
+    const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/timeline-data`);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      showOverlay('Error loading timeline', err.error || resp.statusText);
+      return;
+    }
+    data = await resp.json();
+    initFromData(data);
+    hideOverlay();
+  } catch (e) {
+    showOverlay('Network error', e.message);
+  }
+}
+
+function showOverlay(msg, sub) {
+  document.querySelector('#overlay .ov-msg').textContent = msg;
+  $ovSub.textContent = sub || '';
+  $overlay.classList.remove('hidden');
+}
+function hideOverlay() {
+  $overlay.classList.add('hidden');
+}
+
+// ── Init from data ────────────────────────────────────────────────────────────
+function initFromData(d) {
+  $runName.textContent = d.runId || runId;
+  document.title = `Timeline — ${d.runId || runId}`;
+  totalDur = d.videoDuration || 0;
+
+  // Build internal step objects from API data
+  steps = (d.steps || []).map((s, i) => ({
+    idx:            i,
+    id:             s.id,
+    label:          s.label || s.id,
+    narration:      s.narration || '',
+    videoStart:     s.videoStart ?? null,
+    videoEnd:       s.videoEnd   ?? null,
+    narrationDur:   s.narrationDur   || 0,
+    narrationOffset: s.narrationOffset || 0,
+    // comp_duration = how long this step occupies in the comp (editable)
+    // initialized from (videoEnd - videoStart) if available
+    comp_duration: (s.videoEnd != null && s.videoStart != null)
+      ? (s.videoEnd - s.videoStart)
+      : (s.narrationDur || 5),
+  }));
+
+  // If we have a syncMap, apply it to override comp_duration / narrationOffset
+  if (d.syncMap && Array.isArray(d.syncMap.segments)) {
+    applySyncMapToSteps(d.syncMap.segments);
+  }
+
+  // Update totalDur from last step end if not provided
+  if (!totalDur && steps.length > 0) {
+    const last = steps[steps.length - 1];
+    totalDur = (last.videoEnd != null) ? last.videoEnd : steps.reduce((s, st) => s + st.comp_duration, 0);
+  }
+
+  $totalDur.textContent = fmt(totalDur) + ' total';
+  render();
+}
+
+function applySyncMapToSteps(segments) {
+  // For each manual segment, update the corresponding step's comp_duration
+  // This is a best-effort: match segments to steps by compStart proximity
+  for (const seg of segments) {
+    if (seg._autoGap) continue;
+    // Find which step this segment falls in (by video start range)
+    for (const step of steps) {
+      if (step.videoStart == null) continue;
+      if (Math.abs(seg.videoStart - step.videoStart) < 0.5) {
+        // This segment matches this step
+        const segDur = seg.compEnd - seg.compStart;
+        if (seg.mode === 'freeze') {
+          // Freeze extends comp_duration beyond video_duration
+          step.comp_duration = (step.videoEnd - step.videoStart) + segDur;
+        } else if (seg.mode === 'speed') {
+          step.comp_duration = segDur;
+        }
+        break;
+      }
+    }
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const pps = pxPerSec();
+  const totalPx = Math.max(totalDur * pps + 80, $scroll.clientWidth);
+
+  $tl.style.width = totalPx + 'px';
+  $ruler.width  = totalPx;
+  $ruler.height = 28;
+
+  drawRuler(totalPx, pps);
+  renderSegments(pps);
+}
+
+// ── Draw ruler ────────────────────────────────────────────────────────────────
+function drawRuler(totalPx, pps) {
+  const ctx = $ruler.getContext('2d');
+  const h   = $ruler.height;
+
+  ctx.clearRect(0, 0, totalPx, h);
+  ctx.fillStyle = '#0a1628';
+  ctx.fillRect(0, 0, totalPx, h);
+
+  // Grid lines and ticks
+  const minorStep = pickTickInterval(pps, 1);   // minor tick (every 1s or finer)
+  const majorStep = pickTickInterval(pps, 5);    // label every 5s
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.font = '10px system-ui';
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  for (let t = 0; t <= totalDur + majorStep; t += minorStep) {
+    const x = Math.round(toPx(t)) + 0.5;
+    const isMajor = Math.abs(t % majorStep) < 0.01 || Math.abs(t % majorStep - majorStep) < 0.01;
+
+    ctx.beginPath();
+    ctx.moveTo(x, isMajor ? 0 : h * 0.55);
+    ctx.lineTo(x, h);
+    ctx.stroke();
+
+    if (isMajor) {
+      ctx.fillText(formatTime(t), x, 2);
+    }
+  }
+}
+
+function pickTickInterval(pps, preferSec) {
+  // Choose a reasonable tick interval so ticks aren't < 8px or > 120px apart
+  const candidates = [0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
+  for (const c of candidates) {
+    if (c * pps >= 8 * preferSec) return c;
+  }
+  return 60;
+}
+
+function formatTime(s) {
+  if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + 's';
+  const m = Math.floor(s / 60);
+  const sec = (s % 60).toFixed(0).padStart(2, '0');
+  return `${m}:${sec}`;
+}
+
+// ── Render segments ────────────────────────────────────────────────────────────
+let _segEls = { vid: [], aud: [] };
+
+function renderSegments(pps) {
+  // Remove old segment elements
+  for (const el of [...$tracks.querySelectorAll('.seg')]) el.remove();
+  _segEls = { vid: [], aud: [] };
+
+  let compCursor = 0; // running comp time position
+
+  steps.forEach((step, i) => {
+    const vidDur = (step.videoEnd != null && step.videoStart != null)
+      ? (step.videoEnd - step.videoStart)
+      : step.comp_duration;
+
+    const compStart = compCursor;
+    const compEnd   = compStart + step.comp_duration;
+    compCursor      = compEnd;
+
+    // ── Video segment ──────────────────────────────────────────────────────
+    const isFreeze = step.comp_duration > vidDur + 0.05;
+    const isSpeed  = step.comp_duration < vidDur - 0.05;
+
+    // Main video bar (covers up to vidDur or comp_duration if compressed)
+    const vidBarDur = Math.min(step.comp_duration, vidDur);
+    const vidEl = makeSegEl('vid', i, compStart, vidBarDur, step.label, isFreeze || isSpeed);
+    $tracks.appendChild(vidEl);
+    _segEls.vid.push(vidEl);
+
+    // Freeze extension bar
+    if (isFreeze) {
+      const freezeDur = step.comp_duration - vidDur;
+      const fEl = makeFreezeSeg(i, compStart + vidDur, freezeDur);
+      $tracks.appendChild(fEl);
+    }
+
+    // ── Audio segment ──────────────────────────────────────────────────────
+    const audStart = compStart + step.narrationOffset;
+    const audDur   = step.narrationDur;
+    const audEnd   = audStart + audDur;
+    const overEnd  = compEnd;  // video step ends here
+    const hasOver  = audEnd > compEnd + 0.05;
+
+    if (audDur > 0) {
+      const audBarDur = hasOver ? (compEnd - audStart) : audDur;
+      const audEl = makeAudSeg(i, audStart, audBarDur, step.label, hasOver, step.narrationOffset);
+      $tracks.appendChild(audEl);
+      _segEls.aud.push(audEl);
+
+      if (hasOver) {
+        const overDur = audEnd - compEnd;
+        const overEl = makeAudOverSeg(i, compEnd, overDur);
+        $tracks.appendChild(overEl);
+      }
+    }
+  });
+}
+
+function topForTrack(type) {
+  return type === 'vid'
+    ? VID_TRACK_TOP + TRACK_PAD
+    : AUD_TRACK_TOP + TRACK_PAD;
+}
+
+function makeSegEl(type, idx, compStart, dur, label, hasExtra) {
+  const el = document.createElement('div');
+  el.className = `seg seg-vid`;
+  el.style.left   = toPx(compStart) + 'px';
+  el.style.width  = Math.max(toPx(dur), 4) + 'px';
+  el.style.top    = topForTrack('vid') + 'px';
+  el.style.height = TRACK_H + 'px';
+  el.dataset.type = 'vid';
+  el.dataset.idx  = idx;
+
+  // Label
+  const lbl = document.createElement('div');
+  lbl.className = 'seg-label';
+  lbl.textContent = label;
+  el.appendChild(lbl);
+
+  // Right resize handle
+  const hr = document.createElement('div');
+  hr.className = 'handle handle-right';
+  hr.dataset.drag = 'vid-right';
+  hr.dataset.idx  = idx;
+  el.appendChild(hr);
+
+  // Left resize handle
+  const hl = document.createElement('div');
+  hl.className = 'handle handle-left';
+  hl.dataset.drag = 'vid-left';
+  hl.dataset.idx  = idx;
+  el.appendChild(hl);
+
+  // Events
+  el.addEventListener('mouseenter', e => showTooltip(e, idx));
+  el.addEventListener('mousemove', e => moveTooltip(e));
+  el.addEventListener('mouseleave', () => hideTooltip());
+  el.addEventListener('mousedown', e => onSegMousedown(e, 'vid', idx));
+
+  if (selected && selected.type === 'vid' && selected.idx === idx) {
+    el.classList.add('selected');
+  }
+
+  return el;
+}
+
+function makeFreezeSeg(idx, compStart, dur) {
+  const el = document.createElement('div');
+  el.className = 'seg seg-freeze';
+  el.style.left   = toPx(compStart) + 'px';
+  el.style.width  = Math.max(toPx(dur), 4) + 'px';
+  el.style.top    = topForTrack('vid') + 'px';
+  el.style.height = TRACK_H + 'px';
+  el.dataset.type = 'freeze';
+  el.dataset.idx  = idx;
+  el.addEventListener('mouseenter', e => showTooltip(e, idx));
+  el.addEventListener('mousemove', e => moveTooltip(e));
+  el.addEventListener('mouseleave', () => hideTooltip());
+  el.addEventListener('mousedown', e => onSegMousedown(e, 'vid', idx));
+  return el;
+}
+
+function makeAudSeg(idx, compStart, dur, label, hasOver, offset) {
+  const el = document.createElement('div');
+  el.className = 'seg seg-aud' + (hasOver ? '' : '');
+  el.style.left   = toPx(Math.max(compStart, 0)) + 'px';
+  el.style.width  = Math.max(toPx(dur), 4) + 'px';
+  el.style.top    = topForTrack('aud') + 'px';
+  el.style.height = TRACK_H + 'px';
+  if (hasOver) el.style.borderRadius = '5px 0 0 5px';
+  el.dataset.type = 'aud';
+  el.dataset.idx  = idx;
+
+  const lbl = document.createElement('div');
+  lbl.className = 'seg-label';
+  lbl.textContent = label;
+  el.appendChild(lbl);
+
+  el.addEventListener('mouseenter', e => showTooltip(e, idx));
+  el.addEventListener('mousemove', e => moveTooltip(e));
+  el.addEventListener('mouseleave', () => hideTooltip());
+  el.addEventListener('mousedown', e => onAudMousedown(e, idx));
+
+  if (selected && selected.type === 'aud' && selected.idx === idx) {
+    el.classList.add('selected');
+  }
+
+  return el;
+}
+
+function makeAudOverSeg(idx, compStart, dur) {
+  const el = document.createElement('div');
+  el.className = 'seg seg-aud-over';
+  el.style.left   = toPx(compStart) + 'px';
+  el.style.width  = Math.max(toPx(dur), 4) + 'px';
+  el.style.top    = topForTrack('aud') + 'px';
+  el.style.height = TRACK_H + 'px';
+  el.dataset.type = 'aud-over';
+  el.dataset.idx  = idx;
+  el.addEventListener('mouseenter', e => showTooltip(e, idx));
+  el.addEventListener('mousemove', e => moveTooltip(e));
+  el.addEventListener('mouseleave', () => hideTooltip());
+  return el;
+}
+
+// ── Tooltip ───────────────────────────────────────────────────────────────────
+function showTooltip(e, idx) {
+  const step = steps[idx];
+  if (!step) return;
+
+  const vidDur = (step.videoEnd != null && step.videoStart != null)
+    ? (step.videoEnd - step.videoStart)
+    : step.comp_duration;
+  const freezeAmt = Math.max(0, step.comp_duration - vidDur);
+  const speed = step.comp_duration < vidDur - 0.05
+    ? (vidDur / step.comp_duration).toFixed(2) + '×'
+    : null;
+  const audOverrun = Math.max(0, step.narrationDur - step.comp_duration);
+
+  document.getElementById('tt-label').textContent = step.label;
+  document.getElementById('tt-narration').textContent = step.narration;
+
+  const rows = [
+    ['Video',    fmt(vidDur)],
+    ['Comp dur', fmt(step.comp_duration)],
+    ['Audio',    fmt(step.narrationDur)],
+  ];
+  if (freezeAmt > 0.05) rows.push(['Freeze', fmt(freezeAmt)]);
+  if (speed)            rows.push(['Speed-up', speed]);
+  if (audOverrun > 0.05) rows.push(['Overrun', fmt(audOverrun), true]);
+
+  const rowsEl = document.getElementById('tt-rows');
+  rowsEl.innerHTML = rows.map(([k, v, warn]) =>
+    `<span><span class="tt-key">${k}</span> <span class="${warn ? 'tt-warn' : 'tt-val'}">${v}</span></span>`
+  ).join('');
+
+  $tip.style.display = 'block';
+  moveTooltip(e);
+}
+
+function moveTooltip(e) {
+  const W = $tip.offsetWidth;
+  const H = $tip.offsetHeight;
+  let x = e.clientX + 16;
+  let y = e.clientY - H / 2;
+  if (x + W > window.innerWidth - 8)  x = e.clientX - W - 10;
+  if (y < 8) y = 8;
+  if (y + H > window.innerHeight - 8) y = window.innerHeight - H - 8;
+  $tip.style.left = x + 'px';
+  $tip.style.top  = y + 'px';
+}
+
+function hideTooltip() {
+  $tip.style.display = 'none';
+}
+
+// ── Drag — video resize ───────────────────────────────────────────────────────
+function onSegMousedown(e, type, idx) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  // Determine if this is a handle drag or a selection click
+  const dragType = e.target.dataset.drag;
+  if (!dragType) {
+    // selection only
+    selectSeg(type, idx);
+    return;
+  }
+
+  drag = {
+    type:     dragType,           // 'vid-right' or 'vid-left'
+    idx,
+    startX:   e.pageX,
+    origVal:  steps[idx].comp_duration,
+    origStart: getCompStart(idx),
+  };
+  document.body.style.cursor = 'col-resize';
+  selectSeg(type, idx);
+}
+
+function onAudMousedown(e, idx) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  drag = {
+    type:     'aud-move',
+    idx,
+    startX:   e.pageX,
+    origVal:  steps[idx].narrationOffset,
+  };
+  document.body.style.cursor = 'grabbing';
+  selectSeg('aud', idx);
+}
+
+// Compute comp start of a step (sum of all previous comp_durations)
+function getCompStart(idx) {
+  let t = 0;
+  for (let i = 0; i < idx; i++) t += steps[i].comp_duration;
+  return t;
+}
+
+// ── Global mouse events ───────────────────────────────────────────────────────
+document.addEventListener('mousemove', e => {
+  // Update cursor time display
+  const scrollRect = $scroll.getBoundingClientRect();
+  const relX = e.clientX - scrollRect.left + $scroll.scrollLeft;
+  const t = fromPx(relX);
+  if (t >= 0 && t <= totalDur + 5) {
+    $statusCursor.textContent = `cursor: ${fmt(t)}`;
+  }
+
+  if (!drag) return;
+
+  const dx = e.pageX - drag.startX;
+  const dt = fromPx(dx);
+
+  if (drag.type === 'vid-right') {
+    const step = steps[drag.idx];
+    const minDur = 0.1;
+    step.comp_duration = Math.max(minDur, drag.origVal + dt);
+    dirty = true;
+    requestAnimationFrame(render);
+    updateSelStatus(drag.idx);
+  } else if (drag.type === 'vid-left') {
+    // Left-edge drag: shift compStart ← and extend comp_duration by same amount
+    // (effectively moves where we start reading from in the source video)
+    const step = steps[drag.idx];
+    const clamped = Math.max(0.1, drag.origVal - dt);
+    step.comp_duration = clamped;
+    dirty = true;
+    requestAnimationFrame(render);
+    updateSelStatus(drag.idx);
+  } else if (drag.type === 'aud-move') {
+    const step = steps[drag.idx];
+    step.narrationOffset = drag.origVal + dt;
+    // Clamp: can't go before step start (0) or after step end
+    const maxOffset = step.comp_duration - 0.2;
+    step.narrationOffset = Math.max(-step.comp_duration * 0.5, Math.min(maxOffset, step.narrationOffset));
+    dirty = true;
+    requestAnimationFrame(render);
+    updateSelStatus(drag.idx);
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (drag) {
+    drag = null;
+    document.body.style.cursor = '';
+  }
+});
+
+// ── Selection ─────────────────────────────────────────────────────────────────
+function selectSeg(type, idx) {
+  selected = { type, idx };
+  updateSelStatus(idx);
+  render();
+}
+
+function updateSelStatus(idx) {
+  if (idx == null || !steps[idx]) { $statusSel.textContent = 'selected: —'; return; }
+  const step = steps[idx];
+  const vidDur = (step.videoEnd != null && step.videoStart != null)
+    ? (step.videoEnd - step.videoStart) : step.comp_duration;
+  const freeze = Math.max(0, step.comp_duration - vidDur);
+  let info = `${step.id}  comp=${fmt(step.comp_duration)}  vid=${fmt(vidDur)}`;
+  if (freeze > 0.05) info += `  freeze=${fmt(freeze)}`;
+  $statusSel.textContent = 'selected: ' + info;
+}
+
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (!selected) return;
+  if (e.target.tagName === 'INPUT') return;
+
+  const step = steps[selected.idx];
+  if (!step) return;
+
+  const delta = e.shiftKey ? 1.0 : 0.1;
+  let changed = false;
+
+  if (selected.type === 'vid') {
+    if (e.key === 'ArrowRight') { step.comp_duration += delta; changed = true; }
+    if (e.key === 'ArrowLeft')  { step.comp_duration = Math.max(0.1, step.comp_duration - delta); changed = true; }
+  } else if (selected.type === 'aud') {
+    if (e.key === 'ArrowRight') { step.narrationOffset += delta; changed = true; }
+    if (e.key === 'ArrowLeft')  { step.narrationOffset -= delta; changed = true; }
+  }
+
+  if (changed) {
+    e.preventDefault();
+    dirty = true;
+    requestAnimationFrame(render);
+    updateSelStatus(selected.idx);
+  }
+});
+
+// ── Zoom slider ───────────────────────────────────────────────────────────────
+$zoomSl.addEventListener('input', () => {
+  zoom = parseFloat($zoomSl.value);
+  $zoomVal.textContent = zoom.toFixed(1) + '×';
+  requestAnimationFrame(render);
+});
+
+// ── Click on empty track area to deselect ─────────────────────────────────────
+$tracks.addEventListener('mousedown', e => {
+  if (!e.target.closest('.seg')) {
+    selected = null;
+    $statusSel.textContent = 'selected: —';
+    render();
+  }
+});
+
+// ── Track row mouse move (cursor time from scroll area) ───────────────────────
+$tl.addEventListener('mousemove', e => {
+  const rect = $tl.getBoundingClientRect();
+  const relX = e.clientX - rect.left;
+  const t = fromPx(relX);
+  if (t >= 0) $statusCursor.textContent = `cursor: ${fmt(t)}`;
+});
+
+// ── Resize observer ───────────────────────────────────────────────────────────
+new ResizeObserver(() => requestAnimationFrame(render)).observe($scroll);
+
+// ── Compute sync map ──────────────────────────────────────────────────────────
+function computeSyncMapSegments() {
+  const out = [];
+  let compCursor = 0;
+
+  for (const step of steps) {
+    const vidDur = (step.videoEnd != null && step.videoStart != null)
+      ? (step.videoEnd - step.videoStart)
+      : step.comp_duration;
+    const videoStart = step.videoStart ?? compCursor;
+    const compStart  = compCursor;
+    const compEnd    = compStart + step.comp_duration;
+    compCursor = compEnd;
+
+    const diff = step.comp_duration - vidDur;
+
+    if (Math.abs(diff) < 0.05) {
+      // Identity — no entry needed
+      continue;
+    }
+
+    if (diff > 0) {
+      // Freeze: play video at 1× then freeze
+      out.push({
+        compStart,
+        compEnd: compStart + vidDur,
+        videoStart,
+        mode: 'speed',
+        speed: 1,
+        _step: step.id,
+      });
+      out.push({
+        compStart: compStart + vidDur,
+        compEnd,
+        videoStart: videoStart + vidDur,
+        mode: 'freeze',
+        _step: step.id,
+      });
+    } else {
+      // Speed-up
+      const speed = vidDur / step.comp_duration;
+      out.push({
+        compStart,
+        compEnd,
+        videoStart,
+        mode: 'speed',
+        speed,
+        _step: step.id,
+      });
+    }
+  }
+
+  return out;
+}
+
+// ── Save ──────────────────────────────────────────────────────────────────────
+$btnSave.addEventListener('click', async () => {
+  $btnSave.disabled = true;
+  $btnSave.textContent = 'Saving…';
+  try {
+    const segments = computeSyncMapSegments();
+    const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/sync-map-update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ segments }),
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || resp.statusText);
+    dirty = false;
+    showStatus(`Saved — ${result.count} segment(s) written.`);
+  } catch (e) {
+    showStatus('Save failed: ' + e.message, 5000);
+  } finally {
+    $btnSave.disabled = false;
+    $btnSave.textContent = 'Save Sync Map';
+  }
+});
+
+// ── Rebuild Props ─────────────────────────────────────────────────────────────
+$btnRebuild.addEventListener('click', async () => {
+  $btnRebuild.disabled = true;
+  $btnRebuild.textContent = 'Rebuilding…';
+  try {
+    const resp = await fetch(`/api/runs/${encodeURIComponent(runId)}/rebuild-props`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || resp.statusText);
+    showStatus('remotion-props.json rebuilt.');
+  } catch (e) {
+    showStatus('Rebuild failed: ' + e.message, 5000);
+  } finally {
+    $btnRebuild.disabled = false;
+    $btnRebuild.textContent = 'Rebuild Props';
+  }
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
