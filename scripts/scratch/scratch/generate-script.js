@@ -39,10 +39,75 @@ const MODEL          = 'claude-opus-4-6';
 const BUDGET_TOKENS  = 8000;
 const MAX_TOKENS     = 16000;
 
+// ── Structured output tool schema ─────────────────────────────────────────────
+// Using Claude's tools parameter guarantees structured JSON output without
+// relying on regex extraction of fenced code blocks in the response text.
+
+const GENERATE_DEMO_SCRIPT_TOOL = {
+  name: 'generate_demo_script',
+  description:
+    'Generate a complete structured demo script for a Plaid product demo video. ' +
+    'Call this tool once you have designed the full narrative arc with all steps.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      title:   { type: 'string', description: 'Demo title' },
+      product: { type: 'string', description: 'Plaid product name (e.g. "Plaid Signal")' },
+      persona: {
+        type: 'object',
+        properties: {
+          name:    { type: 'string' },
+          company: { type: 'string' },
+          useCase: { type: 'string' },
+        },
+        required: ['name', 'company', 'useCase'],
+      },
+      plaidSandboxConfig: {
+        type: 'object',
+        description: 'Optional sandbox credentials / config for Plaid Link recording',
+      },
+      steps: {
+        type: 'array',
+        description: 'Ordered list of demo steps (8–14 steps, each 20–35 words narration)',
+        items: {
+          type: 'object',
+          properties: {
+            id:              { type: 'string', description: 'kebab-case step identifier' },
+            label:           { type: 'string' },
+            narration:       { type: 'string', description: '20–35 words for ElevenLabs TTS' },
+            durationHintMs:  { type: 'number', description: 'Expected screen duration in ms' },
+            plaidPhase:      { type: 'string', description: '"launch" for the Plaid Link step' },
+            visualState:     { type: 'string', description: 'What is visible on screen' },
+            voiceoverStartOffsetMs: { type: 'number' },
+            interaction: {
+              type: 'object',
+              properties: {
+                action: { type: 'string' },
+                target: { type: 'string', description: 'CSS/data-testid selector' },
+                waitMs: { type: 'number' },
+              },
+            },
+            apiResponse: {
+              type: 'object',
+              properties: {
+                endpoint: { type: 'string' },
+                response: { type: 'object' },
+              },
+            },
+          },
+          required: ['id', 'label', 'narration', 'durationHintMs'],
+        },
+      },
+    },
+    required: ['title', 'product', 'persona', 'steps'],
+  },
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
  * Extracts JSON from a Claude response content array.
+ * Fallback used when the tool_use block is absent (should be rare with tool_choice).
  * Looks for a text block containing a fenced JSON block or raw JSON object.
  */
 function extractJSON(content) {
@@ -131,13 +196,29 @@ async function main() {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  console.log('[Script] Calling Claude (claude-opus-4-6 with extended thinking)...');
+  console.log('[Script] Calling Claude (claude-opus-4-6 with extended thinking + structured output)...');
 
   // Build prompts from the shared template
   const { system: systemPrompt, userMessages } = buildScriptGenerationPrompt(
     ingestedInputs || { texts: [], screenshots: [], transcriptions: [] },
     productResearch || { synthesizedInsights: {}, internalKnowledge: [], apiSpec: {} }
   );
+
+  // NOTE: The Anthropic API does NOT allow combining extended thinking with
+  // tool_choice: { type: 'tool' } or { type: 'any' } — these force tool use and
+  // are incompatible with thinking. We use tool_choice: 'auto' so the model can
+  // think freely and then choose to call the tool (which it will, given the prompt).
+
+  // Append a strong tool-use directive to the last user message so Claude
+  // calls generate_demo_script instead of outputting JSON as text.
+  const messagesWithToolDirective = [...userMessages];
+  const last = messagesWithToolDirective[messagesWithToolDirective.length - 1];
+  if (last && last.role === 'user') {
+    const lastContent = Array.isArray(last.content)
+      ? [...last.content, { type: 'text', text: '\n\nIMPORTANT: Call the generate_demo_script tool with your completed script. Do NOT output JSON as text.' }]
+      : last.content + '\n\nIMPORTANT: Call the generate_demo_script tool with your completed script. Do NOT output JSON as text.';
+    messagesWithToolDirective[messagesWithToolDirective.length - 1] = { ...last, content: lastContent };
+  }
 
   const response = await client.messages.create({
     model:      MODEL,
@@ -146,17 +227,29 @@ async function main() {
       type:          'enabled',
       budget_tokens: BUDGET_TOKENS,
     },
-    system:   systemPrompt,
-    messages: userMessages,
+    system:      systemPrompt,
+    messages:    messagesWithToolDirective,
+    tools:       [GENERATE_DEMO_SCRIPT_TOOL],
+    tool_choice: { type: 'auto' },
   });
 
-  // Extract and parse the demo script
+  // Extract demo script — prefer tool_use block (structured output), fall back to text extraction
   let demoScript;
-  try {
-    demoScript = extractJSON(response.content);
-  } catch (err) {
-    console.error(err.message);
-    process.exit(1);
+  const toolBlock = response.content.find(
+    b => b.type === 'tool_use' && b.name === 'generate_demo_script'
+  );
+
+  if (toolBlock) {
+    console.log('[Script] Extracted demo script from tool_use block (structured output).');
+    demoScript = toolBlock.input;
+  } else {
+    console.warn('[Script] No tool_use block found — falling back to text extraction.');
+    try {
+      demoScript = extractJSON(response.content);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
   }
 
   // Validate minimum structure

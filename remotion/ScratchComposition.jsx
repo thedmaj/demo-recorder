@@ -49,6 +49,12 @@ const {
 } = require('remotion');
 const { useMemo } = require('react');
 
+// ── @remotion/transitions — standardized scene transition library ──────────────
+// TransitionSeries: wraps sequential scenes with animated transitions between them.
+// Used in SceneTransition (type='fade') for library-standard fade-in behaviour.
+const { TransitionSeries, linearTiming } = require('@remotion/transitions');
+const { fade } = require('@remotion/transitions/fade');
+
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const PLAID_BLACK = '#0d1117';
 const PLAID_WHITE = '#ffffff';
@@ -123,13 +129,56 @@ function useSpringScale(frame, fps, { atFrame = 0, target = 2, damping = 14, sti
 // Wraps children with a configurable spring entrance.
 //   type: 'fade-up' | 'fade-down' | 'fade-left' | 'fade-right' | 'scale' | 'fade'
 //
+// The 'fade' type uses @remotion/transitions TransitionSeries + fade() presentation
+// for library-standard fade-in behaviour. All other types use custom spring animations.
+//
 // Usage in a step:
 //   <SceneTransition relFrame={relFrame} fps={fps} durationFrames={durationFrames} type="fade-up">
 //     <MyContent />
 //   </SceneTransition>
+//
+//   <SceneTransition durationFrames={durationFrames} type="fade">
+//     <MyContent />    {/* no relFrame/fps needed for library fade */}
+//   </SceneTransition>
+
+const SCENE_FADE_FRAMES = 18; // duration of @remotion/transitions fade (approx 0.6s at 30fps)
+
+/**
+ * SceneTransitionFade — uses @remotion/transitions' fade() presentation.
+ * Renders via a minimal TransitionSeries (empty → content) so the library
+ * handles easing internally. Parent Sequence provides the absolute frame offset.
+ */
+function SceneTransitionFade({ durationFrames, children }) {
+  return (
+    <TransitionSeries>
+      {/* Empty "before" scene; its end overlaps with the fade-in of the content scene */}
+      <TransitionSeries.Sequence durationInFrames={SCENE_FADE_FRAMES}>
+        <AbsoluteFill style={{ pointerEvents: 'none' }} />
+      </TransitionSeries.Sequence>
+
+      <TransitionSeries.Transition
+        presentation={fade()}
+        timing={linearTiming({ durationInFrames: SCENE_FADE_FRAMES })}
+      />
+
+      <TransitionSeries.Sequence durationInFrames={durationFrames}>
+        <AbsoluteFill style={{ pointerEvents: 'none' }}>
+          {children}
+        </AbsoluteFill>
+      </TransitionSeries.Sequence>
+    </TransitionSeries>
+  );
+}
+
 function SceneTransition({ relFrame, fps, durationFrames, type = 'fade-up', atFrame = 0, exitFrames = 15, children }) {
+  // Always call hooks unconditionally (React rules)
   const enterSpring = useSpring(relFrame, fps, { atFrame, damping: 16, stiffness: 140 });
   const opacity     = interpolate(relFrame, [atFrame, atFrame + 12, durationFrames - exitFrames, durationFrames], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+
+  // 'fade' type: delegate to library-standard fade via @remotion/transitions
+  if (type === 'fade') {
+    return <SceneTransitionFade durationFrames={durationFrames}>{children}</SceneTransitionFade>;
+  }
 
   let transform = '';
   if (type === 'fade-up')    transform = `translateY(${interpolate(enterSpring, [0, 1], [40, 0])}px)`;
@@ -137,7 +186,6 @@ function SceneTransition({ relFrame, fps, durationFrames, type = 'fade-up', atFr
   if (type === 'fade-left')  transform = `translateX(${interpolate(enterSpring, [0, 1], [60, 0])}px)`;
   if (type === 'fade-right') transform = `translateX(${interpolate(enterSpring, [0, 1], [-60, 0])}px)`;
   if (type === 'scale')      transform = `scale(${useSpringScale(relFrame, fps, { atFrame, target: 1, damping: 18, stiffness: 160 })})`;
-  if (type === 'fade')       transform = '';
 
   return (
     <div style={{ opacity, transform, pointerEvents: 'none' }}>

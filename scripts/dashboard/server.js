@@ -951,6 +951,10 @@ app.post('/api/pipeline/kill', (req, res) => {
 });
 
 app.get('/api/pipeline/status', (req, res) => {
+  // Clear stale reference if the process has already exited
+  if (activeProcess !== null && activeProcess.exitCode !== null) {
+    activeProcess = null;
+  }
   res.json({ running: activeProcess !== null, pid: activeProcess ? activeProcess.pid : null });
 });
 

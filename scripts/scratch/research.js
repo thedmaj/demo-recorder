@@ -63,6 +63,82 @@ const TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'synthesize_research',
+    description:
+      'When you have gathered sufficient information (12–18 tool calls minimum), call this tool ' +
+      'to synthesize all research into structured output. This is your FINAL action — call it once. ' +
+      'Do NOT output JSON as free text; always use this tool for the final synthesis.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        product: { type: 'string' },
+        priorityMessaging: {
+          type: 'object',
+          properties: {
+            preserved: { type: 'boolean' },
+            source: { type: 'string' },
+          },
+        },
+        synthesizedInsights: {
+          type: 'object',
+          properties: {
+            keyFeatures:              { type: 'array', items: { type: 'string' } },
+            valuePropositions:        { type: 'array', items: { type: 'string' } },
+            accurateTerminology:      { type: 'object' },
+            customerUseCases:         { type: 'array', items: { type: 'string' } },
+            demoTalkingPoints:        { type: 'array', items: { type: 'string' } },
+            competitiveDifferentiators: { type: 'array', items: { type: 'object' } },
+          },
+          required: ['keyFeatures', 'valuePropositions'],
+        },
+        gongInsights: {
+          type: 'object',
+          properties: {
+            commonQuestions:       { type: 'array', items: { type: 'string' } },
+            customerPainPoints:    { type: 'array', items: { type: 'object' } },
+            objectionsAndResponses: { type: 'array', items: { type: 'object' } },
+            successStories:        { type: 'array', items: { type: 'object' } },
+            callCount:             { type: 'number' },
+          },
+        },
+        salesCollateral: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              title:       { type: 'string' },
+              type:        { type: 'string', description: 'pitch_deck|one_pager|battle_card|brief' },
+              keyMessages: { type: 'array', items: { type: 'string' } },
+              url:         { type: 'string' },
+            },
+          },
+        },
+        internalKnowledge: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              source:  { type: 'string' },
+              snippet: { type: 'string' },
+              url:     { type: 'string' },
+            },
+          },
+        },
+        apiSpec: {
+          type: 'object',
+          properties: {
+            linkEvents:        { type: 'array', items: { type: 'string' } },
+            sampleApiResponse: { type: 'object' },
+            requiredCallbacks: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['linkEvents', 'requiredCallbacks'],
+        },
+        researchedAt: { type: 'string', description: 'ISO 8601 timestamp' },
+      },
+      required: ['product', 'synthesizedInsights', 'apiSpec'],
+    },
+  },
 ];
 
 // ── Tool execution ─────────────────────────────────────────────────────────────
@@ -74,6 +150,7 @@ async function executeTool(name, input) {
   if (name === 'glean_chat') {
     return await gleanChat(input.query);
   }
+  // synthesize_research is intercepted before executeTool is called
   throw new Error(`Unknown tool: ${name}`);
 }
 
@@ -386,21 +463,9 @@ function buildResearchMessages(context, productSlug) {
       `Ask: "Plaid <product> one-pager", "<product> pitch deck", "<product> competitive". ` +
       `Extract key positioning and competitive comparisons.\n\n` +
       `Aim for 12-18 tool calls total. At least 4-5 glean_chat calls for Gong, 2-3 for sales collateral.\n\n` +
-      `Synthesize findings into a single JSON object — no prose, no markdown fences:\n\n` +
-      `{\n` +
-      `  "product": "<string>",\n` +
-      `  "priorityMessaging": { "preserved": true, "source": "inputs/plaid-value-props.md" },\n` +
-      `  "synthesizedInsights": { "keyFeatures": [...], "valuePropositions": [...], ` +
-      `"accurateTerminology": {}, "customerUseCases": [...], "demoTalkingPoints": [...], ` +
-      `"competitiveDifferentiators": [...] },\n` +
-      `  "gongInsights": { "commonQuestions": [...], "customerPainPoints": [...], ` +
-      `"objectionsAndResponses": [...], "successStories": [...], "callCount": <number> },\n` +
-      `  "salesCollateral": [{ "title": "...", "type": "pitch_deck|one_pager|battle_card|brief", ` +
-      `"keyMessages": [...], "url": "..." }],\n` +
-      `  "internalKnowledge": [{ "source": "...", "snippet": "...", "url": "..." }],\n` +
-      `  "apiSpec": { "linkEvents": [...], "sampleApiResponse": {}, "requiredCallbacks": [...] },\n` +
-      `  "researchedAt": "<ISO 8601 timestamp>"\n` +
-      `}`;
+      `When you have gathered sufficient information, call the synthesize_research tool with all ` +
+      `your findings. Do NOT output JSON as free text — always use the synthesize_research tool ` +
+      `to ensure structured, validated output that the pipeline can reliably parse.`;
 
     return {
       system: systemPrompt,
@@ -443,16 +508,24 @@ async function runResearch(context, productSlug) {
     process.stdout.write(` stop_reason=${response.stop_reason}\n`);
 
     if (response.stop_reason === 'end_turn') {
-      // Final synthesis — extract the JSON
+      // Final synthesis via text (fallback — model should use synthesize_research tool instead)
       const textBlock = response.content.find(b => b.type === 'text');
       if (!textBlock) throw new Error('No text block in final response');
       finalText = textBlock.text;
-      console.log('\nResearch complete — synthesizing results...\n');
+      console.log('\nResearch complete — synthesizing results from text (tool not used)...\n');
       break;
     }
 
     if (response.stop_reason === 'tool_use') {
       const toolBlocks = response.content.filter(b => b.type === 'tool_use');
+
+      // Check for synthesize_research — this is the final structured output
+      const synthesizeBlock = toolBlocks.find(b => b.name === 'synthesize_research');
+      if (synthesizeBlock) {
+        console.log('\nResearch complete — structured synthesis received via tool call.\n');
+        return { structured: synthesizeBlock.input };
+      }
+
       console.log(`  → ${toolBlocks.length} tool call(s): ${toolBlocks.map(b => `${b.name}("${(b.input.question || b.input.query || '').substring(0, 50)}")`).join(', ')}`);
 
       // Add assistant message with all content blocks
@@ -520,34 +593,40 @@ async function main() {
   }
 
   // Run the agentic research loop
-  const rawText = await runResearch(context, productSlug);
+  const rawResult = await runResearch(context, productSlug);
 
-  // Parse the synthesized JSON
+  // Parse the synthesized JSON — prefer structured tool output, fall back to text extraction
   let research;
-  try {
-    research = extractJson(rawText);
-  } catch (err) {
-    console.warn('Could not parse JSON from research response — writing minimal fallback');
-    research = {
-      product: context.type === 'config' ? context.content.product : 'Unknown',
-      researchedAt: new Date().toISOString(),
-      plaidDocs: [],
-      internalKnowledge: [],
-      synthesizedInsights: {
-        keyFeatures: [],
-        valuePropositions: [],
-        accurateTerminology: {},
-        customerUseCases: [],
-        demoTalkingPoints: [],
-        competitiveDifferentiators: [],
-      },
-      apiSpec: {
-        linkEvents: [],
-        sampleApiResponse: {},
-        requiredCallbacks: ['onSuccess', 'onExit', 'onEvent'],
-      },
-      _rawResponse: rawText,
-    };
+  if (rawResult && typeof rawResult === 'object' && rawResult.structured) {
+    console.log('  Using structured tool output (synthesize_research).');
+    research = rawResult.structured;
+  } else {
+    const rawText = typeof rawResult === 'string' ? rawResult : '{}';
+    try {
+      research = extractJson(rawText);
+    } catch (err) {
+      console.warn('Could not parse JSON from research response — writing minimal fallback');
+      research = {
+        product: context.type === 'config' ? context.content.product : 'Unknown',
+        researchedAt: new Date().toISOString(),
+        plaidDocs: [],
+        internalKnowledge: [],
+        synthesizedInsights: {
+          keyFeatures: [],
+          valuePropositions: [],
+          accurateTerminology: {},
+          customerUseCases: [],
+          demoTalkingPoints: [],
+          competitiveDifferentiators: [],
+        },
+        apiSpec: {
+          linkEvents: [],
+          sampleApiResponse: {},
+          requiredCallbacks: ['onSuccess', 'onExit', 'onEvent'],
+        },
+        _rawResponse: rawText,
+      };
+    }
   }
 
   // Ensure required fields exist

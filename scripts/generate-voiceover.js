@@ -246,6 +246,83 @@ const VOICEOVER_SCRIPTS = _scratchScripts || {
   ].join(' '),
 }; // end hardcoded IDV scripts
 
+// ── Narration pre-processing for TTS ─────────────────────────────────────────
+//
+// Normalizes narration text before sending to ElevenLabs to improve pronunciation:
+//  1. Expands acronyms (ACH, API, IDV, etc.) so TTS reads them letter-by-letter
+//  2. Adds a brief SSML <break> pause before "reveal" phrases (score, ACCEPT, approval)
+//     for dramatic pacing — eleven_multilingual_v2 supports SSML inline breaks.
+//
+// Stability is kept at 0.75 per CLAUDE.md — do NOT lower it (causes stutter artifacts).
+
+const ACRONYM_MAP = {
+  'ACH':  'A C H',
+  'API':  'A P I',
+  'IDV':  'I D V',
+  'OTP':  'O T P',
+  'KYC':  'K Y C',
+  'MFA':  'M F A',
+  'IAV':  'I A V',
+  'EAV':  'E A V',
+  'AML':  'A M L',
+  'PEP':  'P E P',
+  'SSN':  'S S N',
+  'CTA':  'C T A',
+  'TLS':  'T L S',
+  'SDK':  'S D K',
+  'CRA':  'C R A',
+};
+
+// Patterns that indicate a reveal moment deserving a brief dramatic pause
+const REVEAL_PATTERNS = [
+  /\bACCEPT\b/,
+  /\bapproved?\b/i,
+  /\bverified\b/i,
+  /\bscore\s+\d/i,
+  /\bin under\s+\d/i,
+  /\binstant(ly)?\b/i,
+  /\$\d[\d,]+/,
+  /\bauthorized\b/i,
+  /\bconfirmed\b/i,
+];
+
+// Phrases that get a preceding pause injected for dramatic effect
+// Pattern: sentence break (". " or " — ") followed by a capitalized reveal word
+const REVEAL_INJECT_RE = /(\.\s+|\s—\s+)(ACCEPT|approved?|verified|authorized|Authorized|Approved)/g;
+
+/**
+ * Normalizes a narration string for ElevenLabs TTS:
+ *  - Expands acronyms to letter-by-letter (e.g. ACH → A C H)
+ *  - Injects SSML <break time="0.4s"/> before reveal phrases in reveal steps
+ *
+ * @param {string} text      - Raw narration from demo-script.json
+ * @param {string} [stepId]  - Optional step ID for logging
+ * @returns {string}         - Normalized text, safe to pass to ElevenLabs
+ */
+function normalizeNarration(text, stepId = '') {
+  let normalized = text;
+
+  // 1. Expand acronyms: word-boundary match to avoid partial replacements
+  for (const [acronym, expansion] of Object.entries(ACRONYM_MAP)) {
+    normalized = normalized.replace(
+      new RegExp(`\\b${acronym}\\b`, 'g'),
+      expansion
+    );
+  }
+
+  // 2. Inject SSML break before reveal phrases (only when the step contains a reveal moment)
+  const isRevealStep = REVEAL_PATTERNS.some(p => p.test(normalized));
+  if (isRevealStep) {
+    normalized = normalized.replace(REVEAL_INJECT_RE, '$1<break time="0.4s"/>$2');
+  }
+
+  if (normalized !== text) {
+    console.log(`  [normalize] ${stepId || 'step'}: "${text.substring(0, 60)}" → "${normalized.substring(0, 60)}"`);
+  }
+
+  return normalized;
+}
+
 // ── ElevenLabs TTS ────────────────────────────────────────────────────────────
 
 async function generateAudio(text, outputPath) {
@@ -491,7 +568,9 @@ async function main() {
     if (fs.existsSync(audioFile)) {
       console.log(`  [cached] ${path.basename(audioFile)}`);
     } else {
-      await generateAudio(script, audioFile);
+      // Normalize narration: expand acronyms, inject SSML breaks before reveals
+      const normalizedScript = normalizeNarration(script, step.id);
+      await generateAudio(normalizedScript, audioFile);
       // Small delay to respect ElevenLabs rate limits
       await new Promise(r => setTimeout(r, 300));
     }

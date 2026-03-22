@@ -3,74 +3,74 @@
 
 const STEP_TIMING = [
   {
-    "id": "dashboard",
-    "label": "dashboard",
+    "id": "dashboard-overview",
+    "label": "Chime Dashboard — Problem Framing",
     "startFrame": 0,
-    "endFrame": 339,
-    "audioEndFrame": 298
+    "endFrame": 301,
+    "audioEndFrame": 269
   },
   {
-    "id": "transfers",
-    "label": "transfers",
-    "startFrame": 339,
-    "endFrame": 610,
-    "audioEndFrame": 586
+    "id": "transfers-page",
+    "label": "Transfers — Entry Point",
+    "startFrame": 301,
+    "endFrame": 557,
+    "audioEndFrame": 514
   },
   {
     "id": "add-external-account",
-    "label": "add-external-account",
-    "startFrame": 610,
-    "endFrame": 905,
-    "audioEndFrame": 879
+    "label": "Add External Account — CTA",
+    "startFrame": 557,
+    "endFrame": 828,
+    "audioEndFrame": 800
   },
   {
-    "id": "plaid-link",
-    "label": "plaid-link",
-    "startFrame": 905,
-    "endFrame": 1228,
-    "audioEndFrame": 1209
+    "id": "plaid-link-flow",
+    "label": "Plaid Link — Connect Bank Account",
+    "startFrame": 828,
+    "endFrame": 1259,
+    "audioEndFrame": 1235
   },
   {
     "id": "post-link-success",
-    "label": "post-link-success",
-    "startFrame": 1228,
-    "endFrame": 1488,
-    "audioEndFrame": 1463
+    "label": "Chime App — Account Linked",
+    "startFrame": 1259,
+    "endFrame": 1550,
+    "audioEndFrame": 1539
   },
   {
-    "id": "insight-auth",
-    "label": "insight-auth",
-    "startFrame": 1488,
-    "endFrame": 1895,
-    "audioEndFrame": 1858
+    "id": "auth-insight",
+    "label": "Plaid Insight — Auth/Get",
+    "startFrame": 1550,
+    "endFrame": 1937,
+    "audioEndFrame": 1880
   },
   {
-    "id": "insight-identity-match",
-    "label": "insight-identity-match",
-    "startFrame": 1895,
-    "endFrame": 2343,
-    "audioEndFrame": 2290
+    "id": "identity-match-insight",
+    "label": "Plaid Insight — Identity Match",
+    "startFrame": 1937,
+    "endFrame": 2407,
+    "audioEndFrame": 2347
   },
   {
-    "id": "insight-signal",
-    "label": "insight-signal",
-    "startFrame": 2343,
-    "endFrame": 2859,
-    "audioEndFrame": 2807
+    "id": "signal-evaluate-insight",
+    "label": "Plaid Insight — Signal Evaluate",
+    "startFrame": 2407,
+    "endFrame": 2924,
+    "audioEndFrame": 2878
   },
   {
-    "id": "funding-confirmation",
-    "label": "funding-confirmation",
-    "startFrame": 2859,
-    "endFrame": 3197,
-    "audioEndFrame": 3167
+    "id": "funds-available",
+    "label": "Chime App — Instant Funding Approved",
+    "startFrame": 2924,
+    "endFrame": 3224,
+    "audioEndFrame": 3183
   },
   {
     "id": "closing-summary",
-    "label": "closing-summary",
-    "startFrame": 3197,
-    "endFrame": 3603,
-    "audioEndFrame": 3595
+    "label": "Closing — Quantified Outcomes",
+    "startFrame": 3224,
+    "endFrame": 3559,
+    "audioEndFrame": 3543
   }
 ];
 
