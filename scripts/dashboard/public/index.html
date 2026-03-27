@@ -13,10 +13,18 @@
     <span class="header-title">Plaid Demo Pipeline</span>
     <div id="recording-status-badge" class="recording-badge" style="display:none" title="Recording status"></div>
     <div class="header-spacer"></div>
-    <select id="run-selector">
-      <option value="">Loading runs…</option>
-    </select>
+    <button id="build-selector-btn" class="build-selector-btn">
+      <span id="build-selector-label">Loading…</span>
+      <span class="build-selector-chevron">›</span>
+    </button>
   </header>
+
+  <div id="stage-banner" style="display:none">
+    <span id="stage-banner-icon" class="stage-banner-icon">◎</span>
+    <span id="stage-banner-label">Pipeline running…</span>
+    <span id="stage-banner-elapsed" class="stage-banner-elapsed"></span>
+    <button id="stage-banner-view-btn" class="stage-banner-view-btn">View Logs ▶</button>
+  </div>
 
   <div id="layout">
     <!-- Sidebar -->
@@ -119,5 +127,19 @@
 </div>
 
 <script src="/static/dashboard.js"></script>
+
+<!-- Build panel overlay (close on outside click) -->
+<div id="build-panel-overlay" style="display:none;position:fixed;inset:0;z-index:999"></div>
+
+<!-- Build selector panel -->
+<div id="build-panel" class="build-panel">
+  <div class="build-panel-header">
+    <span class="build-panel-title">Builds</span>
+    <button id="build-panel-close" class="build-panel-close" title="Close">✕</button>
+  </div>
+  <div id="build-panel-content">
+    <div class="empty-state">Loading…</div>
+  </div>
+</div>
 </body>
 </html>

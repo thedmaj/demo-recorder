@@ -116,17 +116,16 @@ error_INTERNAL_SERVER_ERROR  error_USER_SETUP_REQUIRED
 
 ## 3. Credit, Income & CRA Credentials
 
-**Important:** `user_good` / `pass_good` is **not** suitable for CRA. Use non-OAuth
-institutions only (First Platypus Bank, Houndstooth Bank).
+**Important:** `user_good` / `pass_good` is **not** suitable for **CRA Check Link** institution login. Use non-OAuth institutions only (First Platypus Bank, Houndstooth Bank).
 
 | Username | Password | Description |
 |----------|----------|-------------|
-| `user_bank_income` | `{}` | Wide income streams — **recommended for CRA** |
-| `user_credit_profile_excellent` | *(any)* | High salary, positive cash flow |
+| `user_credit_profile_excellent` | *(any)* | High salary, positive cash flow — **use for CRA / Plaid Check Link** |
 | `user_credit_profile_good` | *(any)* | Neutral cash flow, gig economy |
 | `user_credit_profile_poor` | *(any)* | Net loss, no consistent income |
 | `user_credit_bonus` | *(any)* | Payroll with bonus/commission |
 | `user_credit_joint_account` | *(any)* | Multiple salary streams |
+| `user_bank_income` | `{}` | **Bank Income** (traditional income product) — **not** the primary CRA Check Link persona |
 | `user_prism_1` … `user_prism_8` | *(any)* | Bank Income / Partner Insights personas |
 
 ---
@@ -189,6 +188,7 @@ or `/session/token/create` with `template_id` for Layer + CRA.
 | Remember Me (new) | Any | — | — | Phone: `415-555-0010`, OTP: `123456` |
 | Remember Me (returning) | Any | — | — | Phone: `415-555-0011`, OTP: `123456` |
 | IDV | First Platypus Bank | — | — | Leslie Knope form data |
-| CRA | First Platypus Bank | `user_bank_income` | `{}` | Non-OAuth only |
+| CRA / Plaid Check Link | First Platypus Bank | `user_credit_profile_good` (or other `user_credit_*`) | `pass_good` | Non-OAuth only |
+| Bank Income (traditional) | First Platypus Bank | `user_bank_income` | `{}` | Non-OAuth only; not CRA-primary |
 | MFA | First Platypus Bank | `user_good` | `mfa_device` | OTP: `1234` |
 | Error test | First Platypus Bank | `user_good` | `error_ITEM_LOCKED` | Any `error_*` value |

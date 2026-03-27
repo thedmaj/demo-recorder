@@ -1,0 +1,152 @@
+/*
+ * Plaid Slide Template CSS (Plaid-only)
+ * Designed for presentation readability on both projector and remote calls.
+ *
+ * Color + typography tokens are intentionally aligned with the Plaid design
+ * system in `CLAUDE.md` so generated slides look consistent across runs.
+ */
+
+:root{
+  /* Layout + surface */
+  --slide-safe-pad: 64px;
+  --slide-bg: linear-gradient(135deg, #0d1117, #0a2540);
+  --slide-surface: rgba(255,255,255,0.04);
+  --slide-border: rgba(255,255,255,0.10);
+
+  /* Text */
+  --slide-text-primary: #ffffff;
+  --slide-text-secondary: rgba(255,255,255,0.65);
+  --slide-text-tertiary: rgba(255,255,255,0.35);
+
+  /* Accent */
+  --slide-accent: #00A67E;          /* CTA accent */
+  --slide-accent-border: rgba(0,166,126,0.45);
+  --slide-accent-tint: rgba(0,166,126,0.12);
+
+  /* Risk */
+  --slide-risk: #f87171;
+
+  /* Typography */
+  --slide-font: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0;
+  font-family: var(--slide-font);
+  background: var(--slide-bg);
+  color: var(--slide-text-primary);
+  overflow:hidden;
+}
+
+.slide-root{
+  width:1440px;
+  height:900px;
+  margin:0 auto;
+  padding: 0;
+  display:flex;
+  flex-direction:column;
+}
+
+.slide-header{
+  height:72px;
+  padding: 0 var(--slide-safe-pad);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  border-bottom: 2px solid var(--slide-accent-border);
+}
+
+.slide-header-left{ display:flex; align-items:center; gap:16px; }
+.slide-header-pill{
+  background: var(--slide-accent-tint);
+  border: 1px solid var(--slide-accent-border);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing:0.10em;
+  text-transform:uppercase;
+}
+.slide-header-endpoint{
+  font-size: 13px;
+  font-family: "SF Mono","Fira Code",Consolas,monospace;
+  color: var(--slide-text-tertiary);
+}
+
+.slide-body{
+  flex:1;
+  padding: 48px var(--slide-safe-pad) 56px;
+  display:flex;
+  flex-direction:column;
+  gap: 28px;
+  min-width:0;
+}
+
+.slide-hero{ max-width: 920px; }
+.slide-title{
+  margin:0;
+  font-size: 44px;
+  line-height:1.1;
+  letter-spacing:-0.02em;
+}
+.slide-subtitle{
+  margin-top: 14px;
+  font-size: 16px;
+  color: var(--slide-text-secondary);
+  line-height:1.6;
+  max-width: 70ch;
+}
+
+.slide-panels{
+  display:flex;
+  gap: 18px;
+  flex-wrap:wrap;
+}
+
+.slide-panel{
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  padding: 20px 22px;
+  min-width: 360px;
+  flex: 1;
+}
+.slide-panel-title{
+  margin:0 0 10px 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing:0.05em;
+  text-transform:uppercase;
+  color: rgba(255,255,255,0.75);
+}
+.slide-panel-body{
+  margin:0;
+  font-size: 16px;
+  color: var(--slide-text-secondary);
+  line-height:1.7;
+  max-width: 72ch;
+}
+
+.slide-callout{
+  align-self:flex-end;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(0,166,126,0.28);
+  border-radius: 14px;
+  padding: 18px 20px;
+  min-width: 360px;
+}
+.slide-callout-value{
+  font-size: 40px;
+  font-weight: 800;
+  color: var(--slide-accent);
+  line-height:1;
+}
+.slide-callout-label{
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--slide-text-secondary);
+  line-height:1.5;
+}
+

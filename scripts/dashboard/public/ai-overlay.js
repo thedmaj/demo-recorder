@@ -13,7 +13,12 @@
 
   const RUN_ID = window.__DEMO_RUN_ID__;
   const DASHBOARD = window.__DASHBOARD_ORIGIN__;
+
+  // If globals aren't set, the overlay was loaded outside the dashboard preview — bail silently.
   if (!RUN_ID || !DASHBOARD) return;
+
+  // Track whether the backend is reachable; updated by health-check below.
+  let _backendOnline = null; // null = checking, true = online, false = offline
 
   // ── Restore step position after reload ───────────────────────────────────────
   const SESSION_KEY = '__ai_overlay_step_' + RUN_ID;
@@ -330,6 +335,58 @@
   const inputEl = document.getElementById('__ai-input');
   const sendBtn = document.getElementById('__ai-send-btn');
   const pickBtn = document.getElementById('__ai-pick-btn');
+
+  // ── Backend health check ──────────────────────────────────────────────────────
+  function setOfflineState(reason) {
+    _backendOnline = false;
+    fab.title = 'AI Edit — dashboard offline';
+    fab.style.background = '#374151';
+    fab.style.boxShadow = 'none';
+    fab.style.cursor = 'default';
+    inputEl.disabled = true;
+    inputEl.placeholder = 'Dashboard offline — AI edit unavailable';
+    sendBtn.disabled = true;
+    sendBtn.title = reason || 'Dashboard server not reachable';
+    pickBtn.disabled = true;
+    // Show a banner inside the panel if already open
+    const existing = document.getElementById('__ai-offline-banner');
+    if (!existing) {
+      const banner = document.createElement('div');
+      banner.id = '__ai-offline-banner';
+      banner.style.cssText = 'padding:12px 16px;background:#1f2937;border-bottom:1px solid #374151;font-size:12px;color:#f87171;display:flex;align-items:center;gap:8px;';
+      banner.innerHTML = '<span>⚠</span><span>Dashboard server unreachable. Start it with <code style="background:#111;padding:2px 5px;border-radius:3px">npm run dashboard</code></span>';
+      messagesEl.parentElement.insertBefore(banner, messagesEl);
+    }
+  }
+
+  function setOnlineState() {
+    _backendOnline = true;
+    fab.title = 'AI Edit (opens chat)';
+    fab.style.background = '';
+    fab.style.boxShadow = '';
+    fab.style.cursor = '';
+    inputEl.disabled = false;
+    inputEl.placeholder = 'Describe the change you want…';
+    sendBtn.disabled = false;
+    sendBtn.title = '';
+    pickBtn.disabled = false;
+    const banner = document.getElementById('__ai-offline-banner');
+    if (banner) banner.remove();
+  }
+
+  async function checkBackend() {
+    try {
+      // Use /api/demo-apps — has CORS headers, works from any origin (incl. app-server.js port)
+      const r = await fetch(`${DASHBOARD}/api/demo-apps`, { method: 'GET', signal: AbortSignal.timeout(4000) });
+      if (r.ok) { setOnlineState(); } else { setOfflineState('Dashboard returned ' + r.status); }
+    } catch (_) {
+      setOfflineState('Cannot reach ' + DASHBOARD);
+    }
+  }
+
+  // Run immediately + retry every 10s if offline
+  checkBackend();
+  setInterval(() => { if (!_backendOnline) checkBackend(); }, 10000);
   const contextBar = document.getElementById('__ai-context-bar');
   const contextLabel = document.getElementById('__ai-context-label');
   const contextClear = document.getElementById('__ai-context-clear');
@@ -472,6 +529,10 @@
         selectedElementHtml: pickedHtml || null,
         selectedElementSelector: pickedSelector || null,
         conversationHistory,
+        // Send the active step ID so the server can scope edits to just this step's div
+        currentStepId: typeof window.getCurrentStep === 'function'
+          ? (window.getCurrentStep() || '').replace(/^step-/, '')
+          : null,
       };
 
       const resp = await fetch(`${DASHBOARD}/api/demo-apps/${RUN_ID}/ai-edit`, {

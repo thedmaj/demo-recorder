@@ -74,7 +74,7 @@ Quick reference for all pipeline agents:
 - Default credentials: `user_good` / `pass_good`
 - MFA OTP: `1234` | Remember Me OTP: `123456`
 - OAuth institution: **Platypus OAuth Bank** (`ins_127287`)
-- CRA credentials: `user_bank_income` / `{}` — non-OAuth institutions only
+- CRA (Check / Consumer Report) Link: `user_credit_profile_*` + `pass_good` (or any sandbox password) — non-OAuth institutions only; not `user_bank_income` (that is **Bank Income** — see `inputs/products/plaid-bank-income.md`)
 - IDV persona: Leslie Knope — see `inputs/plaid-link-sandbox.md § 5`
 - OAuth redirect detected → call `agent.handleOAuthFlow()` (5-step process)
 - Always skip Remember Me phone screen via "Continue without phone number"
@@ -356,7 +356,51 @@ Every stage reads its inputs from disk (JSON files in `out/`). To restart from a
 ```
 npm run demo -- --from=STAGE_NAME
 ```
-Stages: `research`, `ingest`, `brand-extract`, `script`, `build`, `record`, `qa`, `voiceover`, `render`, `ppt`
+To **stop early** after a stage (e.g. build the demo and run **build-only QA** without recording):
+```
+npm run demo:build-qa
+# equivalent:
+npm run demo -- --to=build-qa
+```
+`build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same Claude vision QA as post-record QA against `demo-script.json` `visualState` — output `qa-report-build.json` in the run dir. Optional: `BUILD_QA_STRICT=1` to exit non-zero if the score is below `QA_PASS_THRESHOLD`.
+
+Stages: `research`, `ingest`, `brand-extract`, `script`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
+
+---
+## Slide Template and Storyboard Slides
+
+### Slide template (PowerPoint supplement)
+Slides are generated from a reusable Plaid-only template so the styling stays consistent across pipeline runs and presentations.
+
+- Template folder: `templates/slide-template/`
+  - `base.html` — slide surface structure contract
+  - `slide.css` — Plaid-only tokens + typography + panel patterns
+  - `SLIDE_RULES.md` — non-negotiable generation rules for the agent
+
+### How the build uses the template
+During the `build` stage, the app-generation prompt includes:
+- `SLIDE_RULES.md`
+- `slide.css`
+
+This is wired via:
+- `scripts/scratch/scratch/build-app.js` (loads template files from disk)
+- `scripts/scratch/utils/prompt-templates.js` (injects the template content into the system prompt)
+
+### Storyboard: adding “Slide” steps with optional Glean messaging
+In the dashboard storyboard “Add New Step” modal:
+- Choose `Scene type = Slide`
+- Optionally enable `Research messaging (Glean)`
+
+When enabled, the UI sends `useGleanResearch: true` to:
+- `POST /api/runs/:runId/generate-step`
+
+The server calls `gleanChat(...)` before Claude Haiku generates the slide step JSON, using the user’s slide description as the query context.
+
+### Prompt convention for slide output
+`inputs/prompt.txt` contains a dedicated block:
+- `[[SLIDE_OUTPUT_BEGIN]] ... [[SLIDE_OUTPUT_END]]`
+
+The script-generation prompt extracts this block and exposes it to Claude as `SLIDE OUTPUT REQUIREMENTS` so slide-generation intent stays explicit across runs.
 
 ## Output Versioning
 Every pipeline run writes to `out/demos/{YYYY-MM-DD}-{product-slug}-v{N}/`.

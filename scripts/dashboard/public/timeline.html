@@ -556,14 +556,16 @@ function initFromData(d) {
 
   // Build internal step objects from API data
   steps = (d.steps || []).map((s, i) => ({
-    idx:            i,
-    id:             s.id,
-    label:          s.label || s.id,
-    narration:      s.narration || '',
-    videoStart:     s.videoStart ?? null,
-    videoEnd:       s.videoEnd   ?? null,
-    narrationDur:   s.narrationDur   || 0,
+    idx:             i,
+    id:              s.id,
+    label:           s.label || s.id,
+    narration:       s.narration || '',
+    videoStart:      s.videoStart ?? null,
+    videoEnd:        s.videoEnd   ?? null,
+    narrationDur:    s.narrationDur   || 0,
     narrationOffset: s.narrationOffset || 0,
+    // Absolute position of audio clip in composition timeline (from manifest startMs)
+    narrationCompStart: s.narrationCompStart ?? null,
     // comp_duration = how long this step occupies in the comp (editable)
     // initialized from (videoEnd - videoStart) if available
     comp_duration: (s.videoEnd != null && s.videoStart != null)
@@ -576,13 +578,24 @@ function initFromData(d) {
     applySyncMapToSteps(d.syncMap.segments);
   }
 
+  // Extend totalDur to include the full audio timeline (voiceover may be longer than video)
+  const lastAudEnd = steps.reduce((max, s) => {
+    if (s.narrationCompStart != null && s.narrationDur > 0) {
+      return Math.max(max, s.narrationCompStart + s.narrationDur);
+    }
+    return max;
+  }, 0);
+
   // Update totalDur from last step end if not provided
   if (!totalDur && steps.length > 0) {
     const last = steps[steps.length - 1];
     totalDur = (last.videoEnd != null) ? last.videoEnd : steps.reduce((s, st) => s + st.comp_duration, 0);
   }
 
-  $totalDur.textContent = fmt(totalDur) + ' total';
+  // Ruler must span the full extent of both video and audio
+  totalDur = Math.max(totalDur, lastAudEnd);
+
+  $totalDur.textContent = fmt(d.videoDuration || totalDur) + ' video · ' + fmt(lastAudEnd || totalDur) + ' audio';
   render();
 }
 
@@ -710,23 +723,17 @@ function renderSegments(pps) {
     }
 
     // ── Audio segment ──────────────────────────────────────────────────────
-    const audStart = compStart + step.narrationOffset;
-    const audDur   = step.narrationDur;
-    const audEnd   = audStart + audDur;
-    const overEnd  = compEnd;  // video step ends here
-    const hasOver  = audEnd > compEnd + 0.05;
+    // Use absolute composition position from manifest (narrationCompStart) when available,
+    // otherwise fall back to relative offset from video compStart.
+    const audStart = step.narrationCompStart != null
+      ? step.narrationCompStart
+      : compStart + step.narrationOffset;
+    const audDur = step.narrationDur;
 
     if (audDur > 0) {
-      const audBarDur = hasOver ? (compEnd - audStart) : audDur;
-      const audEl = makeAudSeg(i, audStart, audBarDur, step.label, hasOver, step.narrationOffset);
+      const audEl = makeAudSeg(i, audStart, audDur, step.label, false, 0);
       $tracks.appendChild(audEl);
       _segEls.aud.push(audEl);
-
-      if (hasOver) {
-        const overDur = audEnd - compEnd;
-        const overEl = makeAudOverSeg(i, compEnd, overDur);
-        $tracks.appendChild(overEl);
-      }
     }
   });
 }
@@ -924,7 +931,9 @@ function onAudMousedown(e, idx) {
     type:     'aud-move',
     idx,
     startX:   e.pageX,
-    origVal:  steps[idx].narrationOffset,
+    // Use narrationCompStart if available (absolute positioning), else fall back to offset
+    origVal:  steps[idx].narrationCompStart != null ? steps[idx].narrationCompStart : steps[idx].narrationOffset,
+    useCompStart: steps[idx].narrationCompStart != null,
   };
   document.body.style.cursor = 'grabbing';
   selectSeg('aud', idx);
@@ -970,10 +979,12 @@ document.addEventListener('mousemove', e => {
     updateSelStatus(drag.idx);
   } else if (drag.type === 'aud-move') {
     const step = steps[drag.idx];
-    step.narrationOffset = drag.origVal + dt;
-    // Clamp: can't go before step start (0) or after step end
-    const maxOffset = step.comp_duration - 0.2;
-    step.narrationOffset = Math.max(-step.comp_duration * 0.5, Math.min(maxOffset, step.narrationOffset));
+    const newVal = Math.max(0, drag.origVal + dt);
+    if (drag.useCompStart) {
+      step.narrationCompStart = newVal;
+    } else {
+      step.narrationOffset = newVal;
+    }
     dirty = true;
     requestAnimationFrame(render);
     updateSelStatus(drag.idx);
@@ -997,6 +1008,11 @@ function selectSeg(type, idx) {
 function updateSelStatus(idx) {
   if (idx == null || !steps[idx]) { $statusSel.textContent = 'selected: —'; return; }
   const step = steps[idx];
+  if (selected && selected.type === 'aud') {
+    const audStart = step.narrationCompStart != null ? step.narrationCompStart : step.narrationOffset;
+    $statusSel.textContent = `selected: ${step.id}  aud-start=${fmt(audStart)}  aud-dur=${fmt(step.narrationDur)}`;
+    return;
+  }
   const vidDur = (step.videoEnd != null && step.videoStart != null)
     ? (step.videoEnd - step.videoStart) : step.comp_duration;
   const freeze = Math.max(0, step.comp_duration - vidDur);
@@ -1111,6 +1127,19 @@ function computeSyncMapSegments() {
     }
   }
 
+  return out;
+}
+
+// Build narration offset data for saving (converts narrationCompStart back to per-step offsets)
+function computeNarrationOffsets() {
+  const out = [];
+  let compCursor = 0;
+  for (const step of steps) {
+    const compStart = compCursor;
+    compCursor += step.comp_duration;
+    const audAbsStart = step.narrationCompStart != null ? step.narrationCompStart : compStart + step.narrationOffset;
+    out.push({ stepId: step.id, narrationOffset: audAbsStart - compStart });
+  }
   return out;
 }
 

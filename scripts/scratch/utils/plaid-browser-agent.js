@@ -129,23 +129,36 @@ const SANDBOX_CREDS = {
   },
 
   /**
-   * CRA — Consumer Report Access (Bank Income, CRA Base Report, Income Insights).
-   * MUST NOT use user_good/pass_good.
+   * CRA — Plaid Check / Consumer Report (CRA Base Report, CRA Income Insights).
+   * MUST NOT use user_good/pass_good for institution login.
    * MUST use non-OAuth institution.
-   * Products: cra_base_report, cra_income_insights
+   * Products: cra_base_report, cra_income_insights (+ consumer_report_permissible_purpose on token create).
+   * NOTE: user_bank_income is for traditional Bank Income — not CRA-primary in this repo.
    */
   cra: {
-    username:    'user_bank_income',
-    password:    '{}',
+    username:    'user_credit_profile_good',
+    password:    'pass_good',
     institution: 'First Platypus Bank',
     institutionId: 'ins_109508',
     mfa:         '1234',
     alternates: [
-      { username: 'user_credit_profile_excellent', institution: 'First Platypus Bank' },
-      { username: 'user_credit_profile_good',      institution: 'First Platypus Bank' },
-      { username: 'user_credit_profile_poor',      institution: 'First Platypus Bank' },
+      { username: 'user_credit_profile_excellent', password: 'pass_good', institution: 'First Platypus Bank' },
+      { username: 'user_credit_profile_poor',      password: 'pass_good', institution: 'First Platypus Bank' },
+      { username: 'user_credit_bonus',             password: 'pass_good', institution: 'First Platypus Bank' },
+      { username: 'user_credit_joint_account',    password: 'pass_good', institution: 'First Platypus Bank' },
     ],
-    notes: 'CRA/Bank Income. Non-OAuth institutions only. Do not use user_good/pass_good.',
+    notes: 'CRA / Plaid Check Link. Non-OAuth only. user_bank_income is for Bank Income product, not CRA-primary.',
+  },
+
+  /**
+   * Traditional Bank Income — sandbox institution login (not CRA-primary).
+   */
+  bankIncome: {
+    username:    'user_bank_income',
+    password:    '{}',
+    institution: 'First Platypus Bank',
+    institutionId: 'ins_109508',
+    notes: 'Traditional /credit/bank_income flows. Non-OAuth institutions only.',
   },
 
   /**

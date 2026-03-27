@@ -6,6 +6,7 @@ api_endpoints:
 use_cases:
   - "<use-case>"
 last_human_review: ""
+last_reviewed_by: ""
 last_ai_update: ""
 needs_review: false
 approved: false
@@ -63,6 +64,13 @@ version: 1
 
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+## Framework QA Learnings
+<!-- 🔄 SHARED — curated prompt/build lessons for this product family.
+     Promote recurring issues from inputs/qa-fix-log.md into stable product guidance here. -->
 
 ## Objections & Responses
 <!-- 🔄 SHARED — AI adds [DRAFT] from Gong; human approves by removing [DRAFT] tag. -->

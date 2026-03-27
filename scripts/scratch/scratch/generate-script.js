@@ -24,6 +24,11 @@ const readline   = require('readline');
 const {
   buildScriptGenerationPrompt,
 } = require('../utils/prompt-templates');
+const {
+  inferProductFamily,
+} = require('../utils/product-profiles');
+const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
+const { writePipelineRunContext, buildRunContextPayload } = require('../utils/run-context');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -167,6 +172,127 @@ function waitForApproval(message) {
   });
 }
 
+function isInsightLikeStep(step) {
+  const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+  return /\binsight\b|\bapi insight\b|\bplaid insight\b/.test(haystack);
+}
+
+function isAmountEntryStep(step) {
+  const haystack = [step?.id, step?.label, step?.visualState, step?.narration].filter(Boolean).join(' ').toLowerCase();
+  return /\bamount\b|\bfunding amount\b|\btransfer amount\b/.test(haystack);
+}
+
+function validateDemoScript(demoScript, opts = {}) {
+  const errors = [];
+  const warnings = [];
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  const plaidLinkLive = opts.plaidLinkLive === true;
+  const productFamily = opts.productFamily || 'generic';
+
+  const idCounts = new Map();
+  for (const step of steps) {
+    if (!step?.id) {
+      errors.push('A step is missing an id.');
+      continue;
+    }
+    idCounts.set(step.id, (idCounts.get(step.id) || 0) + 1);
+    const action = step.interaction?.action;
+    if ((action === 'click' || action === 'fill') && !step.interaction?.target) {
+      errors.push(`Step "${step.id}" uses interaction action "${action}" but has no interaction.target.`);
+    }
+    if (isInsightLikeStep(step)) {
+      if (!step.apiResponse?.endpoint) {
+        errors.push(`Insight step "${step.id}" is missing apiResponse.endpoint.`);
+      }
+      if (!step.apiResponse?.response || typeof step.apiResponse.response !== 'object') {
+        errors.push(`Insight step "${step.id}" is missing apiResponse.response.`);
+      }
+    } else if (step.apiResponse && (!step.apiResponse.endpoint || !step.apiResponse.response)) {
+      errors.push(`Step "${step.id}" has an incomplete apiResponse block.`);
+    }
+  }
+
+  for (const [id, count] of idCounts.entries()) {
+    if (count > 1) errors.push(`Duplicate step id "${id}" found ${count} times.`);
+  }
+
+  const indexByEndpoint = {};
+  steps.forEach((step, idx) => {
+    const endpoint = step.apiResponse?.endpoint || '';
+    if (/\/identity\/match\b/i.test(endpoint)) indexByEndpoint.identity = idx;
+    if (/\/auth\/get\b/i.test(endpoint)) indexByEndpoint.auth = idx;
+    if (/\/signal\/evaluate\b/i.test(endpoint)) indexByEndpoint.signal = idx;
+    if (/\/cra\/check_report\/base_report\/get\b/i.test(endpoint)) indexByEndpoint.baseReport = idx;
+    if (/\/credit\/(?:bank_income\/get|payroll_income\/get)\b/i.test(endpoint)) indexByEndpoint.income = idx;
+  });
+
+  if (productFamily === 'funding') {
+    if (indexByEndpoint.identity != null && indexByEndpoint.auth != null &&
+        indexByEndpoint.identity > indexByEndpoint.auth) {
+      errors.push('Identity Match must appear before Auth in the demo step order.');
+    }
+    if (indexByEndpoint.auth != null && indexByEndpoint.signal != null &&
+        indexByEndpoint.auth > indexByEndpoint.signal) {
+      errors.push('Auth must appear before Signal in the demo step order.');
+    }
+    if (indexByEndpoint.identity != null && indexByEndpoint.signal != null &&
+        indexByEndpoint.identity > indexByEndpoint.signal) {
+      errors.push('Identity Match must appear before Signal in the demo step order.');
+    }
+    if (indexByEndpoint.auth != null && indexByEndpoint.signal != null) {
+      const amountIdx = steps.findIndex((step, idx) =>
+        idx > indexByEndpoint.auth && idx < indexByEndpoint.signal && isAmountEntryStep(step));
+      if (amountIdx === -1) {
+        warnings.push('No amount-entry step was found between Auth and Signal. Funding demos usually need a host-app amount step before Signal.');
+      }
+    }
+  }
+
+  if (productFamily === 'cra_base_report') {
+    const hasBaseReport = indexByEndpoint.baseReport != null;
+    if (!hasBaseReport) {
+      errors.push('CRA Base Report demos should include an insight step with /cra/check_report/base_report/get.');
+    }
+    const hasReadyBeat = steps.some(step => {
+      const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+      return /\bready\b|\breport ready\b|\breport available\b|\bunderwriting review\b/.test(haystack);
+    });
+    if (!hasReadyBeat) {
+      warnings.push('CRA Base Report demos usually need a report-ready or report-available beat before reviewing the Base Report.');
+    }
+  }
+
+  if (productFamily === 'income_insights') {
+    const hasIncomeEndpoint = steps.some(step => /\/cra\/check_report\/income_insights\/get\b/i.test(step.apiResponse?.endpoint || ''));
+    if (!hasIncomeEndpoint) {
+      errors.push('CRA Income Insights demos should include an insight step using /cra/check_report/income_insights/get.');
+    }
+    const hasReadyBeat = steps.some(step => {
+      const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+      return /\bready\b|\breport ready\b|\breport available\b|\bprocessing\b/.test(haystack);
+    });
+    if (!hasReadyBeat) {
+      warnings.push('CRA Income Insights demos usually need a report-ready or report-available beat before showing retrieved income insights.');
+    }
+  }
+
+  const launchSteps = steps.filter(step => step.plaidPhase === 'launch');
+  if (launchSteps.length > 1) {
+    errors.push(`Multiple plaidPhase:"launch" steps found (${launchSteps.map(s => s.id).join(', ')}). Use exactly one launch step.`);
+  }
+  if (launchSteps.length === 1) {
+    const narration = launchSteps[0].narration || '';
+    if (/\b(plaid link opens|opens plaid link|clicks .*link|taps .*link|launches plaid link)\b/i.test(narration)) {
+      errors.push(`Launch step "${launchSteps[0].id}" narration violates the Plaid Link boundary rule. Narrate what is visible inside the modal, not the trigger action.`);
+    }
+  }
+  if (plaidLinkLive && launchSteps.length === 0) {
+    errors.push('PLAID_LINK_LIVE=true requires exactly one step with plaidPhase:"launch".');
+  }
+
+  return { errors, warnings, productFamily };
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -181,6 +307,10 @@ async function main() {
   }
 
   const ingestedInputs = JSON.parse(fs.readFileSync(INGESTED_FILE, 'utf8'));
+  const promptEntry = Array.isArray(ingestedInputs.texts)
+    ? ingestedInputs.texts.find(t => t && typeof t === 'object' && t.filename === 'prompt.txt')
+    : null;
+  const promptText = promptEntry?.content || promptEntry?.text || '';
 
   let productResearch = null;
   if (fs.existsSync(RESEARCH_FILE)) {
@@ -192,6 +322,15 @@ async function main() {
     }
   }
 
+  const productFamily = inferProductFamily({ promptText, productResearch });
+  const curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
+  const curatedDigest = buildCuratedDigest(curatedProductKnowledge);
+  if (productResearch && typeof productResearch === 'object') {
+    productResearch.productFamily = productFamily;
+    productResearch.curatedProductKnowledge = curatedProductKnowledge;
+    productResearch.curatedDigest = curatedDigest;
+  }
+
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -201,7 +340,14 @@ async function main() {
   // Build prompts from the shared template
   const { system: systemPrompt, userMessages } = buildScriptGenerationPrompt(
     ingestedInputs || { texts: [], screenshots: [], transcriptions: [] },
-    productResearch || { synthesizedInsights: {}, internalKnowledge: [], apiSpec: {} }
+    productResearch || {
+      synthesizedInsights: {},
+      internalKnowledge: [],
+      apiSpec: {},
+      productFamily,
+      curatedProductKnowledge,
+      curatedDigest,
+    }
   );
 
   // NOTE: The Anthropic API does NOT allow combining extended thinking with
@@ -300,8 +446,49 @@ async function main() {
     console.log(`[Script] Plaid launch step: "${launchStep.id}" (plaidPhase: launch) ✓`);
   }
 
+  const scriptValidation = validateDemoScript(demoScript, {
+    plaidLinkLive: process.env.PLAID_LINK_LIVE === 'true',
+    productFamily,
+  });
+  if (scriptValidation.errors.length > 0) {
+    console.error('[Script] Demo script validation failed:');
+    scriptValidation.errors.forEach(e => console.error(`  ✗ ${e}`));
+    process.exit(1);
+  }
+  if (scriptValidation.warnings.length > 0) {
+    console.warn('[Script] Demo script validation warnings:');
+    scriptValidation.warnings.forEach(w => console.warn(`  ! ${w}`));
+    if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+      await waitForApproval('\nDemo script validation warnings were found. Press ENTER to continue, or Ctrl+C to abort and revise...');
+    }
+  }
+
   // Write to disk
   fs.writeFileSync(OUT_FILE, JSON.stringify(demoScript, null, 2));
+
+  try {
+    const prMerged = {
+      ...(productResearch && typeof productResearch === 'object' ? productResearch : {}),
+      productFamily,
+      curatedProductKnowledge,
+      curatedDigest,
+    };
+    writePipelineRunContext(
+      OUT_DIR,
+      buildRunContextPayload({
+        phase: 'post-script',
+        productFamily,
+        productResearch: prMerged,
+        demoScript,
+        promptText,
+      })
+    );
+    if (fs.existsSync(RESEARCH_FILE) && productResearch && typeof productResearch === 'object') {
+      fs.writeFileSync(RESEARCH_FILE, JSON.stringify(prMerged, null, 2));
+    }
+  } catch (e) {
+    console.warn(`[Script] Could not update pipeline run context / product-research: ${e.message}`);
+  }
 
   const stepCount       = demoScript.steps.length;
   const estimatedSeconds = demoScript.steps.reduce((sum, s) => sum + (s.durationHintMs || 0), 0) / 1000;
@@ -319,7 +506,12 @@ async function main() {
   console.log('[Script] Approved — proceeding to build-app');
 }
 
-module.exports = { main };
+module.exports = {
+  main,
+  validateDemoScript,
+  isInsightLikeStep,
+  isAmountEntryStep,
+};
 
 if (require.main === module) {
   main().catch(err => {

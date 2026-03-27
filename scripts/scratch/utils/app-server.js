@@ -130,36 +130,57 @@ async function handleApiRoute(req, res, urlPath) {
     switch (urlPath) {
       case '/api/create-link-token': {
         const result = await plaid.createLinkToken({
+          ...body,
           products:             body.products,
           clientName:           body.clientName || body.client_name,
           userId:               body.userId || body.user_id,
           phoneNumber:          body.phoneNumber || body.phone_number || null,
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
+          productFamily:        body.productFamily || body.product_family || null,
+          credentialScope:      body.credentialScope || body.credential_scope || null,
         });
         sendJson(res, 200, result);
         return true;
       }
 
       case '/api/exchange-public-token': {
-        const result = await plaid.exchangePublicToken(body.public_token);
+        const result = await plaid.exchangePublicToken(body.public_token, {
+          productFamily:   body.productFamily || body.product_family || null,
+          credentialScope: body.credentialScope || body.credential_scope || null,
+        });
         sendJson(res, 200, result);
         return true;
       }
 
       case '/api/auth-get': {
-        const result = await plaid.getAuth(body.access_token);
+        const result = await plaid.getAuth(body.access_token, {
+          credentialScope: body.credentialScope || body.credential_scope || null,
+        });
         sendJson(res, 200, result);
         return true;
       }
 
       case '/api/identity-match': {
-        const result = await plaid.getIdentityMatch(body.access_token, body.legal_name);
+        const result = await plaid.getIdentityMatch(body.access_token, body.legal_name, {
+          credentialScope: body.credentialScope || body.credential_scope || null,
+        });
         sendJson(res, 200, result);
         return true;
       }
 
       case '/api/signal-evaluate': {
-        const result = await plaid.evaluateSignal(body.access_token, body.account_id, body.amount);
+        const result = await plaid.evaluateSignal(body.access_token, body.account_id, body.amount, {
+          credentialScope: body.credentialScope || body.credential_scope || null,
+        });
+        sendJson(res, 200, result);
+        return true;
+      }
+
+      case '/api/plaid-request': {
+        const result = await plaid.plaidRequest(body.endpoint, body.body || {}, {
+          productFamily: body.productFamily || body.product_family || null,
+          credentialScope: body.credentialScope || body.credential_scope || null,
+        });
         sendJson(res, 200, result);
         return true;
       }

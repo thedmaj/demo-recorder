@@ -41,8 +41,10 @@ const TARGET_FPS = parseInt(process.env.RECORDING_FPS || '30', 10);
 
 const PLAID_LINK_LIVE  = process.env.PLAID_LINK_LIVE  === 'true';
 const MANUAL_RECORD   = process.env.MANUAL_RECORD    === 'true';
+const PLAID_LINK_RECORDING_PROFILE = (process.env.PLAID_LINK_RECORDING_PROFILE || '').toLowerCase();
 const PLAID_SANDBOX_INSTITUTION = process.env.PLAID_SANDBOX_INSTITUTION || 'First Platypus Bank';
-const PLAID_SANDBOX_USERNAME    = process.env.PLAID_SANDBOX_USERNAME    || 'user_good';
+const PLAID_SANDBOX_USERNAME    = process.env.PLAID_SANDBOX_USERNAME    ||
+  (PLAID_LINK_RECORDING_PROFILE === 'cra' ? 'user_credit_profile_good' : 'user_good');
 const PLAID_SANDBOX_PASSWORD    = process.env.PLAID_SANDBOX_PASSWORD    || 'pass_good';
 
 // Use vision-based browser agent for Plaid Link iframe phases.
@@ -57,6 +59,8 @@ const SMART_PLAID_AGENT = process.env.SMART_PLAID_AGENT === 'true' && USE_BROWSE
 // How long to dwell on each Plaid Link screen in the recording (~4s = 1 cut).
 // Set PLAID_SCREEN_DWELL_MS=0 to disable and run at full automation speed.
 const PLAID_SCREEN_DWELL_MS = parseInt(process.env.PLAID_SCREEN_DWELL_MS || '4000', 10);
+/** Min wall time between otp-submitted and institution-list-shown (matches test harness). */
+const OTP_TO_INST_LIST_MIN_GAP_MS = parseInt(process.env.OTP_TO_INST_LIST_MIN_GAP_MS || '2000', 10);
 
 // Resolved sandbox credentials (populated in main() after async Glean lookup)
 let _sandboxCredentials = null;
@@ -329,9 +333,12 @@ async function injectPlaidEventTracking(page) {
  * @param {Page}   page
  * @param {number} [timeoutMs=8000]
  * @param {number} [dwell]  Override dwell; defaults to PLAID_SCREEN_DWELL_MS
+ * @param {number|null} [beforeCount]  Wait until count > this (set from immediately before the click that triggers the transition)
  */
-async function plaidWaitForTransition(page, timeoutMs = 8000, dwell = PLAID_SCREEN_DWELL_MS) {
-  const before = await page.evaluate(() => window._plaidTransitionCount || 0);
+async function plaidWaitForTransition(page, timeoutMs = 8000, dwell = PLAID_SCREEN_DWELL_MS, beforeCount = null) {
+  const before = beforeCount !== null && beforeCount !== undefined
+    ? beforeCount
+    : await page.evaluate(() => window._plaidTransitionCount || 0);
   await page.waitForFunction(
     (n) => (window._plaidTransitionCount || 0) > n,
     before,
@@ -405,11 +412,15 @@ async function plaidClickBack(frame, page) {
  *
  * @returns {string|null} Name of the selected institution, or null if list not present
  */
-async function plaidSelectSavedInstitution(page) {
+async function plaidSelectSavedInstitution(page, otpSubmittedWallMs = null) {
   const frame = getPlaidLinkFrame(page);
 
   // Wait for the saved institution list to load
   await frame.locator('ul li').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
+  if (otpSubmittedWallMs != null) {
+    const need = OTP_TO_INST_LIST_MIN_GAP_MS - (Date.now() - otpSubmittedWallMs);
+    if (need > 0) await page.waitForTimeout(need);
+  }
   markPlaidStep('institution-list-shown', page);
 
   // Dwell 2 seconds so the viewer sees the institution list before selection.
@@ -1042,6 +1053,8 @@ async function executePlaidLinkPhase(page, phase) {
           const phoneInput = frame.locator('input[type="tel"], input[name="phone"], input[placeholder*="phone" i], input[placeholder*="Phone" i]').first();
           const phoneVisible = await phoneInput.isVisible({ timeout: 5000 }).catch(() => false);
           if (phoneVisible) {
+            // Requirement: keep initial Plaid Link screen visible ~3s before continuing.
+            await page.waitForTimeout(3000);
             const phone = _sandboxConfig?.phone || '+14155550011';
             await phoneInput.fill(phone);
             await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
@@ -1066,28 +1079,36 @@ async function executePlaidLinkPhase(page, phase) {
           console.log('  [Plaid Link] Checking for OTP screen...');
           const otpSelectors = ['input[inputmode="numeric"]', 'input[type="tel"]', 'input[maxlength="6"]', 'input[maxlength="4"]', 'input[placeholder*="code" i]', 'input[autocomplete*="one-time-code"]'];
           let otpDone = false;
+          let otpSubmittedWallMs = null;
           for (const otpSel of otpSelectors) {
             const otpInput = frame.locator(otpSel).first();
             if (await otpInput.isVisible({ timeout: otpSel.includes('inputmode') ? 8000 : 2000 }).catch(() => false)) {
               markPlaidStep('otp-screen', page);
               const otp = _sandboxConfig?.otp || '123456';
-              await otpInput.fill(otp);
-              await page.waitForTimeout(800);
+              // Requirement: simulate human typing (~1–2s) + 1s pause.
+              await otpInput.click({ force: true, timeout: 3000 }).catch(() => {});
+              const typed = await otpInput.pressSequentially(String(otp), { delay: 220 }).then(() => true).catch(() => false);
+              if (!typed) await otpInput.fill(String(otp)).catch(() => {});
+              await page.waitForTimeout(1000);
               markPlaidStep('otp-filled');
-              // Explicitly click submit button after fill
               for (const btnSel of ['button[type="submit"]', 'button:has-text("Continue")', 'button:has-text("Verify")', 'button:has-text("Confirm")']) {
                 const btn = frame.locator(btnSel).first();
                 if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-                  try { await btn.click({ timeout: 5000 }); } catch (_) { await otpInput.press('Enter').catch(() => {}); }
-                  await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
+                  try { await btn.click({ timeout: 5000 }); } catch (_) { await otpInput.press('Enter', { timeout: 1500 }).catch(() => {}); }
+                  markPlaidStep('otp-submitted', page);
+                  otpSubmittedWallMs = Date.now();
+                  // List DOM usually beats the next TRANSITION_VIEW; avoid waiting on count here.
+                  await page.waitForTimeout(250);
                   otpDone = true;
                   console.log(`  [Plaid Link] OTP filled via "${otpSel}" + submitted`);
                   break;
                 }
               }
               if (!otpDone) {
-                await otpInput.press('Enter').catch(() => {});
-                await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
+                await otpInput.press('Enter', { timeout: 1500 }).catch(() => {});
+                markPlaidStep('otp-submitted', page);
+                otpSubmittedWallMs = Date.now();
+                await page.waitForTimeout(250);
                 otpDone = true;
                 console.log(`  [Plaid Link] OTP filled via "${otpSel}" + Enter`);
               }
@@ -1097,9 +1118,7 @@ async function executePlaidLinkPhase(page, phase) {
           if (!otpDone) console.log('  [Plaid Link] No OTP screen found');
 
           // ── 2b. Saved institution selection (Remember Me returning-user) ────
-          // After OTP, Plaid shows a list of previously linked institutions.
-          // plaidSelectSavedInstitution uses dynamic OAuth detection to avoid Chase.
-          await plaidSelectSavedInstitution(page);
+          await plaidSelectSavedInstitution(page, otpSubmittedWallMs);
 
           // ── 3. Consent / "Get started" screen ──────────────────────────────
           console.log('  [Plaid Link] Handling consent screen...');
@@ -1346,6 +1365,8 @@ async function executePlaidLinkPhase(page, phase) {
         const phoneInput = frame.locator('input[type="tel"], input[name="phone"], input[placeholder*="phone" i], input[placeholder*="Phone" i]').first();
         const phoneVisible = await phoneInput.isVisible({ timeout: 5000 }).catch(() => false);
         if (phoneVisible) {
+          // Requirement: keep initial Plaid Link screen visible ~3s before continuing.
+          await page.waitForTimeout(3000);
           const phone = _sandboxConfig?.phone || '+14155550011';
           await phoneInput.fill(phone);
           await page.waitForTimeout(3000);
@@ -1365,62 +1386,44 @@ async function executePlaidLinkPhase(page, phase) {
         // ── 2. OTP screen (Remember Me verification code) ─────────────────────
         // Plaid uses inputmode="numeric" or type="tel" for OTP — NOT just maxlength="6".
         console.log('  [Plaid Link] CSS: Checking for OTP screen...');
+        let cssOtpSubmittedWallMs = null;
         {
           const cssOtpSelectors = ['input[inputmode="numeric"]', 'input[type="tel"]', 'input[maxlength="6"]', 'input[maxlength="4"]', 'input[placeholder*="code" i]', 'input[autocomplete*="one-time-code"]'];
           for (const otpSel of cssOtpSelectors) {
             const otpEl = frame.locator(otpSel).first();
             if (await otpEl.isVisible({ timeout: otpSel.includes('inputmode') ? 8000 : 2000 }).catch(() => false)) {
               const otp = _sandboxConfig?.otp || '123456';
-              await otpEl.fill(otp);
-              await page.waitForTimeout(800);
+              // Requirement: simulate human typing (~1–2s) + 1s pause.
+              await otpEl.click({ force: true, timeout: 3000 }).catch(() => {});
+              const typed = await otpEl.pressSequentially(String(otp), { delay: 220 }).then(() => true).catch(() => false);
+              if (!typed) await otpEl.fill(String(otp)).catch(() => {});
+              await page.waitForTimeout(1000);
+              let otpSent = false;
               for (const btnSel of ['button[type="submit"]', 'button:has-text("Continue")', 'button:has-text("Verify")', 'button:has-text("Confirm")']) {
                 const btn = frame.locator(btnSel).first();
                 if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-                  try { await btn.click({ timeout: 5000 }); } catch (_) { await otpEl.press('Enter').catch(() => {}); }
-                  await page.waitForTimeout(3000);
+                  try { await btn.click({ timeout: 5000 }); } catch (_) { await otpEl.press('Enter', { timeout: 1500 }).catch(() => {}); }
+                  markPlaidStep('otp-submitted', page);
+                  cssOtpSubmittedWallMs = Date.now();
+                  await page.waitForTimeout(250);
+                  otpSent = true;
                   console.log(`  [Plaid Link] CSS: OTP filled via "${otpSel}" + submitted`);
                   break;
                 }
+              }
+              if (!otpSent) {
+                await otpEl.press('Enter', { timeout: 1500 }).catch(() => {});
+                markPlaidStep('otp-submitted', page);
+                cssOtpSubmittedWallMs = Date.now();
+                await page.waitForTimeout(250);
+                console.log(`  [Plaid Link] CSS: OTP filled via "${otpSel}" + Enter`);
               }
               break;
             }
           }
         }
 
-        // ── 2b. Saved institution selection (Remember Me returning-user) ──────
-        // After OTP, Plaid shows previously linked institutions. Select Tartan Bank
-        // (non-OAuth) — do NOT click Chase which triggers an unhandleable OAuth redirect.
-        {
-          await frame.locator('ul li').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
-          let savedInstPicked = false;
-          for (const name of ['Tartan Bank', 'First Platypus Bank', 'First Gingham']) {
-            const el = frame.getByText(name, { exact: false }).first();
-            if (await el.isVisible({ timeout: 2000 }).catch(() => false)) {
-              await el.click();
-              await page.waitForTimeout(2000);
-              console.log(`  [Plaid Link] CSS: Saved institution selected: "${name}"`);
-              savedInstPicked = true;
-              break;
-            }
-          }
-          if (!savedInstPicked) {
-            const plaidFrame = page.frames().find(f => f.url().includes('cdn.plaid.com') || f.url().includes('plaid.com'));
-            if (plaidFrame) {
-              const listItems = await plaidFrame.evaluate(() =>
-                Array.from(document.querySelectorAll('ul li')).map((li, i) => ({
-                  index: i, text: li.textContent?.trim()?.substring(0, 80) || '', visible: li.offsetParent !== null,
-                })).filter(el => el.visible)
-              ).catch(() => []);
-              const oauthBanks = ['Chase', 'Bank of America', 'Wells Fargo', 'Citi'];
-              const target = listItems.find(item => !oauthBanks.some(kw => item.text.includes(kw)));
-              if (target !== undefined) {
-                await plaidFrame.evaluate((idx) => document.querySelectorAll('ul li')[idx]?.click(), target.index);
-                await page.waitForTimeout(2000);
-                console.log(`  [Plaid Link] CSS: Saved institution (fallback): "${target.text}"`);
-              }
-            }
-          }
-        }
+        await plaidSelectSavedInstitution(page, cssOtpSubmittedWallMs);
 
         // ── 3. Consent / "Get started" screen ─────────────────────────────────
         console.log('  [Plaid Link] CSS: Handling consent screen...');

@@ -1,0 +1,261 @@
+================================================================================
+PLAID DEMO PIPELINE — PROMPT TEMPLATE (HUMAN OR AI)
+================================================================================
+
+PURPOSE
+-------
+Use this file as a **fill-in-the-blanks spec** for any Plaid product demo. A human
+or an AI should replace every `«...»` placeholder with concrete values, delete
+optional sections that do not apply, and keep section headers so the pipeline and
+reviewers can scan the doc.
+
+HOW TO RUN THE PIPELINE
+-----------------------
+1. Copy your completed spec to **`inputs/prompt.txt`** (the orchestrator and
+   script stage read that path), **or** merge your filled sections into the
+   existing `prompt.txt`.
+2. Add a line **`Brand URL: «https://...»`** near the top if you want
+   `brand-extract` to pull host-app colors/logo (fintech customer site).
+3. Keep approved messaging pointers: anchor on `inputs/plaid-value-props.md` and
+   `docs/plaid-demo-script-value-propositions.md` where this template says so.
+4. For slide generation, the block between **`[[SLIDE_OUTPUT_BEGIN]]`** and
+   **`[[SLIDE_OUTPUT_END]]`** is extracted only when it appears inside the file
+   ingested as **`prompt.txt`** (see `scripts/scratch/utils/prompt-templates.js`).
+
+AUTHORITATIVE TECHNICAL RULES (DO NOT CONTRADICT)
+-------------------------------------------------
+- Repo root **`CLAUDE.md`** — DOM contract (`data-testid`, `goToStep`, Plaid Link
+  single-step recording, Signal score semantics, design tokens, manual nav).
+- **`inputs/plaid-link-sandbox.md`** — sandbox institutions, credentials, IDV persona.
+- AskBill / Plaid docs — exact API field names and response shapes for JSON shown
+  in the app.
+- Product knowledge files in **`inputs/products/`** — preferred place for approved
+  value props, accurate terminology, and AI research notes by product family.
+
+================================================================================
+«DEMO TITLE» — «ONE-LINE VALUE PROPOSITION»
+================================================================================
+
+Build a branded demo for **«HOST_APP_NAME»** («industry / segment», «canonical URL»)
+showing **«PRIMARY_USER_JOURNEY_IN_ONE_SENTENCE»**.
+
+Open with the use case narrative and close with a strong value proposition.
+Messaging priority: anchor on **`inputs/plaid-value-props.md`** and
+**`docs/plaid-demo-script-value-propositions.md`** (verbatim or closely adapted),
+supplemented only for API accuracy.
+
+Brand URL (optional, for brand-extract): «https://www.example.com»
+
+-------------------------------------------------------------------------------
+PLAID PRODUCTS & CONNECTION MODE
+-------------------------------------------------------------------------------
+
+**Products featured in the story (approved names only):** «e.g. Plaid Link, Plaid
+Layer, Plaid Identity Verification (IDV), Plaid Auth, Plaid Signal, Plaid Assets,
+Plaid Monitor, Plaid Instant Auth»
+
+**Primary product family / flow type:** «choose one: funding | cra_base_report |
+income_insights | other»
+
+**Product knowledge sources to anchor on:** «e.g. `inputs/products/plaid-auth.md`,
+`inputs/products/plaid-cra-base-report.md`, `inputs/products/plaid-income-insights.md`»
+
+**Connection / entry UX (check all that apply):**
+  [ ] Standard **Plaid Link** only (`/link/token/create`)
+  [ ] **Plaid Layer** path (`/session/token/create` + template) converging to Link SDK
+  [ ] **IDV** session (no bank Link as primary — specify)
+  [ ] Other: «describe»
+
+**Recording expectation:**
+  [ ] **Live Plaid Link** in headless recording (real iframe — follow CLAUDE.md single
+      `plaidPhase: "launch"` step; no simulated Link screens)
+  [ ] Simulated / host-only steps for Link (only if pipeline mode allows — note exception)
+
+**Sandbox / test data:** «institution preference, persona names, amounts, document
+types — or “use defaults in plaid-link-sandbox.md”»
+
+-------------------------------------------------------------------------------
+USER MODEL / REQUIRED DATA
+-------------------------------------------------------------------------------
+
+Document what must exist **before** the main flow can succeed.
+
+**Required user object fields (if any):**
+- «e.g. client_user_id only»
+- «e.g. CRA: name, DOB, email, phone, address, optional SSN fields»
+- «e.g. Income: user/create first, then source-type-specific flow»
+
+**Identity / permissible-purpose / underwriting notes:**
+- «e.g. consumer_report_permissible_purpose required»
+- «e.g. require_identity true/false»
+- «e.g. payroll vs bank vs document source support»
+
+-------------------------------------------------------------------------------
+CRITICAL UI — HOST VS PLAID LAYERS
+-------------------------------------------------------------------------------
+
+**Host app (customer-branded):**
+- «Light vs dark shell; key nav areas; where the user enters the flow»
+- **Never** show raw API JSON, field dumps, or `link-events-panel` in the recorded UX.
+- **`api-response-panel`**: `display:none` on all host steps.
+
+**Plaid insight screens** (if any — full-viewport, Plaid design system per CLAUDE.md):
+- One screen per major API “reveal” you want on video, or as specified below.
+- **JSON**: use the **single global** `#api-response-panel` populated from JS
+  (`showApiPanel` pattern per build prompt — not a duplicate JSON column inside
+  the step layout). Collapsible; 14–15px monospace; matches `demo-script.json`
+  `apiResponse` for that step.
+- Step ids for API insight beats should be obvious (e.g. contain `insight` or match
+  pipeline conventions) so recording helpers can attach data.
+
+**If this demo has no insight beats:** state “No Plaid full-screen insight steps;
+all API context via host UI copy only” and omit JSON panel requirements.
+
+-------------------------------------------------------------------------------
+MANDATORY FLOW ORDER (STORYBOARD + NARRATION + `goToStep` MUST ALIGN)
+-------------------------------------------------------------------------------
+
+List the **logical** order after Link succeeds (or after your product’s equivalent
+handoff). One row per beat; each row becomes a step (or sub-flow) in `demo-script.json`.
+
+| # | Beat type (host / Plaid insight / Link) | What happens | Key API or UX |
+|---|----------------------------------------|--------------|----------------|
+| 1 | «e.g. host» | «…» | «…» |
+| 2 | «…» | «…» | «…» |
+| 3 | «…» | «…» | «…» |
+
+**Hard rules for common products:**
+- **Signal ACH demos:** higher score = higher return risk; happy path uses **low**
+  scores with `ruleset.result: "ACCEPT"` — see CLAUDE.md.
+- **Identity Match:** scores 0–100 on matched fields; narrate consistently with JSON.
+- **Link event names** in scripts/callbacks: use **exact** names from CLAUDE.md (do not invent).
+
+**Async lifecycle / readiness model:**
+- «state whether this flow is synchronous or asynchronous after Link»
+- «name the report-ready / webhook / polling beat if applicable»
+- «state what the app should show while waiting»
+
+**Primary fetch endpoint(s) after Link / handoff:**
+- «e.g. /auth/get, /signal/evaluate»
+- «e.g. /cra/check_report/base_report/get»
+- «e.g. /cra/check_report/income_insights/get»
+
+Add rows until the story reaches a clear **outcome / CTA**.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Persona name:** «Name»
+**Role / context:** «e.g. SMB owner applying for a loan»
+**Host-app account / product context:** «what they already have on screen»
+
+**Structured data (tables encouraged):**
+
+| Field | Value | Notes for narration or JSON |
+|-------|--------|------------------------------|
+| «field» | «value» | «…» |
+| «field» | «value» | «…» |
+
+**Dynamic Link metadata:** institution name, account name, mask — must come from
+`onSuccess` into `window._plaidInstitutionName`, `window._plaidAccountName`,
+`window._plaidAccountMask` where applicable; **do not** hardcode real bank names
+in HTML if the demo uses live Link.
+
+**Insight fields to visualize in Plaid screens / JSON rails:**
+- «list the exact report or API fields worth highlighting in the left-side insight content»
+- «list which fields must remain visible in raw JSON on the right rail»
+- «state which metrics are the reveal moment»
+
+-------------------------------------------------------------------------------
+HOST APP SHELL (LAYOUT INTENT)
+-------------------------------------------------------------------------------
+
+«Describe: header, nav labels, primary CTA placement, breadcrumbs, cards vs tables.
+Reference brand JSON: follow `brand.promptInstructions` from the run’s
+`brand/*.json`; do not hardcode stale hex codes from old runs.»
+
+**Entry point into Plaid:** «Which screen and button copy launches Link / Layer / IDV»
+
+**Viewport:** design for **1440×900** (recording resolution).
+
+-------------------------------------------------------------------------------
+NARRATION & PACING (TARGETS)
+-------------------------------------------------------------------------------
+
+- **Steps:** «8–14 typical; adjust for product»
+- **Per-step narration:** ~20–35 words (fits ~8–12s VO at ~150 wpm unless pipeline overrides)
+- **Opening:** problem within first ~15s
+- **Climax:** «quantified reveal — e.g. score, approval, match»
+- **Closing:** CTA or outcome statement
+
+Optional sample table (replace with your copy):
+
+| Step | Scene | Sample narration (adapt) |
+|------|-------|---------------------------|
+| «id» | «…» | «…» |
+
+-------------------------------------------------------------------------------
+OPTIONAL: PRODUCT-SPECIFIC APPENDIX
+-------------------------------------------------------------------------------
+
+«Link token products array, IDV template IDs, Signal request fields, Assets report
+types, CRA flows, webhooks you want mentioned in copy only, etc.»
+
+**Recommended prompt scaffolding by product family:**
+
+**Funding / Auth / Signal**
+- Flow should usually name the logical order explicitly: Link -> token exchange -> Identity Match and/or Auth -> amount entry -> Signal -> approval.
+- Reveal semantics: low risk score + approval outcome, ownership confirmation, or instant rails retrieval.
+- Good insight screens: Identity Match, Auth, Signal.
+
+**CRA Base Report**
+- Flow should usually include: `/user/create` or equivalent setup -> CRA Link token -> Link -> report creation / ready beat -> Base Report retrieval -> underwriting summary.
+- Reveal semantics: report availability, balances/inflows/outflows, ownership, account stability.
+- Good insight screens: report requested / report ready, Base Report summary, ownership or cash-flow trend highlights.
+
+**CRA Income Insights**
+- Flow should usually include: `/user/create` -> Link token with `["cra_base_report", "cra_income_insights"]` -> Link -> report-ready beat -> `/cra/check_report/income_insights/get` -> underwriting summary.
+- Reveal semantics: verified income understanding from the CRA report, readiness for underwriting, and key report-derived insights.
+- Good insight screens: report requested / report ready, income insights summary, supporting report context or warnings if explicitly requested.
+
+**Docs links (for implementers):** «paste Plaid doc URLs you care about»
+
+-------------------------------------------------------------------------------
+[[SLIDE_OUTPUT_BEGIN]]
+OPTIONAL — SLIDE / POWERPOINT SUPPLEMENT (EDIT OR DELETE BLOCK)
+-------------------------------------------------------------------------------
+
+The pipeline uses this block only when present in **`prompt.txt`**.
+
+Instructions:
+- **Exec slides:** Plaid-only styling; `templates/slide-template/` structure
+  (`.slide-root`, `.slide-header`, `.slide-body`, `.slide-hero`, `.slide-panels`);
+  no raw JSON if the slide is purely messaging.
+- **Technical slides:** if you want JSON on slides, specify layout (e.g. left =
+  bullets, right = sample `apiResponse` JSON in a `<pre>`), max slide count, and
+  placement relative to insight steps.
+- Slides must **not** use host-app branding (per `templates/slide-template/SLIDE_RULES.md`).
+
+«Your slide requirements: count, topics, JSON yes/no, ordering»
+
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT CHECKLIST (HUMAN OR AI)
+-------------------------------------------------------------------------------
+
+Before saving as `inputs/prompt.txt` and running the pipeline:
+
+  [ ] Every «placeholder» replaced or explicitly marked N/A
+  [ ] Plaid product names match approved list (CLAUDE.md)
+  [ ] API order matches storyboard table; Signal semantics not inverted
+  [ ] Link recording mode consistent with CLAUDE.md (single real SDK step if live)
+  [ ] Insight JSON strategy consistent with global `api-response-panel` + `apiResponse` in script
+  [ ] Persona data realistic; no generic “John Doe” unless intentional
+  [ ] No emoji requirement in generated HTML (Heroicons per CLAUDE.md)
+  [ ] `[[SLIDE_OUTPUT_*]]` block removed or completed if using slides
+
+================================================================================
+END OF TEMPLATE — Replace this line with “END OF SPECIFICATION” in final prompt
+================================================================================

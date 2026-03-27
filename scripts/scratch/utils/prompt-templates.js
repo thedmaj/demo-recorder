@@ -20,6 +20,9 @@
 
 'use strict';
 
+const { getProductProfile, inferProductFamilyFromText } = require('./product-profiles');
+const { buildCuratedProductKnowledge, buildCuratedDigest } = require('./product-knowledge');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +38,92 @@ function toJSON(value) {
   } catch (_) {
     return String(value);
   }
+}
+
+function resolveProductFamily(productResearch = {}, promptText = '') {
+  if (productResearch.productFamily) return productResearch.productFamily;
+  return inferProductFamilyFromText(promptText || productResearch.product || '');
+}
+
+function formatProductAccuracyRules(profile) {
+  const rules = (profile?.accuracyRules || []).map(rule => `- ${rule}`).join('\n');
+  return rules || '- Verify all product-specific claims against the supplied research.';
+}
+
+function formatProductCritiqueRules(profile) {
+  const rules = (profile?.critiqueRules || []).map(rule => `- ${rule}`).join('\n');
+  return rules || '- Verify terminology and flow accuracy against the supplied product research.';
+}
+
+function formatCuratedKnowledge(curatedKnowledge) {
+  if (!curatedKnowledge || typeof curatedKnowledge !== 'object') return '';
+  const sections = [];
+
+  if (Array.isArray(curatedKnowledge.knowledgeFiles) && curatedKnowledge.knowledgeFiles.length > 0) {
+    const blocks = curatedKnowledge.knowledgeFiles.map(file => {
+      const parts = [];
+      if (file.source) parts.push(`Source: ${file.source}`);
+      if (file.overview) parts.push(`Overview:\n${file.overview}`);
+      if (file.whereItFits) parts.push(`Where It Fits:\n${file.whereItFits}`);
+      if (file.narrationTalkTracks) parts.push(`Narration Talk Tracks:\n${file.narrationTalkTracks}`);
+      if (file.accurateTerminology) parts.push(`Accurate Terminology:\n${file.accurateTerminology}`);
+      if (file.differentiators) parts.push(`Differentiators:\n${file.differentiators}`);
+      if (file.aiResearchNotes) parts.push(`AI Research Notes:\n${file.aiResearchNotes}`);
+      return parts.join('\n\n');
+    }).filter(Boolean);
+    if (blocks.length > 0) {
+      sections.push(`## CURATED PRODUCT KNOWLEDGE\n\n${blocks.join('\n\n---\n\n')}`);
+    }
+  }
+
+  if (curatedKnowledge.qaFixLogExcerpt) {
+    sections.push(`## FRAMEWORK QA LEARNINGS\n\n${curatedKnowledge.qaFixLogExcerpt}`);
+  }
+
+  return sections.join('\n\n');
+}
+
+/**
+ * Prefer budgeted digest; fall back to building digest from full curated knowledge.
+ */
+function resolveCuratedKnowledgeForPrompt(productResearch, productFamily) {
+  let digest = productResearch && productResearch.curatedDigest;
+  if (!digest || !Array.isArray(digest.knowledgeFiles)) {
+    const base = (productResearch && productResearch.curatedProductKnowledge)
+      || buildCuratedProductKnowledge(productFamily);
+    digest = buildCuratedDigest(base);
+  }
+  return digest;
+}
+
+function formatPipelineRunContextBlock(ctx) {
+  if (!ctx || typeof ctx !== 'object') return '';
+  const lines = [];
+  if (ctx.productFamily) lines.push(`- Resolved product family: ${ctx.productFamily}`);
+  if (ctx.productProfile && ctx.productProfile.label) {
+    lines.push(`- Product profile: ${ctx.productProfile.label}`);
+  }
+  if (ctx.demoScriptSummary) {
+    const s = ctx.demoScriptSummary;
+    lines.push(`- Demo script: ${s.product || 'n/a'} — ${s.stepCount || 0} step(s)`);
+  }
+  if (ctx.approvedClaimsDigest && Array.isArray(ctx.approvedClaimsDigest.fromResearch)) {
+    const ar = ctx.approvedClaimsDigest.fromResearch.slice(0, 10);
+    if (ar.length) lines.push(`- Approved research claims (sample): ${ar.join(' | ')}`);
+  }
+  if (!lines.length) return '';
+  return `## PIPELINE RUN CONTEXT (canonical snapshot — use for consistency)\n\n${lines.join('\n')}`;
+}
+
+function formatBuildQaDiagnosticSummary(summary) {
+  if (!summary || typeof summary !== 'object') return '';
+  const counts = summary.categoryCounts;
+  if (!counts || typeof counts !== 'object' || Object.keys(counts).length === 0) return '';
+  let out = `## BUILD-QA DIAGNOSTIC SUMMARY\n\nCategory counts from the Playwright build walkthrough:\n${toJSON(counts)}\n`;
+  if (Array.isArray(summary.criticalStepIds) && summary.criticalStepIds.length) {
+    out += `Steps with critical diagnostics: ${summary.criticalStepIds.join(', ')}\n`;
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,6 +378,16 @@ function buildResearchPrompt(config) {
  * @returns {{ system: string, userMessages: Array }}
  */
 function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
+  const promptEntry = Array.isArray(ingestedInputs.texts)
+    ? ingestedInputs.texts.find(t => t && typeof t === 'object' && t.filename === 'prompt.txt')
+    : null;
+  const promptText = promptEntry?.content || promptEntry?.text || '';
+  const productFamily = resolveProductFamily(productResearch, promptText);
+  const productProfile = getProductProfile(productFamily);
+  const curatedForPrompt = resolveCuratedKnowledgeForPrompt(productResearch, productFamily);
+  const curatedKnowledgeBlock = formatCuratedKnowledge(curatedForPrompt);
+  const pipelineCtxBlock = formatPipelineRunContextBlock(productResearch.pipelineRunContext);
+
   const system =
     `You are a senior Plaid demo designer with deep knowledge of Plaid's product ` +
     `portfolio and brand voice. You produce demo scripts that convert prospects and train sales teams.\n\n` +
@@ -321,6 +420,42 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
     type: 'text',
     text: `## PRODUCT RESEARCH\n\n${productResearch.synthesizedInsights || ''}`,
   });
+
+  // Slide output requirements (optional) — keep separate so Haiku does not miss it.
+  try {
+    if (typeof promptText === 'string') {
+      const m = promptText.match(/\[\[SLIDE_OUTPUT_BEGIN\]\]([\s\S]*?)\[\[SLIDE_OUTPUT_END\]\]/);
+      if (m && m[1] && m[1].trim()) {
+        contentBlocks.push({
+          type: 'text',
+          text: `## SLIDE OUTPUT REQUIREMENTS\n\n${m[1].trim()}`,
+        });
+      }
+    }
+  } catch (_e) { /* best-effort */ }
+
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## PRODUCT FAMILY\n\n` +
+      `Resolved product family: ${productFamily}\n` +
+      `Profile label: ${productProfile.label}\n\n` +
+      `Product-family-specific accuracy rules:\n${formatProductAccuracyRules(productProfile)}`,
+  });
+
+  if (curatedKnowledgeBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text: curatedKnowledgeBlock,
+    });
+  }
+
+  if (pipelineCtxBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text: pipelineCtxBlock,
+    });
+  }
 
   // Internal knowledge
   if (Array.isArray(productResearch.internalKnowledge) && productResearch.internalKnowledge.length > 0) {
@@ -381,7 +516,13 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
     const formattedTexts = ingestedInputs.texts.map(t => {
       if (typeof t === 'string') return t;
       const label = t.filename ? `### ${t.filename}\n` : '';
-      return label + (t.content || '');
+      let content = t.content || '';
+      // The slide block is already surfaced separately above; strip it from prompt.txt here
+      // so the script model sees one authoritative slide instruction block instead of two.
+      if (t.filename === 'prompt.txt') {
+        content = content.replace(/\[\[SLIDE_OUTPUT_BEGIN\]\][\s\S]*?\[\[SLIDE_OUTPUT_END\]\]/, '').trim();
+      }
+      return label + content;
     }).join('\n\n---\n\n');
     contentBlocks.push({
       type: 'text',
@@ -465,18 +606,12 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `Set "plaidPhase": "launch" on that step. Do NOT create separate sub-steps for\n` +
       `consent, OTP, institution selection, account selection, or success screens.\n` +
       `The recording automation handles those internally via CDP iframe automation.\n` +
-      `The single step's narration (≤35 words) must cover all Plaid story beats:\n` +
-      `e.g. "Plaid Link opens, Berta selects her bank account via Remember Me OTP,\n` +
-      `and the connection completes in seconds — no credentials required."\n\n` +
-      `ACCURACY RULES (CRITICAL — confirmed via Plaid internal docs):\n` +
-      `- Signal scores 0–99: HIGHER score = HIGHER ACH return risk (more likely to fail).\n` +
-      `  ACCEPT scenarios use low scores (5–20). NEVER use 82–97 for ACCEPT — those are high risk.\n` +
-      `  Approved demo values: bank_initiated_return_risk 7, consumer_initiated_return_risk 12, result "ACCEPT".\n` +
-      `- Auth coverage: "over 95% of U.S. depository accounts" — use this exact phrasing.\n` +
-      `- Signal risk factors: "over 1,000 unique risk factors" — use this exact phrasing.\n` +
-      `- Identity Match terminology: use "name matching algorithm" NOT "fuzzy matching".\n` +
-      `- Chime proof point: "Chime users who link with Plaid are 3.2x more likely to fund their accounts".\n` +
-      `  Do NOT use unconfirmed % uplift stats (e.g. "65% conversion uplift").\n` +
+      `The single step's narration (≤35 words) must cover all Plaid story beats while matching\n` +
+      `what is visible inside the modal, not the button click that triggers it.\n` +
+      `e.g. "Recognized as a returning user, Berta confirms with a one-time code,\n` +
+      `selects her checking account, and connects in seconds — no credentials required."\n\n` +
+      `ACCURACY RULES (CRITICAL — confirmed via Plaid internal docs and curated product knowledge):\n` +
+      `${formatProductAccuracyRules(productProfile)}\n` +
       `- Latency claims: "in real time" is safe. "under one second" is unverified — avoid.`,
   });
 
@@ -557,6 +692,18 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
  */
 function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null, opts = {}) {
   const brand = opts.brand || PLAID_DEFAULT_BRAND;
+  const slideTemplateRules = typeof opts.slideTemplateRules === 'string' ? opts.slideTemplateRules : '';
+  const slideTemplateCss = typeof opts.slideTemplateCss === 'string' ? opts.slideTemplateCss : '';
+  const productFamily = opts.productFamily || inferProductFamilyFromText(demoScript?.product || '');
+  const productProfile = getProductProfile(productFamily);
+  const curatedForPrompt = opts.curatedDigest && Array.isArray(opts.curatedDigest.knowledgeFiles)
+    ? opts.curatedDigest
+    : buildCuratedDigest(
+      opts.curatedProductKnowledge || buildCuratedProductKnowledge(productFamily)
+    );
+  const curatedKnowledgeBlock = formatCuratedKnowledge(curatedForPrompt);
+  const pipelineCtxBlock = formatPipelineRunContextBlock(opts.pipelineRunContext);
+  const buildQaDiagBlock = formatBuildQaDiagnosticSummary(opts.buildQaDiagnosticSummary);
 
   let cdnRule = `- Single index.html file: all CSS and JavaScript inlined, zero external libraries or CDN links.\n`;
   if (opts.plaidLinkLive) {
@@ -572,6 +719,12 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `DOM CONTRACT (mandatory — Playwright depends on this exactly):\n` +
     cdnRule +
     renderBrandBlock(brand) + `\n` +
+    (slideTemplateRules
+      ? `SLIDE TEMPLATE RULES (Plaid-only supplement; use for slide/insight surfaces when applicable):\n${slideTemplateRules}\n\n`
+      : '') +
+    (slideTemplateCss
+      ? `SLIDE TEMPLATE CSS (include verbatim in your generated <style> section; do not alter):\n${slideTemplateCss}\n\n`
+      : '') +
     `- Viewport locked: html, body { width: 1440px; height: 900px; overflow: hidden; }\n` +
     `- Each step: <div data-testid="step-{id}" class="step"> (only one .active at a time)\n` +
     `- Global functions:\n` +
@@ -595,8 +748,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `ICONS — ABSOLUTE RULE:\n` +
     `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
     `    Not ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ or any other emoji/symbol character.\n` +
-    `  - ALL icons must be Heroicons SVG (https://heroicons.com). Use inline SVG paths or load via CDN:\n` +
-    `    <script src="https://unpkg.com/heroicons@2/dist/heroicons.js"></script>\n` +
+    `  - ALL icons must be Heroicons SVG (https://heroicons.com). Use inline SVG paths only.\n` +
     `  - Outline style for UI chrome; solid style for active/filled states.\n` +
     `  - If Heroicons lacks the exact icon, use the closest semantic Heroicons match — never emoji.\n` +
     `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses.\n` +
@@ -637,13 +789,49 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
 
   const contentBlocks = [];
 
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## PRODUCT FAMILY\n\n` +
+      `Resolved product family: ${productFamily}\n` +
+      `Profile label: ${productProfile.label}\n\n` +
+      `Product-family-specific accuracy rules for this build:\n${formatProductAccuracyRules(productProfile)}`,
+  });
+
+  if (curatedKnowledgeBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text: curatedKnowledgeBlock,
+    });
+  }
+
+  if (pipelineCtxBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text: pipelineCtxBlock,
+    });
+  }
+
+  if (buildQaDiagBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text: buildQaDiagBlock,
+    });
+  }
+
   // Refinement context if a QA report is provided
   if (qaReport) {
     const issueLines = [];
-    if (Array.isArray(qaReport.steps)) {
-      for (const stepReport of qaReport.steps) {
+    const qaSteps = Array.isArray(qaReport.stepsWithIssues) && qaReport.stepsWithIssues.length > 0
+      ? qaReport.stepsWithIssues
+      : (Array.isArray(qaReport.steps) ? qaReport.steps : []);
+    if (qaSteps.length > 0) {
+      for (const stepReport of qaSteps) {
         if (stepReport.issues && stepReport.issues.length > 0) {
           issueLines.push(`Step "${stepReport.stepId}" (score ${stepReport.score}/100):`);
+          if (Array.isArray(stepReport.categories) && stepReport.categories.length > 0) {
+            issueLines.push(`  Categories: ${stepReport.categories.join(', ')}`);
+          }
           stepReport.issues.forEach((issue) => issueLines.push(`  - ${issue}`));
           if (stepReport.suggestions && stepReport.suggestions.length > 0) {
             stepReport.suggestions.forEach((s) => issueLines.push(`  ? ${s}`));
@@ -697,18 +885,19 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
       });
     }
 
-    // ── Human reviewer feedback (highest priority — overrides all other guidance) ──
-    if (opts.humanFeedback && opts.humanFeedback.trim()) {
-      contentBlocks.push({
-        type: 'text',
-        text:
-          `### ⭐ Human Reviewer Feedback — HIGHEST PRIORITY\n\n` +
-          `A human has reviewed the demo and provided the following specific feedback.\n` +
-          `These instructions take priority over automated QA findings, design system defaults, and ` +
-          `architecture brief suggestions. Address every point explicitly.\n\n` +
-          opts.humanFeedback.trim(),
-      });
-    }
+  }
+
+  // ── Human reviewer feedback (highest priority — overrides all other guidance) ──
+  if (opts.humanFeedback && opts.humanFeedback.trim()) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `### ⭐ Human Reviewer Feedback — HIGHEST PRIORITY\n\n` +
+        `A human has reviewed the demo and provided the following specific feedback.\n` +
+        `These instructions take priority over automated QA findings, design system defaults, and ` +
+        `architecture brief suggestions. Address every point explicitly.\n\n` +
+        opts.humanFeedback.trim(),
+    });
   }
 
   contentBlocks.push({
@@ -1075,6 +1264,7 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
       `  "score": <0–100>,\n` +
       `  "issues": ["<specific deviation from expected state>", ...],\n` +
       `  "suggestions": ["<actionable fix>", ...],\n` +
+      `  "categories": ["<navigation-mismatch|missing-panel|panel-visibility|prompt-contract-drift|slide-template-misuse|action-failure|plaid-step-uncertainty>", ...],\n` +
       `  "critical": <true if the step is completely wrong or broken>\n` +
       `}`,
   });
@@ -1246,6 +1436,11 @@ function buildOverlayPlanPrompt(demoScript, videoAnalysis) {
  * @returns {{ system: string, userMessages: Array }}
  */
 function buildScriptCritiquePrompt(demoScript, productResearch) {
+  const productFamily = resolveProductFamily(productResearch, demoScript?.product || '');
+  const productProfile = getProductProfile(productFamily);
+  const curatedForPrompt = resolveCuratedKnowledgeForPrompt(productResearch, productFamily);
+  const curatedKnowledgeBlock = formatCuratedKnowledge(curatedForPrompt);
+  const pipelineCtxBlock = formatPipelineRunContextBlock(productResearch.pipelineRunContext);
   const system =
     `You are a Plaid demo quality reviewer. You evaluate demo scripts against ` +
     `Plaid's quality standards and flag issues before production begins. ` +
@@ -1267,18 +1462,18 @@ function buildScriptCritiquePrompt(demoScript, productResearch) {
     `Accuracy:\n` +
     `- Product names must match approved list: "Plaid Identity Verification (IDV)", ` +
     `"Plaid Instant Auth", "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets"\n` +
-    `- Signal scores must be realistic low-risk values (5–20 for ACCEPT scenarios, never 82–97)\n` +
-    `- Auth coverage stat: "over 95% of U.S. depository accounts" (not "95% or more")\n` +
-    `- Identity Match terminology: "name matching algorithm" (not "fuzzy matching")\n` +
-    `- Chime proof point: "3.2x more likely to fund their accounts" (not unconfirmed % uplift stats)\n` +
     `- No API error responses in the main flow\n` +
-    `- Verify terminology against the product research below\n\n` +
+    `- Verify terminology against the product research below\n` +
+    `${formatProductCritiqueRules(productProfile)}\n\n` +
     `Anti-patterns (flag each occurrence):\n` +
     `- Error states, declined flows, or unresolved loading spinners\n` +
     `- Generic placeholder data (John Doe, example@email.com, etc.)\n` +
     `- Technical API jargon without customer-facing context\n\n` +
+    `## PRODUCT FAMILY\n${productFamily} — ${productProfile.label}\n\n` +
     `## PRODUCT RESEARCH (for accuracy verification)\n${productResearch.synthesizedInsights || ''}\n\n` +
     `Approved terminology:\n${toJSON(productResearch.accurateTerminology || {})}\n\n` +
+    (curatedKnowledgeBlock ? `${curatedKnowledgeBlock}\n\n` : '') +
+    (pipelineCtxBlock ? `${pipelineCtxBlock}\n\n` : '') +
     `## DEMO SCRIPT TO REVIEW\n${toJSON(demoScript)}\n\n` +
     `Output ONLY a JSON object — no prose, no markdown fences:\n\n` +
     `{\n` +

@@ -10,8 +10,8 @@
  *   - Dynamic OAuth handling: if OPEN_OAUTH fires after selecting an institution,
  *     clicks the Plaid back button and selects the next institution in the list.
  *     No pre-determined list of OAuth banks required.
- *   - SCREEN_DWELL_MS: after each screen loads, pauses this many ms so the screen
- *     is fully visible in the recording. Default 4000ms (~4s per screen).
+ *   - SCREEN_DWELL_MS: dwell after each Plaid screen (default 800ms for ~15–20s total flow).
+ *   - OTP_TO_INST_LIST_GAP_MS: min gap between otp-submitted and institution-list-shown (default 2000ms).
  *
  * Outputs to: out/plaid-link-test/
  *   recording.webm      — full browser recording (non-headless; captures iframe)
@@ -20,19 +20,55 @@
  *
  * Usage:
  *   node scripts/test-plaid-link-record.js
- *   SCREEN_DWELL_MS=500 node scripts/test-plaid-link-record.js   # fast mode
+ *   node scripts/test-plaid-cra-link-record.js                    # CRA Check Link (wrapper)
+ *   PLAID_LINK_RECORD_TEST_PROFILE=cra node scripts/test-plaid-link-record.js
+ *   SCREEN_DWELL_MS=4000 node scripts/test-plaid-link-record.js   # slow / QA mode
+ *   node scripts/test-plaid-cra-link-record-headless.js            # CRA + headless + ~15s timing
+ *
+ * CRA mode: requires CRA_CLIENT_ID and CRA_SECRET; uses user_credit_* sandbox users
+ * (override with PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD).
+ *
+ * Headless: set PLAID_LINK_HEADLESS_RECORDING=true or use test-plaid-cra-link-record-headless.js.
+ * Fast timing (~15s Link flow): automatic for CRA+headless, or PLAID_LINK_TIMING_PROFILE=fast15.
  */
 
-require('dotenv').config({ override: true });
+try {
+  require('dotenv').config({ override: true });
+} catch (_) {
+  /* optional: npm i dotenv if .env loading is required */
+}
 const { chromium } = require('playwright');
 const fs   = require('fs');
 const path = require('path');
 const { startServer } = require('./scratch/utils/app-server');
 
+// CRA mode: env, or invoked via `node scripts/test-plaid-cra-link-record.js`
+const IS_CRA_TEST =
+  process.env.PLAID_LINK_RECORD_TEST_PROFILE === 'cra' ||
+  /test-plaid-cra-link-record\.js$/i.test(process.argv[1] || '');
+
+const IS_HEADLESS_RECORDING =
+  process.env.PLAID_LINK_HEADLESS === 'true' ||
+  process.env.PLAID_LINK_HEADLESS_RECORDING === 'true';
+
+/** Tighter pacing for ~15s total Link UX (CRA headless preset or explicit env). */
+const FAST_TIMING =
+  process.env.PLAID_LINK_TIMING_PROFILE === 'fast15' ||
+  (IS_CRA_TEST && IS_HEADLESS_RECORDING);
+
+function envTiming(name, fastVal, defaultVal) {
+  const raw = process.env[name];
+  if (raw != null && raw !== '') return parseInt(raw, 10);
+  return FAST_TIMING ? fastVal : defaultVal;
+}
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
-const PROJECT_ROOT    = path.resolve(__dirname, '..');
-const OUT_DIR         = path.join(PROJECT_ROOT, 'out', 'plaid-link-test');
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const OUT_LEAF =
+  !IS_CRA_TEST ? 'plaid-link-test'
+    : (IS_HEADLESS_RECORDING ? 'plaid-cra-link-headless-test' : 'plaid-cra-link-test');
+const OUT_DIR         = path.join(PROJECT_ROOT, 'out', OUT_LEAF);
 const APP_DIR         = path.join(OUT_DIR, 'app');
 const SCREENSHOTS_DIR = path.join(OUT_DIR, 'screenshots');
 const REC_TMP_DIR     = path.join(OUT_DIR, '_rec-tmp');
@@ -54,14 +90,50 @@ function recordStep(name) {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-// How long to remain on each Plaid Link screen in the recording (~4s = 1 cut).
-// Override with env var for fast test mode: SCREEN_DWELL_MS=500
-const SCREEN_DWELL_MS = parseInt(process.env.SCREEN_DWELL_MS || '4000', 10);
+// Human-paced Link navigation (~15–20s with FAST_TIMING; ~20s+ default Remember Me flow).
+const SCREEN_DWELL_MS = envTiming('SCREEN_DWELL_MS', 450, 800);
+/** Minimum elapsed time from otp-submitted → institution-list-shown (recording markers). */
+const OTP_TO_INST_LIST_GAP_MS = envTiming('OTP_TO_INST_LIST_GAP_MS', 1100, 2000);
+const PHONE_SCREEN_MIN_MS    = envTiming('PHONE_SCREEN_MIN_MS', 1200, 3000);
+const PHONE_KEY_DELAY_MS     = envTiming('PHONE_KEY_DELAY_MS', 55, 110);
+const PHONE_PREFILL_PAUSE_MS = FAST_TIMING ? 200 : 350;
+const OTP_KEY_DELAY_MS       = envTiming('OTP_KEY_DELAY_MS', 75, 220);
+const OTP_POST_FILL_MS       = envTiming('OTP_POST_FILL_MS', 400, 1000);
+const IFRAME_SETTLE_MS       = envTiming('IFRAME_SETTLE_MS', 350, 600);
+const INST_SEARCH_WAIT_MS    = envTiming('INST_SEARCH_WAIT_MS', 700, 1500);
+const CLICK_BACK_WAIT_MS     = envTiming('CLICK_BACK_WAIT_MS', 550, 1000);
+const OAUTH_BACK_WAIT_MS     = envTiming('OAUTH_BACK_WAIT_MS', 800, 1500);
+const CONSENT_CB_MS          = FAST_TIMING ? 250 : 400;
+const SAVE_DISMISS_MS        = FAST_TIMING ? 320 : 550;
+const ACCOUNT_ROW_PAUSE_MS   = FAST_TIMING ? 200 : 350;
+const FINAL_SUCCESS_DWELL_MS = envTiming('FINAL_SUCCESS_DWELL_MS', 350, 800);
+const PRE_CLOSE_MS           = envTiming('PRE_CLOSE_MS', 600, 1500);
+
+/** Wall time when OTP was submitted; used to pad institution-list-shown. 0 = N/A */
+let _otpSubmittedWallMs = 0;
 
 const PHONE    = '+14155550011';   // Remember Me returning-user
 const OTP      = '123456';
-const USERNAME = 'user_good';
-const PASSWORD = 'pass_good';
+const USERNAME = process.env.PLAID_SANDBOX_USERNAME || (IS_CRA_TEST ? 'user_credit_profile_excellent' : 'user_good');
+const PASSWORD = process.env.PLAID_SANDBOX_PASSWORD || 'pass_good';
+
+/** Request body for POST /api/create-link-token in the embedded test app. */
+const LINK_TOKEN_BODY = IS_CRA_TEST
+  ? {
+      products: ['cra_base_report', 'cra_income_insights'],
+      client_name: 'Plaid CRA Link Test',
+      user_id: 'test-cra-user-001',
+      phone_number: PHONE,
+      consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT',
+      credential_scope: 'cra',
+    }
+  : {
+      products: ['auth', 'identity'],
+      client_name: 'Plaid Link Test',
+      user_id: 'test-user-001',
+      phone_number: PHONE,
+      link_customization_name: '',
+    };
 
 // ── HTML app ──────────────────────────────────────────────────────────────────
 // Tracks Plaid events and exposes them on window.* for Playwright to poll.
@@ -137,6 +209,7 @@ const HTML = `<!DOCTYPE html>
     const eventsList   = document.getElementById('events-list');
     const launchBtn    = document.getElementById('launch-btn');
     const successPanel = document.getElementById('success-panel');
+    const _linkTokenPayload = ${JSON.stringify(LINK_TOKEN_BODY)};
 
     function setStatus(msg) {
       statusValue.textContent = msg;
@@ -149,15 +222,7 @@ const HTML = `<!DOCTYPE html>
         const res = await fetch('/api/create-link-token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            products: ['auth', 'identity'],
-            client_name: 'Plaid Link Test',
-            user_id: 'test-user-001',
-            // Pass phone so Plaid can identify this as a returning Remember Me user
-            // on the backend. Does NOT skip the phone entry UI screen.
-            phone_number: '+14155550011',
-            link_customization_name: '',
-          }),
+          body: JSON.stringify(_linkTokenPayload),
         });
         const data = await res.json();
         console.log('[App] link_token:', data.link_token.substring(0, 30) + '...');
@@ -173,7 +238,7 @@ const HTML = `<!DOCTYPE html>
             fetch('/api/exchange-public-token', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ public_token }),
+              body: JSON.stringify({ public_token${IS_CRA_TEST ? ", credential_scope: 'cra'" : ''} }),
             })
             .then(r => r.json())
             .then(d => {
@@ -215,7 +280,7 @@ const HTML = `<!DOCTYPE html>
               window._plaidTransitionCount++;
               if (metadata.view_name) window._plaidLastView = metadata.view_name;
               // Persistent flag — once set, never reset (survives subsequent transitions)
-              if (metadata.view_name === 'SELECT_SAVED_INSTITUTION') {
+              if (typeof metadata.view_name === 'string' && metadata.view_name.includes('SELECT_SAVED_INSTITUTION')) {
                 window._plaidSavedInstShown = true;
               }
             }
@@ -265,9 +330,12 @@ async function screenshot(page, label) {
  * @param {Page}   page
  * @param {number} [timeoutMs=8000]  Max wait for the transition event
  * @param {number} [dwell]           Override dwell; defaults to SCREEN_DWELL_MS
+ * @param {number|null} [beforeCount] If set, wait until count > this (capture before the action that triggers the transition)
  */
-async function waitForTransition(page, timeoutMs = 8000, dwell = SCREEN_DWELL_MS) {
-  const before = await page.evaluate(() => window._plaidTransitionCount || 0);
+async function waitForTransition(page, timeoutMs = 8000, dwell = SCREEN_DWELL_MS, beforeCount = null) {
+  const before = beforeCount !== null && beforeCount !== undefined
+    ? beforeCount
+    : await page.evaluate(() => window._plaidTransitionCount || 0);
   await page.waitForFunction(
     (n) => (window._plaidTransitionCount || 0) > n,
     before,
@@ -328,7 +396,7 @@ async function waitForIframe(page, timeoutMs = 30000) {
   await page.locator('iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]')
     .waitFor({ state: 'visible', timeout: timeoutMs })
     .catch(() => {});
-  await page.waitForTimeout(1500); // let it render first screen
+  await page.waitForTimeout(IFRAME_SETTLE_MS);
   console.log('  [Plaid] iframe ready');
 }
 
@@ -346,7 +414,7 @@ async function clickBack(frame, page) {
     const btn = frame.locator(sel).first();
     if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
       await btn.click({ force: true });
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(CLICK_BACK_WAIT_MS);
       console.log(`  [Plaid] Clicked back via "${sel}"`);
       return true;
     }
@@ -360,7 +428,7 @@ async function clickBack(frame, page) {
       if (el) { el.click(); return true; }
       return false;
     }).catch(() => false);
-    if (clicked) { await page.waitForTimeout(1000); return true; }
+    if (clicked) { await page.waitForTimeout(CLICK_BACK_WAIT_MS); return true; }
   }
   return false;
 }
@@ -369,6 +437,7 @@ async function clickBack(frame, page) {
 
 async function navigatePlaidLink(page) {
   const frame = getFrame(page);
+  _otpSubmittedWallMs = 0;
 
   // ── 1. Phone entry ────────────────────────────────────────────────────────
   // Handles two cases:
@@ -390,6 +459,7 @@ async function navigatePlaidLink(page) {
       // input's container rather than inputValue() which may return an empty string for
       // masked fields. Fallback: also check if the last-4 hint matches PHONE's last 4.
       recordStep('phone-screen');
+      const phoneScreenWallMs = Date.now();
       const last4 = PHONE.slice(-4); // '0011'
       const containerText = await frame.locator('input[type="tel"]').first()
         .evaluate(el => {
@@ -403,15 +473,16 @@ async function navigatePlaidLink(page) {
 
       if (isPrefilled) {
         console.log(`  [Step 1] Phone appears pre-filled ("${containerText.substring(0,30)}") — skipping entry`);
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(PHONE_PREFILL_PAUSE_MS);
       } else {
-        // Type digits one-by-one to simulate human typing (~110ms per keystroke)
         await el.click();
-        await el.pressSequentially('4155550011', { delay: 110 });
-        // 1.5s pause so the completed number is clearly visible before Continue
-        await page.waitForTimeout(1500);
+        await el.pressSequentially('4155550011', { delay: PHONE_KEY_DELAY_MS });
+        await page.waitForTimeout(FAST_TIMING ? 280 : 450);
         console.log(`  [Step 1] Phone typed manually`);
       }
+
+      const phoneNeedMs = PHONE_SCREEN_MIN_MS - (Date.now() - phoneScreenWallMs);
+      if (phoneNeedMs > 0) await page.waitForTimeout(phoneNeedMs);
 
       // Always click Continue to submit (phone screen never auto-advances).
       // The Continue button starts disabled and becomes enabled once React validates
@@ -425,19 +496,26 @@ async function navigatePlaidLink(page) {
       } else {
         // Fallback: submit button or Enter
         await frame.locator('button[type="submit"]').first()
-          .click({ timeout: 3000 }).catch(() => el.press('Enter').catch(() => {}));
+          .click({ timeout: 3000 }).catch(() => el.press('Enter', { timeout: 1500 }).catch(() => {}));
         console.log(`  [Step 1] Submitted phone via fallback`);
       }
 
       recordStep('phone-submitted');
-      // Wait for TRANSITION_VIEW → OTP screen
-      await page.waitForFunction(
-        (n) => (window._plaidTransitionCount || 0) > n,
-        beforeTransition,
-        { timeout: 8000, polling: 100 }
-      ).catch(() => null);
-      await page.waitForTimeout(200); // settle: let iframe repaint before dwell
-      if (SCREEN_DWELL_MS > 0) await page.waitForTimeout(SCREEN_DWELL_MS);
+      // Race transition vs OTP field — OTP often paints before TRANSITION_VIEW increments;
+      // waiting only on count added ~8s of dead air in sandbox.
+      const otpEarly = frame.locator('input[inputmode="numeric"]').first();
+      await Promise.race([
+        page.waitForFunction(
+          (n) => (window._plaidTransitionCount || 0) > n,
+          beforeTransition,
+          { timeout: 8000, polling: 100 }
+        ),
+        otpEarly.waitFor({ state: 'visible', timeout: 8000 }),
+      ]).catch(() => null);
+      await page.waitForTimeout(200);
+      const otpVisibleNow = await otpEarly.isVisible({ timeout: 400 }).catch(() => false);
+      const phoneDwell = otpVisibleNow ? Math.min(SCREEN_DWELL_MS, 550) : SCREEN_DWELL_MS;
+      if (phoneDwell > 0) await page.waitForTimeout(phoneDwell);
       console.log(`  [Step 1] Phone submitted + transitioned (via "${sel}")`);
       phoneHandled = true;
       break;
@@ -473,41 +551,40 @@ async function navigatePlaidLink(page) {
       await screenshot(page, '2-otp-screen');
       recordStep('otp-screen');
       const transitionBeforeOTP = await page.evaluate(() => window._plaidTransitionCount || 0);
-      // fill() waits for the element to be editable. Cap at 8s; fall back to
-      // pressSequentially (fires key events, bypasses editability checks).
-      const filled = await el.fill(OTP, { timeout: 8000 })
-        .then(() => true)
-        .catch(async () => {
-          console.log('  [Step 2] fill() slow/failed — trying pressSequentially');
-          await el.click({ force: true, timeout: 3000 }).catch(() => {});
-          await el.pressSequentially(OTP, { delay: 80 }).catch(() => {});
-          return true;
-        });
-      // 1s pause so the entered code is clearly visible before auto-advance
-      await page.waitForTimeout(1000);
-      recordStep('otp-filled');  // digits now visible — post-processor anchors success range here
+      // Requirement: simulate a human typing the OTP (~1–2s) + 1s pause before continuing.
+      await el.click({ force: true, timeout: 3000 }).catch(() => {});
+      const typed = await el.pressSequentially(OTP, { delay: OTP_KEY_DELAY_MS }).then(() => true).catch(() => false);
+      if (!typed) {
+        // Fallback: fill() can succeed even when key events are flaky.
+        await el.fill(OTP, { timeout: 8000 }).catch(() => {});
+      }
+      await page.waitForTimeout(OTP_POST_FILL_MS);
+      recordStep('otp-filled'); // digits now visible + 1s pause completed
       // Check if OTP auto-advanced already (common in Plaid sandbox).
       // If not, try a quick submit click; don't waste time on disabled buttons.
       const autoAdvanced = await page.evaluate(
         (n) => (window._plaidTransitionCount || 0) > n, transitionBeforeOTP
       ).catch(() => false);
       if (!autoAdvanced) {
-        // OTP hasn't auto-advanced — try a quick submit click (1.5s timeout per attempt)
         let submitted = false;
         for (const btnSel of ['button[type="submit"]', 'button:has-text("Continue")', 'button:has-text("Verify")']) {
           const btn = frame.locator(btnSel).first();
           if (await btn.isVisible({ timeout: 800 }).catch(() => false)) {
-            await btn.click({ timeout: 1500 }).catch(() => el.press('Enter').catch(() => {}));
+            await btn.click({ timeout: 1500 }).catch(() => el.press('Enter', { timeout: 1500 }).catch(() => {}));
             submitted = true;
             break;
           }
         }
-        if (!submitted) await el.press('Enter').catch(() => {});
+        if (!submitted) await el.press('Enter', { timeout: 1500 }).catch(() => {});
       } else {
         console.log('  [Step 2] OTP auto-advanced — skipping submit click');
       }
+      // Marker at submit moment; Step 3 waits for the list DOM/event and pads to OTP_TO_INST_LIST_GAP_MS.
+      // Do NOT call waitForTransition here: the next TRANSITION_VIEW can lag the saved-institution list
+      // DOM by several seconds, which bloated otp→list timing in the recording.
       recordStep('otp-submitted');
-      await waitForTransition(page, 8000);
+      _otpSubmittedWallMs = Date.now();
+      await page.waitForTimeout(250);
       console.log(`  [Step 2] OTP filled via "${sel}"`);
       otpHandled = true;
       break;
@@ -541,9 +618,12 @@ async function navigatePlaidLink(page) {
     if (!onSavedInstScreen) {
       console.log('  [Step 3] No institution list detected — standard flow, skipping');
     } else {
+      if (_otpSubmittedWallMs > 0) {
+        const need = OTP_TO_INST_LIST_GAP_MS - (Date.now() - _otpSubmittedWallMs);
+        if (need > 0) await page.waitForTimeout(need);
+      }
       recordStep('institution-list-shown');
-      // 500ms settle — enough to show the list before selection (post-processing preserves this)
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(400);
 
     // Collect all visible institution items using the frameLocator (more reliable than page.frames())
     const liLocators = frame.locator('ul li');
@@ -593,7 +673,7 @@ async function navigatePlaidLink(page) {
       if (fired === 'oauth') {
         console.log(`  [Step 3] "${inst.text}" triggered OAuth — clicking back`);
         await clickBack(frame, page);
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(OAUTH_BACK_WAIT_MS);
         continue;
       }
 
@@ -616,7 +696,7 @@ async function navigatePlaidLink(page) {
     const cb = frame.locator(sel).first();
     if (await cb.isVisible({ timeout: 1500 }).catch(() => false)) {
       await cb.click({ force: true }).catch(() => {});
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(CONSENT_CB_MS);
       break;
     }
   }
@@ -639,7 +719,7 @@ async function navigatePlaidLink(page) {
     if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
       await screenshot(page, '5-institution-search');
       await el.fill('First Platypus Bank');
-      await page.waitForTimeout(1500); // wait for results
+      await page.waitForTimeout(INST_SEARCH_WAIT_MS);
       // Select from results
       const result = frame.getByText('First Platypus Bank', { exact: false }).first();
       if (await result.isVisible({ timeout: 4000 }).catch(() => false)) {
@@ -705,7 +785,7 @@ async function navigatePlaidLink(page) {
       await screenshot(page, '8-account-selection');
       recordStep('account-selection');
       await el.click({ force: true });
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(ACCOUNT_ROW_PAUSE_MS);
       console.log(`  [Step 8] Account row clicked`);
       break;
     }
@@ -745,7 +825,7 @@ async function navigatePlaidLink(page) {
     if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
       await screenshot(page, '9-save-screen');
       await el.click();
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(SAVE_DISMISS_MS);
       console.log(`  [Step 9] Save screen dismissed`);
       break;
     }
@@ -755,7 +835,12 @@ async function navigatePlaidLink(page) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SANDBOX_SECRET) {
+  if (IS_CRA_TEST) {
+    if (!process.env.CRA_CLIENT_ID || !process.env.CRA_SECRET) {
+      console.error('ERROR (CRA mode): CRA_CLIENT_ID and CRA_SECRET required in .env');
+      process.exit(1);
+    }
+  } else if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SANDBOX_SECRET) {
     console.error('ERROR: PLAID_CLIENT_ID and PLAID_SANDBOX_SECRET required in .env');
     process.exit(1);
   }
@@ -767,13 +852,23 @@ async function main() {
 
   fs.writeFileSync(path.join(APP_DIR, 'index.html'), HTML);
   console.log(`[Test] SCREEN_DWELL_MS = ${SCREEN_DWELL_MS}ms per screen`);
+  console.log(`[Test] headless = ${IS_HEADLESS_RECORDING}, fast15 = ${FAST_TIMING}`);
+  if (IS_CRA_TEST) {
+    console.log('[Test] Mode: CRA Check Link (cra_base_report + cra_income_insights + EXTENSION_OF_CREDIT)');
+    console.log(`[Test] Sandbox login: ${USERNAME} / ${PASSWORD}`);
+  }
 
   const appServer = await startServer(3838, APP_DIR);
   console.log('[Test] App server:', appServer.url);
 
   const browser = await chromium.launch({
-    headless: false,  // non-headless: GPU compositor captures cross-origin iframe
-    args: ['--no-sandbox', '--disable-dev-shm-usage', '--window-size=1440,900'],
+    headless: IS_HEADLESS_RECORDING,
+    args: [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--window-size=1440,900',
+      ...(IS_HEADLESS_RECORDING ? ['--disable-background-timer-throttling'] : []),
+    ],
   });
 
   const context = await browser.newContext({
@@ -828,7 +923,7 @@ async function main() {
     ).catch(() => console.warn('[Test] onSuccess timeout'));
 
     recordStep('link-complete');  // moment the host page success panel appears
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(FINAL_SUCCESS_DWELL_MS);
     await screenshot(page, 'final-success');
 
     const tokens = await page.evaluate(() => ({
@@ -849,14 +944,14 @@ async function main() {
     // ── Verify with /auth/get ────────────────────────────────────────────────
     if (tokens.accessToken) {
       console.log('\n[Test] Calling /api/auth-get...');
-      const authResp = await page.evaluate(async (at) => {
+      const authResp = await page.evaluate(async ({ at, cra }) => {
         const r = await fetch('/api/auth-get', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ access_token: at }),
+          body: JSON.stringify(cra ? { access_token: at, credential_scope: 'cra' } : { access_token: at }),
         });
         return r.json();
-      }, tokens.accessToken);
+      }, { at: tokens.accessToken, cra: IS_CRA_TEST });
       const accounts = authResp.accounts?.length ?? 0;
       const ach      = authResp.numbers?.ach?.length ?? 0;
       console.log(`  /auth/get → ${accounts} accounts, ${ach} ACH routing numbers`);
@@ -871,7 +966,7 @@ async function main() {
 
   // ── Save recording ───────────────────────────────────────────────────────
   console.log('\n[Test] Closing browser...');
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(PRE_CLOSE_MS);
   const videoPath = await page.video()?.path();
   await context.close();
   await browser.close();
@@ -886,6 +981,15 @@ async function main() {
 
   result.durationMs   = Date.now() - startMs;
   result.screenshots  = fs.readdirSync(SCREENSHOTS_DIR).filter(f => f.endsWith('.png')).sort();
+  result.recordingProfile = {
+    cra:              IS_CRA_TEST,
+    headless:         IS_HEADLESS_RECORDING,
+    fastTiming:       FAST_TIMING,
+    outDir:           OUT_LEAF,
+    screenDwellMs:    SCREEN_DWELL_MS,
+    otpInstListGapMs: OTP_TO_INST_LIST_GAP_MS,
+    phoneMinMs:       PHONE_SCREEN_MIN_MS,
+  };
   fs.writeFileSync(RESULT_FILE, JSON.stringify(result, null, 2));
 
   // Write step timing for post-processing
@@ -902,7 +1006,7 @@ async function main() {
   console.log(`  Screenshots: ${ss}`);
   if (result.authGet) console.log(`  /auth/get:   ${result.authGet.accounts} accounts, ${result.authGet.achNumbers} ACH numbers`);
   console.log(`  Dwell/screen: ${SCREEN_DWELL_MS}ms`);
-  console.log('  Recording:   out/plaid-link-test/recording.webm');
+  console.log(`  Recording:   ${path.relative(PROJECT_ROOT, path.join(OUT_DIR, 'recording.webm'))}`);
   console.log('═'.repeat(60) + '\n');
 
   process.exit(result.success ? 0 : 1);

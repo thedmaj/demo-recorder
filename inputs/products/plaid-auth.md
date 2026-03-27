@@ -43,7 +43,7 @@ Feature this product when the demo persona is a developer or fintech PM solving 
 | Metric | Value | Source | Confidence | Last Verified |
 |--------|-------|--------|------------|---------------|
 | Conversion uplift vs micro-deposits | ~65% | Plaid internal / Gong calls | high | 2026-03-12 |
-| U.S. depository account coverage | 95%+ (10,000+ FIs) | Plaid docs | high | 2026-03-12 |
+| U.S. depository account coverage | 98%+ (10,000+ FIs) | Plaid docs | high | 2026-03-12 |
 | Verification uplift vs aggregator/database mix | ~23% increase in successful verifications | Plaid internal | high | 2026-03-12 |
 | More accounts funded at origination | 20%+ | Plaid internal | high | 2026-03-12 |
 | Higher average funding amounts | 3–4x vs alternatives | Plaid internal | high | 2026-03-12 |
@@ -80,7 +80,7 @@ Feature this product when the demo persona is a developer or fintech PM solving 
 > "Today we'll walk through how Plaid powers account funding and instant account verification. We'll connect a bank account in seconds, verify that the person linking owns that account, and evaluate ACH return risk before releasing funds—all in one integrated flow." (45 words — use abbreviated version for step narration)
 
 ### Auth step
-> "With Auth, we retrieve account and routing numbers directly from the bank. Users connect via Plaid Link using credentials or OAuth—no typing, no micro-deposits. That gives you 95%+ coverage of U.S. depository accounts." (35 words)
+> "With Auth, we retrieve account and routing numbers directly from the bank. Users connect via Plaid Link using credentials or OAuth—no typing, no micro-deposits. That gives you 98%+ coverage of U.S. depository accounts." (35 words)
 
 ### Identity Match step
 > "Before we move money, we verify ownership. Identity Match compares your KYC data—name, email, phone, address—to what's on file at the bank. We return scores per attribute, so you can approve, review, or block." (35 words)

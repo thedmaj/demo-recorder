@@ -162,6 +162,8 @@ async function executeTool(name, input) {
  */
 function detectProductSlug(promptContent) {
   const slugMap = {
+    'cra-base-report': /\b(base report|consumer report|check base report|cra base report)\b/i,
+    'income-insights': /\b(cra income insights|income insights|cra_income_insights)\b/i,
     'auth':     /\bauth\b|\baccount.verif|\bIAV\b|\bEAV\b/i,
     'signal':   /\bsignal\b|\bach.risk\b/i,
     'layer':    /\blayer\b/i,
@@ -633,6 +635,32 @@ async function main() {
   research.researchedAt = new Date().toISOString();
   research.synthesizedInsights = research.synthesizedInsights || {};
   research.apiSpec = research.apiSpec || { linkEvents: [], sampleApiResponse: {}, requiredCallbacks: [] };
+
+  // Run-level context: product family + budgeted curated digest + approved-claims snapshot
+  try {
+    const { inferProductFamily } = require('./utils/product-profiles');
+    const { buildCuratedProductKnowledge, buildCuratedDigest } = require('./utils/product-knowledge');
+    const { writePipelineRunContext, buildRunContextPayload } = require('./utils/run-context');
+    const promptContent = context.type === 'prompt'
+      ? context.content
+      : JSON.stringify(context.content);
+    const productFamily = inferProductFamily({ promptText: promptContent, productResearch: research });
+    research.productFamily = productFamily;
+    research.curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
+    research.curatedDigest = buildCuratedDigest(research.curatedProductKnowledge);
+    writePipelineRunContext(
+      OUT_DIR,
+      buildRunContextPayload({
+        phase: 'research',
+        productFamily,
+        productResearch: research,
+        demoScript: null,
+        promptText: promptContent,
+      })
+    );
+  } catch (e) {
+    console.warn(`  Could not write pipeline run context: ${e.message}`);
+  }
 
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(research, null, 2));
   console.log(`✓ Product research written: out/product-research.json`);

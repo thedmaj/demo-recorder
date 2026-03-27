@@ -377,15 +377,21 @@ async function main({ iteration = 1 } = {}) {  // eslint-disable-line no-unused-
         switch (urlPath) {
           case '/api/create-link-token':
             result = await plaid.createLinkToken({
-              products: body.products, clientName: body.clientName || body.client_name,
-              userId: body.userId || body.user_id, phoneNumber: body.phoneNumber || null,
-              linkCustomizationName: body.linkCustomizationName,
+              ...body,
+              products: body.products,
+              clientName: body.clientName || body.client_name,
+              userId: body.userId || body.user_id,
+              phoneNumber: body.phoneNumber ?? body.phone_number ?? null,
+              linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
+              productFamily: body.productFamily || body.product_family || null,
+              credentialScope: body.credentialScope || body.credential_scope || null,
             });
             break;
-          case '/api/exchange-public-token': result = await plaid.exchangePublicToken(body.public_token); break;
-          case '/api/auth-get':             result = await plaid.getAuth(body.access_token); break;
-          case '/api/identity-match':       result = await plaid.getIdentityMatch(body.access_token, body.legal_name); break;
-          case '/api/signal-evaluate':      result = await plaid.evaluateSignal(body.access_token, body.account_id, body.amount); break;
+          case '/api/exchange-public-token': result = await plaid.exchangePublicToken(body.public_token, { productFamily: body.productFamily || body.product_family || null, credentialScope: body.credentialScope || body.credential_scope || null }); break;
+          case '/api/auth-get':             result = await plaid.getAuth(body.access_token, { credentialScope: body.credentialScope || body.credential_scope || null }); break;
+          case '/api/identity-match':       result = await plaid.getIdentityMatch(body.access_token, body.legal_name, { credentialScope: body.credentialScope || body.credential_scope || null }); break;
+          case '/api/signal-evaluate':      result = await plaid.evaluateSignal(body.access_token, body.account_id, body.amount, { credentialScope: body.credentialScope || body.credential_scope || null }); break;
+          case '/api/plaid-request':        result = await plaid.plaidRequest(body.endpoint, body.body || {}, { productFamily: body.productFamily || body.product_family || null, credentialScope: body.credentialScope || body.credential_scope || null }); break;
           default: sendJson(res, 404, { error: 'Unknown API route' }); return;
         }
         sendJson(res, 200, result);

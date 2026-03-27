@@ -9,6 +9,10 @@
   let fsWatchSSE = null;
   let _logSSEConnectedAt = 0; // timestamp of last SSE connect — used to skip replayed history
 
+  let buildPanelRefreshTimer = null;
+  let stageBannerTimer = null;
+  let stageBannerStart = null;
+
   // Original narration values keyed by stepId (for Revert)
   let originalNarrations = {};
 
@@ -19,6 +23,30 @@
     /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
     'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'ai-suggest-overlays', 'render', 'ppt', 'touchup'
   ];
+
+  const STAGE_META = {
+    research:              { desc: 'Market research via AskBill + Glean', reads: ['inputs/prompt.txt'], writes: ['research-notes.md', 'product-research.json'] },
+    ingest:                { desc: 'Parse prompt, screenshots, transcriptions', reads: ['inputs/'], writes: ['ingested-inputs.json'] },
+    'brand-extract':       { desc: 'Fetch brand colors + typography from Brandfetch', reads: ['inputs/prompt.txt'], writes: ['brand/<slug>.json'] },
+    script:                { desc: 'Claude Opus generates demo storyboard (8–14 steps)', reads: ['ingested-inputs.json', 'product-research.json'], writes: ['demo-script.json'] },
+    'script-critique':     { desc: 'Claude Haiku reviews narration word counts and value props', reads: ['demo-script.json'], writes: ['claim-check-flags.json'] },
+    'embed-script-validate': { desc: 'Multimodal embedding coherence check (optional, requires GCP)', reads: ['demo-script.json'], writes: ['script-validate-report.json'] },
+    build:                 { desc: 'Claude Haiku generates demo web app (HTML/CSS/JS)', reads: ['demo-script.json', 'brand/<slug>.json'], writes: ['scratch-app/index.html'] },
+    record:                { desc: 'Playwright automates + records the demo app', reads: ['scratch-app/'], writes: ['recording.webm', 'step-timing.json'] },
+    qa:                    { desc: 'Vision QA: screenshot eval per step (up to 3 iterations)', reads: ['recording.webm'], writes: ['qa-report-N.json', 'qa-frames/'] },
+    'figma-review':        { desc: 'Optional Figma design feedback loop (FIGMA_REVIEW=true)', reads: ['scratch-app/'], writes: ['figma-review.json'] },
+    'post-process':        { desc: 'Hard-cut loading pauses; preserve Plaid Link screens', reads: ['recording.webm', 'step-timing.json'], writes: ['recording-processed.webm', 'sync-map.json'] },
+    voiceover:             { desc: 'ElevenLabs TTS: generate per-step narration MP3s', reads: ['processed-step-timing.json', 'demo-script.json'], writes: ['audio/vo_*.mp3', 'audio/voiceover.mp3'] },
+    'coverage-check':      { desc: 'Verify all narration steps have audio clips', reads: ['voiceover-manifest.json'], writes: ['coverage-report.json'] },
+    'auto-gap':            { desc: 'Compute speed/freeze sync-map segments from audio timings', reads: ['voiceover-manifest.json'], writes: ['sync-map.json'] },
+    'resync-audio':        { desc: 'Re-stitch audio with sync-map speed/freeze applied', reads: ['sync-map.json', 'voiceover-manifest.json'], writes: ['audio/voiceover.mp3'] },
+    'embed-sync':          { desc: 'Gemini audio-video sync detection (optional)', reads: ['recording-processed.webm', 'voiceover.mp3'], writes: ['embed-sync-report.json'] },
+    'audio-qa':            { desc: 'Per-clip stutter/freeze detection; auto-regenerate bad clips', reads: ['audio/vo_*.mp3'], writes: ['audio-qa-report.json'] },
+    'ai-suggest-overlays': { desc: 'Gemini suggests click ripple + zoom overlay enhancements', reads: ['recording-processed.webm'], writes: ['overlay-suggestions.json'] },
+    render:                { desc: 'Remotion composes final MP4 (2880×1800 H.264)', reads: ['recording-processed.webm', 'voiceover.mp3', 'remotion-props.json'], writes: ['demo-scratch.mp4'] },
+    ppt:                   { desc: 'Generate PowerPoint summary with storyboard frames', reads: ['demo-scratch.mp4'], writes: ['demo-summary.pptx'] },
+    touchup:               { desc: 'Optional Remotion Studio final adjustments', reads: [], writes: ['touchup-complete.json'] },
+  };
 
   // ── Utilities ──────────────────────────────────────────────────────────────
 
@@ -221,21 +249,19 @@
       el.addEventListener('click', () => switchTab(el.dataset.tab));
     });
 
-    // Run selector change
-    document.getElementById('run-selector').addEventListener('change', (e) => {
-      currentRunId = e.target.value || null;
-      if (currentRunId) loadCurrentRun();
-    });
+    // Build panel controls
+    document.getElementById('build-selector-btn')?.addEventListener('click', toggleBuildPanel);
+    document.getElementById('build-panel-close')?.addEventListener('click', toggleBuildPanel);
+    document.getElementById('build-panel-overlay')?.addEventListener('click', toggleBuildPanel);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeBuildPanel(); });
 
-    // Load runs first, then side-effects
-    await loadRuns();
+    // Stage banner view-logs button
+    document.getElementById('stage-banner-view-btn')?.addEventListener('click', () => switchTab('pipeline'));
 
-    // Always load config and pipeline (not run-dependent)
-    loadConfig();
-    loadPipeline();
-    loadValueProps();
+    // Load runs (non-blocking — page chrome is already visible)
+    loadRuns();
 
-    // FS watch and log SSE
+    // FS watch and log SSE (don't depend on currentRunId)
     connectFSWatch();
     connectLogSSE();
 
@@ -245,6 +271,9 @@
 
     // Lightbox
     initLightbox();
+
+    // Smart tooltips
+    initTooltips();
   });
 
   // ── Run List ───────────────────────────────────────────────────────────────
@@ -254,20 +283,158 @@
       const raw = await api('/api/runs');
       // Server returns { runs: [...] } but handle plain array fallback
       const data = Array.isArray(raw) ? { runs: raw } : raw;
-      const sel = document.getElementById('run-selector');
       if (!data.runs || data.runs.length === 0) {
-        sel.innerHTML = '<option value="">No runs found</option>';
+        const btn = document.getElementById('build-selector-btn');
+        const label = document.getElementById('build-selector-label');
+        if (label) label.textContent = 'No runs found';
         return;
       }
-      sel.innerHTML = data.runs
-        .map(r => `<option value="${esc(r.runId)}">${esc(r.runId)} (QA: ${r.qaScore != null ? r.qaScore : '–'})</option>`)
-        .join('');
-      currentRunId = data.runs[0].runId;
-      sel.value = currentRunId;
+      // Restore last selected run from localStorage, or default to first
+      const savedRunId = localStorage.getItem('lastRunId');
+      const savedExists = savedRunId && data.runs.some(r => r.runId === savedRunId);
+      currentRunId = savedExists ? savedRunId : data.runs[0].runId;
+      // Update button label
+      const label = document.getElementById('build-selector-label');
+      if (label) label.textContent = currentRunId;
+      // Render panel content
+      renderBuildPanel(data.runs);
+      // Set up 10s panel refresh timer
+      if (buildPanelRefreshTimer) clearInterval(buildPanelRefreshTimer);
+      buildPanelRefreshTimer = setInterval(() => {
+        const panel = document.getElementById('build-panel');
+        if (panel && panel.classList.contains('open')) refreshBuildPanel();
+      }, 10000);
       loadCurrentRun();
     } catch (e) {
       showToast('Failed to load runs: ' + e.message, 'error');
     }
+  }
+
+  async function refreshBuildPanel() {
+    try {
+      const raw = await api('/api/runs');
+      const data = Array.isArray(raw) ? { runs: raw } : raw;
+      if (data.runs && data.runs.length > 0) renderBuildPanel(data.runs);
+    } catch (_) {}
+  }
+
+  function renderBuildPanel(runs) {
+    const content = document.getElementById('build-panel-content');
+    if (!content) return;
+
+    // Find currently running run (has a currentStage or isRunning)
+    const liveRuns = runs.filter(r => r.isRunning || r.currentStage);
+
+    let html = '';
+
+    if (liveRuns.length > 0) {
+      html += `<div class="build-panel-section-title">Current Build</div>`;
+      liveRuns.forEach(r => { html += buildCardHtml(r, true); });
+    }
+
+    html += `<div class="build-panel-section-title">Recent Builds</div>`;
+    runs.forEach(r => { html += buildCardHtml(r, false); });
+
+    content.innerHTML = html;
+
+    // Wire up Load buttons
+    content.querySelectorAll('.build-card-load-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const runId = btn.dataset.runId;
+        currentRunId = runId;
+        localStorage.setItem('lastRunId', runId);
+        const label = document.getElementById('build-selector-label');
+        if (label) label.textContent = runId;
+        loadCurrentRun();
+        closeBuildPanel();
+      });
+    });
+
+    // Wire up card clicks (load run)
+    content.querySelectorAll('.build-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.build-card-load-btn')) return;
+        const runId = card.dataset.runId;
+        if (!runId) return;
+        currentRunId = runId;
+        localStorage.setItem('lastRunId', runId);
+        const label = document.getElementById('build-selector-label');
+        if (label) label.textContent = runId;
+        loadCurrentRun();
+        closeBuildPanel();
+      });
+    });
+
+    // Mark active card
+    content.querySelectorAll('.build-card').forEach(card => {
+      if (card.dataset.runId === currentRunId) card.classList.add('active');
+    });
+  }
+
+  function buildCardHtml(r, isLiveSection) {
+    const runId = r.runId;
+    const isActive = runId === currentRunId;
+    const isLive = !!(r.isRunning || r.currentStage);
+    const completedCount = (r.completedStages || []).length;
+    const totalStages = STAGES.length;
+    const isComplete = !!(r.artifacts && (r.artifacts.mp4 || r.artifacts.pptx));
+    const badgeClass = isLive ? 'live' : isComplete ? 'complete' : 'partial';
+    const badgeText = isLive ? 'Live' : isComplete ? 'Complete' : 'Partial';
+
+    // Progress bar (19 pips for STAGES)
+    const completedSet = new Set(r.completedStages || []);
+    const pipsHtml = STAGES.map(s => {
+      const isDone = completedSet.has(s);
+      const isActivePip = r.currentStage === s;
+      return `<div class="build-progress-pip ${isDone ? 'done' : isActivePip ? 'active' : ''}"></div>`;
+    }).join('');
+
+    const product = r.script ? r.script.product : extractProduct(runId);
+    const persona = r.script ? r.script.persona : '';
+    const metaText = [product, persona].filter(Boolean).join(' · ');
+
+    const qaText = r.qaScore != null ? `QA: ${r.qaScore}` : '';
+    const stageText = isLive && r.currentStage ? `Stage: ${r.currentStage}` : '';
+    const loadBtn = !isActive
+      ? `<button class="build-card-load-btn" data-run-id="${esc(runId)}">Load</button>`
+      : `<span style="font-size:11px;color:#00A67E">Current</span>`;
+
+    return `
+      <div class="build-card ${isActive ? 'active' : ''} ${isLive ? 'live' : ''}" data-run-id="${esc(runId)}">
+        <div class="build-card-header">
+          <span class="build-card-id">${esc(runId)}</span>
+          <span class="build-card-badge ${badgeClass}">${badgeText}</span>
+        </div>
+        ${metaText ? `<div class="build-card-meta">${esc(metaText)}</div>` : ''}
+        <div class="build-progress-bar">${pipsHtml}</div>
+        <div class="build-card-footer">
+          <span>${[qaText, stageText].filter(Boolean).join(' · ')}</span>
+          ${loadBtn}
+        </div>
+      </div>`;
+  }
+
+  function toggleBuildPanel() {
+    const panel = document.getElementById('build-panel');
+    const overlay = document.getElementById('build-panel-overlay');
+    if (!panel) return;
+    const isOpen = panel.classList.contains('open');
+    if (isOpen) {
+      closeBuildPanel();
+    } else {
+      panel.classList.add('open');
+      if (overlay) overlay.style.display = 'block';
+      // Refresh panel when opened
+      refreshBuildPanel();
+    }
+  }
+
+  function closeBuildPanel() {
+    const panel = document.getElementById('build-panel');
+    const overlay = document.getElementById('build-panel-overlay');
+    if (panel) panel.classList.remove('open');
+    if (overlay) overlay.style.display = 'none';
   }
 
   function loadCurrentRun() {
@@ -278,6 +445,9 @@
   }
 
   // ── Tab Switching ──────────────────────────────────────────────────────────
+
+  // Expose globally for use in inline onclick handlers
+  window.switchTab = function(tabName) { switchTab(tabName); };
 
   function switchTab(tabName) {
     currentTab = tabName;
@@ -473,6 +643,78 @@
           </div>`;
       }
 
+      // Section B: Available Actions
+      const canEditStoryboard = !!(artifacts.script);
+      const canLaunchApp = !!(run.artifacts && run.artifacts.script); // proxy check
+      const canRecord = !!(artifacts.script);
+      const canResync = !!(audioSync && audioSync.isStale);
+      const canRender = !!(artifacts.voiceover && artifacts.processed);
+
+      const actionsHtml = `
+        <div class="card">
+          <div class="card-title">What You Can Do</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            ${canEditStoryboard
+              ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#00A67E">✓</span> <a href="#" onclick="event.preventDefault();window.switchTab&&window.switchTab('storyboard')" style="color:#00A67E">Edit Storyboard</a></div>`
+              : `<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.3)"><span>○</span> Edit Storyboard — run script stage first</div>`}
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+              <span style="color:#00A67E">↗</span>
+              <a href="/demo-app-preview/${esc(currentRunId)}" target="_blank" style="color:#00A67E">Launch &amp; Edit App</a>
+            </div>
+            ${canResync
+              ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#fbbf24">⚠</span> <span style="color:#fbbf24">Audio sync is stale — resync recommended</span></div>`
+              : ''}
+            ${canRender
+              ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#00A67E">✓</span> <span style="color:rgba(255,255,255,0.7)">Ready to render — voiceover + processed recording available</span></div>`
+              : ''}
+          </div>
+        </div>`;
+
+      // Section C: Previous Builds — fetch all runs
+      let prevBuildsHtml = '';
+      try {
+        const allRunsRaw = await api('/api/runs');
+        const allRunsData = Array.isArray(allRunsRaw) ? { runs: allRunsRaw } : allRunsRaw;
+        const allRuns = allRunsData.runs || [];
+        if (allRuns.length > 1) {
+          const rowsHtml = allRuns.map(r => {
+            const rProduct = extractProduct(r.runId);
+            const rQa = r.qaScore != null ? `<span class="chip ${scoreChipClass(r.qaScore)}">${r.qaScore}</span>` : '<span style="color:rgba(255,255,255,0.3)">–</span>';
+            const rStages = (r.completedStages || []).length + '/' + STAGES.length;
+            const rArtifacts = r.artifacts || {};
+            const videoBtn = rArtifacts.mp4
+              ? `<a href="/api/files/${esc(r.runId)}/demo-scratch.mp4" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;font-size:11px">▶ Video</a>`
+              : '';
+            const loadBtn = r.runId !== currentRunId
+              ? `<button class="btn btn-sm btn-secondary overview-load-run-btn" data-run-id="${esc(r.runId)}" style="font-size:11px">Load</button>`
+              : `<span style="font-size:11px;color:#00A67E">Current</span>`;
+            return `<tr>
+              <td style="font-size:12px;color:rgba(255,255,255,0.6);white-space:nowrap">${esc(formatDate(r.runId))}</td>
+              <td style="font-size:12px">${esc(rProduct)}</td>
+              <td>${rQa}</td>
+              <td style="font-size:12px;color:rgba(255,255,255,0.5)">${rStages}</td>
+              <td style="display:flex;gap:6px;align-items:center">${videoBtn} ${loadBtn}</td>
+            </tr>`;
+          }).join('');
+          prevBuildsHtml = `
+            <div class="card">
+              <div class="card-title">Previous Builds</div>
+              <div style="overflow-x:auto">
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                  <thead><tr style="color:rgba(255,255,255,0.35);font-size:10px;text-transform:uppercase;letter-spacing:0.06em">
+                    <th style="text-align:left;padding:4px 8px 8px 0">Date</th>
+                    <th style="text-align:left;padding:4px 8px 8px 0">Product</th>
+                    <th style="text-align:left;padding:4px 8px 8px 0">QA</th>
+                    <th style="text-align:left;padding:4px 8px 8px 0">Stages</th>
+                    <th style="text-align:left;padding:4px 8px 8px 0">Actions</th>
+                  </tr></thead>
+                  <tbody>${rowsHtml}</tbody>
+                </table>
+              </div>
+            </div>`;
+        }
+      } catch (_) {}
+
       el.innerHTML = `
         <div class="card">
           <div class="run-title">${esc(currentRunId)}</div>
@@ -486,7 +728,22 @@
           <div class="card-title" style="margin-top:16px;margin-bottom:8px">Pipeline Stages</div>
           ${checklistHtml}
         </div>
-        ${qaHtml}`;
+        ${qaHtml}
+        ${actionsHtml}
+        ${prevBuildsHtml}`;
+
+      // Wire Previous Builds "Load" buttons
+      el.querySelectorAll('.overview-load-run-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const runId = btn.dataset.runId;
+          if (!runId) return;
+          currentRunId = runId;
+          localStorage.setItem('lastRunId', runId);
+          const selectorLabel = document.getElementById('build-selector-label');
+          if (selectorLabel) selectorLabel.textContent = runId;
+          loadCurrentRun();
+        });
+      });
 
       // Wire pipeline timeline pill clicks → jump to Pipeline tab with stage pre-selected
       const timeline = el.querySelector('.pipeline-timeline');
@@ -1171,6 +1428,8 @@
         </div>` : '');
 
       // ── Storyboard action bar ──
+      // Show launch button always (script is loaded if we got this far); server will 404 if app not built
+      const launchAppBtn = `<a id="sb-launch-app-btn" class="btn btn-sm btn-secondary" href="/demo-app-preview/${esc(currentRunId)}" target="_blank" data-tooltip="Launch App" data-tooltip-title="↗ Launch &amp; Edit App" data-tooltip-desc="Opens scratch-app in a new tab with the AI edit panel." style="text-decoration:none">↗ Launch &amp; Edit App</a>`;
       const actionBarHtml = `
         <div class="sb-action-bar" id="sb-action-bar">
           <div class="sb-action-bar-left">
@@ -1179,10 +1438,15 @@
               title="Generate a new step with AI — demo scene or insight slide">
               ✦ Add Step
             </button>
+            ${launchAppBtn}
           </div>
           <div class="sb-action-bar-right">
             <button id="sb-continue-btn" class="btn btn-sm sb-continue-btn" style="display:none"
               title="Pipeline is waiting — click to send ENTER and proceed to recording">▶ Continue</button>
+            <a id="sb-timeline-btn" class="btn btn-sm btn-secondary" href="/timeline?run=${encodeURIComponent(currentRunId)}" target="_blank"
+              title="Open the visual drag-and-resize timeline editor for this run" style="text-decoration:none">
+              ◫ Timeline Editor
+            </a>
             <button id="sb-record-btn" class="btn btn-sm btn-secondary"
               title="Start Playwright recording using the current built app (skips rebuild)">
               <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="6" cy="6" r="4"/></svg>
@@ -1295,6 +1559,7 @@
             </div>
             <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
               <button type="button" class="btn btn-sm btn-secondary" id="tl-add-split-btn" title="Click a position on the timeline above, then click here to add a freeze segment at that point">+ Add Freeze Segment</button>
+              <a class="btn btn-sm btn-secondary" href="/timeline?run=${encodeURIComponent(currentRunId)}" target="_blank" style="text-decoration:none" title="Open the full drag-and-resize timeline editor">◫ Timeline Editor</a>
               <button type="button" class="btn btn-sm btn-secondary" id="tl-open-studio-btn">▶ Open in Remotion Studio</button>
               <span id="tl-cursor-time" style="font-size:11px;color:rgba(255,255,255,0.4);margin-left:4px"></span>
             </div>
@@ -1819,6 +2084,13 @@
               </div>
               <p class="add-step-scene-desc" id="add-step-desc-demo">App screen — product UI navigates to this step. Persona takes an action or sees a result.</p>
               <p class="add-step-scene-desc" id="add-step-desc-slide" style="display:none">Insight overlay — styled to match this demo's brand design system. Matches existing insight screens (header bar, data table, glassmorphism panels).</p>
+
+              <div id="add-step-glean-row" style="display:none;margin-top:10px;">
+                <label style="display:flex;gap:10px;align-items:center;font-size:13px;color:rgba(255,255,255,0.75);">
+                  <input type="checkbox" id="add-step-glean-checkbox" style="transform: translateY(1px);" />
+                  Research messaging (Glean)
+                </label>
+              </div>
             </div>
             <div class="add-step-field">
               <label class="config-label">What should this step show?</label>
@@ -1901,6 +2173,8 @@
           _addStepSceneType = btn.dataset.type;
           document.getElementById('add-step-desc-demo').style.display = _addStepSceneType === 'demo' ? '' : 'none';
           document.getElementById('add-step-desc-slide').style.display = _addStepSceneType === 'slide' ? '' : 'none';
+          const gleanRow = document.getElementById('add-step-glean-row');
+          if (gleanRow) gleanRow.style.display = _addStepSceneType === 'slide' ? 'block' : 'none';
           // Reset slide description to default when switching away
           if (_addStepSceneType !== 'slide') {
             const slideDesc = document.getElementById('add-step-desc-slide');
@@ -1924,6 +2198,7 @@
         const description = document.getElementById('add-step-description').value.trim();
         if (!description) return showToast('Enter a description first', 'error');
         const insertAfterId = document.getElementById('add-step-after').value || undefined;
+        const useGleanResearch = _addStepSceneType === 'slide' && (document.getElementById('add-step-glean-checkbox')?.checked === true);
         const btn = document.getElementById('add-step-generate-btn');
         setBtnLoading(btn, true, 'Generating…');
         try {
@@ -1931,6 +2206,7 @@
             sceneType: _addStepSceneType,
             description,
             insertAfterId,
+            useGleanResearch,
           });
           _generatedStep = result.step;
           _lastBrand = result.brand || null;
@@ -2332,6 +2608,71 @@
     });
   }
 
+  // ── Wizard Stage Tracker ────────────────────────────────────────────────────
+
+  let _wizardSelectedStage = null;
+  // Store log lines per stage for wizard log panel
+  const _wizardStageLogs = {};
+
+  function renderWizard(completedStages, activeStage) {
+    const completedSet = new Set(completedStages || []);
+
+    // Left: stage list
+    const listItems = STAGES.map(s => {
+      let stateClass = 'pending';
+      let icon = '○';
+      if (completedSet.has(s)) { stateClass = 'done'; icon = '✓'; }
+      else if (s === activeStage) { stateClass = 'active'; icon = '◎'; }
+      return `
+        <div class="wizard-stage-item ${stateClass} ${_wizardSelectedStage === s ? 'selected' : ''}" data-stage="${esc(s)}">
+          <span class="ws-icon">${icon}</span>
+          <span class="ws-label">${esc(s)}</span>
+        </div>`;
+    }).join('');
+
+    // Right: detail panel for selected stage
+    const sel = _wizardSelectedStage || activeStage || STAGES[0];
+    const meta = STAGE_META[sel] || {};
+    let stateLabel = 'Pending';
+    let stateColor = 'rgba(255,255,255,0.35)';
+    if (completedSet.has(sel)) { stateLabel = 'Complete'; stateColor = '#00A67E'; }
+    else if (sel === activeStage) { stateLabel = 'Running…'; stateColor = '#fbbf24'; }
+
+    const readsHtml = (meta.reads || []).map(f => `<div class="wizard-io-item">${esc(f)}</div>`).join('');
+    const writesHtml = (meta.writes || []).map(f => `<div class="wizard-io-item">${esc(f)}</div>`).join('');
+    const logLines = (_wizardStageLogs[sel] || []).slice(-30).join('\n');
+
+    const detailHtml = `
+      <div class="wizard-detail">
+        <div class="wizard-detail-name">${esc(sel)}</div>
+        <div class="wizard-detail-status" style="color:${stateColor}">${stateLabel}</div>
+        ${meta.desc ? `<div class="wizard-detail-desc">${esc(meta.desc)}</div>` : ''}
+        <div class="wizard-io-row">
+          <div class="wizard-io-col">
+            <div class="wizard-io-label">Reads</div>
+            ${readsHtml || '<div class="wizard-io-item" style="color:rgba(255,255,255,0.25)">—</div>'}
+          </div>
+          <div class="wizard-io-col">
+            <div class="wizard-io-label">Writes</div>
+            ${writesHtml || '<div class="wizard-io-item" style="color:rgba(255,255,255,0.25)">—</div>'}
+          </div>
+        </div>
+        <div class="wizard-actions">
+          <button class="btn btn-sm btn-secondary wizard-run-from-btn" data-stage="${esc(sel)}"
+            title="Run pipeline from this stage">▶ Run from here</button>
+        </div>
+        ${logLines ? `<div class="wizard-log">${esc(logLines)}</div>` : ''}
+      </div>`;
+
+    const html = `
+      <div class="wizard-layout" id="wizard-layout">
+        <div class="wizard-stage-list">${listItems}</div>
+        ${detailHtml}
+      </div>`;
+
+    return html;
+  }
+
   // ── Pipeline Tab ───────────────────────────────────────────────────────────
 
   async function loadPipeline() {
@@ -2354,7 +2695,19 @@
       `<div class="stage-pill" id="stage-pill-${esc(s)}" data-stage="${esc(s)}">${esc(s)}</div>`
     ).join('');
 
-    el.innerHTML = `
+    // Wizard section (injected before main controls)
+    let wizardHtml = '';
+    if (currentRunId) {
+      try {
+        const runInfo = await api('/api/runs/' + currentRunId);
+        const completedStages = runInfo.completedStages || [];
+        wizardHtml = renderWizard(completedStages, null);
+      } catch (_) {
+        wizardHtml = renderWizard([], null);
+      }
+    }
+
+    el.innerHTML = wizardHtml + `
       <div class="card">
         <div class="card-title">Prompt</div>
         <textarea id="pipeline-prompt-editor" style="width:100%;min-height:150px;box-sizing:border-box">${esc(promptText)}</textarea>
@@ -2422,6 +2775,35 @@
 
     // Populate stage dropdown based on current run's completed stages
     updateStageDropdown();
+
+    // Wizard stage item clicks
+    el.addEventListener('click', (e) => {
+      const item = e.target.closest('.wizard-stage-item');
+      if (item) {
+        _wizardSelectedStage = item.dataset.stage;
+        // Re-render wizard section only
+        const wizardLayout = document.getElementById('wizard-layout');
+        if (wizardLayout && currentRunId) {
+          api('/api/runs/' + currentRunId).then(runInfo => {
+            const wizardEl = document.createElement('div');
+            wizardEl.innerHTML = renderWizard(runInfo.completedStages || [], null);
+            const newLayout = wizardEl.querySelector('#wizard-layout');
+            if (newLayout) wizardLayout.replaceWith(newLayout);
+            // Re-wire wizard clicks
+          }).catch(() => {});
+        }
+      }
+      const runFromBtn = e.target.closest('.wizard-run-from-btn');
+      if (runFromBtn) {
+        const stage = runFromBtn.dataset.stage;
+        const stageSelect = document.getElementById('stage-select');
+        if (stageSelect) {
+          const opt = stageSelect.querySelector(`option[value="${CSS.escape(stage)}"]:not([disabled])`);
+          if (opt) stageSelect.value = stage;
+        }
+        showToast(`Stage set to ${stage} — click Run from Stage`, 'success');
+      }
+    });
 
     // Continue button — sends '\n' to the blocked pipeline stdin
     document.getElementById('pipeline-continue-btn').addEventListener('click', async () => {
@@ -2574,6 +2956,33 @@
     connectLogSSE();
   }
 
+  // ── Stage Banner ────────────────────────────────────────────────────────────
+
+  function updateStageBanner(stageName, stageIndex) {
+    const banner = document.getElementById('stage-banner');
+    if (!banner) return;
+    const total = STAGES.length;
+    const labelEl = document.getElementById('stage-banner-label');
+    if (labelEl) labelEl.textContent = `Stage ${stageIndex + 1}/${total} · ${stageName}`;
+    banner.style.display = 'flex';
+    if (!stageBannerStart) stageBannerStart = Date.now();
+    if (stageBannerTimer) clearInterval(stageBannerTimer);
+    stageBannerTimer = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - stageBannerStart) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      const el = document.getElementById('stage-banner-elapsed');
+      if (el) el.textContent = `${m}m ${s < 10 ? '0' : ''}${s}s`;
+    }, 1000);
+  }
+
+  function hideStageBanner() {
+    const banner = document.getElementById('stage-banner');
+    if (banner) banner.style.display = 'none';
+    if (stageBannerTimer) { clearInterval(stageBannerTimer); stageBannerTimer = null; }
+    stageBannerStart = null;
+  }
+
   // ── Log SSE ────────────────────────────────────────────────────────────────
 
   function connectLogSSE() {
@@ -2609,6 +3018,7 @@
     if (pipelineDone) {
       showContinueButton(false);
       setPipelineRunning(false);
+      hideStageBanner();
       stopStudioStatusPolling();
       // Refresh overview timeline after a brief delay so pipeline-progress.json is written
       setTimeout(() => { if (currentTab === 'overview') loadOverview(); }, 1500);
@@ -2730,6 +3140,9 @@
     const label = document.getElementById('stage-label');
     if (label) label.textContent = 'Running: ' + stageName;
     _activeStageIndex = idx;
+
+    // Update stage banner
+    updateStageBanner(stageName, idx);
 
     // Show studio status panel when record+qa stage becomes active
     const isRecordStage = stageName === 'record+qa' || stageName === 'record';
@@ -3102,6 +3515,7 @@
   let _vpCurrentFile = null;
   let _vpOriginalContent = '';
   let _vpCurrentFrontmatter = {};  // frontmatter of the file currently displayed
+  let _vpPreserveSelection = null; // after fact PATCH, re-open same file after list refresh
 
   async function loadValueProps() {
     const el = document.getElementById('valueprop-content');
@@ -3124,12 +3538,19 @@
         const badge = f.needsReview
           ? `<span class="vp-needs-review-badge" title="AI has added findings since last human review">Needs Review</span>`
           : '';
+        const staleB = f.staleByAge
+          ? `<span class="vp-stale-badge" title="Last human review older than ${esc(String(f.staleThresholdDays || 90))} days">Stale ${f.staleDays != null ? esc(String(f.staleDays)) + 'd' : ''}</span>`
+          : '';
+        const draftB = (f.draftCount > 0)
+          ? `<span class="vp-draft-count" title="Lines tagged as draft in Fact Inbox">${esc(String(f.draftCount))} draft</span>`
+          : '';
         const displayName = f.name.startsWith('products/') ? f.name.replace('products/', '') : f.name;
         return `
           <div class="vp-file-item" data-name="${esc(f.name)}">
             <span class="vp-file-name">${esc(displayName)}</span>
             ${badge}
             <span class="vp-file-size">${formatBytes(f.size)}</span>
+            <div class="vp-file-badges">${staleB}${draftB}</div>
           </div>`;
       }
 
@@ -3163,9 +3584,14 @@
         });
       });
 
-      // Auto-select first product file (or first file if no products)
-      const firstItem = el.querySelector('.vp-file-item');
+      const want = _vpPreserveSelection;
+      _vpPreserveSelection = null;
+      const pick = want
+        ? [...el.querySelectorAll('.vp-file-item')].find(i => i.dataset.name === want)
+        : null;
+      const firstItem = pick || el.querySelector('.vp-file-item');
       if (firstItem) {
+        el.querySelectorAll('.vp-file-item').forEach(x => x.classList.remove('active'));
         firstItem.classList.add('active');
         const fileInfo = files.find(f => f.name === firstItem.dataset.name);
         _vpCurrentFrontmatter = fileInfo ? (fileInfo.frontmatter || {}) : {};
@@ -3239,10 +3665,22 @@
         <span class="vp-meta-item">Last reviewed: <strong>${esc(fm.last_human_review || '—')}</strong></span>
         <span class="vp-meta-sep">·</span>
         <span class="vp-meta-item">Last AI update: <strong>${esc((fm.last_ai_update || '—').split('T')[0])}</strong></span>
+        ${fm.last_reviewed_by ? `<span class="vp-meta-sep">·</span><span class="vp-meta-item">By: <strong>${esc(fm.last_reviewed_by)}</strong></span>` : ''}
         ${needsReview && !editMode ? `
           <span class="vp-meta-sep">·</span>
           <button class="btn btn-sm vp-mark-reviewed-btn" id="vp-mark-reviewed-btn">✓ Mark as Reviewed</button>` : ''}
       </div>` : '';
+
+    const previewBody = renderVpContent(content);
+    const splitWrap = editMode
+      ? `<div id="vp-content-area"><textarea id="vp-textarea" class="vp-textarea">${esc(content)}</textarea></div>`
+      : `<div id="vp-content-area"><div class="vp-split">
+          <div class="vp-split-main">${previewBody}</div>
+          <aside class="vp-fact-inbox" id="vp-fact-inbox" aria-label="Fact inbox">
+            <div class="vp-fact-inbox-title">Fact inbox</div>
+            <div class="vp-fact-inbox-loading" style="font-size:13px;color:rgba(255,255,255,0.45)">Loading…</div>
+          </aside>
+        </div></div>`;
 
     area.innerHTML = `
       <div class="vp-toolbar">
@@ -3259,11 +3697,7 @@
         </div>
       </div>
       ${metaBar}
-      <div id="vp-content-area">
-        ${editMode
-          ? `<textarea id="vp-textarea" class="vp-textarea">${esc(content)}</textarea>`
-          : renderVpContent(content)}
-      </div>`;
+      ${splitWrap}`;
 
     document.getElementById('vp-preview-btn')?.addEventListener('click', () => {
       const current = editMode ? (document.getElementById('vp-textarea')?.value || content) : content;
@@ -3278,7 +3712,106 @@
     document.getElementById('vp-discard-btn')?.addEventListener('click', () => {
       renderVpEditor(_vpOriginalContent, false);
     });
-    document.getElementById('vp-mark-reviewed-btn')?.addEventListener('click', markVpFileReviewed);
+    document.getElementById('vp-mark-reviewed-btn')?.addEventListener('click', () => markVpFileReviewed(false));
+    if (!editMode) loadVpFactInbox(content);
+  }
+
+  let _vpFactFilterDraftsOnly = true;
+
+  async function loadVpFactInbox(currentMarkdown) {
+    const host = document.getElementById('vp-fact-inbox');
+    if (!host || !_vpCurrentFile) return;
+    try {
+      const r = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/facts');
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      const facts = data.facts || [];
+      const show = _vpFactFilterDraftsOnly ? facts.filter(f => f.draft) : facts;
+      host.innerHTML = `
+        <div class="vp-fact-inbox-title">Fact inbox (${data.draftCount || 0} draft / ${data.factCount || 0} total)</div>
+        <div class="vp-fact-filter">
+          <label><input type="checkbox" id="vp-fact-filter-drafts" ${_vpFactFilterDraftsOnly ? 'checked' : ''}/> Drafts only</label>
+          ${(data.draftCount || 0) > 0 ? `<button type="button" class="btn btn-sm btn-secondary" id="vp-fact-approve-all">Approve all drafts</button>` : ''}
+        </div>
+        <div id="vp-fact-rows"></div>`;
+      document.getElementById('vp-fact-approve-all')?.addEventListener('click', async () => {
+        const drafts = facts.filter(f => f.draft);
+        if (!drafts.length || !confirm(`Approve ${drafts.length} draft fact(s)?`)) return;
+        try {
+          const r = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/facts/bulk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ actions: drafts.map(f => ({ factId: f.id, op: 'approve' })) }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || r.statusText);
+          showToast(`Approved ${j.applied || drafts.length} fact(s)`, 'success');
+          _vpPreserveSelection = _vpCurrentFile;
+          await loadValueProps();
+        } catch (e) {
+          showToast('Bulk approve failed: ' + e.message, 'error');
+        }
+      });
+      const rowsEl = document.getElementById('vp-fact-rows');
+      document.getElementById('vp-fact-filter-drafts')?.addEventListener('change', (e) => {
+        _vpFactFilterDraftsOnly = !!e.target.checked;
+        loadVpFactInbox(currentMarkdown);
+      });
+      if (show.length === 0) {
+        rowsEl.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.45)">No facts in this view.</div>';
+        return;
+      }
+      rowsEl.innerHTML = show.map(f => `
+        <div class="vp-fact-row ${f.draft ? 'vp-fact-row--draft' : ''}" data-fact-id="${esc(f.id)}">
+          <div class="vp-fact-meta">
+            <span class="vp-fact-pill">${esc(f.type)}</span>
+            <span class="vp-fact-pill">${esc(f.section)}</span>
+            ${f.draft ? '<span class="vp-fact-pill vp-fact-pill--draft">DRAFT</span>' : ''}
+            <span class="vp-fact-pill">L${f.lineStart}</span>
+          </div>
+          <div class="vp-fact-text">${esc(f.text)}</div>
+          <div class="vp-fact-actions">
+            ${f.draft ? `<button type="button" class="btn btn-sm btn-primary vp-fact-approve" data-id="${esc(f.id)}">Approve</button>` : ''}
+            <button type="button" class="btn btn-sm btn-secondary vp-fact-edit" data-id="${esc(f.id)}">Edit line…</button>
+            <button type="button" class="btn btn-sm btn-secondary vp-fact-reject" data-id="${esc(f.id)}">Remove line</button>
+          </div>
+        </div>`).join('');
+      rowsEl.querySelectorAll('.vp-fact-approve').forEach(btn => {
+        btn.addEventListener('click', () => vpFactPatch(btn.dataset.id, 'approve'));
+      });
+      rowsEl.querySelectorAll('.vp-fact-reject').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if (confirm('Remove this line from the markdown file?')) vpFactPatch(btn.dataset.id, 'reject');
+        });
+      });
+      rowsEl.querySelectorAll('.vp-fact-edit').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = facts.find(x => x.id === btn.dataset.id);
+          const next = row ? prompt('Edit fact line text:', row.text) : null;
+          if (next == null) return;
+          vpFactPatch(btn.dataset.id, 'edit', next);
+        });
+      });
+    } catch (err) {
+      host.innerHTML = `<div class="vp-fact-inbox-title">Fact inbox</div><div style="color:#f87171;font-size:13px">${esc(err.message)}</div>`;
+    }
+  }
+
+  async function vpFactPatch(factId, op, text) {
+    if (!_vpCurrentFile) return;
+    try {
+      const r = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/facts/' + encodeURIComponent(factId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ op, text }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      showToast('Updated fact', 'success');
+      _vpPreserveSelection = _vpCurrentFile;
+      await loadValueProps();
+    } catch (e) {
+      showToast('Fact update failed: ' + e.message, 'error');
+    }
   }
 
   async function saveVpFile() {
@@ -3299,23 +3832,44 @@
     }
   }
 
-  async function markVpFileReviewed() {
+  async function markVpFileReviewed(forceRetry) {
     if (!_vpCurrentFile) return;
     try {
       const r = await fetch('/api/valueprop/review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: _vpCurrentFile }),
+        body: JSON.stringify({
+          name: _vpCurrentFile,
+          force: !!forceRetry,
+          last_reviewed_by: 'dashboard',
+        }),
       });
-      if (!r.ok) throw new Error((await r.json()).error || r.statusText);
+      const payload = await r.json().catch(() => ({}));
+      if (r.status === 409 && payload.code === 'unresolved_drafts') {
+        const n = payload.unresolvedDraftCount || 0;
+        if (confirm(`There are ${n} draft fact(s) in Fact Inbox. Mark as reviewed anyway?`)) {
+          return markVpFileReviewed(true);
+        }
+        showToast('Resolve drafts in Fact Inbox first, or confirm to force complete.', 'error');
+        return;
+      }
+      if (!r.ok) throw new Error(payload.error || r.statusText);
       const today = new Date().toISOString().split('T')[0];
-      _vpCurrentFrontmatter = { ..._vpCurrentFrontmatter, last_human_review: today, needs_review: 'false' };
-      // Update _vpOriginalContent frontmatter in memory so the badge disappears immediately
+      _vpCurrentFrontmatter = {
+        ..._vpCurrentFrontmatter,
+        last_human_review: today,
+        needs_review: 'false',
+        last_reviewed_by: 'dashboard',
+      };
       _vpOriginalContent = _vpOriginalContent
         .replace(/^last_human_review:.*$/m, `last_human_review: "${today}"`)
         .replace(/^needs_review:.*$/m, 'needs_review: false');
+      if (/^last_reviewed_by:/m.test(_vpOriginalContent)) {
+        _vpOriginalContent = _vpOriginalContent.replace(/^last_reviewed_by:.*$/m, 'last_reviewed_by: "dashboard"');
+      } else {
+        _vpOriginalContent = _vpOriginalContent.replace(/^---\n/, '---\nlast_reviewed_by: "dashboard"\n');
+      }
       showToast('Marked as reviewed', 'success');
-      // Refresh sidebar badge + re-render editor
       await loadValueProps();
     } catch (e) {
       showToast('Review failed: ' + e.message, 'error');
@@ -3406,9 +3960,11 @@
 
   // ── Demo Apps ────────────────────────────────────────────────────────────────
 
-  async function loadDemoApps() {
+  async function loadDemoApps(forceRefresh = false) {
     const el = document.getElementById('demo-apps-content');
     if (!el) return;
+    // Skip re-fetch if already populated and not forced (e.g. after launch/stop)
+    if (!forceRefresh && el.querySelector('#demo-apps-list')) return;
     el.innerHTML = '<div class="empty-state">Loading…</div>';
     try {
       const data = await api('/api/demo-apps');
@@ -3480,7 +4036,7 @@
           const result = await apiPost('/api/demo-apps/launch', { runId });
           window.open(result.url, '_blank');
           showToast(`App launched at ${result.url}`, 'success');
-          setTimeout(loadDemoApps, 400);
+          setTimeout(() => loadDemoApps(true), 400);
         } catch (err) {
           showToast(`Failed to launch: ${err.message}`, 'error');
           setBtnLoading(btn, false, 'Launch');
@@ -3496,7 +4052,7 @@
         try {
           await apiPost(`/api/demo-apps/${runId}/stop`, {});
           showToast('Server stopped', 'success');
-          setTimeout(loadDemoApps, 300);
+          setTimeout(() => loadDemoApps(true), 300);
         } catch (err) {
           showToast(`Failed to stop: ${err.message}`, 'error');
           setBtnLoading(btn, false, 'Stop');
@@ -3508,6 +4064,67 @@
     list.querySelectorAll('.demo-app-open-btn').forEach(btn => {
       btn.addEventListener('click', () => window.open(btn.dataset.url, '_blank'));
     });
+  }
+
+  // ── Smart Tooltip System ────────────────────────────────────────────────────
+
+  let _tooltipEl = null;
+
+  function initTooltips() {
+    _tooltipEl = document.createElement('div');
+    _tooltipEl.className = 'smart-tooltip';
+    _tooltipEl.style.display = 'none';
+    document.body.appendChild(_tooltipEl);
+
+    document.addEventListener('mouseover', (e) => {
+      const target = e.target.closest('[data-tooltip]');
+      if (!target) { _tooltipEl.style.display = 'none'; return; }
+      const text = target.dataset.tooltip;
+      const depsRaw = target.dataset.tooltipDeps;
+      let deps = [];
+      try { deps = depsRaw ? JSON.parse(depsRaw) : []; } catch (_) {}
+
+      let html = `<div class="tooltip-title">${esc(target.dataset.tooltipTitle || text)}</div>`;
+      if (target.dataset.tooltipDesc) html += `<div class="tooltip-desc">${esc(target.dataset.tooltipDesc)}</div>`;
+      if (deps.length > 0) {
+        html += '<div class="tooltip-deps">' + deps.map(d =>
+          `<div class="dep-row ${d.met ? 'met' : 'unmet'}">${d.met ? '✓' : '✗'} ${esc(d.label)}</div>`
+        ).join('') + '</div>';
+      }
+      _tooltipEl.innerHTML = html;
+      _tooltipEl.style.display = 'block';
+      _positionTooltip(e);
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (_tooltipEl.style.display === 'none') return;
+      _positionTooltip(e);
+    });
+
+    document.addEventListener('mouseout', (e) => {
+      if (!e.target.closest('[data-tooltip]')) return;
+      if (!e.relatedTarget?.closest('[data-tooltip]')) _tooltipEl.style.display = 'none';
+    });
+  }
+
+  function _positionTooltip(e) {
+    const tw = 240, th = _tooltipEl.offsetHeight;
+    let x = e.clientX + 12, y = e.clientY + 12;
+    if (x + tw > window.innerWidth - 8) x = e.clientX - tw - 8;
+    if (y + th > window.innerHeight - 8) y = e.clientY - th - 12;
+    _tooltipEl.style.left = x + 'px';
+    _tooltipEl.style.top = y + 'px';
+  }
+
+  function guardedAction(depsList, action, helpTab) {
+    helpTab = helpTab || 'pipeline';
+    const unmet = depsList.filter(d => !d.met);
+    if (unmet.length === 0) { action(); return; }
+    showToast(
+      'Cannot proceed: ' + unmet[0].label,
+      'warning',
+      { action: 'View ' + helpTab, onClick: () => switchTab(helpTab) }
+    );
   }
 
   // ── Lightbox ────────────────────────────────────────────────────────────────

@@ -15,6 +15,15 @@ const OUT_DIR = path.join(PROJECT_ROOT, 'out');
 const DEMOS_DIR = path.join(OUT_DIR, 'demos');
 const ENV_FILE = path.join(PROJECT_ROOT, '.env');
 
+const {
+  parseFrontmatter,
+  computeStaleness,
+  extractFactsFromMarkdown,
+  countDraftFacts,
+  applyFactOperation,
+  parseFactLine,
+} = require(path.join(__dirname, '../scratch/utils/markdown-knowledge.js'));
+
 const PORT = process.env.PORT || 4040;
 
 // ── ENV whitelist ─────────────────────────────────────────────────────────────
@@ -220,6 +229,32 @@ function detectLastCompletedStage(runId) {
   for (const [stage, relPath] of STAGE_ARTIFACTS) {
     if (fs.existsSync(path.join(dir, relPath))) lastStage = stage;
   }
+
+  // Slide template dependency (prevents skipping build when template changes)
+  // If the slide template assets are newer than the run's built app, force the pipeline
+  // to restart from the build stage.
+  try {
+    const slideTemplateDir = path.join(PROJECT_ROOT, 'templates/slide-template');
+    const candidateFiles = ['base.html', 'slide.css', 'SLIDE_RULES.md', 'components.html'];
+    let maxTemplateMtimeMs = 0;
+    for (const f of candidateFiles) {
+      const fp = path.join(slideTemplateDir, f);
+      if (!fs.existsSync(fp)) continue;
+      const m = fs.statSync(fp).mtimeMs;
+      if (m > maxTemplateMtimeMs) maxTemplateMtimeMs = m;
+    }
+    const builtApp = path.join(dir, 'scratch-app', 'index.html');
+    if (fs.existsSync(builtApp) && maxTemplateMtimeMs > 0) {
+      const builtMtimeMs = fs.statSync(builtApp).mtimeMs;
+      if (maxTemplateMtimeMs > builtMtimeMs) {
+        const buildIdx = PIPELINE_STAGES.indexOf('build');
+        if (buildIdx > 0) lastStage = PIPELINE_STAGES[buildIdx - 1];
+      }
+    }
+  } catch (_) {
+    // Best-effort only — do not block pipeline UI
+  }
+
   return lastStage;
 }
 
@@ -301,6 +336,18 @@ function mimeFor(filePath) {
 const app = express();
 app.use(express.json());
 
+// Plaid Layer API (for demo-app-preview — app fetches from same origin)
+if (process.env.PLAID_LINK_LIVE === 'true') {
+  let _plaidLayer = null;
+  const getPlaidLayer = () => { if (!_plaidLayer) _plaidLayer = require('../scratch/utils/plaid-backend'); return _plaidLayer; };
+  app.post('/api/create-session-token', async (req, res) => {
+    try { res.json(await getPlaidLayer().createSessionToken(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+  app.post('/api/user-account-session-get', async (req, res) => {
+    try { res.json(await getPlaidLayer().userAccountSessionGet(req.body.public_token)); } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+}
+
 // Static assets
 app.use('/static', express.static(path.join(__dirname, 'public')));
 
@@ -311,23 +358,36 @@ app.get('/', (req, res) => {
 
 // ── Run listing routes ────────────────────────────────────────────────────────
 
+let _runsCache = null;
+let _runsCacheAt = 0;
+const RUNS_CACHE_TTL = 2000; // ms — burst-safe; invalidated by FS watch events too
+
+function invalidateRunsCache() { _runsCache = null; }
+
+function buildRunsList() {
+  const dirs = safeReaddir(DEMOS_DIR)
+    .filter(name => {
+      try { return fs.statSync(path.join(DEMOS_DIR, name)).isDirectory(); } catch (_) { return false; }
+    })
+    .sort()
+    .reverse();
+
+  return dirs.map(runId => {
+    const artifacts = getRunArtifacts(runId);
+    const qa = getLatestQaReport(runId);
+    const completedStages = getCompletedStages(runId);
+    return { runId, artifacts, qaScore: qa ? qa.overallScore : null, completedStages };
+  });
+}
+
 app.get('/api/runs', (req, res) => {
   try {
-    const dirs = safeReaddir(DEMOS_DIR)
-      .filter(name => {
-        try { return fs.statSync(path.join(DEMOS_DIR, name)).isDirectory(); } catch (_) { return false; }
-      })
-      .sort()
-      .reverse();
-
-    const runs = dirs.map(runId => {
-      const artifacts = getRunArtifacts(runId);
-      const qa = getLatestQaReport(runId);
-      const completedStages = getCompletedStages(runId);
-      return { runId, artifacts, qaScore: qa ? qa.overallScore : null, completedStages };
-    });
-
-    res.json({ runs });
+    const now = Date.now();
+    if (!_runsCache || now - _runsCacheAt > RUNS_CACHE_TTL) {
+      _runsCache = buildRunsList();
+      _runsCacheAt = now;
+    }
+    res.json({ runs: _runsCache });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1012,9 +1072,9 @@ app.get('/api/fs/watch', (req, res) => {
     try { res.write(`data: ${JSON.stringify({ type, path: rel })}\n\n`); } catch (_) {}
   };
 
-  watcher.on('add',    p => send('add', p));
-  watcher.on('change', p => send('change', p));
-  watcher.on('unlink', p => send('unlink', p));
+  watcher.on('add',    p => { invalidateRunsCache(); if (p.endsWith('index.html')) invalidateDemoAppsCache(); send('add', p); });
+  watcher.on('change', p => { invalidateRunsCache(); send('change', p); });
+  watcher.on('unlink', p => { invalidateRunsCache(); if (p.endsWith('index.html')) invalidateDemoAppsCache(); send('unlink', p); });
 
   const keepAlive = setInterval(() => {
     try { res.write(': keep-alive\n\n'); } catch (_) {}
@@ -1120,7 +1180,7 @@ app.get('/api/runs/:runId/brand', (req, res) => {
 // body: { sceneType: 'demo'|'slide', description, insertAfterId? }
 app.post('/api/runs/:runId/generate-step', async (req, res) => {
   try {
-    const { sceneType, description, insertAfterId } = req.body;
+    const { sceneType, description, insertAfterId, useGleanResearch = false } = req.body;
     if (!sceneType || !description) return res.status(400).json({ error: 'sceneType and description required' });
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -1136,6 +1196,29 @@ app.post('/api/runs/:runId/generate-step', async (req, res) => {
     const personaFirst = (persona.split(' ')[0] || 'the user');
     const stepContext = steps.map((s, i) => `${i + 1}. [${s.id}] "${s.label}": ${(s.narration || '').slice(0, 80)}`).join('\n');
     const isSlide = sceneType === 'slide';
+    let gleanContext = '';
+    if (isSlide && useGleanResearch) {
+      try {
+        const { gleanChat } = require('../scratch/utils/mcp-clients');
+        const query =
+          `You are helping generate sales messaging for a Plaid demo slide.\n` +
+          `Product: ${product}\n` +
+          `Slide request: ${description}\n\n` +
+          `Return concise guidance only (no hallucinated stats). Include:\n` +
+          `- 2-3 value proof points (phrases a presenter can say)\n` +
+          `- any relevant Plaid terminology / endpoint context\n` +
+          `- recommended wording for the slide title and narration\n` +
+          `Keep it under ~250 words.`;
+        gleanContext = await gleanChat(query);
+        if (typeof gleanContext === 'string' && gleanContext.length > 0) {
+          gleanContext = gleanContext.slice(0, 3000);
+        } else {
+          gleanContext = '';
+        }
+      } catch (e) {
+        gleanContext = '';
+      }
+    }
 
     // ── Resolve brand JSON for this run ──────────────────────────────────────
     // Strategy: extract brand slug from ingested prompt.txt "Brand URL:" line,
@@ -1217,6 +1300,7 @@ Must visually match existing insight steps: auth-insight, identity-match-insight
 Product: ${product}
 Persona: ${persona}
 Scene type: ${slideStyleDesc}
+${gleanContext ? `\nGLEAN CONTEXT (use as factual inspiration for messaging; do not invent new metrics):\n${gleanContext}` : ''}
 
 Existing steps:
 ${stepContext}
@@ -1624,72 +1708,73 @@ function safeInputsPath(name) {
   return resolved;
 }
 
-/**
- * Parse YAML frontmatter from markdown content.
- * Returns a plain object of key→value strings, or {} if no frontmatter.
- * No external deps — regex only.
- */
-function parseFrontmatter(content) {
-  const m = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return {};
-  const obj = {};
-  m[1].split('\n').forEach(line => {
-    const colonIdx = line.indexOf(':');
-    if (colonIdx === -1) return;
-    const k = line.slice(0, colonIdx).trim();
-    if (!k) return;
-    let v = line.slice(colonIdx + 1).trim();
-    // Strip surrounding quotes
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    obj[k] = v;
-  });
-  return obj;
+function enrichValuepropListEntry(name, group, fullPath, stat) {
+  const content = fs.readFileSync(fullPath, 'utf8');
+  const fm = parseFrontmatter(content);
+  const { facts } = extractFactsFromMarkdown(content);
+  const draftCount = countDraftFacts(facts);
+  const { staleDays, staleByAge, staleThresholdDays } = computeStaleness(fm);
+  const needsReview = fm.needs_review === 'true' ||
+    (fm.last_ai_update && fm.last_human_review && fm.last_ai_update > fm.last_human_review);
+  return {
+    name,
+    size: stat.size,
+    mtime: stat.mtimeMs,
+    group,
+    frontmatter: fm,
+    needsReview,
+    draftCount,
+    factCount: facts.length,
+    newSinceReviewCount: draftCount,
+    staleDays,
+    staleByAge,
+    staleThresholdDays,
+  };
 }
+
+function queuePriorityScore(entry) {
+  let s = 0;
+  if (entry.needsReview) s += 1000;
+  if (entry.staleByAge) s += 200;
+  s += Math.min(50, entry.draftCount || 0) * 10;
+  s += Math.min(365, entry.staleDays || 0);
+  return s;
+}
+
+app.get('/api/valueprop/review-queue', (req, res) => {
+  try {
+    const entries = [];
+    for (const f of safeReaddir(INPUTS_DIR).filter(x => x.toLowerCase().endsWith('.md'))) {
+      const full = path.join(INPUTS_DIR, f);
+      entries.push(enrichValuepropListEntry(f, 'root', full, fs.statSync(full)));
+    }
+    for (const f of safeReaddir(PRODUCTS_DIR).filter(x => x.toLowerCase().endsWith('.md'))) {
+      const full = path.join(PRODUCTS_DIR, f);
+      entries.push(enrichValuepropListEntry(`products/${f}`, 'products', full, fs.statSync(full)));
+    }
+    entries.sort((a, b) => queuePriorityScore(b) - queuePriorityScore(a));
+    res.json({ queue: entries });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/valueprop/list', (req, res) => {
   try {
-    // Root inputs/ files
     const rootFiles = safeReaddir(INPUTS_DIR)
       .filter(f => f.toLowerCase().endsWith('.md'))
       .sort()
       .map(f => {
         const full = path.join(INPUTS_DIR, f);
-        const stat = fs.statSync(full);
-        const content = fs.readFileSync(full, 'utf8');
-        const fm = parseFrontmatter(content);
-        const needsReview = fm.needs_review === 'true' ||
-          (fm.last_ai_update && fm.last_human_review && fm.last_ai_update > fm.last_human_review);
-        return {
-          name: f,
-          size: stat.size,
-          mtime: stat.mtimeMs,
-          group: 'root',
-          frontmatter: fm,
-          needsReview,
-        };
+        return enrichValuepropListEntry(f, 'root', full, fs.statSync(full));
       });
 
-    // inputs/products/ files
     const productFiles = safeReaddir(PRODUCTS_DIR)
       .filter(f => f.toLowerCase().endsWith('.md'))
       .sort()
       .map(f => {
         const full = path.join(PRODUCTS_DIR, f);
-        const stat = fs.statSync(full);
-        const content = fs.readFileSync(full, 'utf8');
-        const fm = parseFrontmatter(content);
-        const needsReview = fm.needs_review === 'true' ||
-          (fm.last_ai_update && fm.last_human_review && fm.last_ai_update > fm.last_human_review);
-        return {
-          name: `products/${f}`,
-          size: stat.size,
-          mtime: stat.mtimeMs,
-          group: 'products',
-          frontmatter: fm,
-          needsReview,
-        };
+        return enrichValuepropListEntry(`products/${f}`, 'products', full, fs.statSync(full));
       });
 
     res.json({ files: [...productFiles, ...rootFiles] });
@@ -1700,18 +1785,103 @@ app.get('/api/valueprop/list', (req, res) => {
 
 app.post('/api/valueprop/review', (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, force, last_reviewed_by: reviewedBy, review_note: reviewNote } = req.body || {};
     if (!name) return res.status(400).json({ error: 'name is required' });
     const filePath = safeInputsPath(name);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
     let content = fs.readFileSync(filePath, 'utf8');
+    const { facts } = extractFactsFromMarkdown(content);
+    const unresolvedDraftCount = countDraftFacts(facts);
+    if (!force && unresolvedDraftCount > 0) {
+      return res.status(409).json({
+        ok: false,
+        code: 'unresolved_drafts',
+        unresolvedDraftCount,
+        message: 'Clear draft facts first, or pass force: true to complete review anyway.',
+      });
+    }
     const today = new Date().toISOString().split('T')[0];
     content = content.replace(/^last_human_review:.*$/m, `last_human_review: "${today}"`);
     content = content.replace(/^needs_review:.*$/m, 'needs_review: false');
+    if (reviewedBy && typeof reviewedBy === 'string') {
+      const safe = reviewedBy.replace(/["\n\r]/g, '').slice(0, 120);
+      if (/^last_reviewed_by:/m.test(content)) {
+        content = content.replace(/^last_reviewed_by:.*$/m, `last_reviewed_by: "${safe}"`);
+      } else {
+        content = content.replace(/^---\n/, `---\nlast_reviewed_by: "${safe}"\n`);
+      }
+    }
+    if (reviewNote && typeof reviewNote === 'string' && reviewNote.trim()) {
+      const note = reviewNote.trim().replace(/-->/g, '').slice(0, 500);
+      content += `\n\n<!-- human_review ${today}: ${note} -->\n`;
+    }
+    const tmp = filePath + '.tmp';
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, filePath);
+    res.json({ ok: true, unresolvedDraftCount: 0 });
+  } catch (err) {
+    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
+  }
+});
+
+app.get('/api/valueprop/:name/facts', (req, res) => {
+  try {
+    const filePath = safeInputsPath(req.params.name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    const content = fs.readFileSync(filePath, 'utf8');
+    const { facts, bodyStartLine } = extractFactsFromMarkdown(content);
+    res.json({
+      name: req.params.name,
+      factCount: facts.length,
+      draftCount: countDraftFacts(facts),
+      bodyStartLine,
+      facts,
+    });
+  } catch (err) {
+    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/valueprop/:name/facts/:factId', (req, res) => {
+  try {
+    const lineStart = parseFactLine(req.params.factId);
+    if (!lineStart) return res.status(400).json({ error: 'Invalid fact id (expected L<number>)' });
+    const { op, text } = req.body || {};
+    if (!op) return res.status(400).json({ error: 'op is required (approve|reject|edit)' });
+    const filePath = safeInputsPath(req.params.name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    let content = fs.readFileSync(filePath, 'utf8');
+    content = applyFactOperation(content, { op, lineStart, text });
     const tmp = filePath + '.tmp';
     fs.writeFileSync(tmp, content, 'utf8');
     fs.renameSync(tmp, filePath);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/valueprop/:name/facts/bulk', (req, res) => {
+  try {
+    const actions = req.body && req.body.actions;
+    if (!Array.isArray(actions) || actions.length === 0) {
+      return res.status(400).json({ error: 'actions array required' });
+    }
+    const filePath = safeInputsPath(req.params.name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    let content = fs.readFileSync(filePath, 'utf8');
+    const resolved = actions.map((a) => {
+      const lineStart = parseFactLine(a.factId);
+      return { op: a.op, lineStart, text: a.text };
+    }).filter(a => a.lineStart != null);
+    resolved.sort((a, b) => b.lineStart - a.lineStart);
+    for (const a of resolved) {
+      content = applyFactOperation(content, a);
+    }
+    const tmp = filePath + '.tmp';
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, filePath);
+    res.json({ ok: true, applied: resolved.length });
   } catch (err) {
     res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
   }
@@ -1919,16 +2089,25 @@ async function launchDemoAppServer(runId) {
       try { res.json(await getPlaid().createLinkToken(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
     });
     demoApp.post('/api/exchange-public-token', async (req, res) => {
-      try { res.json(await getPlaid().exchangePublicToken(req.body.public_token)); } catch (e) { res.status(500).json({ error: e.message }); }
+      try { res.json(await getPlaid().exchangePublicToken(req.body.public_token, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
     });
     demoApp.post('/api/auth-get', async (req, res) => {
-      try { res.json(await getPlaid().getAuth(req.body.access_token)); } catch (e) { res.status(500).json({ error: e.message }); }
+      try { res.json(await getPlaid().getAuth(req.body.access_token, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
     });
     demoApp.post('/api/identity-match', async (req, res) => {
-      try { res.json(await getPlaid().getIdentityMatch(req.body.access_token, req.body.legal_name)); } catch (e) { res.status(500).json({ error: e.message }); }
+      try { res.json(await getPlaid().getIdentityMatch(req.body.access_token, req.body.legal_name, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
     });
     demoApp.post('/api/signal-evaluate', async (req, res) => {
-      try { res.json(await getPlaid().evaluateSignal(req.body.access_token, req.body.account_id, req.body.amount)); } catch (e) { res.status(500).json({ error: e.message }); }
+      try { res.json(await getPlaid().evaluateSignal(req.body.access_token, req.body.account_id, req.body.amount, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/plaid-request', async (req, res) => {
+      try { res.json(await getPlaid().plaidRequest(req.body.endpoint, req.body.body || {}, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/create-session-token', async (req, res) => {
+      try { res.json(await getPlaid().createSessionToken(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/user-account-session-get', async (req, res) => {
+      try { res.json(await getPlaid().userAccountSessionGet(req.body.public_token)); } catch (e) { res.status(500).json({ error: e.message }); }
     });
   }
 
@@ -1971,22 +2150,34 @@ app.use('/api/demo-apps', (req, res, next) => {
   next();
 });
 
+// Cache the expensive directory scan (running status is always live)
+let _demoAppsRunIds = null;
+let _demoAppsScannedAt = 0;
+const DEMO_APPS_CACHE_TTL = 5000; // ms — longer TTL since scratch-app dirs don't change often
+
+function invalidateDemoAppsCache() { _demoAppsRunIds = null; }
+
 app.get('/api/demo-apps', (req, res) => {
   try {
-    const apps = safeReaddir(DEMOS_DIR)
-      .filter(d => {
-        try {
-          return fs.statSync(path.join(DEMOS_DIR, d)).isDirectory() &&
-            fs.existsSync(path.join(DEMOS_DIR, d, 'scratch-app/index.html'));
-        } catch (_) { return false; }
-      })
-      .sort().reverse()
-      .map(runId => ({
-        runId,
-        running: demoAppServers.has(runId),
-        url: demoAppServers.get(runId)?.url || null,
-        port: demoAppServers.get(runId)?.port || null,
-      }));
+    const now = Date.now();
+    if (!_demoAppsRunIds || now - _demoAppsScannedAt > DEMO_APPS_CACHE_TTL) {
+      _demoAppsRunIds = safeReaddir(DEMOS_DIR)
+        .filter(d => {
+          try {
+            return fs.statSync(path.join(DEMOS_DIR, d)).isDirectory() &&
+              fs.existsSync(path.join(DEMOS_DIR, d, 'scratch-app/index.html'));
+          } catch (_) { return false; }
+        })
+        .sort().reverse();
+      _demoAppsScannedAt = now;
+    }
+    // Always reflect live running state (no FS needed)
+    const apps = _demoAppsRunIds.map(runId => ({
+      runId,
+      running: demoAppServers.has(runId),
+      url: demoAppServers.get(runId)?.url || null,
+      port: demoAppServers.get(runId)?.port || null,
+    }));
     res.json({ apps });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2075,20 +2266,116 @@ function detectEditMode(message, selectedElementHtml) {
   return selectedElementHtml ? 'element' : 'full';
 }
 
+// ── App Index Cache ────────────────────────────────────────────────────────────
+// Parsed per-run cache: avoids re-parsing the full HTML on every AI edit request.
+// Invalidated when scratch-app/index.html is modified (mtime check).
+const _appCache = new Map(); // runId → { mtime, steps, cssRules, allCss, styleBlocks }
+
+function getAppIndex(runId) {
+  const htmlPath = path.join(DEMOS_DIR, runId, 'scratch-app', 'index.html');
+  if (!fs.existsSync(htmlPath)) return null;
+  const mtime = fs.statSync(htmlPath).mtimeMs;
+  const cached = _appCache.get(runId);
+  if (cached && cached.mtime === mtime) return cached;
+
+  const html = fs.readFileSync(htmlPath, 'utf8');
+  const styleBlocks = extractStyleBlocks(html);
+  const allCss = styleBlocks.map(b => b.inner).join('\n');
+
+  // Parse CSS into individual rules for per-step filtering
+  const cssRules = [];
+  let buf = '', depth = 0;
+  for (let i = 0; i < allCss.length; i++) {
+    buf += allCss[i];
+    if (allCss[i] === '{') depth++;
+    else if (allCss[i] === '}') {
+      depth--;
+      if (depth === 0) { cssRules.push(buf.trim()); buf = ''; }
+    }
+  }
+
+  // Index step divs by ID
+  const steps = {};
+  for (const m of html.matchAll(/data-testid="step-([^"]+)"/g)) {
+    const stepDiv = extractStepHtml(html, m[1]);
+    if (stepDiv) steps[m[1]] = stepDiv;
+  }
+
+  const index = { mtime, html, steps, cssRules, allCss, styleBlocks };
+  _appCache.set(runId, index);
+  return index;
+}
+
+/** Extract CSS rules relevant to the classes and IDs found in a step's HTML. */
+function extractStepCss(cssRules, stepHtml) {
+  // Collect all class names and IDs from the step HTML
+  const classes = new Set();
+  const ids = new Set();
+  for (const m of stepHtml.matchAll(/class="([^"]+)"/g))
+    m[1].split(/\s+/).forEach(c => c && classes.add(c));
+  for (const m of stepHtml.matchAll(/id="([^"]+)"/g))
+    ids.add(m[1]);
+
+  // Keep rules whose selector mentions any of those classes or IDs,
+  // plus always-relevant rules (*, body, :root, .step, keyframes, variables)
+  const always = /^\s*(@keyframes|:root|body|html|\*|\.step[\s{,:])/;
+  const relevant = cssRules.filter(rule => {
+    const sel = rule.slice(0, rule.indexOf('{'));
+    if (always.test(rule)) return true;
+    for (const c of classes) if (sel.includes('.' + c) || sel.includes(c)) return true;
+    for (const id of ids)   if (sel.includes('#' + id)) return true;
+    return false;
+  });
+  return relevant.join('\n');
+}
+
+/** Extract a single step div from the full HTML by its step ID. */
+function extractStepHtml(html, stepId) {
+  const marker = `data-testid="step-${stepId}"`;
+  const markerPos = html.indexOf(marker);
+  if (markerPos === -1) return null;
+  // Walk back from the marker to find the opening <div
+  const divStart = html.lastIndexOf('<div', markerPos);
+  if (divStart === -1) return null;
+  // Walk forward counting div depth to find the matching </div>
+  let depth = 0, i = divStart;
+  while (i < html.length) {
+    if (html[i] === '<') {
+      if (html.slice(i, i + 4) === '<div') { depth++; i += 4; continue; }
+      if (html.slice(i, i + 6) === '</div>') {
+        depth--;
+        if (depth === 0) return html.slice(divStart, i + 6);
+        i += 6; continue;
+      }
+    }
+    i++;
+  }
+  return null;
+}
+
+/** Replace a step div in the full HTML with updated HTML. */
+function spliceStepHtml(fullHtml, stepId, newStepHtml) {
+  const old = extractStepHtml(fullHtml, stepId);
+  if (!old) return { html: fullHtml, valid: false };
+  return { html: fullHtml.replace(old, newStepHtml), valid: true };
+}
+
 app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
   try {
     const { runId } = req.params;
-    const { message, selectedElementHtml, selectedElementSelector, conversationHistory } = req.body;
+    const { message, selectedElementHtml, selectedElementSelector, conversationHistory, currentStepId } = req.body;
     const appHtmlPath = path.join(DEMOS_DIR, runId, 'scratch-app/index.html');
     if (!fs.existsSync(appHtmlPath)) return res.status(404).json({ error: 'App HTML not found' });
 
-    const currentHtml = fs.readFileSync(appHtmlPath, 'utf8');
+    const appIndex = getAppIndex(runId);
+    if (!appIndex) return res.status(404).json({ error: 'App HTML not found' });
+    const currentHtml = appIndex.html;
+    const { allCss, styleBlocks, cssRules } = appIndex;
+
     const Anthropic = require('@anthropic-ai/sdk');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const mode = detectEditMode(message, selectedElementHtml);
-    const styleBlocks = extractStyleBlocks(currentHtml);
-    const allCss = styleBlocks.map(b => b.inner).join('\n');
 
     let systemPrompt, userContent, maxTokens, responseHandler;
 
@@ -2155,8 +2442,33 @@ Preserve all data-testid attributes and event handlers (onclick etc).`;
         return { newHtml: valid ? newHtml : currentHtml, valid };
       };
 
+    } else if (currentStepId) {
+      // Step mode — send only the active step div + filtered CSS (rules used by this step only)
+      const stepHtml = appIndex.steps[currentStepId] || extractStepHtml(currentHtml, currentStepId);
+      if (!stepHtml) return res.status(400).json({ error: `Step "${currentStepId}" not found in app HTML` });
+      const filteredCss = extractStepCss(cssRules, stepHtml);
+
+      systemPrompt = `You are editing a single step screen in a Plaid demo web app.
+The app shows one step at a time via goToStep(). You are given ONLY the HTML for the currently visible step and the CSS rules that apply to it.
+Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
+Respond with ONLY the updated outer HTML of the step div — preserve its data-testid, class="step", and all data-testid attributes on child elements.
+Do not include <html>, <body>, <style>, or <script> tags. No explanation.`;
+      userContent = [
+        selectedElementHtml ? `Selected element:\n${selectedElementHtml.slice(0, 800)}` : '',
+        selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        `Request: ${message}`,
+        `\nCurrent step HTML (step id="${currentStepId}"):\n${stepHtml}`,
+        `\nCSS rules for this step:\n${filteredCss}`,
+      ].filter(Boolean).join('\n\n');
+      maxTokens = 8000;
+      responseHandler = (text) => {
+        const updated = text.trim();
+        const { html: newHtml, valid } = spliceStepHtml(currentHtml, currentStepId, updated);
+        return { newHtml, valid };
+      };
+
     } else {
-      // Full mode — send entire HTML
+      // Full mode — send entire HTML (fallback when no step context available)
       systemPrompt = `You are an expert frontend developer editing a Plaid demo web application.
 The app is a single-file HTML demo showing a Plaid product flow.
 Respond with ONLY the complete updated HTML — no explanation, no markdown fences.
@@ -2187,8 +2499,8 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
     }
     messages.push({ role: 'user', content: userContent });
 
-    // Use Haiku for css/element modes (fast, cheap) — Opus for full structural edits
-    const model = (mode === 'full') ? 'claude-opus-4-6' : 'claude-haiku-4-5-20251001';
+    // Haiku for css/element/step modes (small context, fast) — Opus only for full-file rewrite
+    const model = (mode === 'full' && !currentStepId) ? 'claude-opus-4-6' : 'claude-haiku-4-5-20251001';
     console.log(`[AI Edit] mode=${mode} model=${model} tokens≈${Math.round(userContent.length / 4)} run=${runId}`);
 
     const response = await client.messages.create({
@@ -2209,9 +2521,10 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
       return res.status(500).json({ error: 'AI response could not be applied cleanly', mode, preview: response.content[0].text.slice(0, 300) });
     }
 
-    // Backup before overwriting
+    // Backup before overwriting; invalidate cache so next request re-parses
     fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
     fs.writeFileSync(appHtmlPath, newHtml, 'utf8');
+    _appCache.delete(runId);
     res.json({ ok: true, reply: `Done (${mode} mode) — changes written.` });
   } catch (err) {
     console.error('[AI Edit]', err);
@@ -2261,15 +2574,15 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
     if (timingData) {
       if (Array.isArray(timingData)) {
         timingSteps = timingData.map(t => ({
-          id:              t.step || t.id,
-          recordingOffsetS: t.recordingOffsetS,
-          durationS:       t.durationS || null,
+          id:               t.step || t.id,
+          recordingOffsetS: t.recordingOffsetS ?? (t.processedStartMs != null ? t.processedStartMs / 1000 : undefined),
+          durationS:        t.durationS ?? (t.processedStartMs != null && t.processedEndMs != null ? (t.processedEndMs - t.processedStartMs) / 1000 : null),
         }));
       } else if (timingData.steps && Array.isArray(timingData.steps)) {
         timingSteps = timingData.steps.map(t => ({
-          id:              t.id || t.step,
-          recordingOffsetS: t.recordingOffsetS,
-          durationS:       t.durationS || null,
+          id:               t.id || t.step,
+          recordingOffsetS: t.recordingOffsetS ?? (t.processedStartMs != null ? t.processedStartMs / 1000 : undefined),
+          durationS:        t.durationS ?? (t.processedStartMs != null && t.processedEndMs != null ? (t.processedEndMs - t.processedStartMs) / 1000 : null),
         }));
       }
     }
@@ -2334,7 +2647,8 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
     if (manifest && Array.isArray(manifest.clips)) {
       for (const clip of manifest.clips) {
         const id  = clip.stepId || clip.id;
-        const dur = clip.durationMs != null ? clip.durationMs / 1000 : null;
+        const dur = clip.durationMs != null ? clip.durationMs / 1000
+          : clip.audioDurationMs != null ? clip.audioDurationMs / 1000 : null;
         if (id && dur != null) {
           narrationMap[id] = { durationS: dur, startMs: clip.startMs || null };
         }
@@ -2372,13 +2686,6 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
       const timing    = timingMap[step.id] || {};
       const narration = narrationMap[step.id] || {};
 
-      // narrationOffset: from manifest startMs relative to step videoStart
-      let narrationOffset = 0;
-      if (narration.startMs != null && timing.videoStart != null) {
-        narrationOffset = (narration.startMs / 1000) - timing.videoStart;
-        narrationOffset = Math.max(0, narrationOffset);
-      }
-
       return {
         id:              step.id,
         label:           step.label || step.id,
@@ -2386,7 +2693,10 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
         videoStart:      timing.videoStart   ?? null,
         videoEnd:        timing.videoEnd     ?? null,
         narrationDur:    narration.durationS ?? 0,
-        narrationOffset,
+        // Absolute position of this audio clip in the composition timeline
+        narrationCompStart: narration.startMs != null ? narration.startMs / 1000 : null,
+        // Legacy offset kept at 0 — audio is positioned absolutely, not relative to video step
+        narrationOffset: 0,
       };
     });
 
@@ -2459,6 +2769,29 @@ app.post('/api/runs/:runId/sync-map-update', (req, res) => {
     console.error('[sync-map-update]', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Demo app preview with AI overlay injection ────────────────────────────────
+
+app.get('/demo-app-preview/:runId', (req, res) => {
+  let runDir;
+  try {
+    runDir = getRunDir(req.params.runId);
+  } catch (e) {
+    return res.status(400).send('Invalid runId');
+  }
+  const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+  if (!fs.existsSync(htmlPath)) {
+    return res.status(404).send('<html><body style="background:#0d1117;color:#fff;font-family:sans-serif;padding:40px"><h2>App not built for this run.</h2><p>Complete the <strong>build</strong> stage first.</p></body></html>');
+  }
+  let html = fs.readFileSync(htmlPath, 'utf8');
+  const runId = req.params.runId;
+  // Inject the variables ai-overlay.js expects, then load the script
+  html = html.replace('</body>',
+    `<script>window.__DEMO_RUN_ID__ = ${JSON.stringify(runId)}; window.__DASHBOARD_ORIGIN__ = 'http://localhost:${PORT}';</script>\n` +
+    `<script src="/static/ai-overlay.js"></script>\n</body>`);
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────

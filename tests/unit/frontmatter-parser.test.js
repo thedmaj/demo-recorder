@@ -8,24 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-// Mirrors parseFrontmatter() from scripts/dashboard/server.js
-function parseFrontmatter(content) {
-  const m = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return {};
-  const obj = {};
-  m[1].split('\n').forEach(line => {
-    const colonIdx = line.indexOf(':');
-    if (colonIdx === -1) return;
-    const k = line.slice(0, colonIdx).trim();
-    if (!k) return;
-    let v = line.slice(colonIdx + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    obj[k] = v;
-  });
-  return obj;
-}
+const { parseFrontmatter } = require(path.join(__dirname, '../../scripts/scratch/utils/markdown-knowledge'));
 
 describe('frontmatter-parser', () => {
   test('valid frontmatter → correct key/value pairs', () => {
@@ -50,11 +33,9 @@ describe('frontmatter-parser', () => {
 
   test('CRLF line endings → parses correctly', () => {
     const content = '---\r\nproduct: plaid-auth\r\nslug: auth\r\n---\r\n# Body';
-    // parseFrontmatter uses \n split — CRLF keys get trailing \r, test that it finds at least something
-    // This documents the current behavior (CRLF not fully supported)
     const fm = parseFrontmatter(content);
-    // With CRLF, the regex won't match (---\r\n vs ---\n), so returns {}
-    assert.ok(typeof fm === 'object');
+    assert.equal(fm.product, 'plaid-auth');
+    assert.equal(fm.slug, 'auth');
   });
 
   test('needs_review: false → readable as string "false"', () => {

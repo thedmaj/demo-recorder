@@ -9,6 +9,8 @@ const assert = require('node:assert/strict');
 
 // Mirrors detectProductSlug() from scripts/scratch/research.js
 const SLUG_MAP = {
+  'cra-base-report': /\b(base report|consumer report|check base report|cra base report)\b/i,
+  'income-insights': /\b(cra income insights|income insights|cra_income_insights)\b/i,
   'auth':     /\bauth\b|\baccount.verif|\bIAV\b|\bEAV\b/i,
   'signal':   /\bsignal\b|\bach.risk\b/i,
   'layer':    /\blayer\b/i,
@@ -48,6 +50,14 @@ describe('product-slug-detection', () => {
 
   test('"Random unrelated text" → null', () => {
     assert.equal(detectProductSlug('Random unrelated text about nothing'), null);
+  });
+
+  test('"CRA Base Report underwriting flow" → cra-base-report', () => {
+    assert.equal(detectProductSlug('CRA Base Report underwriting flow'), 'cra-base-report');
+  });
+
+  test('"CRA Income Insights underwriting review" → income-insights', () => {
+    assert.equal(detectProductSlug('CRA Income Insights underwriting review'), 'income-insights');
   });
 
   test('"Signal auth flow" → auth (auth listed first in slugMap)', () => {

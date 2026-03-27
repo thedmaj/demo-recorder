@@ -26,6 +26,9 @@ const {
   buildAppArchitectureBriefPrompt,
   buildAppGenerationPrompt,
 } = require('../utils/prompt-templates');
+const { inferProductFamily } = require('../utils/product-profiles');
+const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
+const { readPipelineRunContext } = require('../utils/run-context');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -37,9 +40,25 @@ const SCRATCH_APP_DIR = path.join(OUT_DIR, 'scratch-app');
 const HTML_OUT        = path.join(SCRATCH_APP_DIR, 'index.html');
 const PLAYWRIGHT_OUT  = path.join(SCRATCH_APP_DIR, 'playwright-script.json');
 const FEEDBACK_FILE   = path.join(INPUTS_DIR, 'build-feedback.md');
+const PROMPT_FILE     = path.join(INPUTS_DIR, 'prompt.txt');
 
 // Delimiter that separates HTML from Playwright JSON in Claude's response
 const PLAYWRIGHT_MARKER = '<!-- PLAYWRIGHT_SCRIPT_JSON -->';
+const BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json');
+
+/**
+ * @param {Array<{ category?: string, severity?: string, stepId?: string }>} diagnostics
+ */
+function summarizeBuildQaDiagnostics(diagnostics) {
+  const categoryCounts = {};
+  const criticalStepIds = new Set();
+  for (const d of diagnostics || []) {
+    const c = d.category || 'uncategorized';
+    categoryCounts[c] = (categoryCounts[c] || 0) + 1;
+    if (d.severity === 'critical' && d.stepId) criticalStepIds.add(d.stepId);
+  }
+  return { categoryCounts, criticalStepIds: [...criticalStepIds] };
+}
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
@@ -243,6 +262,16 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   console.log('[Build] Progress: ');
 
   const designPlugin = loadDesignPlugin();
+  const slideRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/SLIDE_RULES.md');
+  const slideCssPath = path.join(PROJECT_ROOT, 'templates/slide-template/slide.css');
+  let slideTemplateRules = '';
+  let slideTemplateCss = '';
+  try {
+    if (fs.existsSync(slideRulesPath)) slideTemplateRules = fs.readFileSync(slideRulesPath, 'utf8');
+    if (fs.existsSync(slideCssPath)) slideTemplateCss = fs.readFileSync(slideCssPath, 'utf8');
+  } catch (e) {
+    console.warn('[Build] Warning: could not load slide template assets:', e.message);
+  }
   const { system: buildSystem, userMessages: buildMessages } = buildAppGenerationPrompt(
     demoScript, architectureBrief, qaReport,
     {
@@ -251,8 +280,13 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       designPluginHtml:   designPlugin.html,
       designPluginCss:    designPlugin.css,
       brand,
+      slideTemplateRules,
+      slideTemplateCss,
       qaFrames:           refinementOpts.qaFrames   || [],
       prevTestids:        refinementOpts.prevTestids || [],
+      humanFeedback:      refinementOpts.humanFeedback || '',
+      productFamily:      refinementOpts.productFamily || 'generic',
+      curatedProductKnowledge: refinementOpts.curatedProductKnowledge || null,
     }
   );
 
@@ -304,19 +338,49 @@ async function main(opts = {}) {
     process.exit(1);
   }
 
-  // Validate Plaid credentials when live mode is enabled
+  const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
+  console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
+  const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
+  const productFamily = inferProductFamily({ promptText, demoScript });
+  const curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
+  const curatedDigest = buildCuratedDigest(curatedProductKnowledge);
+  const pipelineRunContext = readPipelineRunContext(OUT_DIR);
+  let buildQaDiagnosticSummary = null;
+  if (fs.existsSync(BUILD_QA_DIAG_FILE)) {
+    try {
+      const dq = JSON.parse(fs.readFileSync(BUILD_QA_DIAG_FILE, 'utf8'));
+      buildQaDiagnosticSummary = dq.summary && dq.summary.categoryCounts
+        ? {
+          categoryCounts: dq.summary.categoryCounts,
+          criticalStepIds: dq.summary.criticalStepIds || [],
+        }
+        : summarizeBuildQaDiagnostics(dq.diagnostics);
+      if (Object.keys(buildQaDiagnosticSummary.categoryCounts || {}).length) {
+        console.log('[Build] Loaded build-qa-diagnostics.json summary for prompt context');
+      }
+    } catch (e) {
+      console.warn(`[Build] Could not parse build-qa-diagnostics.json: ${e.message}`);
+    }
+  }
+  console.log(`[Build] Product family: ${productFamily}`);
+
+  // Validate Plaid credentials when live mode is enabled (requires productFamily above)
   if (PLAID_LINK_LIVE) {
-    if (!process.env.PLAID_CLIENT_ID || !process.env.PLAID_SANDBOX_SECRET) {
-      console.error('[Build] PLAID_LINK_LIVE=true but missing PLAID_CLIENT_ID or PLAID_SANDBOX_SECRET in .env');
+    const isCraFamily = productFamily === 'cra_base_report' || productFamily === 'income_insights';
+    const hasDefaultCreds = !!process.env.PLAID_CLIENT_ID && !!process.env.PLAID_SANDBOX_SECRET;
+    const hasCraCreds = !!process.env.CRA_CLIENT_ID && !!process.env.CRA_SECRET;
+    if ((!isCraFamily && !hasDefaultCreds) || (isCraFamily && !(hasCraCreds || hasDefaultCreds))) {
+      console.error(
+        isCraFamily
+          ? '[Build] CRA-family live mode requires CRA_CLIENT_ID and CRA_SECRET (or fallback default Plaid creds) in .env'
+          : '[Build] PLAID_LINK_LIVE=true but missing PLAID_CLIENT_ID or PLAID_SANDBOX_SECRET in .env'
+      );
       process.exit(1);
     }
     console.log('[Build] Plaid Link mode: LIVE (sandbox) — will generate app with real Plaid Link SDK');
   } else {
     console.log('[Build] Plaid Link mode: MOCK (self-contained HTML)');
   }
-
-  const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
-  console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
 
   // Load brand profile (auto-detects from persona.company, --brand=, or BRAND_PROFILE env)
   const brand = loadBrand(demoScript);
@@ -430,7 +494,17 @@ async function main(opts = {}) {
 
   // ── Call 2: Full app generation (streaming) ───────────────────────────────
   const rawResponse = await generateApp(client, demoScript, architectureBrief, qaReport, brand,
-    { qaFrames, prevTestids, humanFeedback, plaidLinkScreens });
+    {
+      qaFrames,
+      prevTestids,
+      humanFeedback,
+      plaidLinkScreens,
+      productFamily,
+      curatedProductKnowledge,
+      curatedDigest,
+      pipelineRunContext,
+      buildQaDiagnosticSummary,
+    });
 
   // ── Parse response ────────────────────────────────────────────────────────
   let html, playwrightScript;
@@ -480,6 +554,18 @@ async function main(opts = {}) {
   }
   if (!html.includes('window.getCurrentStep')) {
     domErrors.push('window.getCurrentStep not found in generated HTML');
+  }
+
+  // 2b. API panel contract: if any step has apiResponse data, the global panel chrome
+  // must exist so build-qa, manual preview, and recording can all surface the same JSON rail.
+  const stepsWithApiData = (demoScript.steps || []).filter(s => s.apiResponse?.response);
+  if (stepsWithApiData.length > 0) {
+    if (!html.includes('id="api-response-panel"')) {
+      domErrors.push('Global api-response-panel not found in generated HTML.');
+    }
+    if (!html.includes('id="api-response-content"')) {
+      domErrors.push('Global api-response-content not found in generated HTML.');
+    }
   }
   // Detect malformed "function {" (no name, no params) — a JS syntax error that prevents
   // the entire inline <script> from executing. This makes window.goToStep undefined at
@@ -587,13 +673,10 @@ async function main(opts = {}) {
   }
   console.log('[Build] DOM contract: OK');
 
-  // ── Strip duplicate API response panels ────────────────────────────────────
-  // The LLM frequently generates both a global `api-response-panel` floating overlay
-  // AND inline step-specific JSON panels, causing two JSON panels to appear at once.
-  // Fix: unconditionally remove ALL showApiPanel() calls regardless of inline panel
-  // detection. The api-response-panel overlay remains hidden (display:none) and only
-  // the inline per-step panel is visible. This is simpler and more reliable than
-  // trying to detect which pattern the LLM used.
+  // ── Strip brittle showApiPanel calls and normalize to one global panel ─────
+  // The LLM frequently emits partial / duplicated panel logic. We strip direct
+  // showApiPanel() calls and later inject a stable global `_stepApiResponses` +
+  // goToStep wrapper so build-qa, manual preview, and recording all see the same panel behavior.
   if (html.includes('showApiPanel(')) {
     const before = html;
     // Step 1: Rename the function DEFINITION so stripping doesn't corrupt it.
@@ -646,6 +729,62 @@ async function main(opts = {}) {
       }
     );
     console.log('[Build] Patched _showApiPanelStub to clear display:none before show');
+  }
+
+  // ── Inject global API response data + goToStep wrapper ─────────────────────
+  // build-qa and manual preview do not get the record-local.js runtime patch, so ensure the
+  // built app can surface api-response-panel content on its own even if the model forgot to
+  // wire every insight branch correctly.
+  const stepApiResponses = {};
+  const stepApiEndpoints = {};
+  for (const step of (demoScript.steps || [])) {
+    if (step.apiResponse?.response) {
+      stepApiResponses[step.id] = step.apiResponse.response;
+      if (step.apiResponse.endpoint) stepApiEndpoints[step.id] = step.apiResponse.endpoint;
+    }
+  }
+  if (Object.keys(stepApiResponses).length > 0 && html.includes('</body>')) {
+    const apiPatch = `<script>
+(function() {
+  if (window.__buildApiPanelPatchApplied) return;
+  window.__buildApiPanelPatchApplied = true;
+  var _resp = ${JSON.stringify(stepApiResponses).replace(/</g, '\\u003c')};
+  var _eps  = ${JSON.stringify(stepApiEndpoints).replace(/</g, '\\u003c')};
+  window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _resp);
+  var _origGoToStep = window.goToStep;
+  if (typeof _origGoToStep !== 'function') return;
+  window.goToStep = function(id) {
+    _origGoToStep(id);
+    var panel = document.getElementById('api-response-panel');
+    if (!panel) return;
+    var content = document.getElementById('api-response-content');
+    var endpoint = document.getElementById('api-panel-endpoint');
+    var data = window._stepApiResponses && window._stepApiResponses[id];
+    if (data) {
+      if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
+      if (typeof window._showApiPanelStub === 'function') {
+        window._showApiPanelStub(data);
+      } else if (typeof window.showApiPanel === 'function') {
+        window.showApiPanel(data);
+      } else {
+        panel.style.removeProperty('display');
+        panel.style.display = 'flex';
+        panel.classList.add('visible');
+        if (content) {
+          var pretty = JSON.stringify(data, null, 2);
+          if (typeof window.syntaxHighlight === 'function') content.innerHTML = window.syntaxHighlight(pretty);
+          else content.textContent = pretty;
+        }
+      }
+    } else {
+      panel.style.setProperty('display', 'none', 'important');
+      panel.classList.remove('visible', 'expanded', 'open', 'active');
+    }
+  };
+})();
+</script>`;
+    html = html.replace('</body>', `${apiPatch}\n</body>`);
+    console.log(`[Build] Injected _stepApiResponses patch for ${Object.keys(stepApiResponses).length} step(s)`);
   }
 
   // ── Enforce 98% U.S. depository account coverage stat (Auth) ───────────────

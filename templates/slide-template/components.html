@@ -1,0 +1,40 @@
+<!--
+Shared markup fragments for slide generation.
+These fragments are optional helpers; the build agent may inline
+equivalent HTML as long as it matches the required class contract
+from SLIDE_RULES.md.
+-->
+
+<!-- Slide header -->
+<header class="slide-header">
+  <div class="slide-header-left">
+    <div class="slide-header-pill" data-testid="slide-product">PLAID</div>
+    <div class="slide-header-endpoint" data-testid="slide-endpoint">/product/method</div>
+  </div>
+</header>
+
+<!-- Slide hero -->
+<section class="slide-hero">
+  <h1 class="slide-title" data-testid="slide-title">Title</h1>
+  <p class="slide-subtitle" data-testid="slide-subtitle">One-liner supporting message.</p>
+</section>
+
+<!-- Slide panel -->
+<section class="slide-panels">
+  <div class="slide-panel" data-testid="slide-panel">
+    <h3 class="slide-panel-title">Panel title</h3>
+    <div class="slide-panel-body">
+      <ul>
+        <li>Short bullet proof point</li>
+        <li>Short bullet proof point</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- Slide callout -->
+<aside class="slide-callout" data-testid="slide-callout">
+  <div class="slide-callout-value">98%</div>
+  <div class="slide-callout-label">Coverage for instant verification</div>
+</aside>
+

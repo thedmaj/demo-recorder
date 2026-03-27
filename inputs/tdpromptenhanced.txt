@@ -1,25 +1,133 @@
-TD Bank (United States) Account Funding Demo — Branded Demo Specification
-============================================================================
+TD Bank (United States) Account Funding Demo — Branded Demo Specification (ENHANCED)
+===================================================================================
 
 Build a branded demo for TD Bank (U.S. retail banking, https://www.td.com) showing an external account funding flow. The consumer links an external bank account using Plaid (Plaid Layer OR Plaid Link, depending on demo mode), then the backend runs Identity Match, Auth, a funding-amount capture step in the host app, and Signal Evaluate before showing instant funds approval.
 
 Open with the use case narrative and close with a strong value proposition. Messaging priority remains: anchor on `inputs/plaid-value-props.md` and `docs/plaid-demo-script-value-propositions.md` (verbatim or closely adapted), supplemented only for API accuracy.
 
+USAGE — `scripts/scratch/utils/prompt-templates.js` only extracts `[[SLIDE_OUTPUT_BEGIN]]`…`[[SLIDE_OUTPUT_END]]` when that content lives in the ingested file named **`prompt.txt`**. To run the pipeline with this spec: replace `inputs/prompt.txt` with this file, **or** keep `tdpromptenhanced.txt` as a source-of-truth copy and sync the slide markers (and any sections you want) into `inputs/prompt.txt` before `ingest` / `script`.
+
 -------------------------------------------------------------------------------
-CRITICAL UI REQUIREMENT — PLAID INSIGHT SCREENS AND JSON (NON-NEGOTIABLE)
+WHY THIS FILE EXISTS (REVERSE-ENGINEERED FROM PIPELINE + LATEST BUILD)
 -------------------------------------------------------------------------------
 
-For EVERY behind-the-scenes Plaid-branded full-viewport insight screen (after each API milestone below), the implementation MUST use the global `api-response-panel` overlay as the ONE mechanism for showing raw Plaid API JSON:
+Observed gaps in prior runs:
 
-  1. The panel is labeled clearly (e.g. "API response" or "Response JSON") in the Plaid insight chrome.
-  2. It shows the JSON response body for the API that screen represents (pretty-printed, monospace 14–15px).
-  3. It is COLLAPSIBLE / TOGGLEABLE via chevron or "Show JSON" / "Hide JSON" behavior.
-  4. It animates consistently with the host app (e.g. slide in from the right, ~400ms), matching the `api-response-panel` behavior described in the demo DOM contract.
-  5. It appears on Plaid insight steps ONLY — never on TD consumer-facing screens.
+1. **JSON sidebar drift** — The product spec asked for a “right-side JSON panel” on insight screens. The build system’s DOM contract uses **one global** `#api-response-panel` populated from JavaScript (`showApiPanel` → post-processed to `_showApiPanelStub`). Models sometimes inlined JSON inside `.insight-layout` (duplicate panels, QA noise) or hand-rolled `goToStep` branches that **do not** match the `API_DATA[id]` pattern `build-app.js` re-injects after stripping `showApiPanel(` calls — leaving the overlay empty or hidden.
 
-Do NOT build a second inline JSON column or step-specific `*-json-panel` inside the insight step div. Raw API JSON belongs exclusively in the global `api-response-panel`.
+2. **Recording fallback** — `record-local.js` injects `window._recordApiResponses` from `demo-script.json` and, after `goToStep`, calls `_showApiPanelStub(data)` when step IDs look like insight steps **and** data exists. That only helps if `_showApiPanelStub` exists and clears `display:none` on the panel. Manual preview without injection still needs a correct app-side implementation.
 
-The consumer-facing TD UX must never show raw JSON, field names, or API payloads.
+3. **Slides** — Earlier prompt text said “do not include raw JSON on slides,” which fights the goal of PowerPoint-ready technical slides. This file splits **exec** vs **technical** slide rules and ties technical slides to `templates/slide-template/` plus an explicit JSON preview column.
+
+This enhanced spec aligns **product language**, **demo-script.json** (`apiResponse` blocks), **HTML build**, and **slide generation** so you do not hand-patch JSON rails after the build.
+
+-------------------------------------------------------------------------------
+PIPELINE / DOM CONTRACT — NON-NEGOTIABLE (IMPLEMENTATION)
+-------------------------------------------------------------------------------
+
+These rules mirror `scripts/scratch/utils/prompt-templates.js` and `scripts/scratch/scratch/build-app.js` post-processing.
+
+### A) Exactly one JSON surface for API bodies
+
+- Raw Plaid API JSON appears **only** inside the global overlay:
+  - `#api-response-panel` with `data-testid="api-response-panel"`.
+- **Do not** place `<pre>` JSON columns, “insight-right”, `*-json-panel`, or duplicate “Response JSON” divs **inside** Plaid insight step markup. The insight step shows narrative, scores, value lines — not the full payload.
+- TD consumer steps: panel stays `display:none` (and collapsed/closed).
+
+### B) Wiring pattern the build can repair
+
+Implement API population so `build-app.js` can strip duplicate `showApiPanel(` calls and restore the insight branch:
+
+1. Define a map keyed by **exact** `demo-script.json` step ids (copy-paste ids, no drift):
+
+```javascript
+var API_DATA = {
+  'identity-match-insight': { response: { /* full POST /identity/match body */ } },
+  'auth-insight':           { response: { /* full POST /auth/get body */ } },
+  'signal-insight':         { response: { /* full POST /signal/evaluate body */ } }
+};
+```
+
+2. Implement **`function showApiPanel(data)`** (build renames this to `_showApiPanelStub` and strips/repairs calls) that:
+   - Targets `#api-response-panel` only.
+   - Removes inline `display:none` / shows the panel, applies your `visible` / slide-in classes.
+   - Renders `JSON.stringify(data, null, 2)` in `#api-response-content` (or equivalent), monospace **14–15px**.
+   - Supports collapse/expand (chevron or “Hide JSON” / “Show JSON”) **without** moving JSON back into the step div.
+
+3. Inside **`window.goToStep`**, after activating the step:
+   - For every step id **not** in `API_DATA`, hide the api-response panel completely.
+   - For ids in `API_DATA`, call **`showApiPanel(API_DATA[id].response)`** (single call — no parallel inline JSON UI).
+
+4. **Mirror for the recorder** (redundant but safe):
+
+```javascript
+window._stepApiResponses = {
+  'identity-match-insight': API_DATA['identity-match-insight'].response,
+  'auth-insight':           API_DATA['auth-insight'].response,
+  'signal-insight':         API_DATA['signal-insight'].response
+};
+```
+
+5. **Insight step IDs** — Include the substring `insight` in Plaid API milestone step ids (e.g. `identity-match-insight`, `auth-insight`, `signal-insight`) so automated recording heuristics and humans can grep them consistently.
+
+### C) Expand / collapse default for recording
+
+- **Default for insight steps: panel expanded** when the step loads (presenters collapse during live talk tracks). Prior builds sometimes defaulted to collapsed, which reads as “missing JSON” in video and QA frames.
+- TD screens: never show the panel expanded.
+
+### D) Toggle control test IDs (unique per step)
+
+Per `CLAUDE.md`, avoid duplicate `data-testid` values. Use step-scoped ids, e.g.:
+- `api-sidebar-expand-btn-identity-match`
+- `api-sidebar-expand-btn-auth`
+- `api-sidebar-expand-btn-signal`
+
+-------------------------------------------------------------------------------
+CRITICAL UI REQUIREMENT — PLAID INSIGHT SCREENS (PRODUCT LANGUAGE)
+-------------------------------------------------------------------------------
+
+For EVERY behind-the-scenes Plaid-branded full-viewport insight screen that corresponds to **POST /identity/match**, **POST /auth/get**, and **POST /signal/evaluate**:
+
+  1. The **host viewport** shows Plaid insight chrome (dark navy, teal accent) and **does not** embed the raw API body in the main layout.
+  2. The **global** `api-response-panel` overlay (right rail) is labeled clearly (e.g. “API response”) and shows the JSON for **that** step only when that step is active.
+  3. The panel is **collapsible** (chevron / Show / Hide) and animates in (~400ms) consistently with the app.
+  4. Consumer TD UX must never show raw JSON.
+
+This replaces ambiguous “dedicated right-side panel inside the insight screen” wording — the effect on video is the same, but implementation matches the pipeline.
+
+-------------------------------------------------------------------------------
+[[SLIDE_OUTPUT_BEGIN]]
+SLIDE OUTPUT (POWERPOINT SUPPLEMENT) — TEMPLATE + TECHNICAL JSON RAILS
+-------------------------------------------------------------------------------
+
+The pipeline extracts this block from `prompt.txt` (or the active prompt file that contains these markers) into script/slide generation. Keep `[[SLIDE_OUTPUT_BEGIN]]` / `[[SLIDE_OUTPUT_END]]` intact if you paste this file into `inputs/prompt.txt`.
+
+### Goals
+
+1. **Exec / story slides** — Plaid-only styling, no raw JSON; 3–6 short bullets; use `templates/slide-template/` structure (`.slide-root`, `.slide-header`, `.slide-body`, `.slide-hero`, `.slide-panels`, optional `.slide-callout`).
+2. **Technical companion slides** — For the three API milestones (Identity Match, Auth, Signal), generate **slide steps** (or slide scenes) that **do** include a **JSON preview rail** so PowerPoint exports match what SEs show live. These slides are **Plaid-only** (no TD chrome), same dark navy + teal as `SLIDE_RULES.md` / `CLAUDE.md`.
+
+### Technical slide layout (required when JSON is shown)
+
+Inside `.slide-root`:
+
+- Keep the standard **header**: PLAID pill + mono endpoint (e.g. `POST /identity/match`).
+- Use a **two-column** `.slide-body` layout (implement with flex or CSS grid):
+  - **Left (~55%)** — `.slide-hero` + optional `.slide-panels` for 3–5 bullets (value props, scores summary in plain English — no fake “code” in bullets).
+  - **Right (~45%)** — `.slide-json-rail` (new class name is fine if styled in the same `<style>` as slide template CSS): a glassmorphism card titled **“Sample API response”** containing a `<pre>` with **pretty-printed JSON** that matches the same object as the corresponding `demo-script.json` `apiResponse.response` for that endpoint (full body preferred; if too tall, cap height with `overflow:auto` and keep font 11–13px mono).
+
+**Do not** put TD logos, TD greens, or host-app frames on technical slides.
+
+### Count and placement
+
+- Generate **up to 2 exec slides** (problem, outcome, or combined value prop) **plus up to 3 technical slides** (one per API insight milestone), when useful — max **5 slide scenes** total unless the orchestrator caps lower.
+- Place technical slides **adjacent** to their matching insight/API narrative in the storyboard order (immediately before or after the related insight step is acceptable; prefer **before** the insight step if the slide tees up the API, **after** if it reinforces the JSON the audience just saw).
+
+### Revocation of old rule
+
+- **Do not** use the instruction “never include JSON on slides.” Replace with this section’s split between exec slides (no JSON) and technical slides (JSON rail required).
+
+[[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
 MANDATORY BACKEND API SEQUENCE (STORYBOARD AND NARRATION MUST MATCH THIS ORDER)
@@ -30,12 +138,14 @@ After `public_token` exchange yields an `access_token` (and you have the selecte
   1. POST /identity/match — Confirm account ownership first
        - Compare KYC PII on file at TD (demo host) to identity on file at the linked institution.
        - Narration: ownership verification before moving money; nickname/typo tolerance.
-       - Plaid insight screen: Identity Match. Global `api-response-panel`: full `/identity/match` JSON.
+       - Plaid insight screen: Identity Match. **Global** `api-response-panel`: full `/identity/match` JSON.
+       - **demo-script.json**: this step MUST include `apiResponse: { "endpoint": "POST /identity/match", "response": { ... } }` — the build and recorder use it.
 
   2. POST /auth/get — Retrieve rails for ACH funding
        - Use `access_token`; pass `account_ids` scoped to the funding account when limiting scope.
        - Narration: Auth supplies ACH account and routing numbers for the funding leg.
-       - Plaid insight screen: Auth. Global `api-response-panel`: full `/auth/get` JSON.
+       - Plaid insight screen: Auth. **Global** panel: full `/auth/get` JSON.
+       - **demo-script.json**: `apiResponse` for `POST /auth/get`.
 
   3. HOST APP STEP (TD consumer UX, not Plaid branded)
        - Prompt the end user for the funding amount (USD) they want to move into their TD account.
@@ -45,7 +155,8 @@ After `public_token` exchange yields an `access_token` (and you have the selecte
   4. POST /signal/evaluate — ACH return risk for the specific funding amount
        - Required inputs include: `access_token`, `account_id`, `amount` as a USD decimal (NOT cents), and `client_transaction_id` (unique, max 36 chars).
        - Strongly recommended for model quality: `client_user_id`, `user` object (name, phone, email, address), `device` (ip, user_agent), and optional `ruleset_key`.
-       - Plaid insight screen: Signal. Global `api-response-panel`: full `/signal/evaluate` JSON.
+       - Plaid insight screen: Signal. **Global** panel: full `/signal/evaluate` JSON.
+       - **demo-script.json**: `apiResponse` for `POST /signal/evaluate`.
 
   5. TD consumer UX — Instant approval outcome
        - After Signal `ruleset.result` is `ACCEPT` (happy path), return to TD-branded UI and show that funds are approved instantly / available per demo copy (no micro-deposits).
@@ -95,36 +206,7 @@ DEMO INTENT
 - Hyper-realistic large online banking app — simulate a mature U.S. retail banking portal (TD-style): menus, headers, accounts, transfers, activity, settings, help.
 - Realistic TD banking UI — brand colors, typography, logo, motion, and layout guidance live in `brand/td.json`, which is always freshly generated by `brand-extract.js` (Brandfetch) at the start of each pipeline run. Do NOT hardcode brand tokens; do NOT reuse stale brand JSON from prior runs. Follow `brand.promptInstructions` for shell layout.
 - Persona: Primary KYC name on file at TD differs slightly from the name at the external bank to showcase Identity Match fuzzy matching (define exact strings in demo data tables below). TD checking account with masked last four; external institution name and account mask come from Plaid Link `onSuccess` metadata only — never hardcode institution display strings in HTML.
-- Strict separation of layers: TD consumer UX and Plaid insight screens MUST NOT appear as a combined single viewport. TD steps = TD branding only, panels hidden. Insight steps = Plaid dark navy system + global `api-response-panel` overlay for JSON.
-
--------------------------------------------------------------------------------
-[[SLIDE_OUTPUT_BEGIN]]
-SLIDE OUTPUT (POWERPOINT SUPPLEMENT)
--------------------------------------------------------------------------------
-
-In addition to the recorded demo steps, generate up to 2 supplemental **exec/story slides** and up to 3 **technical companion slides** when it improves presenter clarity.
-
-SLIDE REQUIREMENTS (non-negotiable):
-- Slides use **Plaid-only styling** (dark navy background + Plaid teal accent `#00A67E`) and remain independent from TD host-app chrome.
-- Slides must follow the shared slide template contract described in `templates/slide-template/`:
-  - Header: PLAID pill + endpoint label (mono font)
-  - Body: title + short 1–2 sentence subtitle
-  - Optional panels: glassmorphism cards for supporting proof points
-  - Optional callout: one stat badge for emphasis
-- Exec / story slides:
-  - No raw JSON
-  - Use 3–6 short bullet proof points
-- Technical slides:
-  - May include a right-side JSON preview rail using the same API response object as the corresponding `demo-script.json` `apiResponse.response`
-  - Use a two-column layout: messaging/proof points on the left, sample API response on the right
-- Tie messaging directly to nearby Plaid insight steps when beneficial:
-  - Identity Match slide: include 8–10% eligibility logic and match rationale
-  - Auth slide: include 98% account coverage proof point
-  - Signal slide: reinforce amount-aware ACH risk scoring and instant-approval outcome
-
-When slide instructions are present, the pipeline should infer slide placement based on the demo step sequence (no hardcoded positions).
-
-[[SLIDE_OUTPUT_END]]
+- Strict separation of layers: TD consumer UX and Plaid insight screens MUST NOT appear as a combined single viewport. TD steps = TD branding only, panels hidden. Insight steps = Plaid dark navy system + **global** JSON overlay (not an inline second column inside the step).
 
 -------------------------------------------------------------------------------
 HOST APP SHELL — LARGE ONLINE BANKING LAYOUT
@@ -169,7 +251,7 @@ TWO-LAYER VISUAL ARCHITECTURE
 ### Layer 2 — Plaid insight screens
   - Full-viewport Plaid-branded screens AFTER: Identity Match, Auth, Signal (each with value line from value props).
   - Thin teal header bar recommended, e.g. "Plaid API insight" / "Plaid API response".
-  - **Global `api-response-panel` overlay** (mandatory, see top section) shows the response for that API.
+  - **Global** `api-response-panel` (mandatory, see PIPELINE / DOM CONTRACT) shows the response for that API. **No second JSON column inside the step.**
   - Transition: smooth fade/slide ~400ms between TD and Plaid layers.
 
 ### Transition mechanic
@@ -251,7 +333,7 @@ Use a deliberate mismatch between TD KYC and bank-file identity (fuzzy match win
 | Phone | +12155550100 | (215) 555-0100 | high |
 | Email | rdonnelly.bank@example.com | r.donnelly@personal.example | 0–40 (show email mismatch) |
 
-Narrate: strong match on name/address/phone despite formatting; email mismatch visible in JSON panel.
+Narrate: strong match on name/address/phone despite formatting; email mismatch visible in **api-response-panel** JSON (not as a second column in the slide layout inside the insight step).
 
 Request body highlights (`POST /identity/match`):
   - `access_token` (required)
@@ -315,5 +397,5 @@ Primary documentation:
   - Signal: https://plaid.com/docs/api/products/signal/#signalevaluate
 
 -------------------------------------------------------------------------------
-END OF SPECIFICATION
+END OF SPECIFICATION (ENHANCED)
 -------------------------------------------------------------------------------

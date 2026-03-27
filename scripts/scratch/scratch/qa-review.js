@@ -15,6 +15,9 @@
  *   node scripts/scratch/scratch/qa-review.js
  *   node scripts/scratch/scratch/qa-review.js --iteration=2
  *
+ * Programmatic (build-only QA — no recording):
+ *   require('./qa-review').main({ buildOnly: true, prebuiltStepFrames, iteration: 'build' })
+ *
  * Environment:
  *   ANTHROPIC_API_KEY      — required
  *   QA_PASS_THRESHOLD      — default 80
@@ -204,12 +207,12 @@ function extractJSONFromResponse(content) {
  * @param {string} stepId      - Step ID
  * @param {Array}  frames      - Array of { label, path } frame objects
  * @param {object} demoContext - Demo-level context: { product, persona, stepIndex, totalSteps, prevStep, nextStep }
- * @returns {Promise<object>} - { stepId, score, issues, suggestions, critical }
+ * @returns {Promise<object>} - { stepId, score, issues, suggestions, categories, critical }
  */
 async function reviewStep(client, step, stepId, frames, demoContext = {}) {
   if (frames.length === 0) {
     console.warn(`[QA] Step ${stepId}: no frames to review, skipping`);
-    return { stepId, score: 0, issues: ['No frames extracted'], suggestions: [], critical: true };
+    return { stepId, score: 0, issues: ['No frames extracted'], suggestions: [], categories: ['navigation-mismatch'], critical: true };
   }
 
   // Read frame images as base64 for the prompt template
@@ -223,7 +226,7 @@ async function reviewStep(client, step, stepId, frames, demoContext = {}) {
 
   if (framesBase64.length === 0) {
     console.warn(`[QA] Step ${stepId}: could not read any frame files`);
-    return { stepId, score: 0, issues: ['Frame files unreadable'], suggestions: [], critical: true };
+    return { stepId, score: 0, issues: ['Frame files unreadable'], suggestions: [], categories: ['action-failure'], critical: true };
   }
 
   // Use the shared prompt template
@@ -247,6 +250,7 @@ async function reviewStep(client, step, stepId, frames, demoContext = {}) {
       score:       0,
       issues:      ['Failed to parse QA response'],
       suggestions: ['Check qa-review.js logs'],
+      categories:  ['prompt-contract-drift'],
       critical:    true,
     };
   }
@@ -257,6 +261,7 @@ async function reviewStep(client, step, stepId, frames, demoContext = {}) {
     score:       typeof result.score === 'number' ? result.score : 0,
     issues:      Array.isArray(result.issues)      ? result.issues      : [],
     suggestions: Array.isArray(result.suggestions) ? result.suggestions : [],
+    categories:  Array.isArray(result.categories)  ? result.categories  : [],
     critical:    Boolean(result.critical),
   };
 }
@@ -264,19 +269,13 @@ async function reviewStep(client, step, stepId, frames, demoContext = {}) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(opts = {}) {
-  const { iteration } = opts.iteration ? opts : parseArgs();
+  const cliArgs  = parseArgs();
+  const iteration = opts.iteration != null ? opts.iteration : cliArgs.iteration;
+  const buildOnly = opts.buildOnly === true;
+  const buildQaDiagnostics = Array.isArray(opts.buildQaDiagnostics) ? opts.buildQaDiagnostics : [];
 
-  // Validate inputs
-  if (!fs.existsSync(RECORDING_FILE)) {
-    console.error('[QA] Missing: public/recording.webm — run record-local.js first');
-    process.exit(1);
-  }
-  if (!fs.existsSync(TIMING_FILE)) {
-    console.error('[QA] Missing: out/step-timing.json — run record-local.js first');
-    process.exit(1);
-  }
   if (!fs.existsSync(SCRIPT_FILE)) {
-    console.error('[QA] Missing: out/demo-script.json — run generate-script.js first');
+    console.error('[QA] Missing: demo-script.json — run generate-script.js first');
     process.exit(1);
   }
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -284,8 +283,38 @@ async function main(opts = {}) {
     process.exit(1);
   }
 
-  const timing     = JSON.parse(fs.readFileSync(TIMING_FILE, 'utf8'));
+  if (!buildOnly) {
+    if (!fs.existsSync(RECORDING_FILE)) {
+      console.error('[QA] Missing: public/recording.webm — run record-local.js first');
+      process.exit(1);
+    }
+    if (!fs.existsSync(TIMING_FILE)) {
+      console.error('[QA] Missing: step-timing.json — run record-local.js first');
+      process.exit(1);
+    }
+  } else if (!opts.prebuiltStepFrames || !Array.isArray(opts.prebuiltStepFrames) || opts.prebuiltStepFrames.length === 0) {
+    console.error('[QA] buildOnly mode requires opts.prebuiltStepFrames (non-empty array)');
+    process.exit(1);
+  }
+
   const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
+  let timing;
+  let stepFrames;
+
+  if (buildOnly) {
+    stepFrames = opts.prebuiltStepFrames;
+    timing = {
+      steps: stepFrames.map(({ stepId }) => ({
+        id:         stepId,
+        startMs:    0,
+        endMs:      5000,
+        durationMs: 5000,
+      })),
+    };
+  } else {
+    timing     = JSON.parse(fs.readFileSync(TIMING_FILE, 'utf8'));
+    stepFrames = null;
+  }
 
   // Build step lookup by ID and ordered index array
   const stepMap = {};
@@ -301,14 +330,18 @@ async function main(opts = {}) {
     totalSteps: stepIds.length,
   };
 
-  console.log(`[QA] Starting QA review (iteration ${iteration})`);
+  console.log(`[QA] Starting QA review (iteration ${iteration})${buildOnly ? ' [build-only — no recording]' : ''}`);
   console.log(`[QA] Product: ${demoMeta.product || '(unknown)'} | ${timing.steps.length} steps | threshold: ${QA_PASS_THRESHOLD}/100`);
 
   // ── Step 1: Extract frames ─────────────────────────────────────────────────
-  console.log('[QA] Extracting step-boundary frames...');
-  const stepFrames = extractStepFrames(timing.steps);
+  if (!buildOnly) {
+    console.log('[QA] Extracting step-boundary frames from recording...');
+    stepFrames = extractStepFrames(timing.steps);
+  } else {
+    console.log('[QA] Using pre-captured build walkthrough frames');
+  }
   const totalFrames = stepFrames.reduce((n, s) => n + s.frames.length, 0);
-  console.log(`[QA] Extracted ${totalFrames} frames across ${stepFrames.length} steps`);
+  console.log(`[QA] ${totalFrames} frames across ${stepFrames.length} steps`);
 
   // ── Step 2: Embedding pre-screening (Phase 2) ────────────────────────────
   // For steps where the mid-frame visually matches the visualState description,
@@ -321,7 +354,7 @@ async function main(opts = {}) {
   })).filter(({ step }) => step.id);
 
   let screenResults = new Map();
-  if (process.env.VERTEX_AI_PROJECT_ID) {
+  if (!buildOnly && process.env.VERTEX_AI_PROJECT_ID) {
     console.log('[QA] Running embedding pre-screening (Phase 2)...');
     try {
       screenResults = await screenSteps(screenInputs);
@@ -341,6 +374,13 @@ async function main(opts = {}) {
 
   const stepResults  = [];
   const allStepScores = {};
+  const diagByStep = new Map();
+  for (const diag of buildQaDiagnostics) {
+    if (!diag || !diag.stepId) continue;
+    const arr = diagByStep.get(diag.stepId) || [];
+    arr.push(diag);
+    diagByStep.set(diag.stepId, arr);
+  }
 
   // Build timing lookup by step ID
   const timingByStepId = {};
@@ -396,6 +436,7 @@ async function main(opts = {}) {
         score: 85,
         issues: [],
         suggestions: [],
+        categories: [],
         critical: false,
         _note: autoNote,
       };
@@ -414,6 +455,7 @@ async function main(opts = {}) {
         score:          screenResult.score,
         issues:         [],
         suggestions:    [],
+        categories:    [],
         critical:       false,
         _embedScreened: true,
         _embeddingSimilarity: screenResult.similarity,
@@ -426,6 +468,19 @@ async function main(opts = {}) {
     }
 
     const result = await reviewStep(client, step, stepId, frames, demoContext);
+    const stepDiagnostics = diagByStep.get(stepId) || [];
+    if (stepDiagnostics.length > 0) {
+      const diagIssues = stepDiagnostics.map(d => d.issue);
+      const diagSuggestions = stepDiagnostics.map(d => d.suggestion).filter(Boolean);
+      const diagCategories = [...new Set(stepDiagnostics.map(d => d.category).filter(Boolean))];
+      result.issues = [...diagIssues, ...result.issues];
+      result.suggestions = [...diagSuggestions, ...result.suggestions];
+      result.categories = [...new Set([...(result.categories || []), ...diagCategories])];
+      if (stepDiagnostics.some(d => d.severity === 'critical')) {
+        result.critical = true;
+        result.score = Math.min(result.score, 45);
+      }
+    }
     stepResults.push(result);
     allStepScores[stepId] = result.score;
 
@@ -455,8 +510,16 @@ async function main(opts = {}) {
     overallScore,
     passThreshold: QA_PASS_THRESHOLD,
     passed,
+    steps: stepResults,
     stepsWithIssues,
     allStepScores,
+    qaSource: buildOnly ? 'build-walkthrough' : 'recording',
+    issueCategoryCounts: stepResults
+      .flatMap(r => Array.isArray(r.categories) ? r.categories : [])
+      .reduce((acc, category) => {
+        acc[category] = (acc[category] || 0) + 1;
+        return acc;
+      }, {}),
   };
 
   // ── Step 5: Write report ───────────────────────────────────────────────────
@@ -473,7 +536,13 @@ async function main(opts = {}) {
     for (const s of stepsWithIssues) {
       console.log(`  - ${s.stepId}: ${s.score}/100`);
     }
-    console.log('[QA] Next: node scripts/scratch/scratch/build-app.js --qa=out/qa-report-' + iteration + '.json');
+    if (buildOnly) {
+      console.log('[QA] Next: refine HTML with build-app (use qa-report) or fix script, then re-run build-qa');
+    } else {
+      console.log('[QA] Next: node scripts/scratch/scratch/build-app.js --qa=out/qa-report-' + iteration + '.json');
+    }
+  } else if (buildOnly) {
+    console.log('[QA] Build QA passed — ready to record when you are (`npm run demo` from --from=record)');
   } else {
     console.log('[QA] All steps passed! Next: voiceover + render pipeline');
   }
