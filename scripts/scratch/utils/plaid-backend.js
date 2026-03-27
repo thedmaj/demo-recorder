@@ -159,6 +159,12 @@ const CREATE_LINK_TOKEN_WRAPPER_KEYS = new Set([
   'credential_scope',
   'user',
   'products',
+  'plaidCheckUserId',
+  'plaid_check_user_id',
+  'userToken',
+  'user_token',
+  'checkUserIdentity',
+  'check_user_identity',
 ]);
 
 async function createLinkToken(opts = {}) {
@@ -170,6 +176,8 @@ async function createLinkToken(opts = {}) {
     opts.linkCustomizationName ?? opts.link_customization_name ?? process.env.PLAID_LINK_CUSTOMIZATION ?? null;
   const productFamily = opts.productFamily ?? opts.product_family ?? null;
   const credentialScope = opts.credentialScope ?? opts.credential_scope ?? null;
+  const plaidCheckUserId = opts.plaidCheckUserId ?? opts.plaid_check_user_id ?? null;
+  const legacyUserToken = opts.userToken ?? opts.user_token ?? null;
 
   let user = { client_user_id: userId };
   if (phoneNumber) user.phone_number = phoneNumber;
@@ -185,6 +193,12 @@ async function createLinkToken(opts = {}) {
     products,
   };
 
+  if (plaidCheckUserId) {
+    body.user_id = plaidCheckUserId;
+  } else if (legacyUserToken) {
+    body.user_token = legacyUserToken;
+  }
+
   if (linkCustomizationName) {
     body.link_customization_name = linkCustomizationName;
     console.log(`[plaid-backend] Using Link customization: "${linkCustomizationName}"`);
@@ -199,6 +213,67 @@ async function createLinkToken(opts = {}) {
 
   console.log(`[plaid-backend] Link token created: ${data.link_token?.substring(0, 30)}...`);
   return data;
+}
+
+/** Sandbox identity for Plaid Check /user/create (Plaid Users API). */
+function sandboxConsumerReportIdentity(clientUserId) {
+  const safe = String(clientUserId).replace(/[^a-z0-9-]/gi, '');
+  return {
+    name: { given_name: 'Carmen', family_name: 'Testuser' },
+    date_of_birth: '1987-01-31',
+    emails: [{ data: `cra-link-${safe || 'user'}@example.com`, primary: true }],
+    phone_numbers: [{ data: '+14155550011', primary: true }],
+    addresses: [
+      {
+        street_1: '3200 W Armitage Ave',
+        street_2: null,
+        city: 'Chicago',
+        region: 'IL',
+        country: 'US',
+        postal_code: '60657',
+        primary: true,
+      },
+    ],
+    id_numbers: [{ value: '1234', type: 'us_ssn_last_4' }],
+  };
+}
+
+/**
+ * Plaid Check: /user/create (with identity) then /link/token/create with root user_id.
+ */
+async function createConsumerReportLinkToken(flat = {}) {
+  const clientUserId = flat.userId || flat.user_id || `cra-link-${Date.now()}`;
+  const scopeOpts = {
+    productFamily:   flat.productFamily || flat.product_family || 'cra_base_report',
+    credentialScope: flat.credentialScope || flat.credential_scope || 'cra',
+  };
+  const identity = flat.checkUserIdentity || sandboxConsumerReportIdentity(clientUserId);
+
+  const userResult = await plaidPost('/user/create', {
+    client_user_id: clientUserId,
+    identity,
+  }, scopeOpts);
+
+  const plaidUserId = userResult.user_id || null;
+  const legacyToken = userResult.user_token || null;
+  if (!plaidUserId && !legacyToken) {
+    throw new Error(`[plaid-backend] /user/create failed: ${JSON.stringify(userResult)}`);
+  }
+  console.log(`[plaid-backend] Plaid Check user created (user_id=${plaidUserId || 'n/a'})`);
+
+  return createLinkToken({
+    products: flat.products,
+    clientName: flat.clientName || flat.client_name,
+    userId: clientUserId,
+    phoneNumber: flat.phoneNumber ?? flat.phone_number ?? null,
+    linkCustomizationName: flat.linkCustomizationName ?? flat.link_customization_name ?? null,
+    productFamily: flat.productFamily ?? flat.product_family ?? null,
+    credentialScope: flat.credentialScope ?? flat.credential_scope ?? null,
+    consumer_report_permissible_purpose: flat.consumer_report_permissible_purpose,
+    cra_options: flat.cra_options,
+    plaidCheckUserId: plaidUserId || undefined,
+    userToken: plaidUserId ? undefined : legacyToken || undefined,
+  });
 }
 
 async function plaidRequest(endpoint, body = {}, opts = {}) {
@@ -334,6 +409,7 @@ module.exports = {
   createUser,
   isLivePlaidLink,
   createLinkToken,
+  createConsumerReportLinkToken,
   createSessionToken,
   exchangePublicToken,
   getAuth,

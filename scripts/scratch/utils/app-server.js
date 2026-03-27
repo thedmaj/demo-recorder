@@ -129,7 +129,12 @@ async function handleApiRoute(req, res, urlPath) {
   try {
     switch (urlPath) {
       case '/api/create-link-token': {
-        const result = await plaid.createLinkToken({
+        const products = body.products;
+        const isCra = Array.isArray(products) && products.some((p) =>
+          /cra|consumer_report/i.test(String(p))
+        );
+        const skipBootstrap = !!(body.plaid_user_id || body.plaidUserId);
+        const baseOpts = {
           ...body,
           products:             body.products,
           clientName:           body.clientName || body.client_name,
@@ -138,7 +143,13 @@ async function handleApiRoute(req, res, urlPath) {
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
           productFamily:        body.productFamily || body.product_family || null,
           credentialScope:      body.credentialScope || body.credential_scope || null,
-        });
+        };
+        if (body.plaid_user_id || body.plaidUserId) {
+          baseOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
+        }
+        const result = isCra && !skipBootstrap
+          ? await plaid.createConsumerReportLinkToken(baseOpts)
+          : await plaid.createLinkToken(baseOpts);
         sendJson(res, 200, result);
         return true;
       }

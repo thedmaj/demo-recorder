@@ -25,8 +25,8 @@
  *   SCREEN_DWELL_MS=4000 node scripts/test-plaid-link-record.js   # slow / QA mode
  *   node scripts/test-plaid-cra-link-record-headless.js            # CRA + headless + ~15s timing
  *
- * CRA mode: requires CRA_CLIENT_ID and CRA_SECRET; uses user_credit_* sandbox users
- * (override with PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD).
+ * CRA mode: requires CRA_CLIENT_ID and CRA_SECRET; defaults to user_bank_income / {}
+ * (see inputs/plaid-link-sandbox.md). Override with PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD.
  *
  * Headless: set PLAID_LINK_HEADLESS_RECORDING=true or use test-plaid-cra-link-record-headless.js.
  * Fast timing (~15s Link flow): automatic for CRA+headless, or PLAID_LINK_TIMING_PROFILE=fast15.
@@ -50,6 +50,15 @@ const IS_CRA_TEST =
 const IS_HEADLESS_RECORDING =
   process.env.PLAID_LINK_HEADLESS === 'true' ||
   process.env.PLAID_LINK_HEADLESS_RECORDING === 'true';
+
+// Inherited `PLAID_LINK_CUSTOMIZATION` (e.g. Ascend) is often invalid for CRA sandbox clients → 400.
+if (IS_CRA_TEST) {
+  if (process.env.PLAID_LINK_CRA_LINK_CUSTOMIZATION) {
+    process.env.PLAID_LINK_CUSTOMIZATION = process.env.PLAID_LINK_CRA_LINK_CUSTOMIZATION;
+  } else {
+    delete process.env.PLAID_LINK_CUSTOMIZATION;
+  }
+}
 
 /** Tighter pacing for ~15s total Link UX (CRA headless preset or explicit env). */
 const FAST_TIMING =
@@ -114,8 +123,8 @@ let _otpSubmittedWallMs = 0;
 
 const PHONE    = '+14155550011';   // Remember Me returning-user
 const OTP      = '123456';
-const USERNAME = process.env.PLAID_SANDBOX_USERNAME || (IS_CRA_TEST ? 'user_credit_profile_excellent' : 'user_good');
-const PASSWORD = process.env.PLAID_SANDBOX_PASSWORD || 'pass_good';
+const USERNAME = process.env.PLAID_SANDBOX_USERNAME || (IS_CRA_TEST ? 'user_bank_income' : 'user_good');
+const PASSWORD = process.env.PLAID_SANDBOX_PASSWORD || (IS_CRA_TEST ? '{}' : 'pass_good');
 
 /** Request body for POST /api/create-link-token in the embedded test app. */
 const LINK_TOKEN_BODY = IS_CRA_TEST
@@ -125,6 +134,7 @@ const LINK_TOKEN_BODY = IS_CRA_TEST
       user_id: 'test-cra-user-001',
       phone_number: PHONE,
       consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT',
+      cra_options: { days_requested: 90 },
       credential_scope: 'cra',
     }
   : {
