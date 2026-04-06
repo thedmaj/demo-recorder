@@ -4,6 +4,11 @@
   // ── State ──────────────────────────────────────────────────────────────────
   let currentRunId = null;
   let currentTab = 'overview';
+  /** Open this valueprop file on next loadValueProps (from ?vp= or Overview deep link). */
+  let _vpPendingOpenName = null;
+  /** If set, switchTab runs once after loadRuns (from ?tab=). */
+  let _urlInitialTab = null;
+  const VALID_DASHBOARD_TABS = new Set(['overview', 'config', 'files', 'storyboard', 'pipeline', 'valueprop', 'demo-apps']);
   let studioStatusInterval = null;
   let logSSE = null;
   let fsWatchSSE = null;
@@ -18,18 +23,18 @@
 
   // Stage list for progress bar
   const STAGES = [
-    'research', 'ingest', 'brand-extract', 'script', 'script-critique',
+    'research', 'ingest', 'script', 'brand-extract', 'script-critique',
     'embed-script-validate',
     /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
     'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'ai-suggest-overlays', 'render', 'ppt', 'touchup'
   ];
 
   const STAGE_META = {
-    research:              { desc: 'Market research via AskBill + Glean', reads: ['inputs/prompt.txt'], writes: ['research-notes.md', 'product-research.json'] },
+    research:              { desc: 'Research: Plaid skill baseline + AskBill/Glean (RESEARCH_MODE)', reads: ['inputs/prompt.txt', 'skills/plaid-integration.skill'], writes: ['product-research.json', 'plaid-skill-manifest.json', 'plaid-skill-gaps.json'] },
     ingest:                { desc: 'Parse prompt, screenshots, transcriptions', reads: ['inputs/'], writes: ['ingested-inputs.json'] },
-    'brand-extract':       { desc: 'Fetch brand colors + typography from Brandfetch', reads: ['inputs/prompt.txt'], writes: ['brand/<slug>.json'] },
+    'brand-extract':       { desc: 'Brandfetch + Haiku → brand/<slug>.json (after script)', reads: ['demo-script.json', 'ingested-inputs.json'], writes: ['brand/<slug>.json', 'brand-extract.json'] },
     script:                { desc: 'Claude Opus generates demo storyboard (8–14 steps)', reads: ['ingested-inputs.json', 'product-research.json'], writes: ['demo-script.json'] },
-    'script-critique':     { desc: 'Claude Haiku reviews narration word counts and value props', reads: ['demo-script.json'], writes: ['claim-check-flags.json'] },
+    'script-critique':     { desc: 'Claude Haiku reviews narration word counts and value props', reads: ['demo-script.json'], writes: ['script-critique.json', 'claim-check-flags.json'] },
     'embed-script-validate': { desc: 'Multimodal embedding coherence check (optional, requires GCP)', reads: ['demo-script.json'], writes: ['script-validate-report.json'] },
     build:                 { desc: 'Claude Haiku generates demo web app (HTML/CSS/JS)', reads: ['demo-script.json', 'brand/<slug>.json'], writes: ['scratch-app/index.html'] },
     record:                { desc: 'Playwright automates + records the demo app', reads: ['scratch-app/'], writes: ['recording.webm', 'step-timing.json'] },
@@ -156,10 +161,13 @@
    * Returns the server response, or throws if user declines or another error occurs.
    */
   async function runPipeline(opts) {
+    const rm = document.getElementById('research-mode-select')?.value;
+    const payload = { ...opts };
+    if (rm) payload.researchMode = rm;
     const res = await fetch('/api/pipeline/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(opts),
+      body: JSON.stringify(payload),
     });
     if (res.status === 409) {
       const confirmed = window.confirm(
@@ -167,10 +175,13 @@
       );
       if (!confirmed) throw new Error('Cancelled — pipeline already running');
       // Retry with force flag
+      const rm = document.getElementById('research-mode-select')?.value;
+      const payload2 = { ...opts, force: true };
+      if (rm) payload2.researchMode = rm;
       const res2 = await fetch('/api/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...opts, force: true }),
+        body: JSON.stringify(payload2),
       });
       if (!res2.ok) {
         const text = await res2.text().catch(() => res2.statusText);
@@ -244,6 +255,12 @@
   // ── Initialization ─────────────────────────────────────────────────────────
 
   document.addEventListener('DOMContentLoaded', async () => {
+    const _params = new URLSearchParams(window.location.search);
+    const _tab = _params.get('tab');
+    const _vp = _params.get('vp');
+    if (_vp) _vpPendingOpenName = _vp;
+    if (_tab && VALID_DASHBOARD_TABS.has(_tab)) _urlInitialTab = _tab;
+
     // Sidebar tab clicks
     document.querySelectorAll('.nav-item[data-tab]').forEach(el => {
       el.addEventListener('click', () => switchTab(el.dataset.tab));
@@ -287,6 +304,10 @@
         const btn = document.getElementById('build-selector-btn');
         const label = document.getElementById('build-selector-label');
         if (label) label.textContent = 'No runs found';
+        if (_urlInitialTab) {
+          switchTab(_urlInitialTab);
+          _urlInitialTab = null;
+        }
         return;
       }
       // Restore last selected run from localStorage, or default to first
@@ -305,6 +326,10 @@
         if (panel && panel.classList.contains('open')) refreshBuildPanel();
       }, 10000);
       loadCurrentRun();
+      if (_urlInitialTab) {
+        switchTab(_urlInitialTab);
+        _urlInitialTab = null;
+      }
     } catch (e) {
       showToast('Failed to load runs: ' + e.message, 'error');
     }
@@ -474,10 +499,11 @@
     el.innerHTML = '<div class="empty-state">Loading…</div>';
 
     try {
-      const [runData, qaData, audioSyncData] = await Promise.allSettled([
+      const [runData, qaData, audioSyncData, reviewQueueData] = await Promise.allSettled([
         api('/api/runs/' + currentRunId),
         api('/api/runs/' + currentRunId + '/qa'),
         api('/api/runs/' + currentRunId + '/audio-sync-status'),
+        api('/api/valueprop/review-queue'),
       ]);
 
       const run = runData.status === 'fulfilled' ? runData.value : {};
@@ -650,6 +676,50 @@
       const canResync = !!(audioSync && audioSync.isStale);
       const canRender = !!(artifacts.voiceover && artifacts.processed);
 
+      let kbCardHtml = '';
+      const rqPayload = reviewQueueData.status === 'fulfilled' ? reviewQueueData.value : null;
+      const kbQueue = (rqPayload && rqPayload.queue) ? rqPayload.queue : [];
+      const productQ = kbQueue.filter(e => e.group === 'products');
+      const totalKbDrafts = productQ.reduce((s, e) => s + (e.draftCount || 0), 0);
+      const kbNeedsReview = productQ.filter(e => e.needsReview).length;
+      const kbTop = productQ.slice(0, 5);
+      if (productQ.length > 0) {
+        const summaryBits = [];
+        if (totalKbDrafts > 0) summaryBits.push(`<strong style="color:#fbbf24">${totalKbDrafts}</strong> draft fact(s)`);
+        if (kbNeedsReview > 0) summaryBits.push(`<strong style="color:#fbbf24">${kbNeedsReview}</strong> file(s) need review`);
+        if (summaryBits.length === 0) summaryBits.push('<span style="color:#00A67E">No open drafts in product files</span>');
+        kbCardHtml = `
+          <div class="card overview-product-kb-card">
+            <div class="card-title">Product knowledge &amp; fact review</div>
+            <p class="run-meta" style="margin-bottom:10px">
+              Markdown under <code style="font-size:12px">inputs/products/</code> is curated into the demo pipeline. Use the <strong>Fact inbox</strong> (preview mode) to approve AI-suggested fact lines.
+            </p>
+            <p class="run-meta" style="margin-bottom:12px">${summaryBits.join(' · ')}</p>
+            <p style="margin-bottom:10px">
+              <button type="button" class="btn btn-sm btn-primary" id="overview-kb-open-tab">Open Product knowledge tab</button>
+            </p>
+            ${kbTop.length ? `
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:rgba(255,255,255,0.35);margin-bottom:6px">Top of review queue</div>
+            <ul class="overview-kb-queue">
+              ${kbTop.map(e => {
+                const short = e.name.replace(/^products\//, '');
+                const badges = [
+                  e.needsReview ? '<span class="overview-kb-badge overview-kb-badge--warn">needs review</span>' : '',
+                  (e.draftCount || 0) > 0 ? `<span class="overview-kb-badge">${e.draftCount} draft</span>` : '',
+                ].filter(Boolean).join(' ');
+                return `<li><button type="button" class="overview-kb-file-btn" data-vp-name="${esc(e.name)}"><span class="overview-kb-file-label">${esc(short)}</span><span class="overview-kb-file-badges">${badges}</span></button></li>`;
+              }).join('')}
+            </ul>` : ''}
+          </div>`;
+      } else {
+        kbCardHtml = `
+          <div class="card overview-product-kb-card">
+            <div class="card-title">Product knowledge &amp; fact review</div>
+            <p class="run-meta" style="margin-bottom:10px">No <code>*.md</code> files found in <code>inputs/products/</code>. Add product docs to drive curated facts in the pipeline.</p>
+            <button type="button" class="btn btn-sm btn-secondary" id="overview-kb-open-tab">Open Product knowledge tab</button>
+          </div>`;
+      }
+
       const actionsHtml = `
         <div class="card">
           <div class="card-title">What You Can Do</div>
@@ -657,6 +727,11 @@
             ${canEditStoryboard
               ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#00A67E">✓</span> <a href="#" onclick="event.preventDefault();window.switchTab&&window.switchTab('storyboard')" style="color:#00A67E">Edit Storyboard</a></div>`
               : `<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.3)"><span>○</span> Edit Storyboard — run script stage first</div>`}
+            <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+              <span style="color:#00A67E">✓</span>
+              <a href="#" onclick="event.preventDefault();window.switchTab&&window.switchTab('valueprop')" style="color:#00A67E">Product knowledge &amp; fact review</a>
+              <span style="color:rgba(255,255,255,0.35);font-size:11px">Fact inbox · inputs/products</span>
+            </div>
             <div style="display:flex;align-items:center;gap:8px;font-size:13px">
               <span style="color:#00A67E">↗</span>
               <a href="/demo-app-preview/${esc(currentRunId)}" target="_blank" style="color:#00A67E">Launch &amp; Edit App</a>
@@ -730,7 +805,17 @@
         </div>
         ${qaHtml}
         ${actionsHtml}
+        ${kbCardHtml}
         ${prevBuildsHtml}`;
+
+      el.querySelector('#overview-kb-open-tab')?.addEventListener('click', () => switchTab('valueprop'));
+      el.querySelectorAll('.overview-kb-file-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const name = btn.getAttribute('data-vp-name');
+          if (name) _vpPendingOpenName = name;
+          switchTab('valueprop');
+        });
+      });
 
       // Wire Previous Builds "Load" buttons
       el.querySelectorAll('.overview-load-run-btn').forEach(btn => {
@@ -2721,6 +2806,13 @@
         </div>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <label>From stage: <select id="stage-select">${stageOptions}</select></label>
+          <label title="Passed as RESEARCH_MODE for the research stage (empty = use prompt line or default)">Research: <select id="research-mode-select">
+            <option value="">Default (gapfill) / prompt</option>
+            <option value="full">full</option>
+            <option value="gapfill">gapfill</option>
+            <option value="messaging">messaging</option>
+            <option value="skip">skip</option>
+          </select></label>
           <label><input type="checkbox" id="no-touchup-check"> Skip touchup</label>
           <button id="run-btn" class="btn btn-primary">Run Pipeline</button>
           <button id="run-from-btn" class="btn btn-secondary">Run from Stage</button>
@@ -3584,7 +3676,8 @@
         });
       });
 
-      const want = _vpPreserveSelection;
+      const want = _vpPendingOpenName || _vpPreserveSelection;
+      _vpPendingOpenName = null;
       _vpPreserveSelection = null;
       const pick = want
         ? [...el.querySelectorAll('.vp-file-item')].find(i => i.dataset.name === want)

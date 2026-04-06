@@ -8,6 +8,8 @@ voiceover, and Remotion video composition.
 
 All pipeline commands run without human intervention by default (`SCRATCH_AUTO_APPROVE=true`).
 
+**Author prompts for story and product intent** using [`inputs/prompt-template.txt`](inputs/prompt-template.txt). Technical integration patterns are loaded from [`skills/plaid-integration.skill`](skills/plaid-integration.skill) at research, script, and build stages; `RESEARCH_MODE` / **Research depth** in the prompt controls how much AskBill/Glean runs on top. If neither is set, research defaults to **`gapfill`** (targeted AskBill, minimal Glean).
+
 ---
 
 ## Brand Voice
@@ -152,6 +154,16 @@ a storyboard mismatch where audio precedes the visual it describes.
 - Institution: Defaults to **First Platypus Bank** / Remember Me flow (non-OAuth)
 - The "Save with Plaid" phone screen is auto-dismissed by the recording script
 
+### CRA / Consumer Report Link Requirements (Base Report + Income Insights)
+
+- CRA demos MUST use the real Plaid Link CRA/Check experience (single `"plaidPhase": "launch"` step with real SDK modal).
+- Do not replace CRA Link with host-only pseudo flows, simulated forms, or custom wizard screens.
+- CRA setup must include user setup semantics before report retrieval (`/user/create` identity context + permissible purpose in token config).
+- For CRA stories, `"/link/token/create"` products should include `cra_base_report` and `cra_income_insights` when income insights are part of the flow.
+- CRA retrieval remains asynchronous: show a report-ready lifecycle beat before insight retrieval.
+- Plaid Passport may be present via enabled templates for stronger identity verification; treat Passport as optional per account configuration, but never omit the core CRA Link/consent experience.
+- Any CRA "setup" or "data returned / report returned" explanatory scene should use a Plaid-branded slide step (`.slide-root`) instead of customer-branded host chrome.
+
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
 - Plaid Signal ACH transaction risk scores: 0–99 (higher = HIGHER return risk — higher score means more likely to result in ACH return/failure). Realistic demo values for ACCEPT scenarios: 5–20 (low risk). Do NOT use scores 82–97 — those represent high-risk transactions that should receive REVIEW or REROUTE, not ACCEPT. Do NOT use the term "Trust Index" — it is not a Plaid product name.
@@ -188,7 +200,7 @@ a storyboard mismatch where audio precedes the visual it describes.
 
 <!-- Side panels (always include — HIDDEN by default, shown only when explicitly triggered) -->
 <!-- IMPORTANT: link-events-panel MUST be hidden by default (display:none) — never visible in recordings -->
-<!-- IMPORTANT: api-response-panel MUST be hidden by default (display:none) — shown only when expanded -->
+<!-- IMPORTANT: api-response-panel MUST be hidden by default (display:none) — on insight steps, show panel chrome with JSON body collapsed (class api-json-collapsed on #api-response-panel hides .side-panel-body until toggle) -->
 <div id="link-events-panel" data-testid="link-events-panel" class="side-panel" style="display:none">...</div>
 <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none">...</div>
 ```
@@ -276,7 +288,9 @@ dwell is inserted between `institution-list-shown` and the click. Do not remove 
 
 ## Brand Extraction (brand-extract stage)
 - **Always regenerate brand JSONs on every pipeline run** — never reuse a previously written `brand/<slug>.json`.
-- The `brand-extract` stage runs before `script` and writes a fresh `brand/<slug>.json` via Brandfetch (falling back to Playwright CSS extraction).
+- The `brand-extract` stage runs **after `script`** so `demo-script.json` exists with `persona.company`. It writes a fresh `brand/<slug>.json` via **Brandfetch** (`api.brandfetch.io/v2/brands/{domain}`), then Playwright CSS extraction and Haiku normalization as fallbacks.
+- Brand URL resolution: explicit `Brand URL: https://…` in ingested prompt, else the first plausible `https` URL in the prompt head (skips Plaid/docs/CDN hosts). Company name still drives slug; domain drives Brandfetch.
+- The stage also writes `brand-extract.json` in the run directory as a completion sentinel.
 - Build agents must read the brand JSON written by the **current run's** brand-extract stage. Never commit brand JSON files as library assets to rely on later.
 - `BRANDFETCH_API_KEY` and `BRANDFETCH_CLIENT_ID` are already in `.env` — no additional env variables should be added for branding.
 
@@ -364,13 +378,13 @@ npm run demo -- --to=build-qa
 ```
 `build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same Claude vision QA as post-record QA against `demo-script.json` `visualState` — output `qa-report-build.json` in the run dir. Optional: `BUILD_QA_STRICT=1` to exit non-zero if the score is below `QA_PASS_THRESHOLD`.
 
-Stages: `research`, `ingest`, `brand-extract`, `script`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
+Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
 
 ---
 ## Slide Template and Storyboard Slides
 
 ### Slide template (PowerPoint supplement)
-Slides are generated from a reusable Plaid-only template so the styling stays consistent across pipeline runs and presentations.
+Slides are generated from a reusable Plaid-only template so the styling stays consistent across pipeline runs and presentations. **Slides are only for behind-the-scenes API/data explanation** (optional `.slide-root` steps). The **host bank UI** uses Brandfetch-driven `brand/<slug>.json`, not slide chrome. Full-viewport **Plaid insight** steps use the insight + `#api-response-panel` contract unless they explicitly use `.slide-root`.
 
 - Template folder: `templates/slide-template/`
   - `base.html` — slide surface structure contract
