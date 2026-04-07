@@ -80,6 +80,42 @@ describe('prompt-templates', () => {
     assert.ok(fullText.includes('JSON rail hidden on consumer steps'), 'Human feedback content should be included');
   });
 
+  test('buildAppGenerationPrompt() enforces single global JSON panel contract', () => {
+    const result = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Simple single-page demo app'
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('api-response-panel: the ONE AND ONLY mechanism'),
+      'Prompt should enforce one global api-response-panel contract');
+    assert.ok(fullText.includes('No "insight-right", no "auth-json-panel"'),
+      'Prompt should explicitly forbid duplicate inline raw JSON panels');
+  });
+
+  test('buildAppGenerationPrompt() requires narrative-driven API attribute highlights', () => {
+    const result = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Simple single-page demo app'
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('top response attributes that drive the outcome'),
+      'Prompt should require highlighting key API attributes tied to story outcomes');
+    assert.ok(fullText.includes('Signal risk drivers + recommendation'),
+      'Prompt should include concrete product-contextual attribute examples');
+    assert.ok(fullText.includes('No data-testid="api-panel-toggle"'),
+      'Prompt should forbid JSON panel show/hide controls');
+    assert.ok(fullText.includes('render JSON body immediately visible'),
+      'Prompt should require JSON visibility when API panel is visible');
+    assert.ok(fullText.includes('renderjson@1.4.0/renderjson.min.js'),
+      'Prompt should require renderjson viewer script for API payload display');
+    assert.ok(fullText.includes('side-panel-body is vertically scrollable'),
+      'Prompt should require scrollable API panel body for long JSON payloads');
+    assert.ok(fullText.includes('request/response content aligns with the slide claim'),
+      'Prompt should require request/response alignment with slide narrative');
+    assert.ok(fullText.includes('HOST UI METRICS GUARDRAIL'),
+      'Prompt should include host UI metrics leakage guardrail');
+  });
+
   test('buildScriptGenerationPrompt() lifts slide block out of prompt.txt duplication', () => {
     const promptText = `Intro\n[[SLIDE_OUTPUT_BEGIN]]\nSlide rules here\n[[SLIDE_OUTPUT_END]]\nOutro`;
     const result = templates.buildScriptGenerationPrompt(
@@ -121,6 +157,60 @@ describe('prompt-templates', () => {
     assert.ok(fullText.includes('cra_base_report'), 'Expected product family to be injected');
     assert.ok(fullText.includes('consumer_report'), 'Expected curated product knowledge to be included');
     assert.ok(fullText.includes('Category 1'), 'Expected QA learnings to be included');
+  });
+
+  test('buildScriptGenerationPrompt() includes Plaid Link UX skill block when provided', () => {
+    const result = templates.buildScriptGenerationPrompt(
+      { texts: [{ filename: 'prompt.txt', content: 'Build account verification demo' }], screenshots: [], transcriptions: [] },
+      {
+        synthesizedInsights: '',
+        internalKnowledge: [],
+        apiSpec: {},
+        plaidLinkUxSkillMarkdown: '## PLAID LINK PRE-LINK UX SKILL (use-case-specific)\n\nFlow type selected: generic.',
+      }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('PLAID LINK PRE-LINK UX SKILL'), 'Expected link UX skill block in script prompt');
+  });
+
+  test('buildScriptGenerationPrompt() enforces merged pre-link + launch rule', () => {
+    const result = templates.buildScriptGenerationPrompt(
+      { texts: [{ filename: 'prompt.txt', content: 'Build funding demo with Plaid Link.' }], screenshots: [], transcriptions: [] },
+      { synthesizedInsights: '', internalKnowledge: [], apiSpec: {} }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('Do NOT create a standalone pre-Link explainer step before launch.'),
+      'Script prompt should forbid standalone pre-Link explainer steps');
+    assert.ok(fullText.includes('must be merged into the SAME launch step'),
+      'Script prompt should require merged pre-Link + launch composition');
+    assert.ok(fullText.includes('FINAL VALUE SUMMARY SLIDE RULE'),
+      'Script prompt should require a final value summary slide');
+    assert.ok(fullText.includes('The LAST step in the demo MUST be a Plaid-branded value-summary slide'),
+      'Script prompt should enforce final-step value-summary placement');
+  });
+
+  test('buildAppGenerationPrompt() requires a visible host logo shell container', () => {
+    const result = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Simple single-page demo app',
+      null,
+      {
+        brand: {
+          name: 'Citi',
+          slug: 'citi',
+          mode: 'light',
+          colors: { bgPrimary: '#ffffff', accentCta: '#0052a5', textPrimary: '#111827', textSecondary: '#475569', textTertiary: '#64748b', accentBorder: 'rgba(15,23,42,0.2)', accentBgTint: 'rgba(15,23,42,0.06)', error: '#ef4444', success: '#22c55e' },
+          typography: { fontHeading: 'Arial, sans-serif', fontBody: 'Arial, sans-serif', fontMono: 'monospace', scaleH1: '32px/700', scaleH2: '24px/600', scaleH3: '18px/600', scaleBody: '15px/400', headingLetterSpacing: '-0.02em', headingLineHeight: '1.2', bodyLineHeight: '1.6' },
+          motion: { stepTransition: 'opacity 0.3s ease', cardEntrance: 'fade 0.4s', buttonHover: 'all 0.2s', modalScale: 'scale(1)', loadingIndicatorColor: '#0052a5' },
+          atmosphere: { overlayBackdropFilter: 'blur(8px)', cardBorderRadius: '8px', cardBoxShadow: '0 2px 8px rgba(0,0,0,0.08)', maxContentWidth: '1440px' },
+          sidePanels: { bg: '#111827', accentColor: '#0052a5', jsonKeyColor: '#7dd3fc', jsonStringColor: '#fff', jsonNumberColor: '#86efac' },
+          logo: { imageUrl: 'https://example.com/logo.svg' },
+        },
+      }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('host-bank-logo-shell'),
+      'App generation prompt should require a visible logo shell container');
   });
 
   test('buildQAReviewPrompt() returns { system, userMessages } and includes expected state', () => {

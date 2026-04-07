@@ -21,6 +21,7 @@ const { execSync }   = require('child_process');
 const { startServer } = require('../utils/app-server');
 const agent          = require('../utils/plaid-browser-agent');
 const { executeSmartPlaidPhase } = require('../utils/smart-plaid-agent');
+const { inferProductFamily } = require('../utils/product-profiles');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,12 @@ const PLAID_SANDBOX_INSTITUTION = process.env.PLAID_SANDBOX_INSTITUTION || 'Firs
 const PLAID_SANDBOX_USERNAME    = process.env.PLAID_SANDBOX_USERNAME    ||
   (PLAID_LINK_RECORDING_PROFILE === 'cra' ? 'user_credit_profile_good' : 'user_good');
 const PLAID_SANDBOX_PASSWORD    = process.env.PLAID_SANDBOX_PASSWORD    || 'pass_good';
+
+/** True when demo-script.json is a Plaid Check / CRA family (Base Report or Income Insights). */
+function isCraFamilyDemoScript(demoScript) {
+  const family = inferProductFamily({ promptText: '', demoScript: demoScript || null });
+  return family === 'cra_base_report' || family === 'income_insights';
+}
 
 // Use vision-based browser agent for Plaid Link iframe phases.
 // Falls back to CSS-selector approach only if ANTHROPIC_API_KEY is missing.
@@ -87,16 +94,25 @@ let _sandboxConfig = null;
  */
 function loadSandboxConfig(demoScript) {
   const sc = demoScript?.plaidSandboxConfig || {};
+  const isCraFlow =
+    PLAID_LINK_RECORDING_PROFILE === 'cra' ||
+    isCraFamilyDemoScript(demoScript);
+  const fallbackUser = process.env.PLAID_SANDBOX_USERNAME ||
+    (isCraFlow ? 'user_credit_profile_good' : 'user_good');
+  const fallbackPass = process.env.PLAID_SANDBOX_PASSWORD || 'pass_good';
   const config = {
     phone:         sc.phone         || process.env.PLAID_SANDBOX_PHONE    || '+14155550011',
     otp:           sc.otp           || process.env.PLAID_SANDBOX_OTP      || '123456',
     institutionId: sc.institutionId || process.env.PLAID_SANDBOX_INSTITUTION_ID || 'ins_109508',
-    username:      sc.username      || PLAID_SANDBOX_USERNAME,
-    password:      sc.password      || PLAID_SANDBOX_PASSWORD,
+    username:      sc.username      || fallbackUser,
+    password:      sc.password      || fallbackPass,
     mfa:           sc.mfa           || null,
     plaidLinkFlow: sc.plaidLinkFlow || process.env.PLAID_LINK_FLOW || 'standard',
   };
-  console.log(`[Record] Sandbox config: phone=${config.phone}, otp=${config.otp}, flow=${config.plaidLinkFlow}`);
+  console.log(
+    `[Record] Sandbox config: phone=${config.phone}, otp=${config.otp}, flow=${config.plaidLinkFlow}, ` +
+    `username=${config.username} (CRA-like=${isCraFlow})`
+  );
   return config;
 }
 
@@ -903,10 +919,18 @@ function matchPlaidLinkPhase(stepId) {
  *   Falls back to heuristic CSS-selector approach (may fail on cross-origin iframes).
  */
 async function executePlaidLinkPhase(page, phase) {
-  const creds = _sandboxCredentials || {
+  const base = _sandboxCredentials || {
     username:    PLAID_SANDBOX_USERNAME,
     password:    PLAID_SANDBOX_PASSWORD,
     institution: PLAID_SANDBOX_INSTITUTION,
+  };
+  // demo-script plaidSandboxConfig overrides (CRA personas, etc.)
+  const creds = {
+    ...base,
+    username: _sandboxConfig?.username || base.username,
+    password: _sandboxConfig?.password || base.password,
+    institution: base.institution || PLAID_SANDBOX_INSTITUTION,
+    mfa: _sandboxConfig?.mfa != null && _sandboxConfig.mfa !== '' ? _sandboxConfig.mfa : base.mfa,
   };
 
   // ── LIVE PLAID LINK MODE ─────────────────────────────────────────────────
@@ -1478,10 +1502,12 @@ async function executePlaidLinkPhase(page, phase) {
 
         // ── 7. Credentials ────────────────────────────────────────────────────
         console.log('  [Plaid Link] CSS: Entering credentials...');
+        const cssUser = _sandboxConfig?.username || PLAID_SANDBOX_USERNAME;
+        const cssPass = _sandboxConfig?.password || PLAID_SANDBOX_PASSWORD;
         for (const sel of ['input[name="username"]', 'input[id*="username" i]', 'input[type="text"]:first-of-type']) {
           const el = frame.locator(sel).first();
           if (await el.isVisible({ timeout: 6000 }).catch(() => false)) {
-            await el.fill(PLAID_SANDBOX_USERNAME);
+            await el.fill(cssUser);
             break;
           }
         }
@@ -1489,7 +1515,7 @@ async function executePlaidLinkPhase(page, phase) {
         for (const sel of ['input[name="password"]', 'input[type="password"]']) {
           const el = frame.locator(sel).first();
           if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
-            await el.fill(PLAID_SANDBOX_PASSWORD);
+            await el.fill(cssPass);
             break;
           }
         }
@@ -2016,7 +2042,12 @@ async function main(opts = {}) {
 
   // Resolve Plaid sandbox credentials (queries Glean plaid_docs if available)
   if (PLAID_LINK_LIVE) {
-    const flowType = process.env.PLAID_FLOW_TYPE || 'link'; // 'link' | 'layer' | 'cra'
+    const flowTypeFromEnv = (process.env.PLAID_FLOW_TYPE || '').trim().toLowerCase();
+    const flowType = flowTypeFromEnv ||
+      ((PLAID_LINK_RECORDING_PROFILE === 'cra' || isCraFamilyDemoScript(demoScript)) ? 'cra' : 'link');
+    if (!flowTypeFromEnv && flowType === 'cra') {
+      console.log('[Record] Using CRA sandbox institution credentials (inferred from demo-script or profile)');
+    }
     console.log(`[Record] Resolving Plaid sandbox credentials (flow: ${flowType})...`);
     _sandboxCredentials = await agent.resolveSandboxCredentials(flowType);
     if (USE_BROWSER_AGENT) {
@@ -2071,7 +2102,7 @@ async function main(opts = {}) {
     style.textContent = [
       '.step:not(.active) { display: none !important; }',
       '#link-events-panel { display: none !important; }',
-      // NOTE: Do NOT hide #api-response-panel — the demo EXPANDS it during API reveal steps.
+      // NOTE: Do NOT hide #api-response-panel — insight steps show it (JSON body may be collapsed via .api-json-collapsed).
       // Only the link-events-panel is permanently hidden (developer artifact).
       '[id*="plaid"][id*="sandbox"], [class*="plaid-sandbox"], [class*="sandbox-disclosure"],',
       '[id*="sandbox-banner"], [class*="sandbox-banner"] { display: none !important; }',
@@ -2098,7 +2129,7 @@ async function main(opts = {}) {
     // Override goToStep to:
     // 1. Suppress LINK EVENTS panel visibility (developer artifact)
     // 2. Auto-show API response panel when a step has pre-populated response data.
-    //    The panel is hidden by default but should be visible for API insight steps.
+    //    The panel is hidden by default; insight steps show the chrome with JSON collapsed until toggle expands it.
     const origGoToStep = window.goToStep;
     if (origGoToStep) {
       window.goToStep = function(id) {
@@ -2121,15 +2152,16 @@ async function main(opts = {}) {
             // Populate JSON panel content if data available
             if (data && typeof window._showApiPanelStub === 'function') {
               window._showApiPanelStub(data);
+              apiPanel.classList.add('api-json-collapsed');
             } else {
-              // Fallback: just make panel visible without content
+              // Fallback: show panel chrome only; keep JSON body collapsed
               apiPanel.style.display = 'flex';
-              apiPanel.classList.add('visible', 'expanded', 'open', 'active');
+              apiPanel.classList.add('visible', 'api-json-collapsed');
             }
           } else {
             // Hide panel between non-insight steps
             apiPanel.style.setProperty('display', 'none', 'important');
-            apiPanel.classList.remove('visible', 'expanded', 'open', 'active');
+            apiPanel.classList.remove('visible', 'expanded', 'open', 'active', 'api-json-collapsed');
           }
         }
       };

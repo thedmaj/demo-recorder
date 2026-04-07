@@ -8,7 +8,7 @@ voiceover, and Remotion video composition.
 
 All pipeline commands run without human intervention by default (`SCRATCH_AUTO_APPROVE=true`).
 
-**Author prompts for story and product intent** using [`inputs/prompt-template.txt`](inputs/prompt-template.txt). Technical integration patterns are loaded from [`skills/plaid-integration.skill`](skills/plaid-integration.skill) at research, script, and build stages; `RESEARCH_MODE` / **Research depth** in the prompt controls how much AskBill/Glean runs on top. If neither is set, research defaults to **`gapfill`** (targeted AskBill, minimal Glean).
+**Author prompts for story and product intent** using [`inputs/prompt-template.txt`](inputs/prompt-template.txt). Research now starts with **Solutions Master** context (solutions → components/APIs → playbook/play value props) when prompt includes “Solutions supported”. Then technical integration patterns are loaded from [`skills/plaid-integration.skill`](skills/plaid-integration.skill), with AskBill/Glean used for gaps. `RESEARCH_MODE` / **Research depth** controls depth; if neither is set, research defaults to **`gapfill`** (targeted AskBill, minimal Glean).
 
 ---
 
@@ -35,6 +35,11 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 - Font: `system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif`
 - Effects: `backdrop-filter: blur(8px)` for overlay panels
 - Viewport: Always design for `1440×900` (Playwright recording resolution)
+
+### Host app background interpretation (UX rule)
+- For **host/customer-branded app screens** (non-Plaid modal content), default the primary page background to white or another light neutral when compatible with brand colors.
+- Keep brand identity through accent colors, typography, nav treatment, and CTA styles while maintaining accessible contrast.
+- Keep Plaid-dark surfaces for Plaid-specific contexts (for example `.slide-root` explanatory slides and dedicated Plaid insight scenes), not as the default host canvas.
 
 ---
 

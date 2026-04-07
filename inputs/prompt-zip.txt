@@ -1,0 +1,131 @@
+================================================================================
+Zip BNPL Second-Look Underwriting — Up-Funnel CRA Cash-Flow Decisioning
+================================================================================
+
+**Host:** **Zip US** — BNPL / consumer credit  
+**Canonical URL:** https://zip.co/us  
+**Brand URL** (optional): https://zip.co/us
+
+**User journey (one sentence):**  
+An applicant moves through Zip’s early BNPL onboarding; when bureau data is inconclusive after personal details, Zip offers a low-friction bank-link second look powered by Plaid Check Base Report + Income Insights.
+
+**Story arc (short prose):**  
+Start with fast mobile-first onboarding, show the common underwriting gap when bureau data is inconclusive, introduce Plaid as the up-funnel second-look path, then reveal CRA Base Report and Income Insights on Plaid-branded slides, and close with a confident, policy-owned decision handoff.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**  
+Plaid Link, Plaid Check Base Report, Plaid Check Income Insights
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):  
+Consumer Report Underwriting, BNPL Credit Underwriting, Second-Look Cash-Flow Underwriting
+
+**Primary product family** (pick one — aligns with pipeline profiles):  
+`income_insights`
+
+**Primary messaging file for this demo** (pick one to own stats):  
+`inputs/products/plaid-income-insights.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK (`plaidPhase: "launch"` single step per `CLAUDE.md`)
+  [ ] **Plaid Layer** / OAuth / IDV — note if applicable
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`; use CRA `user_credit_*`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Zip welcome + phone capture screen matching reference (lavender background, centered white card, `Enter mobile number`, `Send code`) | Mobile-first onboarding is fast and familiar | `Send code` |
+| 2 | host | OTP verification screen matching reference (`Verify mobile number`, 6 code boxes, resend/change links) | Lightweight trust step before application details | `Continue` after valid code |
+| 3 | host | Personal details screen matching reference (`Get started with Zip`, email/name/address/DOB, terms checkbox) | User provides details required for underwriting | `Agree and continue` |
+| 4 | host | Underwriting status: bureau check returns **inconclusive** (no decline language) | Zip needs one more high-signal input to avoid unnecessary fallout | CTA: `Link bank for second look` |
+| 5 | host | Pre-Link explainer card (credit-specific UX best practices) explaining why linking helps and what data is used | Position consent clearly: consumer-permissioned cash-flow context for underwriting | CTA ends narration: `Link your bank` |
+| 6 | link | Real Plaid Link CRA flow (consent -> OTP/remember-me -> institution -> account select -> success) | Narrate only what appears inside the Plaid modal; no trigger narration here | Link complete |
+| 7 | slide | Plaid-branded setup slide (`.slide-root`) for CRA lifecycle: user setup + permissible purpose + report generation async | Explain report-ready lifecycle and compliance-safe purpose | `Report requested` |
+| 8 | slide | Plaid-branded Base Report attributes slide (`.slide-root`) with key fields and business meaning | Base Report surfaces balances, ownership, inflows/outflows, transaction behavior, days available | `Base report ready` |
+| 9 | slide | Plaid-branded Income Insights attributes slide (`.slide-root`) with key income signals | Income Insights adds categorized income context, historical/forecasted monthly income, and payment-timing signals when present | `Income insights ready` |
+| 10 | host | Zip underwriting result screen: second-look approved path / increased confidence message + next action | Plaid data supports a better decision earlier in funnel; lender policy remains final authority | CTA: `Continue application` |
+
+**Product-specific reminders** (delete if N/A):  
+- CRA: real Link; include explicit async report-ready lifecycle beat before insight retrieval.  
+- Link: pre-step narration ends on the button; Link step narrates inside the modal only.
+
+**Compliance / user data (one line):**  
+This is an extension-of-credit use case: perform `/user/create`, set `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, and frame outputs as underwriting inputs (not automatic approvals).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Morgan Lee, BNPL shopper and Zip applicant  
+**Company / context:** Applying for pay-over-time at checkout; bureau file is thin/inconclusive  
+**Sample fields that must appear on screen:** `+1` phone entry, six-digit OTP, email, legal first/last name, address lines, DOB, terms consent, bureau status = inconclusive, CTA = link bank for second look
+
+Recommended structured data:
+- `client_user_id`: `zip-morgan-001`
+- `email`: `morgan.lee@example.com`
+- `phone`: `+14164339331`
+- `address`: `245 King St W, Toronto, ON M5V 1J2` (or US equivalent if preferred by build profile)
+- `days_requested`: `365`
+- Link products: `cra_base_report`, `cra_income_insights`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Reproduce the attached Zip-style visual language in the first onboarding screens: soft lavender canvas, centered rounded white application card, muted gray form controls, understated helper text, and purple accent links/buttons.  
+After personal details, insert a new Zip-branded second-look screen before Plaid Link that explains why bank linking is requested when bureau is inconclusive.  
+Keep host screens customer-branded; keep CRA setup/data explanation screens in Plaid-branded slide format.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+3 Plaid-branded slides required, using `templates/slide-template/slide.css` and `SLIDE_RULES.md` look/feel:
+1) CRA lifecycle setup slide (consumer-permissioned setup + async report-ready concept)
+2) Base Report attributes slide (balances, ownership, inflows/outflows, transactions, days available, primary account indicators)
+3) Income Insights attributes slide (categorized income streams, historical average monthly income, forecasted average monthly income, predicted next payment date when present)
+
+Slides should be explanatory, presentation-grade, and avoid host-brand chrome.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+VALUE PROP / MESSAGING NOTES (GLEAN-ALIGNED, COMPLIANCE-SAFE)
+-------------------------------------------------------------------------------
+
+Use these angles in narration and on-screen copy:
+- Approve more good users with less friction by adding cash-flow context when bureau data is inconclusive.
+- Position bank linking as a second-look path that can increase spending power confidence.
+- Use the same connected account for both decisioning context and downstream repayment setup where appropriate.
+- Move Plaid earlier in the funnel, not only at repayment, to improve BNPL coverage.
+- Emphasize one-platform consolidation themes (risk + monitoring + consumer-reporting workflows) without overclaiming.
+- Reinforce lifecycle value after approval: ongoing account context can support line maintenance and tailored offers.
+
+Language guardrails:
+- Prefer: "can help", "supports", "designed for", "input to underwriting".
+- Avoid guarantees of approval, loss reduction, or fixed conversion lift.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (value-props **or** product KB — not duplicated)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

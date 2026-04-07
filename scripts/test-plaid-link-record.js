@@ -25,8 +25,9 @@
  *   SCREEN_DWELL_MS=4000 node scripts/test-plaid-link-record.js   # slow / QA mode
  *   node scripts/test-plaid-cra-link-record-headless.js            # CRA + headless + ~15s timing
  *
- * CRA mode: requires CRA_CLIENT_ID and CRA_SECRET; defaults to user_bank_income / {}
- * (see inputs/plaid-link-sandbox.md). Override with PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD.
+ * CRA mode: requires CRA_CLIENT_ID and CRA_SECRET; institution login defaults to
+ * user_credit_profile_good / pass_good (Plaid Check Link — not user_bank_income / {}, which is
+ * traditional Bank Income). Override with PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD.
  *
  * Headless: set PLAID_LINK_HEADLESS_RECORDING=true or use test-plaid-cra-link-record-headless.js.
  * Fast timing (~15s Link flow): automatic for CRA+headless, or PLAID_LINK_TIMING_PROFILE=fast15.
@@ -123,8 +124,8 @@ let _otpSubmittedWallMs = 0;
 
 const PHONE    = '+14155550011';   // Remember Me returning-user
 const OTP      = '123456';
-const USERNAME = process.env.PLAID_SANDBOX_USERNAME || (IS_CRA_TEST ? 'user_bank_income' : 'user_good');
-const PASSWORD = process.env.PLAID_SANDBOX_PASSWORD || (IS_CRA_TEST ? '{}' : 'pass_good');
+const USERNAME = process.env.PLAID_SANDBOX_USERNAME || (IS_CRA_TEST ? 'user_credit_profile_good' : 'user_good');
+const PASSWORD = process.env.PLAID_SANDBOX_PASSWORD || 'pass_good';
 
 /** Request body for POST /api/create-link-token in the embedded test app. */
 const LINK_TOKEN_BODY = IS_CRA_TEST

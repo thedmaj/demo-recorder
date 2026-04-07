@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plaid Link CRA Base Report Test</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+      color-scheme: dark;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, #0d1117, #0a2540);
+      color: #fff;
+    }
+    .card {
+      width: min(720px, 92vw);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 24px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 1.4rem;
+    }
+    p {
+      margin: 0 0 14px;
+      color: rgba(255, 255, 255, 0.72);
+    }
+    .token {
+      margin: 12px 0 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.9rem;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      word-break: break-all;
+    }
+    button {
+      border: 1px solid rgba(0, 166, 126, 0.45);
+      background: #00a67e;
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    pre {
+      margin: 16px 0 0;
+      max-height: 280px;
+      overflow: auto;
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 0.85rem;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Plaid Link CRA Base Report Test</h1>
+    <p>This test page uses a hardcoded Link token and opens the real Plaid Link modal.</p>
+    <div class="token" id="token-value"></div>
+    <button id="launch-link-btn">Launch Plaid Link</button>
+    <pre id="log" aria-live="polite">Preparing Plaid Link...</pre>
+  </main>
+
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script>
+    const HARD_CODED_LINK_TOKEN = "link-sandbox-d6a79100-7c2c-4b45-b88e-7aa9b19d4c1f";
+    const tokenNode = document.getElementById("token-value");
+    const logNode = document.getElementById("log");
+    const launchBtn = document.getElementById("launch-link-btn");
+
+    tokenNode.textContent = `link_token: ${HARD_CODED_LINK_TOKEN}`;
+
+    function writeLog(label, payload) {
+      const line = `${new Date().toISOString()} | ${label}${payload ? ` | ${JSON.stringify(payload)}` : ""}`;
+      logNode.textContent = `${line}\n${logNode.textContent}`;
+      console.log(label, payload || "");
+    }
+
+    if (!window.Plaid || typeof window.Plaid.create !== "function") {
+      launchBtn.disabled = true;
+      writeLog("Plaid SDK failed to load");
+    } else {
+      const handler = window.Plaid.create({
+        token: HARD_CODED_LINK_TOKEN,
+        onSuccess: (public_token, metadata) => {
+          writeLog("onSuccess", { public_token, metadata });
+        },
+        onExit: (err, metadata) => {
+          writeLog("onExit", { err, metadata });
+        },
+        onEvent: (eventName, metadata) => {
+          writeLog("onEvent", { eventName, metadata });
+        },
+      });
+
+      launchBtn.addEventListener("click", () => {
+        writeLog("Opening Plaid Link");
+        handler.open();
+      });
+
+      writeLog("Plaid Link ready");
+    }
+  </script>
+</body>
+</html>

@@ -106,6 +106,8 @@ Feature this product when the persona needs a consumer-report workflow that adds
 - Link token endpoint: `/link/token/create`
 - CRA report retrieval endpoint: `/cra/check_report/income_insights/get`
 - Required Link products for this family: `cra_base_report`, `cra_income_insights`
+- Link requirement: real Plaid Link CRA/Check modal (single `plaidPhase: "launch"` step) — no simulated host-only Link flow
+- Passport note: Plaid Passport may be enabled in template configuration for stronger verification, but it does not replace the core CRA Link/consent flow
 - Important CRA configuration terms: `cra_options`, `consumer_report_permissible_purpose`, `days_requested`
 - Important distinction: this product is **not** traditional `income_verification`, Bank Income, Payroll Income, or Document Income
 - Async lifecycle: report requested -> report generating -> report ready
@@ -133,6 +135,8 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 - Do not retrieve CRA Income Insights with `/credit/bank_income/get` or `/credit/payroll_income/get`.
 - Do not describe CRA Income Insights as a source-selection flow for payroll, bank income, or document upload.
 - Include a report-ready beat because CRA Income Insights is part of an asynchronous consumer-report workflow.
+- Do not replace CRA Link with custom customer-hosted pseudo-link forms; use the real Plaid CRA Link experience.
+- Setup and data-returned explanation beats should use Plaid-branded slide template screens (`.slide-root`) instead of customer-branded host UI.
 
 ## Framework QA Learnings
 <!-- 🔄 SHARED — curated prompt/build lessons for this product family.
@@ -141,6 +145,7 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 - Use the single global `api-response-panel` for CRA Income Insights report steps so the framework can reuse the same host-vs-insight contract as other demos.
 - Keep report-ready and report-review steps visually distinct to avoid transition ambiguity in build-QA and record-QA.
 - Do not mix traditional income UX assumptions with CRA report-review screens in the same prompt.
+- CRA setup/data explanation beats are easier to validate when rendered as Plaid-branded slide steps (`.slide-root`) with customer host chrome reserved for user journey screens.
 
 ## Objections & Responses
 <!-- 🔄 SHARED — AI adds [DRAFT] from Gong; human approves by removing [DRAFT] tag. -->

@@ -8,7 +8,7 @@
  * - Uses FAST_TIMING presets (~15s target for the in-iframe flow; tune via env vars).
  *
  * Requires: CRA_CLIENT_ID, CRA_SECRET
- * Optional: PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD (default user_credit_*)
+ * Optional: PLAID_SANDBOX_USERNAME / PLAID_SANDBOX_PASSWORD (default user_credit_profile_good / pass_good)
  *
  * Outputs:
  *   out/plaid-cra-link-headless-test/recording.webm

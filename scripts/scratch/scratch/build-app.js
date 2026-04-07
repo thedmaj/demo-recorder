@@ -29,6 +29,12 @@ const {
 const { inferProductFamily } = require('../utils/product-profiles');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
 const { readPipelineRunContext } = require('../utils/run-context');
+const {
+  getPlaidSkillBundleForFamily,
+  getPlaidLinkUxSkillBundle,
+  writePlaidLinkUxSkillManifest,
+} = require('../utils/plaid-skill-loader');
+const { askPlaidDocs } = require('../utils/mcp-clients');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -36,6 +42,7 @@ const PROJECT_ROOT    = path.resolve(__dirname, '../../..');
 const OUT_DIR         = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
 const INPUTS_DIR      = path.join(PROJECT_ROOT, 'inputs');
 const SCRIPT_FILE     = path.join(OUT_DIR, 'demo-script.json');
+const RESEARCH_FILE   = path.join(OUT_DIR, 'product-research.json');
 const SCRATCH_APP_DIR = path.join(OUT_DIR, 'scratch-app');
 const HTML_OUT        = path.join(SCRATCH_APP_DIR, 'index.html');
 const PLAYWRIGHT_OUT  = path.join(SCRATCH_APP_DIR, 'playwright-script.json');
@@ -45,6 +52,7 @@ const PROMPT_FILE     = path.join(INPUTS_DIR, 'prompt.txt');
 // Delimiter that separates HTML from Playwright JSON in Claude's response
 const PLAYWRIGHT_MARKER = '<!-- PLAYWRIGHT_SCRIPT_JSON -->';
 const BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json');
+const API_PANEL_QA_FILE = path.join(OUT_DIR, 'api-panel-qa.json');
 
 /**
  * @param {Array<{ category?: string, severity?: string, stepId?: string }>} diagnostics
@@ -58,6 +66,110 @@ function summarizeBuildQaDiagnostics(diagnostics) {
     if (d.severity === 'critical' && d.stepId) criticalStepIds.add(d.stepId);
   }
   return { categoryCounts, criticalStepIds: [...criticalStepIds] };
+}
+
+function isSlideLikeStep(step) {
+  const sceneType = String(step?.sceneType || '').toLowerCase();
+  if (sceneType) return sceneType === 'slide';
+  const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+  return /\bslide\b/.test(haystack) && !/\binsight\b/.test(haystack);
+}
+
+function isApiRelevantSlide(step) {
+  if (!isSlideLikeStep(step)) return false;
+  if (step?.apiResponse?.endpoint || step?.apiResponse?.response) return true;
+  const haystack = [
+    step?.id,
+    step?.label,
+    step?.visualState,
+    step?.narration,
+    step?.description,
+  ].filter(Boolean).join(' ').toLowerCase();
+  return /\b(api|endpoint|json|report|insight|income|cra|base report)\b/.test(haystack);
+}
+
+function parseJsonFromText(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) {
+    try { return JSON.parse(fenced.trim()); } catch (_) {}
+  }
+  const obj = text.match(/\{[\s\S]*\}/);
+  if (obj) {
+    try { return JSON.parse(obj[0]); } catch (_) {}
+  }
+  return null;
+}
+
+function isNonEmptyObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function buildAskBillApiSampleQuestion(step, productName, productFamily) {
+  const endpoint = step?.apiResponse?.endpoint || '';
+  const stepLabel = [step?.label, step?.id].filter(Boolean).join(' / ');
+  return (
+    `Provide a realistic Plaid sandbox JSON sample response for this demo step.\n` +
+    `Product: ${productName || productFamily || 'Plaid'}\n` +
+    `Step: ${stepLabel}\n` +
+    (endpoint ? `Endpoint: ${endpoint}\n` : '') +
+    `Requirements:\n` +
+    `- Return JSON only (no markdown, no prose).\n` +
+    `- Use fields that are valid for the endpoint and plausible values.\n` +
+    `- Keep the payload concise (about 10-40 lines when pretty-printed).\n`
+  );
+}
+
+async function hydrateApiSamplesForRelevantSlides(demoScript, productFamily) {
+  const checks = [];
+  const steps = demoScript.steps || [];
+  let autoFilled = 0;
+
+  for (const step of steps) {
+    const relevant = isApiRelevantSlide(step);
+    const endpoint = step?.apiResponse?.endpoint || null;
+    const hasResponse = isNonEmptyObject(step?.apiResponse?.response);
+    const row = {
+      stepId: step?.id || '',
+      relevant,
+      endpoint,
+      hadResponse: hasResponse,
+      askBillUsed: false,
+      filled: false,
+      note: '',
+    };
+    if (!relevant || hasResponse) {
+      checks.push(row);
+      continue;
+    }
+
+    row.askBillUsed = true;
+    try {
+      const q = buildAskBillApiSampleQuestion(step, demoScript.product, productFamily);
+      const answer = await askPlaidDocs(q);
+      const parsed = parseJsonFromText(answer);
+      if (isNonEmptyObject(parsed)) {
+        step.apiResponse = step.apiResponse || {};
+        step.apiResponse.response = parsed;
+        row.filled = true;
+        row.note = 'Filled from AskBill sample JSON.';
+        autoFilled += 1;
+      } else {
+        row.note = 'AskBill returned non-JSON or empty content.';
+      }
+    } catch (err) {
+      row.note = `AskBill request failed: ${err.message}`;
+    }
+    checks.push(row);
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    stage: 'build',
+    autoFilledCount: autoFilled,
+    checks,
+  };
 }
 
 // ── Model config ──────────────────────────────────────────────────────────────
@@ -149,6 +261,64 @@ function parseArgs() {
   };
 }
 
+/**
+ * Models sometimes emit click/fill rows for steps that have apiResponse insight data.
+ * build-qa and recordings expect goToStep so the active step matches demo-script.json.
+ */
+function repairPlaywrightInsightNavigation(playwrightScript, demoScript) {
+  const rows = playwrightScript?.steps;
+  if (!Array.isArray(rows)) return;
+  const insightIds = new Set(
+    (demoScript.steps || [])
+      .filter(s => s && s.apiResponse && /insight/i.test(s.id))
+      .map(s => s.id)
+  );
+  let fixed = 0;
+  for (const row of rows) {
+    const id = row.stepId || row.id;
+    if (!id || !insightIds.has(id)) continue;
+    if (row.action === 'goToStep' && String(row.target || '').replace(/['"]/g, '') === id) continue;
+    row.action = 'goToStep';
+    row.target = id;
+    fixed++;
+  }
+  if (fixed > 0) {
+    console.log(`[Build] Repaired ${fixed} playwright row(s) to goToStep for insight steps`);
+  }
+}
+
+function normalizeLaunchPlaywrightRow(playwrightScript, demoScript) {
+  const rows = playwrightScript?.steps;
+  if (!Array.isArray(rows)) return;
+  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  if (!launch) return;
+  const row = rows.find((r) => (r.stepId || r.id) === launch.id);
+  if (!row) return;
+  row.action = 'click';
+  row.target = '[data-testid="link-external-account-btn"]';
+  if (!row.waitMs || row.waitMs < 120000) row.waitMs = 120000;
+}
+
+function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
+  if (!PLAID_LINK_LIVE) return { html, injected: false };
+  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  if (!launch) return { html, injected: false };
+  if (html.includes('data-testid="link-external-account-btn"')) {
+    return { html, injected: false };
+  }
+  const stepDivRe = new RegExp(
+    `(<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?)(<(?:button|a)(?:\\s[^>]*?)?)>`,
+    'i'
+  );
+  const patched = html.replace(stepDivRe, (_m, pre, tagOpen) => {
+    if (/data-testid=/i.test(tagOpen)) {
+      return `${pre}${tagOpen.replace(/data-testid="[^"]*"/i, 'data-testid="link-external-account-btn"')}>`;
+    }
+    return `${pre}${tagOpen} data-testid="link-external-account-btn">`;
+  });
+  return { html: patched, injected: patched !== html };
+}
+
 // ── Response parsing ──────────────────────────────────────────────────────────
 
 /**
@@ -162,14 +332,7 @@ function stripFences(text) {
     .trim();
 }
 
-/**
- * Splits the raw Claude response into HTML and Playwright JSON parts.
- * The response must contain PLAYWRIGHT_MARKER.
- *
- * @param {string} raw - Full response text from Claude
- * @returns {{ html: string, playwrightScript: object }}
- */
-function parseAppResponse(raw) {
+function extractHtmlPartFromRaw(raw) {
   const markerIdx = raw.indexOf(PLAYWRIGHT_MARKER);
   if (markerIdx === -1) {
     throw new Error(
@@ -177,42 +340,234 @@ function parseAppResponse(raw) {
       `First 300 chars: ${raw.substring(0, 300)}`
     );
   }
-
   let htmlPart = raw.substring(0, markerIdx).trim();
-  const jsonPart = raw.substring(markerIdx + PLAYWRIGHT_MARKER.length).trim();
-
-  // Strip markdown fences from HTML if present
   htmlPart = stripFences(htmlPart);
   if (!htmlPart.startsWith('<!DOCTYPE') && !htmlPart.startsWith('<html')) {
-    // Try to find the actual HTML start
     const doctypeIdx = htmlPart.indexOf('<!DOCTYPE');
     const htmlIdx    = htmlPart.indexOf('<html');
     const startIdx   = doctypeIdx !== -1 ? doctypeIdx : (htmlIdx !== -1 ? htmlIdx : 0);
     htmlPart = htmlPart.substring(startIdx);
   }
+  return htmlPart;
+}
 
-  // Parse the Playwright JSON (may be in a fenced block)
-  let playwrightRaw = stripFences(jsonPart);
-  // Handle ```json prefix leftover
-  playwrightRaw = playwrightRaw.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+function extractPlaywrightJsonText(raw) {
+  const markerIdx = raw.indexOf(PLAYWRIGHT_MARKER);
+  if (markerIdx === -1) return '';
+  const jsonPart = raw.substring(markerIdx + PLAYWRIGHT_MARKER.length).trim();
+  return stripFences(jsonPart).replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+}
 
-  let playwrightScript;
-  try {
-    playwrightScript = JSON.parse(playwrightRaw);
-  } catch (err) {
-    // Attempt to extract JSON object from surrounding text
-    const jsonMatch = playwrightRaw.match(/(\{[\s\S]*\})/);
-    if (jsonMatch) {
-      try {
-        playwrightScript = JSON.parse(jsonMatch[1]);
-      } catch {
-        throw new Error(`[Build] Could not parse playwright-script.json: ${err.message}\nRaw:\n${playwrightRaw.substring(0, 500)}`);
+/**
+ * Fixes common LLM mistakes before JSON.parse (invalid targets, trailing commas, smart quotes).
+ */
+function sanitizePlaywrightJsonText(s) {
+  let t = String(s);
+  t = t.replace(/[\u201c\u201d]/g, '"');
+  // "target": "window.goToStep('step-id')" / goToStep("id") → bare step id (strict JSON)
+  const unesc = (id) => String(id).replace(/\\(.)/g, '$1');
+  t = t.replace(
+    /"target"\s*:\s*"window\.goToStep\('([^'\\]*(?:\\.[^'\\]*)*)'\)"/g,
+    (_m, id) => `"target": ${JSON.stringify(unesc(id))}`
+  );
+  t = t.replace(
+    /"target"\s*:\s*"window\.goToStep\("([^"\\]*(?:\\.[^"\\]*)*)"\)"/g,
+    (_m, id) => `"target": ${JSON.stringify(unesc(id))}`
+  );
+  t = t.replace(
+    /"target"\s*:\s*"goToStep\('([^'\\]*(?:\\.[^'\\]*)*)'\)"/g,
+    (_m, id) => `"target": ${JSON.stringify(unesc(id))}`
+  );
+  t = t.replace(
+    /"target"\s*:\s*"goToStep\("([^"\\]*(?:\\.[^"\\]*)*)"\)"/g,
+    (_m, id) => `"target": ${JSON.stringify(unesc(id))}`
+  );
+  t = t.replace(/,(\s*[\]}])/g, '$1');
+  return t;
+}
+
+/**
+ * When the model truncates mid-step, extract complete `{ ... }` step objects from the steps array.
+ */
+function recoverStepsFromPartialJson(text) {
+  const key = '"steps"';
+  const si = text.indexOf(key);
+  if (si < 0) return null;
+  const lb = text.indexOf('[', si + key.length);
+  if (lb < 0) return null;
+  const inner = text.slice(lb + 1);
+  const steps = [];
+  let i = 0;
+  while (i < inner.length) {
+    const objStart = inner.indexOf('{', i);
+    if (objStart < 0) break;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let j = objStart;
+    let closed = false;
+    for (; j < inner.length; j++) {
+      const c = inner[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
       }
-    } else {
-      throw new Error(`[Build] Could not parse playwright-script.json: ${err.message}\nRaw:\n${playwrightRaw.substring(0, 500)}`);
+      if (c === '"') {
+        inStr = true;
+        continue;
+      }
+      if (c === '{') depth++;
+      else if (c === '}') {
+        depth--;
+        if (depth === 0) {
+          const chunk = inner.slice(objStart, j + 1);
+          try {
+            steps.push(JSON.parse(chunk));
+          } catch (_) {
+            /* skip malformed chunk */
+          }
+          closed = true;
+          i = j + 1;
+          while (i < inner.length && /[\s,\n\r]/.test(inner[i])) i++;
+          break;
+        }
+      }
+    }
+    if (!closed) break;
+  }
+  if (steps.length === 0) return null;
+  return { steps };
+}
+
+/**
+ * Try to parse only the "steps" array (handles truncated outer JSON if array is complete).
+ */
+function tryParseStepsArrayOnly(text) {
+  const key = '"steps"';
+  const si = text.indexOf(key);
+  if (si < 0) return null;
+  const lb = text.indexOf('[', si + key.length);
+  if (lb < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let q = '';
+  for (let p = lb; p < text.length; p++) {
+    const c = text[p];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === q) inStr = false;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      q = '"';
+      continue;
+    }
+    if (c === '[') depth++;
+    else if (c === ']') {
+      depth--;
+      if (depth === 0) {
+        const inner = text.slice(lb, p + 1);
+        try {
+          const steps = JSON.parse(inner);
+          if (Array.isArray(steps)) return { steps };
+        } catch (_) {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Normalize goToStep rows to bare step id (record-local accepts both; JSON is cleaner). */
+function normalizePlaywrightGoToTargets(script) {
+  const steps = script && script.steps;
+  if (!Array.isArray(steps)) return;
+  for (const row of steps) {
+    if (!row || row.action !== 'goToStep' || row.target == null) continue;
+    const t = String(row.target).trim();
+    const m1 = t.match(/^window\.goToStep\((['"])((?:\\.|(?!\2).)*?)\2\)\s*$/);
+    if (m1) {
+      row.target = m1[2].replace(/\\(.)/g, '$1');
+      continue;
+    }
+    const m2 = t.match(/^goToStep\((['"])((?:\\.|(?!\2).)*?)\2\)\s*$/);
+    if (m2) row.target = m2[2].replace(/\\(.)/g, '$1');
+  }
+}
+
+/**
+ * @returns {{ playwrightScript: object } | null}
+ */
+function tryParsePlaywrightScript(playwrightRaw) {
+  const variants = [playwrightRaw, sanitizePlaywrightJsonText(playwrightRaw)];
+  for (const v of variants) {
+    try {
+      const o = JSON.parse(v);
+      if (o && Array.isArray(o.steps)) return o;
+    } catch (_) {}
+    const greedy = v.match(/(\{[\s\S]*\})/);
+    if (greedy) {
+      try {
+        const o = JSON.parse(greedy[1]);
+        if (o && Array.isArray(o.steps)) return o;
+      } catch (_) {}
+    }
+    const stepsOnly = tryParseStepsArrayOnly(v);
+    if (stepsOnly) return stepsOnly;
+    const recovered = recoverStepsFromPartialJson(v);
+    if (recovered && recovered.steps.length > 0) {
+      console.warn(
+        `[Build] Recovered ${recovered.steps.length} complete playwright step object(s) from partial/truncated JSON.`
+      );
+      return recovered;
+    }
+  }
+  return null;
+}
+
+/**
+ * Splits the raw Claude response into HTML and Playwright JSON parts.
+ * The response must contain PLAYWRIGHT_MARKER.
+ *
+ * @param {string} raw - Full response text from Claude
+ * @returns {{ html: string, playwrightScript: object }}
+ */
+function parseAppResponse(raw, opts = {}) {
+  const htmlPart = extractHtmlPartFromRaw(raw);
+  const playwrightRaw = extractPlaywrightJsonText(raw);
+  let playwrightScript = tryParsePlaywrightScript(playwrightRaw);
+
+  if (!playwrightScript && opts.fallbackPlaywrightPath && fs.existsSync(opts.fallbackPlaywrightPath)) {
+    try {
+      playwrightScript = JSON.parse(fs.readFileSync(opts.fallbackPlaywrightPath, 'utf8'));
+      if (playwrightScript && Array.isArray(playwrightScript.steps)) {
+        console.warn(
+          `[Build] Playwright JSON parse failed — reusing previous ${path.basename(opts.fallbackPlaywrightPath)} ` +
+            '(new HTML still applied; verify step IDs match demo-script).'
+        );
+      } else {
+        playwrightScript = null;
+      }
+    } catch (_) {
+      playwrightScript = null;
     }
   }
 
+  if (!playwrightScript) {
+    const err = new Error(
+      `[Build] Could not parse playwright-script.json after sanitization.\nRaw (first 800 chars):\n${playwrightRaw.substring(0, 800)}`
+    );
+    err.playwrightRaw = playwrightRaw;
+    throw err;
+  }
+
+  normalizePlaywrightGoToTargets(playwrightScript);
   return { html: htmlPart, playwrightScript };
 }
 
@@ -236,10 +591,13 @@ function extractText(content) {
 /**
  * Call 1: Architecture brief (claude-sonnet-4-6, non-streaming, 1024 tokens).
  */
-async function getArchitectureBrief(client, demoScript) {
+async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
   console.log('[Build] Call 1: Generating architecture brief (claude-opus-4-6)...');
 
-  const { system, userMessages } = buildAppArchitectureBriefPrompt(demoScript, { plaidLinkLive: PLAID_LINK_LIVE });
+  const { system, userMessages } = buildAppArchitectureBriefPrompt(demoScript, {
+    plaidLinkLive: PLAID_LINK_LIVE,
+    plaidSkillBrief: briefOpts.plaidSkillBrief || '',
+  });
 
   const response = await client.messages.create({
     model:      ARCH_MODEL,
@@ -287,6 +645,12 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       humanFeedback:      refinementOpts.humanFeedback || '',
       productFamily:      refinementOpts.productFamily || 'generic',
       curatedProductKnowledge: refinementOpts.curatedProductKnowledge || null,
+      curatedDigest:      refinementOpts.curatedDigest || null,
+      pipelineRunContext: refinementOpts.pipelineRunContext || null,
+      solutionsMasterContext: refinementOpts.solutionsMasterContext || null,
+      buildQaDiagnosticSummary: refinementOpts.buildQaDiagnosticSummary || null,
+      plaidSkillMarkdown: refinementOpts.plaidSkillMarkdown || '',
+      plaidLinkUxSkillMarkdown: refinementOpts.plaidLinkUxSkillMarkdown || '',
     }
   );
 
@@ -342,9 +706,31 @@ async function main(opts = {}) {
   console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
   const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
   const productFamily = inferProductFamily({ promptText, demoScript });
+  const apiPanelQa = await hydrateApiSamplesForRelevantSlides(demoScript, productFamily);
+  try {
+    fs.writeFileSync(API_PANEL_QA_FILE, JSON.stringify(apiPanelQa, null, 2));
+    if (apiPanelQa.autoFilledCount > 0) {
+      console.log(`[Build] API panel QA: auto-filled ${apiPanelQa.autoFilledCount} relevant slide API sample(s) from AskBill`);
+    } else {
+      console.log('[Build] API panel QA: no missing relevant slide API samples detected');
+    }
+  } catch (e) {
+    console.warn(`[Build] Could not write api-panel-qa.json: ${e.message}`);
+  }
   const curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
   const curatedDigest = buildCuratedDigest(curatedProductKnowledge);
   const pipelineRunContext = readPipelineRunContext(OUT_DIR);
+  let solutionsMasterContext = null;
+  if (fs.existsSync(RESEARCH_FILE)) {
+    try {
+      const research = JSON.parse(fs.readFileSync(RESEARCH_FILE, 'utf8'));
+      if (research && research.solutionsMasterContext && typeof research.solutionsMasterContext === 'object') {
+        solutionsMasterContext = research.solutionsMasterContext;
+      }
+    } catch (e) {
+      console.warn(`[Build] Could not parse product-research.json for Solutions Master context: ${e.message}`);
+    }
+  }
   let buildQaDiagnosticSummary = null;
   if (fs.existsSync(BUILD_QA_DIAG_FILE)) {
     try {
@@ -363,6 +749,24 @@ async function main(opts = {}) {
     }
   }
   console.log(`[Build] Product family: ${productFamily}`);
+
+  const skillBundle = getPlaidSkillBundleForFamily(productFamily, { promptText, demoScript });
+  if (skillBundle.skillLoaded) {
+    console.log(
+      `[Build] Plaid integration skill: ${skillBundle.members.length} excerpt(s) for prompts`
+    );
+  }
+  const linkUxSkillBundle = getPlaidLinkUxSkillBundle({ promptText, demoScript });
+  if (linkUxSkillBundle.skillLoaded) {
+    console.log(`[Build] Plaid Link UX skill: loaded (${linkUxSkillBundle.flowType} flow)`);
+  }
+  writePlaidLinkUxSkillManifest(OUT_DIR, {
+    stage: 'build',
+    flowType: linkUxSkillBundle.flowType,
+    markdownPath: linkUxSkillBundle.markdownPath,
+    skillLoaded: linkUxSkillBundle.skillLoaded,
+    chars: linkUxSkillBundle.chars,
+  });
 
   // Validate Plaid credentials when live mode is enabled (requires productFamily above)
   if (PLAID_LINK_LIVE) {
@@ -490,7 +894,9 @@ async function main(opts = {}) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   // ── Call 1: Architecture brief ────────────────────────────────────────────
-  const architectureBrief = await getArchitectureBrief(client, demoScript);
+  const architectureBrief = await getArchitectureBrief(client, demoScript, {
+    plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
+  });
 
   // ── Call 2: Full app generation (streaming) ───────────────────────────────
   const rawResponse = await generateApp(client, demoScript, architectureBrief, qaReport, brand,
@@ -503,13 +909,18 @@ async function main(opts = {}) {
       curatedProductKnowledge,
       curatedDigest,
       pipelineRunContext,
+      solutionsMasterContext,
       buildQaDiagnosticSummary,
+      plaidSkillMarkdown: skillBundle.skillLoaded ? skillBundle.text : '',
+      plaidLinkUxSkillMarkdown: linkUxSkillBundle.skillLoaded ? linkUxSkillBundle.text : '',
     });
 
   // ── Parse response ────────────────────────────────────────────────────────
   let html, playwrightScript;
   try {
-    ({ html, playwrightScript } = parseAppResponse(rawResponse));
+    ({ html, playwrightScript } = parseAppResponse(rawResponse, {
+      fallbackPlaywrightPath: fs.existsSync(PLAYWRIGHT_OUT) ? PLAYWRIGHT_OUT : null,
+    }));
   } catch (err) {
     console.error(err.message);
     // Save raw response for debugging
@@ -519,6 +930,29 @@ async function main(opts = {}) {
     console.error(`[Build] Raw response saved to ${debugPath} for debugging`);
     process.exit(1);
   }
+
+  // Truncated model output may yield fewer playwright rows than demo-script steps — splice tail from previous file.
+  {
+    const need = demoScript.steps.length;
+    const have = (playwrightScript.steps || []).length;
+    if (have < need && fs.existsSync(PLAYWRIGHT_OUT)) {
+      try {
+        const prev = JSON.parse(fs.readFileSync(PLAYWRIGHT_OUT, 'utf8'));
+        const ps = prev && prev.steps;
+        if (Array.isArray(ps) && ps.length >= need) {
+          const merged = playwrightScript.steps.slice();
+          for (let i = merged.length; i < need; i++) merged.push(ps[i]);
+          playwrightScript = { steps: merged };
+          console.warn(
+            `[Build] Playwright steps: merged ${have} new row(s) + ${need - have} from previous build (truncated JSON recovery).`
+          );
+        }
+      } catch (_) {}
+    }
+  }
+
+  repairPlaywrightInsightNavigation(playwrightScript, demoScript);
+  normalizeLaunchPlaywrightRow(playwrightScript, demoScript);
 
   // ── Validate DOM contract ──────────────────────────────────────────────────
   // These are hard errors — a contract violation means the recording will fail.
@@ -548,7 +982,41 @@ async function main(opts = {}) {
     }
   }
 
-  // 2. Navigation functions must exist (record-local.js calls them on every step)
+  // 2. Navigation functions must exist (record-local.js calls them on every step).
+  // If missing, inject a safe fallback implementation from the step DOM contract.
+  const hasGoToStep = html.includes('window.goToStep');
+  const hasGetCurrentStep = html.includes('window.getCurrentStep');
+  if ((!hasGoToStep || !hasGetCurrentStep) && html.includes('</body>')) {
+    const navPatch = `<script>
+(function() {
+  if (typeof window.goToStep !== 'function') {
+    window.goToStep = function(id) {
+      var sid = String(id || '').replace(/^step-/, '');
+      var steps = document.querySelectorAll('.step[data-testid]');
+      for (var i = 0; i < steps.length; i++) steps[i].classList.remove('active');
+      var target = document.querySelector('[data-testid="step-' + sid + '"]');
+      if (!target) return;
+      target.classList.add('active');
+      if (window._stepLinkEvents && window._stepLinkEvents[sid]) {
+        window._stepLinkEvents[sid].forEach(function(e){
+          if (window.addLinkEvent) window.addLinkEvent(e.eventName, e.metadata);
+        });
+      }
+      if (window._stepApiResponses && window._stepApiResponses[sid] && typeof window.updateApiResponse === 'function') {
+        window.updateApiResponse(window._stepApiResponses[sid]);
+      }
+    };
+  }
+  if (typeof window.getCurrentStep !== 'function') {
+    window.getCurrentStep = function() {
+      return document.querySelector('.step.active')?.dataset?.testid || '';
+    };
+  }
+})();
+</script>`;
+    html = html.replace('</body>', `${navPatch}\n</body>`);
+    console.log('[Build] Injected fallback goToStep/getCurrentStep contract');
+  }
   if (!html.includes('window.goToStep')) {
     domErrors.push('window.goToStep not found in generated HTML');
   }
@@ -560,11 +1028,48 @@ async function main(opts = {}) {
   // must exist so build-qa, manual preview, and recording can all surface the same JSON rail.
   const stepsWithApiData = (demoScript.steps || []).filter(s => s.apiResponse?.response);
   if (stepsWithApiData.length > 0) {
-    if (!html.includes('id="api-response-panel"')) {
+    const hasPanel =
+      html.includes('id="api-response-panel"') || html.includes("id='api-response-panel'");
+    const hasContent =
+      html.includes('id="api-response-content"') ||
+      html.includes("id='api-response-content'") ||
+      html.includes('data-testid="api-response-content"');
+    if (hasPanel && !hasContent) {
+      html = html.replace(
+        /(<div[^>]*\bid\s*=\s*["']api-response-panel["'][^>]*>)/i,
+        '$1<div id="api-response-content" data-testid="api-response-content"></div>'
+      );
+      console.log('[Build] Injected missing #api-response-content inside api-response-panel');
+    }
+    if (!html.includes('id="api-response-panel"') && !html.includes("id='api-response-panel'")) {
       domErrors.push('Global api-response-panel not found in generated HTML.');
     }
-    if (!html.includes('id="api-response-content"')) {
+    if (
+      !html.includes('id="api-response-content"') &&
+      !html.includes("id='api-response-content'") &&
+      !html.includes('data-testid="api-response-content"')
+    ) {
       domErrors.push('Global api-response-content not found in generated HTML.');
+    }
+    if (
+      html.includes('data-testid="api-panel-toggle"') ||
+      html.includes("data-testid='api-panel-toggle'") ||
+      html.includes('id="api-panel-toggle"') ||
+      html.includes("id='api-panel-toggle'")
+    ) {
+      console.log('[Build] Found legacy API JSON toggle control — will disable to keep JSON always visible when panel is shown');
+    }
+
+    // Enforce one canonical raw JSON rail. Any extra inline JSON panel containers in step
+    // layouts are contract violations that create repetitive QA churn.
+    const forbiddenInlineJsonPanelMatches = [
+      ...html.matchAll(/<(?:div|aside|section)[^>]*\b(?:id|class)\s*=\s*["'][^"']*(?:json-panel|insight-right|auth-json-panel|api-json-panel|raw-json)[^"']*["'][^>]*>/gi),
+    ]
+      .map(m => m[0])
+      .filter(tag => !/api-response-panel|api-response-content/i.test(tag));
+    if (forbiddenInlineJsonPanelMatches.length > 0) {
+      const example = forbiddenInlineJsonPanelMatches[0].slice(0, 140);
+      domErrors.push(`Found duplicate inline raw JSON panel markup. Use only #api-response-panel. Example: ${example}`);
     }
   }
   // Detect malformed "function {" (no name, no params) — a JS syntax error that prevents
@@ -666,12 +1171,33 @@ async function main(opts = {}) {
     }
   }
 
+  // 5b. Live Plaid launch CTA must always exist for plaid-link-qa selector contract.
+  if (PLAID_LINK_LIVE) {
+    const ctaPatch = ensureCanonicalLaunchCtaInHtml(html, demoScript);
+    html = ctaPatch.html;
+    if (ctaPatch.injected) {
+      console.log('[Build] Injected canonical launch CTA data-testid="link-external-account-btn"');
+    }
+    if (!html.includes('data-testid="link-external-account-btn"')) {
+      domErrors.push('Missing canonical launch CTA target: data-testid="link-external-account-btn".');
+    }
+  }
+
   if (domErrors.length > 0) {
     console.error('[Build] DOM contract violations (recording will fail):');
     domErrors.forEach(e => console.error(`  ✗ ${e}`));
     process.exit(1);
   }
   console.log('[Build] DOM contract: OK');
+
+  // ── Harden syntaxHighlight (LLM sometimes calls it with undefined data) ─────
+  if (/function\s+_?syntaxHighlight\s*\(\s*json\s*\)\s*\{/.test(html)) {
+    html = html.replace(
+      /function\s+(_?syntaxHighlight)\s*\(\s*json\s*\)\s*\{/,
+      'function $1(json) { if (json == null) return ""; '
+    );
+    console.log('[Build] Patched syntaxHighlight for null-safe JSON stringify');
+  }
 
   // ── Strip brittle showApiPanel calls and normalize to one global panel ─────
   // The LLM frequently emits partial / duplicated panel logic. We strip direct
@@ -713,7 +1239,7 @@ async function main(opts = {}) {
   // correct _showApiPanelStub call so insight steps show their JSON response panel.
   html = html.replace(
     /if\s*\(\s*API_DATA\s*\[\s*id\s*\]\s*\)\s*\{\s*\}/g,
-    'if (API_DATA[id]) { _showApiPanelStub(API_DATA[id].response); }'
+    'if (API_DATA[id]) { _showApiPanelStub(API_DATA[id].endpoint || "", API_DATA[id].response || API_DATA[id].data); }'
   );
 
   // ── Patch _showApiPanelStub to clear display:none!important before showing ──
@@ -743,6 +1269,29 @@ async function main(opts = {}) {
       if (step.apiResponse.endpoint) stepApiEndpoints[step.id] = step.apiResponse.endpoint;
     }
   }
+  if (Object.keys(stepApiResponses).length > 0) {
+    const renderJsonScriptTag = '<script data-renderjson-lib src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>';
+    if (!html.includes('renderjson.min.js')) {
+      if (html.includes('</head>')) html = html.replace('</head>', `${renderJsonScriptTag}\n</head>`);
+      else if (html.includes('</body>')) html = html.replace('</body>', `${renderJsonScriptTag}\n</body>`);
+      console.log('[Build] Injected renderjson viewer script tag');
+    }
+    if (!html.includes('id="api-json-viewer-styles"') && html.includes('</head>')) {
+      const viewerStyles = `<style id="api-json-viewer-styles">
+#api-response-panel .side-panel-body { overflow-y: auto !important; overflow-x: hidden; max-height: calc(100vh - 140px); overscroll-behavior: contain; scrollbar-width: thin; }
+#api-response-content { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,0.9); }
+#api-response-content .disclosure { color: #00A67E !important; }
+#api-response-content .syntax { color: rgba(255,255,255,0.55) !important; }
+#api-response-content .key { color: #7dd3fc !important; }
+#api-response-content .string { color: #86efac !important; }
+#api-response-content .number { color: #fbbf24 !important; }
+#api-response-content .boolean { color: #fca5a5 !important; }
+#api-response-content .keyword { color: #c4b5fd !important; }
+</style>`;
+      html = html.replace('</head>', `${viewerStyles}\n</head>`);
+      console.log('[Build] Injected API JSON viewer styles (scroll + theme colors)');
+    }
+  }
   if (Object.keys(stepApiResponses).length > 0 && html.includes('</body>')) {
     const apiPatch = `<script>
 (function() {
@@ -751,6 +1300,39 @@ async function main(opts = {}) {
   var _resp = ${JSON.stringify(stepApiResponses).replace(/</g, '\\u003c')};
   var _eps  = ${JSON.stringify(stepApiEndpoints).replace(/</g, '\\u003c')};
   window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _resp);
+  function renderApiJson(target, data) {
+    if (!target) return;
+    target.innerHTML = '';
+    try {
+      if (window.renderjson && typeof window.renderjson === 'function') {
+        if (typeof window.renderjson.set_show_to_level === 'function') window.renderjson.set_show_to_level(3);
+        if (typeof window.renderjson.set_icons === 'function') window.renderjson.set_icons('+', '-');
+        if (typeof window.renderjson.set_sort_objects === 'function') window.renderjson.set_sort_objects(false);
+        target.appendChild(window.renderjson(data));
+        return;
+      }
+    } catch (_) {}
+    var pretty = JSON.stringify(data, null, 2);
+    try {
+      if (typeof window.syntaxHighlight === 'function') target.innerHTML = window.syntaxHighlight(pretty);
+      else target.textContent = pretty;
+    } catch (_) {
+      target.textContent = pretty;
+    }
+  }
+  function rerenderCurrentApiJson() {
+    var panel = document.getElementById('api-response-panel');
+    var content = document.getElementById('api-response-content');
+    var data = window.__lastApiJsonData;
+    if (!panel || !content || !data) return;
+    renderApiJson(content, data);
+  }
+  if (!window.renderjson) {
+    var existing = document.querySelector('script[data-renderjson-lib]');
+    if (existing) {
+      existing.addEventListener('load', rerenderCurrentApiJson, { once: true });
+    }
+  }
   var _origGoToStep = window.goToStep;
   if (typeof _origGoToStep !== 'function') return;
   window.goToStep = function(id) {
@@ -760,31 +1342,56 @@ async function main(opts = {}) {
     var content = document.getElementById('api-response-content');
     var endpoint = document.getElementById('api-panel-endpoint');
     var data = window._stepApiResponses && window._stepApiResponses[id];
+    var body = panel.querySelector('.side-panel-body');
     if (data) {
       if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
-      if (typeof window._showApiPanelStub === 'function') {
-        window._showApiPanelStub(data);
-      } else if (typeof window.showApiPanel === 'function') {
-        window.showApiPanel(data);
-      } else {
-        panel.style.removeProperty('display');
-        panel.style.display = 'flex';
-        panel.classList.add('visible');
-        if (content) {
-          var pretty = JSON.stringify(data, null, 2);
-          if (typeof window.syntaxHighlight === 'function') content.innerHTML = window.syntaxHighlight(pretty);
-          else content.textContent = pretty;
-        }
+      panel.style.removeProperty('display');
+      panel.style.display = 'flex';
+      panel.classList.add('visible');
+      panel.classList.remove('api-json-collapsed');
+      if (body) {
+        body.style.display = '';
+        body.style.overflowY = 'auto';
+        body.style.maxHeight = 'calc(100vh - 140px)';
+      }
+      window.__lastApiJsonData = data;
+      if (content) {
+        renderApiJson(content, data);
       }
     } else {
       panel.style.setProperty('display', 'none', 'important');
-      panel.classList.remove('visible', 'expanded', 'open', 'active');
+      panel.classList.remove('visible', 'expanded', 'open', 'active', 'api-json-collapsed');
+      if (body) {
+        body.style.display = '';
+        body.style.overflowY = 'auto';
+      }
     }
   };
+  var jsonToggles = document.querySelectorAll('[data-testid="api-panel-toggle"], #api-panel-toggle');
+  jsonToggles.forEach(function(el) {
+    el.style.display = 'none';
+    el.setAttribute('aria-hidden', 'true');
+  });
+  try { delete window.toggleApiPanel; } catch (_) { window.toggleApiPanel = undefined; }
 })();
 </script>`;
     html = html.replace('</body>', `${apiPatch}\n</body>`);
     console.log(`[Build] Injected _stepApiResponses patch for ${Object.keys(stepApiResponses).length} step(s)`);
+  } else if (html.includes('api-response-panel') && html.includes('</body>') && !html.includes('window.__apiPanelNoJsonToggleApplied')) {
+    const collapsePatch = `<script>
+(function() {
+  if (window.__apiPanelNoJsonToggleApplied) return;
+  window.__apiPanelNoJsonToggleApplied = true;
+  var jsonToggles = document.querySelectorAll('[data-testid="api-panel-toggle"], #api-panel-toggle');
+  jsonToggles.forEach(function(el) {
+    el.style.display = 'none';
+    el.setAttribute('aria-hidden', 'true');
+  });
+  try { delete window.toggleApiPanel; } catch (_) { window.toggleApiPanel = undefined; }
+})();
+</script>`;
+    html = html.replace('</body>', `${collapsePatch}\n</body>`);
+    console.log('[Build] Disabled legacy API JSON toggle controls');
   }
 
   // ── Enforce 98% U.S. depository account coverage stat (Auth) ───────────────
@@ -828,6 +1435,43 @@ async function main(opts = {}) {
       'window._plaidLinkComplete = true;\n        if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }'
     );
     console.log('[Build] Injected handler.destroy() into onSuccess (Plaid modal cleanup)');
+  }
+
+  // ── Harden Plaid Link token bootstrap error handling ───────────────────────
+  // Generated apps commonly do:
+  //   fetch('/api/create-link-token').then(r => r.json()).then(data => Plaid.create({ token: data.link_token }))
+  // If the endpoint returns HTTP 500 with { error: ... }, Plaid.create() is still called
+  // with token=undefined, causing a misleading "Missing Link parameter" client error.
+  // Fix:
+  // 1) parse response body with status-aware check
+  // 2) guard on data.link_token before Plaid.create()
+  if (html.includes("fetch('/api/create-link-token'")) {
+    const before = html;
+    html = html.replace(
+      /\.then\(function\(r\)\s*\{\s*return r\.json\(\);\s*\}\)/,
+      `.then(function(r) {
+    return r.text().then(function(t) {
+      var j = {};
+      try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { raw: t }; }
+      if (!r.ok) {
+        var msg = (j && (j.error || j.error_message || j.display_message)) || ('HTTP ' + r.status);
+        throw new Error(msg);
+      }
+      return j;
+    });
+  })`
+    );
+    html = html.replace(
+      /window\._plaidHandler\s*=\s*Plaid\.create\(\{/,
+      `if (!data || !data.link_token) {
+      console.error('Failed to create link token: missing link_token in response', data);
+      return;
+    }
+    window._plaidHandler = Plaid.create({`
+    );
+    if (html !== before) {
+      console.log('[Build] Hardened Plaid token bootstrap (HTTP/error-aware + link_token guard)');
+    }
   }
 
   // ── Write outputs ──────────────────────────────────────────────────────────

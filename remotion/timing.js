@@ -3,74 +3,60 @@
 
 const STEP_TIMING = [
   {
-    "id": "dashboard-overview",
-    "label": "Chime Dashboard — Problem Framing",
-    "startFrame": 0,
-    "endFrame": 301,
-    "audioEndFrame": 269
+    "id": "problem-intro",
+    "label": "The Problem: Manual Income Verification",
+    "startFrame": 15,
+    "endFrame": 361,
+    "audioEndFrame": 276
   },
   {
-    "id": "transfers-page",
-    "label": "Transfers — Entry Point",
-    "startFrame": 301,
-    "endFrame": 557,
-    "audioEndFrame": 514
+    "id": "solution-intro",
+    "label": "Introducing Plaid Check Income Insights",
+    "startFrame": 376,
+    "endFrame": 773,
+    "audioEndFrame": 757
   },
   {
-    "id": "add-external-account",
-    "label": "Add External Account — CTA",
-    "startFrame": 557,
-    "endFrame": 828,
-    "audioEndFrame": 800
+    "id": "application-income-step",
+    "label": "Applicant Reaches Income Verification",
+    "startFrame": 788,
+    "endFrame": 1062,
+    "audioEndFrame": 1030
   },
   {
-    "id": "plaid-link-flow",
-    "label": "Plaid Link — Connect Bank Account",
-    "startFrame": 828,
-    "endFrame": 1259,
-    "audioEndFrame": 1235
+    "id": "plaid-link-cra",
+    "label": "Plaid Link — Bank Connection & Consent",
+    "startFrame": 1122,
+    "endFrame": 1851,
+    "audioEndFrame": 1387
   },
   {
-    "id": "post-link-success",
-    "label": "Chime App — Account Linked",
-    "startFrame": 1259,
-    "endFrame": 1550,
-    "audioEndFrame": 1539
+    "id": "report-generating",
+    "label": "Report Generation In Progress",
+    "startFrame": 1866,
+    "endFrame": 2121,
+    "audioEndFrame": 2134
   },
   {
-    "id": "auth-insight",
-    "label": "Plaid Insight — Auth/Get",
-    "startFrame": 1550,
-    "endFrame": 1937,
-    "audioEndFrame": 1880
+    "id": "report-ready",
+    "label": "Report Ready for Retrieval",
+    "startFrame": 2136,
+    "endFrame": 2439,
+    "audioEndFrame": 2383
   },
   {
-    "id": "identity-match-insight",
-    "label": "Plaid Insight — Identity Match",
-    "startFrame": 1937,
-    "endFrame": 2407,
-    "audioEndFrame": 2347
+    "id": "income-insights-insight",
+    "label": "Income Insights — Underwriting Context",
+    "startFrame": 2454,
+    "endFrame": 2774,
+    "audioEndFrame": 2729
   },
   {
-    "id": "signal-evaluate-insight",
-    "label": "Plaid Insight — Signal Evaluate",
-    "startFrame": 2407,
-    "endFrame": 2924,
-    "audioEndFrame": 2878
-  },
-  {
-    "id": "funds-available",
-    "label": "Chime App — Instant Funding Approved",
-    "startFrame": 2924,
-    "endFrame": 3224,
-    "audioEndFrame": 3183
-  },
-  {
-    "id": "closing-summary",
-    "label": "Closing — Quantified Outcomes",
-    "startFrame": 3224,
-    "endFrame": 3559,
-    "audioEndFrame": 3543
+    "id": "underwriting-outcome",
+    "label": "Underwriting-Ready Outcome",
+    "startFrame": 2789,
+    "endFrame": 3147,
+    "audioEndFrame": 3095
   }
 ];
 

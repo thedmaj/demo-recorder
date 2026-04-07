@@ -1,0 +1,220 @@
+================================================================================
+Liberty Mutual Insurance Claim Disbursements — Ownership + Rails Verification Demo
+================================================================================
+
+Build a branded demo for **Liberty Mutual** (U.S. insurance, https://www.libertymutual.com)
+showing a digital claim disbursement flow where a claimant links a bank account,
+Liberty verifies ownership with **Plaid Identity Match**, retrieves ACH rails with
+**Plaid Auth**, and disburses funds after verification checks.
+
+Open with claimant pain (slow checks, payout uncertainty) and close with a strong
+operations + customer outcome.
+
+Messaging priority:
+- Anchor on `inputs/plaid-value-props.md`
+- Anchor on `docs/plaid-demo-script-value-propositions.md`
+- Keep all performance claims compliance-safe (`can help`, `up to`, `typically`)
+
+Brand URL (optional, for brand-extract): https://www.libertymutual.com
+
+-------------------------------------------------------------------------------
+PLAID PRODUCTS & CONNECTION MODE
+-------------------------------------------------------------------------------
+
+Products featured:
+- Plaid Link
+- Plaid Auth
+- Plaid Identity Match
+
+Primary product family / flow type: `funding`
+
+Product knowledge sources to anchor on:
+- `inputs/products/plaid-auth.md`
+- `inputs/products/plaid-identity.md` (if present)
+- `inputs/products/plaid-funding.md` (if present)
+
+Connection / entry UX:
+- [x] Standard Plaid Link only (`/link/token/create`)
+- [ ] Plaid Layer path
+- [ ] IDV session as primary
+
+Recording expectation:
+- [x] Live Plaid Link in headless recording (single real SDK `plaidPhase: "launch"`)
+- [ ] Simulated host-only Link
+
+Sandbox/test data:
+- Use defaults from `inputs/plaid-link-sandbox.md`
+- Institution: First Platypus Bank (unless overridden by the recorder)
+
+-------------------------------------------------------------------------------
+USER MODEL / REQUIRED DATA
+-------------------------------------------------------------------------------
+
+Required user object fields for Identity Match:
+- `legal_name`
+- `phone_number` (E.164 format)
+- `email_address`
+- `address`: `street`, `city`, `region`, `postal_code`, `country`
+
+Required fields for Auth:
+- `access_token`
+- optional `account_ids` for scoped ACH retrieval
+
+Identity / permissible-purpose notes:
+- This is a claims payout verification flow.
+- Keep language factual and avoid legal/compliance guarantees.
+
+-------------------------------------------------------------------------------
+CRITICAL UI — HOST VS PLAID LAYERS
+-------------------------------------------------------------------------------
+
+Host app (Liberty branded):
+- Insurance claims context (claim detail + payment method selection)
+- No raw API JSON visible in host consumer screens
+- `#api-response-panel` hidden by default on non-insight steps
+
+Plaid insight screens:
+- Full-viewport Plaid insight beats for:
+  - `identity-match-insight`
+  - `auth-insight`
+- Use the single global `#api-response-panel`
+- Keep JSON collapsed by default (`api-json-collapsed`) and expandable via toggle
+
+If no additional insight beats:
+- Keep this flow to exactly two insight beats (Identity Match and Auth)
+
+-------------------------------------------------------------------------------
+MANDATORY FLOW ORDER (STORYBOARD + NARRATION + goToStep MUST ALIGN)
+-------------------------------------------------------------------------------
+
+| # | Beat type | What happens | Key API or UX |
+|---|-----------|--------------|----------------|
+| 1 | host | Claims agent/policyholder selects digital bank payout for approved claim | claim disbursement setup |
+| 2 | host | User taps "Link payout account" | launches Plaid Link |
+| 3 | Link | User completes Link institution + account selection | Plaid Link modal |
+| 4 | host | Token exchange confirms linked account metadata in host UI | `/item/public_token/exchange` |
+| 5 | Plaid insight | Ownership verification against claimant profile | `POST /identity/match` |
+| 6 | Plaid insight | ACH rails retrieval for selected account | `POST /auth/get` |
+| 7 | host | Liberty confirms payout destination and amount, then submits | claim payout confirmation |
+| 8 | host | Success outcome: payout initiated with verified account details | clear CTA/outcome |
+
+Hard rules:
+- Identity Match appears before Auth in the story.
+- Do not narrate guaranteed fraud elimination.
+- Keep API endpoint naming exact (`POST /identity/match`, `POST /auth/get`).
+
+Async lifecycle/readiness:
+- This flow is synchronous for demo purposes.
+- Show lightweight processing states, then immediate verification outcome.
+
+Primary fetch endpoints after Link:
+- `POST /identity/match`
+- `POST /auth/get`
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+Persona name: Erica Thompson
+Role/context: Auto policyholder receiving approved claim disbursement
+Host-app context: "Claim #LM-48219 approved, choose payout method"
+
+| Field | Value | Notes |
+|------|-------|-------|
+| claim_id | LM-48219 | shown in host claim header |
+| policyholder_name | Erica Thompson | KYC name |
+| legal_name_for_match | Erica L Thompson | slight format variance acceptable |
+| phone_number | +12125550172 | E.164 |
+| email_address | erica.thompson@example.com | used in Identity Match |
+| street | 1482 Franklin Ave | used in Identity Match |
+| city/state/zip | Boston, MA 02116 | used in Identity Match |
+| payout_amount_usd | 1842.67 | host confirmation step |
+
+Dynamic Link metadata:
+- Use `window._plaidInstitutionName`, `window._plaidAccountName`, `window._plaidAccountMask`
+- Never hardcode bank names in post-Link screens
+
+Insight fields to visualize:
+- Identity Match:
+  - `name.score`, `phone_number.score`, `email_address.score`, `address.score`
+  - overall ownership confidence summary
+- Auth:
+  - account + routing details availability
+  - selected account context for payout rails
+
+-------------------------------------------------------------------------------
+HOST APP SHELL (LAYOUT INTENT)
+-------------------------------------------------------------------------------
+
+- Branded insurer experience: claim summary card, payout method stepper, verification status
+- Primary CTA sequence:
+  1) Link payout account
+  2) Verify account owner
+  3) Confirm payout
+- Include clear "payout destination verified" callout before submission
+- Viewport target: 1440x900
+
+-------------------------------------------------------------------------------
+NARRATION & PACING (TARGETS)
+-------------------------------------------------------------------------------
+
+- Steps: 8
+- Per-step narration: 20-35 words
+- Opening in first 15 seconds: check-based disbursement friction
+- Climax: verified ownership + verified ACH rails for payout
+- Closing: faster, more confident claims disbursement outcome
+
+Sample messaging lines (Glean-informed for insurance use case):
+- "Liberty can shift claim disbursements from mailed checks to verified bank payouts."
+- "Identity Match helps confirm the payout account owner matches the claimant profile before funds move."
+- "Auth provides the ACH rails details needed to disburse to the selected account."
+- "This can reduce payout rework from misdirected or incorrectly entered account details."
+- "Claimants get a clearer, faster payment experience at the most important moment."
+- "Operations teams get stronger controls without adding manual checks to every claim."
+
+-------------------------------------------------------------------------------
+OPTIONAL: PRODUCT-SPECIFIC APPENDIX (INSURANCE CLAIMS)
+-------------------------------------------------------------------------------
+
+Compliance-safe quantified proof points for messaging (non-Liberty-specific):
+- Plaid insurance materials cite **up to 80% ACH return reduction** with stronger account verification.
+- Plaid materials cite **about 40% payment cost savings** when shifting suitable flows to bank rails.
+- Plaid reports broad consumer familiarity: **1 in 2 U.S. banked consumers** have connected with Plaid.
+
+Caveat language to enforce in script:
+- Use "can help", "typically", "up to"
+- Avoid "will", "guarantee", "eliminate fraud", "instant for all users"
+- State outcomes depend on institution/rail eligibility and Liberty controls
+
+-------------------------------------------------------------------------------
+[[SLIDE_OUTPUT_BEGIN]]
+OPTIONAL — SLIDE / POWERPOINT SUPPLEMENT
+-------------------------------------------------------------------------------
+
+Generate up to 4 slides:
+1) Claims payout challenge (checks, delays, claimant anxiety)
+2) Liberty + Plaid verification flow (Link -> Identity Match -> Auth -> Disburse)
+3) API proof slide: `POST /identity/match` summary + sample JSON
+4) API proof slide: `POST /auth/get` summary + sample JSON
+
+Slide rules:
+- Use Plaid slide template (`templates/slide-template/`)
+- `.slide-root` must remain responsive per template rules
+- For API slides, JSON panel can be shown in slide content
+- Keep host branding out of slide chrome
+
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT CHECKLIST
+-------------------------------------------------------------------------------
+
+[ ] Product names use approved Plaid naming
+[ ] Story order is Link -> Identity Match -> Auth -> payout outcome
+[ ] Insight JSON uses global `#api-response-panel`, collapsed by default
+[ ] Narration avoids over-claims and absolute guarantees
+[ ] Persona data is realistic and consistent with JSON
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

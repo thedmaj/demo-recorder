@@ -415,10 +415,13 @@ async function main(opts = {}) {
     // a Plaid Link sim step — that step contains the actual Plaid SDK auth flow.
     const nextStepIsPlaidSim = nextStepObj && PLAID_SIM_STEP_PATTERN.test(nextStepObj.id);
     const stepObj = demoScript.steps.find(s => s.id === stepId);
+    // plaidPhase:'launch' is authoritative regardless of duration (build-only mode synthesizes
+    // 5s timings, so the duration threshold would never be met in build-qa).
     const isLivePlaidLaunchStep = PLAID_LINK_LIVE
-      && stepTiming
-      && stepTiming.durationMs >= LIVE_PLAID_LAUNCH_DURATION_THRESHOLD_MS
-      && (/link.?launch/i.test(stepId) || nextStepIsPlaidSim || stepObj?.plaidPhase === 'launch');
+      && (stepObj?.plaidPhase === 'launch'
+        || (stepTiming
+            && stepTiming.durationMs >= LIVE_PLAID_LAUNCH_DURATION_THRESHOLD_MS
+            && (/link.?launch/i.test(stepId) || nextStepIsPlaidSim)));
 
     // When CDP screenshots exist for a Plaid Link sub-step, use them for full vision review
     // instead of auto-scoring. CDP screenshots capture the real Plaid iframe accurately.

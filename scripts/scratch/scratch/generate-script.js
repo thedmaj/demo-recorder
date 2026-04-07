@@ -27,6 +27,11 @@ const {
 const {
   inferProductFamily,
 } = require('../utils/product-profiles');
+const {
+  getPlaidSkillBundleForFamily,
+  getPlaidLinkUxSkillBundle,
+  writePlaidLinkUxSkillManifest,
+} = require('../utils/plaid-skill-loader');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
 const { writePipelineRunContext, buildRunContextPayload } = require('../utils/run-context');
 
@@ -69,7 +74,11 @@ const GENERATE_DEMO_SCRIPT_TOOL = {
       },
       plaidSandboxConfig: {
         type: 'object',
-        description: 'Optional sandbox credentials / config for Plaid Link recording',
+        description:
+          'Optional overrides for live Plaid Link recording (phone, otp, institutionId, username, password, mfa, plaidLinkFlow). ' +
+          'For CRA / Plaid Check (Base Report or Income Insights), use institution login user_credit_profile_good or another ' +
+          'user_credit_* sandbox persona with password pass_good. Do not use user_good/pass_good for CRA Link or user_bank_income/{} ' +
+          '(that pair is for traditional Bank Income only). Non-OAuth institutions only (e.g. First Platypus Bank).',
       },
       steps: {
         type: 'array',
@@ -79,6 +88,7 @@ const GENERATE_DEMO_SCRIPT_TOOL = {
           properties: {
             id:              { type: 'string', description: 'kebab-case step identifier' },
             label:           { type: 'string' },
+            sceneType:       { type: 'string', description: '"host" | "link" | "insight" | "slide"' },
             narration:       { type: 'string', description: '20–35 words for ElevenLabs TTS' },
             durationHintMs:  { type: 'number', description: 'Expected screen duration in ms' },
             plaidPhase:      { type: 'string', description: '"launch" for the Plaid Link step' },
@@ -173,6 +183,7 @@ function waitForApproval(message) {
 }
 
 function isInsightLikeStep(step) {
+  if (String(step?.sceneType || '').toLowerCase() === 'insight') return true;
   const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
   return /\binsight\b|\bapi insight\b|\bplaid insight\b/.test(haystack);
 }
@@ -182,15 +193,187 @@ function isAmountEntryStep(step) {
   return /\bamount\b|\bfunding amount\b|\btransfer amount\b/.test(haystack);
 }
 
+function normalizeSceneType(step) {
+  const raw = String(step?.sceneType || '').trim().toLowerCase();
+  if (raw === 'slide') {
+    const text = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+    const explicitlySlide = /\bslide\b/.test(text) && /\.slide-root\b/.test(text);
+    const likelyInsight = /\binsight\b/.test(text) || !!step?.apiResponse?.endpoint || !!step?.apiResponse?.response;
+    return explicitlySlide || !likelyInsight ? 'slide' : 'insight';
+  }
+  if (raw === 'host' || raw === 'link' || raw === 'insight') return raw;
+  if (step?.plaidPhase === 'launch') return 'link';
+  if (step?.apiResponse?.endpoint || step?.apiResponse?.response) return 'insight';
+  return 'host';
+}
+
+function enforceCanonicalLaunchInteraction(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return null;
+  const launchStep = demoScript.steps.find((s) => s && s.plaidPhase === 'launch');
+  if (!launchStep) return null;
+  launchStep.sceneType = 'link';
+  launchStep.interaction = launchStep.interaction || {};
+  launchStep.interaction.action = 'click';
+  launchStep.interaction.target = 'link-external-account-btn';
+  launchStep.interaction.waitMs = 120000;
+  return launchStep.id || null;
+}
+
+function isPreLinkExplainerStep(step) {
+  if (!step || step.plaidPhase === 'launch') return false;
+  if (step.apiResponse?.endpoint) return false;
+  const text = [step?.id, step?.label, step?.narration, step?.visualState]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return /\b(pre[-\s]?link|link (?:your )?bank|connect (?:your )?bank|add (?:a )?bank(?: account)?|open plaid|launch plaid|continue with plaid|link externally)\b/.test(text);
+}
+
+function mergePreLinkIntoLaunchStep(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return null;
+  const launchIdx = demoScript.steps.findIndex((s) => s && s.plaidPhase === 'launch');
+  if (launchIdx <= 0) return null;
+  const launchStep = demoScript.steps[launchIdx];
+  const preLinkStep = demoScript.steps[launchIdx - 1];
+  if (!isPreLinkExplainerStep(preLinkStep)) return null;
+
+  if (!launchStep.interaction && preLinkStep.interaction) {
+    launchStep.interaction = preLinkStep.interaction;
+  }
+  if (!launchStep.visualState && preLinkStep.visualState) {
+    launchStep.visualState = preLinkStep.visualState;
+  } else if (preLinkStep.visualState && launchStep.visualState) {
+    launchStep.visualState = `${preLinkStep.visualState} Then ${launchStep.visualState}`;
+  }
+  if (!launchStep.label && preLinkStep.label) {
+    launchStep.label = preLinkStep.label;
+  }
+  const preMs = Number(preLinkStep.durationHintMs || 0);
+  const launchMs = Number(launchStep.durationHintMs || 0);
+  if (preMs > 0 || launchMs > 0) {
+    launchStep.durationHintMs = preMs + launchMs;
+  }
+  if (typeof launchStep.durationMs === 'number' || typeof preLinkStep.durationMs === 'number') {
+    const preDurationMs = Number(preLinkStep.durationMs || 0);
+    const launchDurationMs = Number(launchStep.durationMs || 0);
+    launchStep.durationMs = preDurationMs + launchDurationMs;
+  }
+
+  demoScript.steps.splice(launchIdx - 1, 1);
+  return { removedStepId: preLinkStep.id, launchStepId: launchStep.id };
+}
+
+function extractTopValuePropositions(productResearch, maxItems = 3) {
+  const candidates = [];
+  const pushMany = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (const item of arr) {
+      if (typeof item !== 'string') continue;
+      const cleaned = item.replace(/\s+/g, ' ').trim().replace(/^[-*]\s*/, '');
+      if (cleaned) candidates.push(cleaned);
+    }
+  };
+  pushMany(productResearch?.synthesizedInsights?.valuePropositions);
+  pushMany(productResearch?.solutionsMasterValueProps);
+  pushMany(productResearch?.solutionsMasterContext?.valuePropositionStatements);
+  const seen = new Set();
+  const deduped = [];
+  for (const value of candidates) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(value);
+    if (deduped.length >= maxItems) break;
+  }
+  return deduped;
+}
+
+function buildValueSummaryNarration(valueProps) {
+  const defaults = [
+    'faster approvals with lower friction',
+    'stronger account confidence before funds move',
+    'safer funding decisions with clear auditability',
+  ];
+  const items = (Array.isArray(valueProps) && valueProps.length > 0 ? valueProps : defaults)
+    .slice(0, 3)
+    .map((v) => v.replace(/[.]+$/g, '').trim())
+    .filter(Boolean);
+  const summary = items.length >= 3
+    ? `${items[0]}, ${items[1]}, and ${items[2]}`
+    : items.join(' and ');
+  return `Plaid closes with clear business value: ${summary}. The team moves faster with lower risk and a better customer approval experience.`;
+}
+
+function isValueSummaryStep(step) {
+  if (!step) return false;
+  const id = String(step.id || '').toLowerCase();
+  const label = String(step.label || '').toLowerCase();
+  const sceneType = String(step.sceneType || '').toLowerCase();
+  if (sceneType === 'slide' && /\b(summary|value|outcome|wrap)\b/.test(label)) return true;
+  return /\b(value-summary|summary-slide|plaid-outcome|final-summary)\b/.test(id);
+}
+
+function ensureFinalValueSummarySlide(demoScript, productResearch) {
+  if (!demoScript || !Array.isArray(demoScript.steps) || demoScript.steps.length === 0) return null;
+  const topValueProps = extractTopValuePropositions(productResearch, 3);
+  const narration = buildValueSummaryNarration(topValueProps);
+  const visualBullets = (topValueProps.length ? topValueProps : [
+    'Faster approvals',
+    'Lower funding risk',
+    'Better customer conversion',
+  ]).slice(0, 3).join(' | ');
+  const normalized = {
+    id: 'value-summary-slide',
+    label: 'Value Summary',
+    sceneType: 'slide',
+    narration,
+    durationHintMs: 9000,
+    visualState: `.slide-root final summary with top value propositions: ${visualBullets}. Emphasize user outcomes and next-step confidence.`,
+  };
+
+  const idx = demoScript.steps.findIndex((s) => isValueSummaryStep(s));
+  let action = 'inserted';
+  if (idx >= 0) {
+    const existing = demoScript.steps[idx] || {};
+    const merged = {
+      ...existing,
+      ...normalized,
+      narration: typeof existing.narration === 'string' && existing.narration.trim()
+        ? existing.narration
+        : normalized.narration,
+      visualState: typeof existing.visualState === 'string' && existing.visualState.trim()
+        ? existing.visualState
+        : normalized.visualState,
+    };
+    delete merged.apiResponse;
+    delete merged.plaidPhase;
+    demoScript.steps.splice(idx, 1);
+    demoScript.steps.push(merged);
+    action = idx === demoScript.steps.length - 1 ? 'normalized' : 'moved-to-final';
+  } else {
+    demoScript.steps.push(normalized);
+  }
+  return { action, id: normalized.id };
+}
+
 function validateDemoScript(demoScript, opts = {}) {
   const errors = [];
   const warnings = [];
   const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
   const plaidLinkLive = opts.plaidLinkLive === true;
   const productFamily = opts.productFamily || 'generic';
+  const requireFinalValueSummarySlide = opts.requireFinalValueSummarySlide === true;
 
   const idCounts = new Map();
   for (const step of steps) {
+    const sceneType = normalizeSceneType(step);
+    if (step.sceneType !== sceneType) step.sceneType = sceneType;
+    if (sceneType === 'link' && step.plaidPhase !== 'launch') {
+      errors.push(`Step "${step.id}" has sceneType "link" but is missing plaidPhase:"launch".`);
+    }
+    if (sceneType === 'slide' && step.apiResponse?.endpoint && /\binsight\b/i.test([step?.id, step?.label].join(' '))) {
+      warnings.push(`Step "${step.id}" is marked sceneType "slide" but looks like an insight step. Use sceneType "insight" unless .slide-root is intentional.`);
+    }
     if (!step?.id) {
       errors.push('A step is missing an id.');
       continue;
@@ -289,6 +472,39 @@ function validateDemoScript(demoScript, opts = {}) {
   if (plaidLinkLive && launchSteps.length === 0) {
     errors.push('PLAID_LINK_LIVE=true requires exactly one step with plaidPhase:"launch".');
   }
+  if (launchSteps.length === 1) {
+    const launchId = launchSteps[0].id;
+    const launchIdx = steps.findIndex(s => s.id === launchId);
+    // Only inspect the immediate lead-in to launch to avoid flagging generic onboarding steps.
+    const preLaunchWindow = launchIdx > 0 ? steps.slice(Math.max(0, launchIdx - 4), launchIdx) : [];
+    const preLinkExplainers = preLaunchWindow.filter((step) => {
+      return isPreLinkExplainerStep(step);
+    });
+    if (preLinkExplainers.length > 0) {
+      errors.push(
+        `Standalone pre-Link explainer step(s) detected before launch step "${launchId}": ` +
+        `${preLinkExplainers.map(s => s.id).join(', ')}. Merge pre-Link explainer + launch into one step.`
+      );
+    }
+  }
+
+  if (requireFinalValueSummarySlide && steps.length > 0) {
+    const finalStep = steps[steps.length - 1];
+    if (!isValueSummaryStep(finalStep)) {
+      errors.push('Final step must be a value-summary slide with sceneType:"slide".');
+    } else {
+      if (String(finalStep.sceneType || '').toLowerCase() !== 'slide') {
+        errors.push('Final value-summary step must use sceneType:"slide".');
+      }
+      const text = [finalStep.label, finalStep.narration, finalStep.visualState]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      if (!/\bvalue|outcome|benefit|faster|lower risk|conversion|confidence\b/.test(text)) {
+        warnings.push('Final value-summary slide should clearly state user/business value outcomes.');
+      }
+    }
+  }
 
   return { errors, warnings, productFamily };
 }
@@ -325,11 +541,41 @@ async function main() {
   const productFamily = inferProductFamily({ promptText, productResearch });
   const curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
   const curatedDigest = buildCuratedDigest(curatedProductKnowledge);
-  if (productResearch && typeof productResearch === 'object') {
-    productResearch.productFamily = productFamily;
-    productResearch.curatedProductKnowledge = curatedProductKnowledge;
-    productResearch.curatedDigest = curatedDigest;
+  const skillBundle = getPlaidSkillBundleForFamily(productFamily, { promptText });
+  const skillMd = skillBundle.skillLoaded ? skillBundle.text : '';
+  const linkUxSkillBundle = getPlaidLinkUxSkillBundle({ promptText });
+  const linkUxSkillMd = linkUxSkillBundle.skillLoaded ? linkUxSkillBundle.text : '';
+  if (linkUxSkillBundle.skillLoaded) {
+    console.log(`[Script] Plaid Link UX skill loaded (${linkUxSkillBundle.flowType} flow)`);
   }
+  writePlaidLinkUxSkillManifest(OUT_DIR, {
+    stage: 'script',
+    flowType: linkUxSkillBundle.flowType,
+    markdownPath: linkUxSkillBundle.markdownPath,
+    skillLoaded: linkUxSkillBundle.skillLoaded,
+    chars: linkUxSkillBundle.chars,
+  });
+
+  const productResearchForPrompt =
+    productResearch && typeof productResearch === 'object'
+      ? {
+        ...productResearch,
+        productFamily,
+        curatedProductKnowledge,
+        curatedDigest,
+        plaidSkillMarkdown: skillMd,
+        plaidLinkUxSkillMarkdown: linkUxSkillMd,
+      }
+      : {
+        synthesizedInsights: {},
+        internalKnowledge: [],
+        apiSpec: {},
+        productFamily,
+        curatedProductKnowledge,
+        curatedDigest,
+        plaidSkillMarkdown: skillMd,
+        plaidLinkUxSkillMarkdown: linkUxSkillMd,
+      };
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
@@ -340,14 +586,7 @@ async function main() {
   // Build prompts from the shared template
   const { system: systemPrompt, userMessages } = buildScriptGenerationPrompt(
     ingestedInputs || { texts: [], screenshots: [], transcriptions: [] },
-    productResearch || {
-      synthesizedInsights: {},
-      internalKnowledge: [],
-      apiSpec: {},
-      productFamily,
-      curatedProductKnowledge,
-      curatedDigest,
-    }
+    productResearchForPrompt
   );
 
   // NOTE: The Anthropic API does NOT allow combining extended thinking with
@@ -404,6 +643,19 @@ async function main() {
     process.exit(1);
   }
 
+  const mergedLaunch = mergePreLinkIntoLaunchStep(demoScript);
+  if (mergedLaunch) {
+    console.log(`[Script] Merged pre-Link explainer "${mergedLaunch.removedStepId}" into launch step "${mergedLaunch.launchStepId}".`);
+  }
+  const canonicalLaunchId = enforceCanonicalLaunchInteraction(demoScript);
+  if (canonicalLaunchId) {
+    console.log(`[Script] Normalized launch interaction target for "${canonicalLaunchId}" to data-testid="link-external-account-btn".`);
+  }
+  const summarySlide = ensureFinalValueSummarySlide(demoScript, productResearchForPrompt);
+  if (summarySlide) {
+    console.log(`[Script] Final value summary slide ${summarySlide.action} (${summarySlide.id}).`);
+  }
+
   // ── Narration word count validation ───────────────────────────────────────
   // CLAUDE.md spec: 20–35 words per step narration (fits ~8–12s of speech at 150 wpm)
   // We enforce 8–35 here (8 as floor to catch accidental one-liners).
@@ -449,6 +701,7 @@ async function main() {
   const scriptValidation = validateDemoScript(demoScript, {
     plaidLinkLive: process.env.PLAID_LINK_LIVE === 'true',
     productFamily,
+    requireFinalValueSummarySlide: true,
   });
   if (scriptValidation.errors.length > 0) {
     console.error('[Script] Demo script validation failed:');
@@ -511,6 +764,14 @@ module.exports = {
   validateDemoScript,
   isInsightLikeStep,
   isAmountEntryStep,
+  normalizeSceneType,
+  enforceCanonicalLaunchInteraction,
+  isPreLinkExplainerStep,
+  mergePreLinkIntoLaunchStep,
+  extractTopValuePropositions,
+  buildValueSummaryNarration,
+  isValueSummaryStep,
+  ensureFinalValueSummarySlide,
 };
 
 if (require.main === module) {

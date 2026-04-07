@@ -9,6 +9,7 @@ repeat long technical build specs here — the pipeline loads them automatically
 
   • **`CLAUDE.md`** — DOM contract, Plaid Link recording, design tokens, manual nav
   • **`skills/plaid-integration.skill`** — Plaid integration patterns (Link, products, APIs)
+  • **`skills/plaid-link-prelink-ui-skill.md`** — pre-Link UX/copy conventions (auto-selected generic vs credit-specific by use case)
   • **`inputs/plaid-link-sandbox.md`** — sandbox banks, credentials, IDV persona
   • **`inputs/products/plaid-*.md`** — approved terminology, talk tracks, proof points
 
@@ -63,6 +64,9 @@ PRODUCTS & FAMILY
 
 **Products featured (approved names only):**  
 «e.g. Plaid Link, Plaid Layer, Plaid Identity Verification (IDV), Plaid Auth, Plaid Signal, …»
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):  
+«e.g. Account Opening, Funding, Consumer Report Underwriting»
 
 **Primary product family** (pick one — aligns with pipeline profiles):  
 «`funding` | `cra_base_report` | `income_insights` | other»

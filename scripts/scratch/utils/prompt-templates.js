@@ -40,6 +40,17 @@ function toJSON(value) {
   }
 }
 
+/** Normalize synthesizedInsights for prompts (string or structured object from research). */
+function formatSynthesizedInsights(si) {
+  if (si == null || si === '') return '';
+  if (typeof si === 'string') return si;
+  try {
+    return JSON.stringify(si, null, 2);
+  } catch (_) {
+    return String(si);
+  }
+}
+
 function resolveProductFamily(productResearch = {}, promptText = '') {
   if (productResearch.productFamily) return productResearch.productFamily;
   return inferProductFamilyFromText(promptText || productResearch.product || '');
@@ -126,6 +137,37 @@ function formatBuildQaDiagnosticSummary(summary) {
   return out;
 }
 
+function formatSolutionsMasterPromptBlock(solutionsMaster) {
+  if (!solutionsMaster || typeof solutionsMaster !== 'object') return '';
+  const requested = Array.isArray(solutionsMaster.requestedSolutionNames)
+    ? solutionsMaster.requestedSolutionNames
+    : [];
+  const resolved = Array.isArray(solutionsMaster.resolvedSolutions)
+    ? solutionsMaster.resolvedSolutions
+    : [];
+  const unresolved = Array.isArray(solutionsMaster.unresolvedSolutionNames)
+    ? solutionsMaster.unresolvedSolutionNames
+    : [];
+  const vps = Array.isArray(solutionsMaster.valuePropositionStatements)
+    ? solutionsMaster.valuePropositionStatements.slice(0, 20)
+    : [];
+  const apis = Array.isArray(solutionsMaster.apiNames)
+    ? solutionsMaster.apiNames.slice(0, 30)
+    : [];
+  if (!requested.length && !resolved.length && !vps.length && !apis.length) return '';
+  const lines = [];
+  if (requested.length) lines.push(`- Requested solutions: ${requested.join(' | ')}`);
+  if (resolved.length) lines.push(`- Resolved solutions: ${resolved.map((s) => s.name || s.id).join(' | ')}`);
+  if (unresolved.length) lines.push(`- Unresolved solutions: ${unresolved.join(' | ')}`);
+  if (apis.length) lines.push(`- APIs/components referenced: ${apis.join(' | ')}`);
+  if (vps.length) {
+    lines.push('- Value proposition statements from solution plays/content:');
+    vps.forEach((v) => lines.push(`  - ${v}`));
+  }
+  if (solutionsMaster.transportUsed) lines.push(`- Transport used: ${solutionsMaster.transportUsed}`);
+  return `## SOLUTIONS MASTER CONTEXT\n\n${lines.join('\n')}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Brand theming
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,6 +226,8 @@ function renderBrandBlock(brand) {
   const a  = brand.atmosphere  || {};
   const sp = brand.sidePanels  || {};
   const logo = brand.logo      || {};
+  const logoShellBg = logo.shellBg || (brand.mode === 'light' ? 'rgba(15,23,42,0.06)' : 'rgba(255,255,255,0.12)');
+  const logoShellBorder = logo.shellBorder || (brand.mode === 'light' ? 'rgba(15,23,42,0.16)' : 'rgba(255,255,255,0.24)');
 
   const lines = [];
   lines.push(`- HOST APP DESIGN SYSTEM — ${brand.name} brand (applies to app chrome only; Plaid Link modal is always white/Plaid-branded):`);
@@ -239,12 +283,29 @@ function renderBrandBlock(brand) {
   if (sp.jsonStringColor) lines.push(`    JSON string color: ${sp.jsonStringColor}`);
   if (sp.jsonNumberColor) lines.push(`    JSON number color: ${sp.jsonNumberColor}`);
 
-  // Logo
+  // Logo: ONE Brandfetch mark in nav — wordmark + square icon are often the same tile (double TD).
+  if (logo.imageUrl && /^https?:\/\//i.test(logo.imageUrl)) {
+    lines.push(
+      `    Logo image (HOST): wrap exactly one logo image in a visible shell for contrast:\n` +
+      `      <div data-testid="host-bank-logo-shell" style="display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:10px;background:${logoShellBg};border:1px solid ${logoShellBorder}">\n` +
+      `        <img src="${logo.imageUrl}" alt="${(brand.name || 'Bank').replace(/"/g, '')}" data-testid="host-bank-logo-img" height="28" style="object-fit:contain;max-height:32px;">\n` +
+      `      </div>\n` +
+      `      exactly ONE bank mark in the header/nav per step (this URL only). Do NOT add a second Brandfetch <img> beside it.`
+    );
+  } else if (logo.iconUrl && /^https?:\/\//i.test(logo.iconUrl)) {
+    lines.push(
+      `    Logo image (HOST): wrap exactly one logo image in a visible shell for contrast:\n` +
+      `      <div data-testid="host-bank-logo-shell" style="display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:10px;background:${logoShellBg};border:1px solid ${logoShellBorder}">\n` +
+      `        <img src="${logo.iconUrl}" alt="${(brand.name || 'Bank').replace(/"/g, '')}" data-testid="host-bank-logo-img" height="28" style="object-fit:contain;">\n` +
+      `      </div>\n` +
+      `      use only when no wordmark URL exists; still exactly ONE <img> in nav.`
+    );
+  }
   if (logo.wordmark) {
-    // Only pass SVG URL/string to the build agent, never emoji characters from svgOrEmoji
     const svgVal = logo.svgOrEmoji && !logo.svgOrEmoji.match(/\p{Emoji}/u) ? `${logo.svgOrEmoji} ` : '';
-    lines.push(`    Logo:              ${svgVal}"${logo.wordmark}" — color ${logo.color || c.accentCta}, ` +
-      `${logo.fontSize}/${logo.fontWeight}, letter-spacing ${logo.letterSpacing || 'normal'}`);
+    lines.push(`    Logo (text fallback): ${svgVal}"${logo.wordmark}" — color ${logo.color || c.accentCta}, ` +
+      `${logo.fontSize}/${logo.fontWeight}, letter-spacing ${logo.letterSpacing || 'normal'}` +
+      (logo.imageUrl ? ` (use only if images fail to load)` : ''));
   }
 
   // Frontend-design quality principles — scoped to host app chrome only
@@ -253,6 +314,14 @@ function renderBrandBlock(brand) {
   lines.push(`        Use real brand patterns. Depth and surface hierarchy: ${brand.mode === 'light'
     ? 'white cards on light-gray page bg, subtle shadows, clear nav separation'
     : 'layered dark surfaces, accent color glows, high contrast CTAs'}.`);
+  lines.push(`      - UX baseline for host apps: default the PRIMARY page background to white or a very light neutral`);
+  lines.push(`        whenever brand colors allow. Keep contrast strong and preserve brand accents on CTA, nav, and key highlights.`);
+  lines.push(`        Reserve dark, Plaid-heavy surfaces for explicit Plaid insight/slide contexts, not general host screens.`);
+  lines.push(`      - For dark-brand profiles, reinterpret tokens for host UX: keep nav/sidebar brand-forward if needed,`);
+  lines.push(`        but keep the content canvas and primary cards on light surfaces by default (white/light-gray).`);
+  if (c.navAccentStripe) {
+    lines.push(`      - Prefer ${c.navAccentStripe} for host emphasis accents when a brighter CTA token feels too aggressive on light surfaces.`);
+  }
   lines.push(`      - Motion with purpose: step transitions use "${m.stepTransition}".`);
   lines.push(`        Card entrances: ${m.cardEntrance}. Button hover: ${m.buttonHover}.`);
   lines.push(`      - Typography as identity: headings set in ${(t.fontHeading || '').split(',')[0]}.`);
@@ -387,6 +456,11 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
   const curatedForPrompt = resolveCuratedKnowledgeForPrompt(productResearch, productFamily);
   const curatedKnowledgeBlock = formatCuratedKnowledge(curatedForPrompt);
   const pipelineCtxBlock = formatPipelineRunContextBlock(productResearch.pipelineRunContext);
+  const solutionsMasterBlock = formatSolutionsMasterPromptBlock(productResearch.solutionsMasterContext);
+  const linkUxSkillBlock =
+    productResearch && typeof productResearch.plaidLinkUxSkillMarkdown === 'string'
+      ? productResearch.plaidLinkUxSkillMarkdown.trim()
+      : '';
 
   const system =
     `You are a senior Plaid demo designer with deep knowledge of Plaid's product ` +
@@ -410,15 +484,17 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
     `- Narration: 20–35 words per step\n` +
     `- Include a climactic reveal with a quantified outcome\n` +
     `- Use realistic persona data (never generic placeholders)\n` +
-    `- No error states, declined flows, or unresolved loading spinners`;
+    `- No error states, declined flows, or unresolved loading spinners\n\n` +
+    `Claims and stats: prefer **CURATED PRODUCT KNOWLEDGE** (verbatim proof points and talk tracks). ` +
+    `Use **PRODUCT RESEARCH** mainly for API facts, Gong color, and internal snippets — do not invent numbers.`;
 
   // Build the multi-part user message content array
   const contentBlocks = [];
 
-  // Research block
+  // Research block (object or string)
   contentBlocks.push({
     type: 'text',
-    text: `## PRODUCT RESEARCH\n\n${productResearch.synthesizedInsights || ''}`,
+    text: `## PRODUCT RESEARCH\n\n${formatSynthesizedInsights(productResearch.synthesizedInsights)}`,
   });
 
   // Slide output requirements (optional) — keep separate so Haiku does not miss it.
@@ -442,6 +518,35 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `Profile label: ${productProfile.label}\n\n` +
       `Product-family-specific accuracy rules:\n${formatProductAccuracyRules(productProfile)}`,
   });
+
+  if (solutionsMasterBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `${solutionsMasterBlock}\n\n` +
+        `Use this as foundational context for selected solutions (components/APIs + value props) before adding gap-fill facts from AskBill or Glean evidence.`,
+    });
+  }
+
+  if (linkUxSkillBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `${linkUxSkillBlock}\n\n` +
+        `Use this specifically for pre-Link and pre-Plaid UX composition, copy hierarchy, CTA labels, and security/value framing.`,
+    });
+  }
+
+  const skillMd =
+    productResearch && typeof productResearch.plaidSkillMarkdown === 'string'
+      ? productResearch.plaidSkillMarkdown.trim()
+      : '';
+  if (skillMd) {
+    contentBlocks.push({
+      type: 'text',
+      text: skillMd,
+    });
+  }
 
   if (curatedKnowledgeBlock) {
     contentBlocks.push({
@@ -583,6 +688,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `    {\n` +
       `      "id": "<kebab-case string>",\n` +
       `      "label": "<string>",\n` +
+      `      "sceneType": "<host|link|insight|slide>",\n` +
       `      "narration": "<20–35 words, active voice, quantified outcomes>",\n` +
       `      "durationMs": <number>,\n` +
       `      "interaction": {\n` +
@@ -605,11 +711,27 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `When the demo includes Plaid Link, use EXACTLY ONE step for the entire Plaid flow.\n` +
       `Set "plaidPhase": "launch" on that step. Do NOT create separate sub-steps for\n` +
       `consent, OTP, institution selection, account selection, or success screens.\n` +
+      `Do NOT create a standalone pre-Link explainer step before launch.\n` +
+      `Any trust/value explainer content must be merged into the SAME launch step screen/state.\n` +
       `The recording automation handles those internally via CDP iframe automation.\n` +
       `The single step's narration (≤35 words) must cover all Plaid story beats while matching\n` +
       `what is visible inside the modal, not the button click that triggers it.\n` +
       `e.g. "Recognized as a returning user, Berta confirms with a one-time code,\n` +
       `selects her checking account, and connects in seconds — no credentials required."\n\n` +
+      `SCENE METADATA RULE (CRITICAL):\n` +
+      `Set sceneType for every step and keep it consistent with structure:\n` +
+      `- host: customer-branded host UI step\n` +
+      `- link: the single Plaid Link launch step (must also have plaidPhase:"launch")\n` +
+      `- insight: Plaid insight step using global api-response-panel (NOT .slide-root)\n` +
+      `- slide: template-driven slide step that uses .slide-root\n` +
+      `Do not label insight steps as slide unless they intentionally render .slide-root.\n\n` +
+      `FINAL VALUE SUMMARY SLIDE RULE (CRITICAL):\n` +
+      `The LAST step in the demo MUST be a Plaid-branded value-summary slide (sceneType:"slide").\n` +
+      `This summary slide must synthesize the strongest messaging discovered in PRODUCT RESEARCH,\n` +
+      `especially synthesizedInsights.valuePropositions and, when present, SOLUTIONS MASTER\n` +
+      `value proposition statements.\n` +
+      `Use concise user-benefit language and outcomes. Avoid decorative internal model metrics\n` +
+      `or scorecards unless they directly explain a user action or decision.\n\n` +
       `ACCURACY RULES (CRITICAL — confirmed via Plaid internal docs and curated product knowledge):\n` +
       `${formatProductAccuracyRules(productProfile)}\n` +
       `- Latency claims: "in real time" is safe. "under one second" is unverified — avoid.`,
@@ -631,6 +753,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
  * @param {object} demoScript  Parsed demo-script.json object
  * @param {object} [opts]      Options
  * @param {boolean} [opts.plaidLinkLive]  When true, include live Plaid Link architecture notes
+ * @param {string}  [opts.plaidSkillBrief] Excerpt from Plaid integration skill (Link, APIs)
  * @returns {{ system: string, userMessages: Array }}
  */
 function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
@@ -639,7 +762,15 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
     `for B2B SaaS sales teams. You understand Plaid's design system and the DOM contract ` +
     `that Playwright recording scripts depend on.`;
 
-  let userText =
+  let userText = '';
+  if (opts.plaidSkillBrief && String(opts.plaidSkillBrief).trim()) {
+    userText +=
+      `## PLAID INTEGRATION SKILL (reference — product flows)\n\n` +
+      `${String(opts.plaidSkillBrief).trim().slice(0, 12000)}\n\n` +
+      `Use the skill for Link/token/product ordering; the DOM contract in the next build step is authoritative for the demo app.\n\n`;
+  }
+
+  userText +=
     `Given the following demo script, describe the frontend architecture ` +
     `in approximately 200 words. Cover:\n\n` +
     `1. Number of screens and their logical groupings\n` +
@@ -688,6 +819,8 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
  * @param {string}  [opts.designPluginHtml]  assetlib/index.html — pixel-perfect Plaid Link modal ref
  * @param {string}  [opts.designPluginCss]   assetlib/plaid-link.css source
  * @param {object}  [opts.brand]             Brand profile from brand/*.json. Falls back to Plaid defaults.
+ * @param {string}  [opts.plaidSkillMarkdown] Plaid integration skill bundle (repo ZIP excerpts)
+ * @param {string}  [opts.plaidLinkUxSkillMarkdown] Plaid Link UX markdown skill excerpt
  * @returns {{ system: string, userMessages: Array }}
  */
 function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null, opts = {}) {
@@ -703,29 +836,66 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     );
   const curatedKnowledgeBlock = formatCuratedKnowledge(curatedForPrompt);
   const pipelineCtxBlock = formatPipelineRunContextBlock(opts.pipelineRunContext);
+  const solutionsMasterBlock = formatSolutionsMasterPromptBlock(opts.solutionsMasterContext);
+  const linkUxSkillBlock = typeof opts.plaidLinkUxSkillMarkdown === 'string'
+    ? opts.plaidLinkUxSkillMarkdown.trim()
+    : '';
   const buildQaDiagBlock = formatBuildQaDiagnosticSummary(opts.buildQaDiagnosticSummary);
 
-  let cdnRule = `- Single index.html file: all CSS and JavaScript inlined, zero external libraries or CDN links.\n`;
+  let cdnRule =
+    `- Single index.html file: all CSS and JavaScript inlined.\n` +
+    `  EXCEPTION: allow renderjson viewer script in <head>:\n` +
+    `  <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n`;
   if (opts.plaidLinkLive) {
-    cdnRule = `- Single index.html file: all CSS and JavaScript inlined. EXCEPTION: load the Plaid Link SDK from https://cdn.plaid.com/link/v2/stable/link-initialize.js (this is the ONLY allowed CDN link).\n`;
+    cdnRule =
+      `- Single index.html file: all CSS and JavaScript inlined.\n` +
+      `  EXCEPTIONS in <head>:\n` +
+      `  - Plaid Link SDK: https://cdn.plaid.com/link/v2/stable/link-initialize.js\n` +
+      `  - JSON viewer: https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js\n`;
   }
   if (brand.typography && brand.typography.googleFontsImport) {
     cdnRule += `  ALSO ALLOWED: the Google Fonts @import specified in the brand design system below (CSS only, in <style> tag).\n`;
+  }
+  const logoImg = brand.logo || {};
+  const primaryBrandImg =
+    (logoImg.imageUrl && /^https?:\/\//i.test(logoImg.imageUrl) && logoImg.imageUrl) ||
+    (logoImg.iconUrl && /^https?:\/\//i.test(logoImg.iconUrl) && logoImg.iconUrl) ||
+    null;
+  if (primaryBrandImg) {
+    cdnRule +=
+      `  ALSO ALLOWED: a single HOST bank <img> — ${primaryBrandImg} (one URL only in nav; no second Brandfetch icon beside wordmark).\n`;
   }
 
   const system =
     `You are an expert frontend developer generating a self-contained HTML demo ` +
     `application for Plaid. The app will be recorded by Playwright at 1440×900.\n\n` +
+    `When a **PLAID INTEGRATION SKILL** block appears in the user message, use it for Link tokens, ` +
+    `product API ordering, and sandbox-oriented integration patterns. This prompt's DOM contract ` +
+    `(steps, data-testid, panels, Playwright JSON) overrides generic integration advice where they differ.\n\n` +
     `DOM CONTRACT (mandatory — Playwright depends on this exactly):\n` +
     cdnRule +
     renderBrandBlock(brand) + `\n` +
     (slideTemplateRules
-      ? `SLIDE TEMPLATE RULES (Plaid-only supplement; use for slide/insight surfaces when applicable):\n${slideTemplateRules}\n\n`
+      ? `SLIDE TEMPLATE RULES (Plaid-only — read carefully):\n${slideTemplateRules}\n\n`
       : '') +
     (slideTemplateCss
-      ? `SLIDE TEMPLATE CSS (include verbatim in your generated <style> section; do not alter):\n${slideTemplateCss}\n\n`
+      ? `SLIDE TEMPLATE CSS (scoped — embed verbatim in <style>):\n${slideTemplateCss}\n\n` +
+        `SLIDE VS HOST APP (critical):\n` +
+        `- The slide CSS above applies ONLY inside a step div that contains \`.slide-root\` (optional slide-type steps).\n` +
+        `- Do NOT restyle \`html\` or \`body\` using slide tokens. The HOST BANK UI (nav, cards, TD/chrome, consumer screens, Plaid Link host page) MUST follow the HOST APP DESIGN SYSTEM block only.\n` +
+        `- Full-viewport Plaid *insight* steps (*-insight, API reveal) are NOT slides unless the step explicitly uses \`.slide-root\`. Use insight layout + global api-response-panel per DOM contract — not slide template chrome.\n` +
+        `- Slides exist only to explain behind-the-scenes API/data; they are Plaid-styled; the rest of the app is customer-branded.\n` +
+        `- For any API storytelling context, keep one raw JSON mechanism only: global \`#api-response-panel\`. Never render duplicate inline raw JSON containers in \`.slide-root\`.\n` +
+        `- If a step has \`apiResponse\`, the panel stays hidden on initial page load, then appears with JSON immediately visible when that step is active.\n` +
+        `- Do not add JSON show/hide controls (no \`api-panel-toggle\`, no \`window.toggleApiPanel\`, no \`api-json-collapsed\`).\n` +
+        `- Use renderjson for payload rendering and keep JSON colors consistent with Plaid slide styling.\n` +
+        `- Slide content must summarize only high-signal attributes (3-6 bullets) that support the story decision; raw payload remains in global panel.\n` +
+        `- API request/response shown in panel must match the slide's claim and endpoint context (no mismatched endpoint narrative).\n` +
+        `- **Slide surface:** keep \`.slide-root\` **responsive** per SLIDE_RULES (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n\n`
       : '') +
-    `- Viewport locked: html, body { width: 1440px; height: 900px; overflow: hidden; }\n` +
+    `- Desktop responsive requirement (MANDATORY): support 1280×800, 1440×900, and 1728×1117 without horizontal clipping or overflow.\n` +
+    `  Keep recording parity at 1440×900, but do NOT hard-lock html/body to fixed pixel width/height.\n` +
+    `  Use fluid desktop layout (e.g. width:100vw; height:100vh; max-width patterns inside containers).\n` +
     `- Each step: <div data-testid="step-{id}" class="step"> (only one .active at a time)\n` +
     `- Global functions:\n` +
     `    window.goToStep(id)       — activate a step by id, fire its link events and API panel\n` +
@@ -748,16 +918,36 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `ICONS — ABSOLUTE RULE:\n` +
     `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
     `    Not ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ or any other emoji/symbol character.\n` +
-    `  - ALL icons must be Heroicons SVG (https://heroicons.com). Use inline SVG paths only.\n` +
+    `  - ALL icons must be Heroicons SVG (https://heroicons.com). Copy each icon verbatim: one icon = one <path> (or <g>) — NEVER concatenate two icons into a single path d="...".\n` +
+    `  - EXCEPTION: exactly ONE Brandfetch bank <img> in the host nav per the design system (wordmark URL, or icon URL only if no wordmark). No second bank <img> beside it.\n` +
     `  - Outline style for UI chrome; solid style for active/filled states.\n` +
     `  - If Heroicons lacks the exact icon, use the closest semantic Heroicons match — never emoji.\n` +
+    `  - Feature cards (e.g. link external account): use a clear semantic icon such as "link" or "building-library" — not abstract or merged paths.\n` +
     `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses.\n` +
     `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
+    `    - Default UX: keep #api-response-panel hidden on initial page load (display:none).\n` +
+    `    - On API insight/slide steps, show the panel and render JSON body immediately visible.\n` +
+    `    - Ensure .side-panel-body is vertically scrollable for long JSON payloads.\n` +
+    `      Do NOT implement JSON collapse/expand controls.\n` +
+    `      No data-testid="api-panel-toggle", no window.toggleApiPanel(), no api-json-collapsed class contract.\n` +
+    `    - Use renderjson for JSON rendering:\n` +
+    `      <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n` +
+    `      and style keys/strings/numbers to match Plaid slide theme colors.\n` +
     `    - It slides in from the right as a glassmorphism overlay.\n` +
     `    - CRITICAL: Do NOT create any inline JSON display panels inside step divs.\n` +
     `      No "insight-right", no "auth-json-panel", no "-json-panel" divs of any kind.\n` +
     `      Every step div shows ONLY the customer-facing demo screen — zero raw JSON in the layout.\n` +
     `      Raw API JSON lives exclusively in api-response-panel. One panel. No duplicates.\n` +
+    `    - On API storytelling steps, body content should call out top response attributes that drive the outcome.\n` +
+    `      Examples: Signal risk drivers + recommendation; CRA income stream summary + next payment;\n` +
+    `      Identity score + pass threshold/status for happy-path approval.\n` +
+    `    - Ensure request/response content aligns with the slide claim: endpoint label, fields, and highlighted bullets\n` +
+    `      must describe the same API context.\n` +
+    `HOST UI METRICS GUARDRAIL:\n` +
+    `  - Do NOT expose presentation-style internal stats in customer-facing host screens unless they provide clear end-user benefit.\n` +
+    `  - Avoid showing Identity score / Signal score / LOW RISK / ACCEPT / coverage % as decorative stat cards in host steps.\n` +
+    `  - Prefer user-meaningful outcomes in host UI: "Account funded", "Transfer posted", "Verified", "Next step".\n` +
+    `  - Internal model metrics belong in Plaid insight/slide contexts, not core customer UI chrome.\n` +
     `- All interactive elements must have data-testid attributes in kebab-case that match\n` +
     `  the interaction.target field in demo-script.json exactly.\n` +
     `- Plaid Link event names to use verbatim:\n` +
@@ -776,7 +966,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `    {\n` +
     `      "id": "<MUST be one of the exact step IDs listed below — no other values allowed>",\n` +
     `      "action": "<goToStep|click|fill|wait>",\n` +
-    `      "target": "<CSS selector or function call>",\n` +
+    `      "target": "<goToStep: bare step id ONLY, e.g. \\"td-dashboard\\" — NEVER window.goToStep(...) or JS. click|fill: CSS selector>",\n` +
     `      "value": "<string, optional>",\n` +
     `      "waitMs": <number, optional>\n` +
     `    }\n` +
@@ -798,6 +988,14 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
       `Product-family-specific accuracy rules for this build:\n${formatProductAccuracyRules(productProfile)}`,
   });
 
+  const plaidSkillMd = typeof opts.plaidSkillMarkdown === 'string' ? opts.plaidSkillMarkdown.trim() : '';
+  if (plaidSkillMd) {
+    contentBlocks.push({
+      type: 'text',
+      text: plaidSkillMd,
+    });
+  }
+
   if (curatedKnowledgeBlock) {
     contentBlocks.push({
       type: 'text',
@@ -809,6 +1007,24 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     contentBlocks.push({
       type: 'text',
       text: pipelineCtxBlock,
+    });
+  }
+
+  if (solutionsMasterBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `${solutionsMasterBlock}\n\n` +
+        `Where this context conflicts with generic assumptions, follow the listed solution components/APIs.`,
+    });
+  }
+
+  if (linkUxSkillBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `${linkUxSkillBlock}\n\n` +
+        `Apply this guidance to host pre-Link UX steps and CTA copy where relevant. Do not contradict DOM contract constraints.`,
     });
   }
 
@@ -928,8 +1144,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `SIMULATED Plaid Link step divs that you must build.  Reference screenshots of the actual\n` +
           `Plaid Link sandbox screens are provided below — match the layout and content exactly.\n\n` +
           `Follow these rules precisely:\n\n` +
-          `1. SCRIPT TAG: <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
-          `   in <head>. This is the ONLY permitted CDN script.\n\n` +
+          `1. SCRIPT TAGS in <head>:\n` +
+          `   - <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
+          `   - <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n\n` +
           `2. ON PAGE LOAD — initialise the handler silently (no open() call):\n` +
           `   fetch('/api/create-link-token', { method: 'POST',\n` +
           `     headers: { 'Content-Type': 'application/json' },\n` +
@@ -1039,8 +1256,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `The recording uses headless:false which captures the real Plaid iframe in the video.\n` +
           `Your step list goes directly from the initiate-link step to the post-link customer UI steps.\n\n` +
           `Follow these rules precisely:\n\n` +
-          `1. SCRIPT TAG: Add <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
-          `   in <head>. This is the ONLY permitted CDN script.\n\n` +
+          `1. SCRIPT TAGS in <head>:\n` +
+          `   - <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>\n` +
+          `   - <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n\n` +
           `2. ON PAGE LOAD — initialise the handler silently:\n` +
           `   fetch('/api/create-link-token', { method: 'POST',\n` +
           `     headers: { 'Content-Type': 'application/json' },\n` +
@@ -1066,6 +1284,15 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `   });\n` +
           `   Replace <FIRST_POST_LINK_STEP_ID> with the ID of the step immediately after the\n` +
           `   initiate-link step in the demo script.\n\n` +
+          `   CRA/Check REQUIREMENT (when demo uses cra_base_report / cra_income_insights):\n` +
+          `   The create-link-token request body MUST include:\n` +
+          `     products: ['cra_base_report', 'cra_income_insights']\n` +
+          `     consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT'\n` +
+          `     cra_options: { days_requested: 365 }\n` +
+          `     productFamily: 'income_insights' (or 'cra_base_report')\n` +
+          `     credentialScope: 'cra'\n` +
+          `   If CRA_LAYER_TEMPLATE is configured server-side, the backend will use it automatically\n` +
+          `   with CRA credentials to initialize the CRA/Layer session token path.\n\n` +
           `3. INITIATE LINK BUTTON: The "Link External Account" button\n` +
           `   (data-testid="link-external-account-btn") MUST be inside the initiate-link step div.\n` +
           `   Clicking it runs: if (window._plaidHandler) window._plaidHandler.open();\n` +

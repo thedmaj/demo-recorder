@@ -126,6 +126,8 @@ error_INTERNAL_SERVER_ERROR  error_USER_SETUP_REQUIRED
 | `user_credit_bonus` | *(any)* | Payroll with bonus/commission |
 | `user_credit_joint_account` | *(any)* | Multiple salary streams |
 | `user_bank_income` | `{}` | **Bank Income** (traditional income product) — **not** the primary CRA Check Link persona |
+
+**Automation in this repo:** for `user_credit_*` institution login in Playwright, use password **`pass_good`** (matches §7 and `record-local.js` defaults), even though many sandbox rows accept any non-empty password.
 | `user_prism_1` … `user_prism_8` | *(any)* | Bank Income / Partner Insights personas |
 
 ---

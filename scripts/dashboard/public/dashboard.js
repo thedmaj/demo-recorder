@@ -30,7 +30,7 @@
   ];
 
   const STAGE_META = {
-    research:              { desc: 'Research: Plaid skill baseline + AskBill/Glean (RESEARCH_MODE)', reads: ['inputs/prompt.txt', 'skills/plaid-integration.skill'], writes: ['product-research.json', 'plaid-skill-manifest.json', 'plaid-skill-gaps.json'] },
+    research:              { desc: 'Research: Solutions Master foundation + skill + AskBill/Glean (RESEARCH_MODE)', reads: ['inputs/prompt.txt', 'skills/plaid-integration.skill'], writes: ['product-research.json', 'plaid-skill-manifest.json', 'plaid-skill-gaps.json'] },
     ingest:                { desc: 'Parse prompt, screenshots, transcriptions', reads: ['inputs/'], writes: ['ingested-inputs.json'] },
     'brand-extract':       { desc: 'Brandfetch + Haiku → brand/<slug>.json (after script)', reads: ['demo-script.json', 'ingested-inputs.json'], writes: ['brand/<slug>.json', 'brand-extract.json'] },
     script:                { desc: 'Claude Opus generates demo storyboard (8–14 steps)', reads: ['ingested-inputs.json', 'product-research.json'], writes: ['demo-script.json'] },

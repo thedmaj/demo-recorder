@@ -181,7 +181,7 @@ function ingestVideos() {
   const results = [];
   if (!fs.existsSync(VIDEOS_DIR)) {
     console.log('[Ingest] inputs/videos/ not found — skipping videos');
-    return results;
+    return { transcriptions: [], transcribed: 0 };
   }
 
   const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov']);

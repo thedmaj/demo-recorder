@@ -7,6 +7,7 @@ const {
   validateDemoScript,
   isInsightLikeStep,
   isAmountEntryStep,
+  ensureFinalValueSummarySlide,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/generate-script'));
 
 describe('demo-script validation', () => {
@@ -81,5 +82,36 @@ describe('demo-script validation', () => {
     assert.equal(isInsightLikeStep({ id: 'instant-approval' }), false);
     assert.equal(isAmountEntryStep({ id: 'amount-entry' }), true);
     assert.equal(isAmountEntryStep({ narration: 'The user enters the funding amount.' }), true);
+  });
+
+  test('ensureFinalValueSummarySlide appends final summary slide from research value props', () => {
+    const script = {
+      steps: [
+        { id: 'intro', label: 'Intro', narration: 'Intro narration for host step.', durationHintMs: 5000 },
+      ],
+    };
+    const research = {
+      synthesizedInsights: {
+        valuePropositions: ['Approve good users faster', 'Reduce fraud losses'],
+      },
+    };
+    const result = ensureFinalValueSummarySlide(script, research);
+    assert.ok(result, 'Expected value summary normalization result');
+    const finalStep = script.steps[script.steps.length - 1];
+    assert.equal(finalStep.id, 'value-summary-slide');
+    assert.equal(finalStep.sceneType, 'slide');
+    assert.ok(/approve good users faster/i.test(finalStep.narration));
+  });
+
+  test('validateDemoScript requires final value summary slide when enabled', () => {
+    const missing = validateDemoScript({
+      steps: [{ id: 'intro', label: 'Intro', narration: 'Welcome screen.' }],
+    }, { requireFinalValueSummarySlide: true });
+    assert.ok(missing.errors.some((e) => /Final step must be a value-summary slide/.test(e)));
+
+    const passing = validateDemoScript({
+      steps: [{ id: 'value-summary-slide', label: 'Value Summary', sceneType: 'slide', narration: 'Clear value outcomes for users and business.', visualState: '.slide-root summary.' }],
+    }, { requireFinalValueSummarySlide: true });
+    assert.equal(passing.errors.length, 0);
   });
 });

@@ -130,16 +130,18 @@ async function handleApiRoute(req, res, urlPath) {
     switch (urlPath) {
       case '/api/create-link-token': {
         const products = body.products;
-        const isCra = Array.isArray(products) && products.some((p) =>
-          /cra|consumer_report/i.test(String(p))
+        const isCra = (
+          (Array.isArray(products) && products.some((p) => /cra|consumer_report/i.test(String(p)))) ||
+          /cra|consumer[_\s-]?report|income[_\s-]?insights|check/i.test(String(body.productFamily || body.product_family || '')) ||
+          String(body.credentialScope || body.credential_scope || '').toLowerCase() === 'cra'
         );
-        const skipBootstrap = !!(body.plaid_user_id || body.plaidUserId);
         const baseOpts = {
           ...body,
           products:             body.products,
           clientName:           body.clientName || body.client_name,
           userId:               body.userId || body.user_id,
           phoneNumber:          body.phoneNumber || body.phone_number || null,
+          checkUserIdentity:    body.checkUserIdentity || body.check_user_identity || body.consumer_report_user_identity || null,
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
           productFamily:        body.productFamily || body.product_family || null,
           credentialScope:      body.credentialScope || body.credential_scope || null,
@@ -147,7 +149,10 @@ async function handleApiRoute(req, res, urlPath) {
         if (body.plaid_user_id || body.plaidUserId) {
           baseOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
         }
-        const result = isCra && !skipBootstrap
+        if (body.plaid_user_token || body.plaidUserToken) {
+          baseOpts.legacyUserToken = body.plaid_user_token || body.plaidUserToken;
+        }
+        const result = isCra
           ? await plaid.createConsumerReportLinkToken(baseOpts)
           : await plaid.createLinkToken(baseOpts);
         sendJson(res, 200, result);

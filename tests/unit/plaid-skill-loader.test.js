@@ -6,6 +6,8 @@ const path = require('path');
 
 const {
   getPlaidSkillBundleForFamily,
+  getPlaidLinkUxSkillBundle,
+  detectPlaidLinkUxFlowType,
   resolveResearchMode,
   effectiveResearchMode,
   resolveMemberPaths,
@@ -53,4 +55,25 @@ test('effectiveResearchMode defaults', () => {
 test('resolveMemberPaths adds oauth when prompt mentions OAuth', () => {
   const p = resolveMemberPaths('funding', { promptText: 'Use OAuth bank flow' });
   assert.ok(p.some((x) => x.includes('oauth')), 'oauth.md included');
+});
+
+test('detectPlaidLinkUxFlowType distinguishes credit-specific and generic', () => {
+  assert.strictEqual(
+    detectPlaidLinkUxFlowType({ promptText: 'Loan underwriting and repayment setup flow' }),
+    'credit-specific'
+  );
+  assert.strictEqual(
+    detectPlaidLinkUxFlowType({ promptText: 'P2P payments and account verification flow' }),
+    'generic'
+  );
+});
+
+test('getPlaidLinkUxSkillBundle loads markdown skill excerpt', () => {
+  const b = getPlaidLinkUxSkillBundle({
+    promptText: 'Build a credit decision lending onboarding flow',
+    maxChars: 6000,
+  });
+  assert.ok(b.skillLoaded, 'markdown skill should load');
+  assert.ok(b.text.includes('PLAID LINK PRE-LINK UX SKILL'), 'expected header');
+  assert.strictEqual(b.flowType, 'credit-specific');
 });

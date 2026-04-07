@@ -18,6 +18,7 @@ try {
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const DEFAULT_SKILL_REL = path.join('skills', 'plaid-integration.skill');
+const DEFAULT_LINK_UX_SKILL_REL = path.join('skills', 'plaid-link-prelink-ui-skill.md');
 const ZIP_INTERNAL_PREFIX = 'plaid-integration/';
 
 /** @type {Record<string, string[]>} base paths inside plaid-integration/ */
@@ -62,12 +63,19 @@ const PRODUCT_FILE_TRIGGERS = [
 
 const DEFAULT_MAX_CHARS = parseInt(process.env.PLAID_SKILL_MAX_CHARS || '28000', 10);
 const SKILL_MD_TRIM = parseInt(process.env.PLAID_SKILL_SKILLMD_MAX_CHARS || '9000', 10);
+const LINK_UX_MAX_CHARS = parseInt(process.env.PLAID_LINK_UX_SKILL_MAX_CHARS || '12000', 10);
 
 function getDefaultSkillZipPath() {
   const env = process.env.PLAID_SKILL_ZIP;
   if (env && fs.existsSync(env)) return path.resolve(env);
   const def = path.join(PROJECT_ROOT, DEFAULT_SKILL_REL);
   return def;
+}
+
+function getDefaultPlaidLinkUxSkillPath() {
+  const env = process.env.PLAID_LINK_UX_SKILL_PATH;
+  if (env && fs.existsSync(env)) return path.resolve(env);
+  return path.join(PROJECT_ROOT, DEFAULT_LINK_UX_SKILL_REL);
 }
 
 function sha256File(absPath) {
@@ -131,6 +139,96 @@ function truncateSkillMd(content) {
     content.slice(0, SKILL_MD_TRIM) +
     '\n\n… [SKILL.md truncated by PLAID_SKILL_SKILLMD_MAX_CHARS for context budget]\n'
   );
+}
+
+function detectPlaidLinkUxFlowType(signals = {}) {
+  const text = `${signals.promptText || ''}\n${JSON.stringify(signals.demoScript || {})}`.toLowerCase();
+  const creditRe =
+    /\b(lending|underwriting|loan approval|credit decision|bnpl|buy now pay later|second-look|repayment setup|loan repayment|credit card payment)\b/;
+  return creditRe.test(text) ? 'credit-specific' : 'generic';
+}
+
+function extractSectionByHeading(markdown, headingRe) {
+  if (!markdown || typeof markdown !== 'string') return '';
+  const lines = markdown.split('\n');
+  const startIdx = lines.findIndex((line) => headingRe.test(line.trim()));
+  if (startIdx < 0) return '';
+  let endIdx = lines.length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (/^#\s+PART\s+/i.test(lines[i].trim())) {
+      endIdx = i;
+      break;
+    }
+  }
+  return lines.slice(startIdx, endIdx).join('\n').trim();
+}
+
+function extractSharedDesignSection(markdown) {
+  if (!markdown || typeof markdown !== 'string') return '';
+  const lines = markdown.split('\n');
+  const startIdx = lines.findIndex((line) => /^##\s+Shared Design System Reference/i.test(line.trim()));
+  if (startIdx < 0) return '';
+  let endIdx = lines.length;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (/^##\s+Prototype Checklists/i.test(lines[i].trim())) {
+      endIdx = i;
+      break;
+    }
+  }
+  return lines.slice(startIdx, endIdx).join('\n').trim();
+}
+
+/**
+ * Returns a flow-aware excerpt from skills/plaid-link-prelink-ui-skill.md.
+ * This is a markdown-native skill and complements the zipped technical skill.
+ *
+ * @param {{ markdownPath?: string, maxChars?: number, promptText?: string, demoScript?: object }} opts
+ * @returns {{
+ *   text: string,
+ *   skillLoaded: boolean,
+ *   markdownPath: string|null,
+ *   flowType: 'generic'|'credit-specific',
+ *   chars: number,
+ * }}
+ */
+function getPlaidLinkUxSkillBundle(opts = {}) {
+  const markdownPath = opts.markdownPath || getDefaultPlaidLinkUxSkillPath();
+  const maxChars = opts.maxChars != null ? opts.maxChars : LINK_UX_MAX_CHARS;
+  const flowType = detectPlaidLinkUxFlowType({ promptText: opts.promptText, demoScript: opts.demoScript });
+  if (!markdownPath || !fs.existsSync(markdownPath)) {
+    return {
+      text: '',
+      skillLoaded: false,
+      markdownPath: markdownPath || null,
+      flowType,
+      chars: 0,
+    };
+  }
+
+  const md = fs.readFileSync(markdownPath, 'utf8');
+  const partI = extractSectionByHeading(md, /^#\s+PART I:/i);
+  const partII = extractSectionByHeading(md, /^#\s+PART II:/i);
+  const shared = extractSharedDesignSection(md);
+  const selectedPart = flowType === 'credit-specific' ? partII : partI;
+  let block =
+    '## PLAID LINK PRE-LINK UX SKILL (use-case-specific)\n\n' +
+    `Flow type selected: ${flowType}.\n` +
+    `Use this guidance for pre-Link UX copy, CTA hierarchy, security framing, and handoff screens.\n\n` +
+    `Source: ${path.relative(PROJECT_ROOT, markdownPath)}\n\n` +
+    selectedPart;
+  if (shared) {
+    block += `\n\n---\n\n${shared}`;
+  }
+  if (block.length > maxChars) {
+    block = `${block.slice(0, Math.max(0, maxChars - 80))}\n\n… [plaid-link-prelink-ui-skill.md truncated by PLAID_LINK_UX_SKILL_MAX_CHARS]\n`;
+  }
+  return {
+    text: block,
+    skillLoaded: block.trim().length > 0,
+    markdownPath,
+    flowType,
+    chars: block.length,
+  };
 }
 
 /**
@@ -224,6 +322,22 @@ function writePlaidSkillManifest(runDir, meta) {
 }
 
 /**
+ * Write per-run artifact for Plaid Link UX markdown skill selection.
+ * @param {string} runDir
+ * @param {object} meta
+ */
+function writePlaidLinkUxSkillManifest(runDir, meta) {
+  if (!runDir) return;
+  try {
+    fs.mkdirSync(runDir, { recursive: true });
+    const out = path.join(runDir, 'plaid-link-ux-skill-manifest.json');
+    fs.writeFileSync(out, JSON.stringify({ ...meta, writtenAt: new Date().toISOString() }, null, 2), 'utf8');
+  } catch (_) {
+    /* best-effort */
+  }
+}
+
+/**
  * @returns {'full'|'gapfill'|'skip'|'messaging'}
  */
 function resolveResearchMode(promptText = '') {
@@ -258,13 +372,18 @@ function effectiveResearchMode(explicit, _skillLoaded) {
 module.exports = {
   PROJECT_ROOT,
   DEFAULT_SKILL_REL,
+  DEFAULT_LINK_UX_SKILL_REL,
   getDefaultSkillZipPath,
+  getDefaultPlaidLinkUxSkillPath,
   sha256File,
   openSkillZip,
   readZipMember,
   resolveMemberPaths,
   getPlaidSkillBundleForFamily,
+  getPlaidLinkUxSkillBundle,
+  detectPlaidLinkUxFlowType,
   writePlaidSkillManifest,
+  writePlaidLinkUxSkillManifest,
   resolveResearchMode,
   effectiveResearchMode,
   FAMILY_BASE_FILES,

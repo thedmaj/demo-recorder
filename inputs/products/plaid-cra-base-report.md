@@ -103,6 +103,8 @@ Feature this product when the persona needs a reusable underwriting artifact bac
 - Report creation endpoint: `/cra/check_report/create`
 - Report retrieval endpoint: `/cra/check_report/base_report/get`
 - Product term: `consumer_report`
+- Link requirement: real Plaid Link CRA/Check modal (single `plaidPhase: "launch"` step) — no simulated host-only Link flow
+- Passport note: Plaid Passport may be enabled via account template for stronger identity verification; treat as optional by configuration, not as a replacement for core CRA Link/consent
 - Key configuration terms: `consumer_report_permissible_purpose`, `enable_multi_item_link`, `require_identity`
 - Async lifecycle: report requested -> report generating -> report ready
 - Readiness concepts: `CHECK_REPORT_READY`, `USER_CHECK_REPORT_READY`
@@ -142,6 +144,8 @@ Official list: [Plaid Sandbox test credentials — Credit and income testing](ht
 - Do not present Base Report retrieval as the same thing as Auth, Signal, or payment-rails retrieval.
 - If the prompt implies asynchronous report readiness, include a report-ready beat before reviewing the report contents.
 - Highlight report fields like balances, ownership, inflows, outflows, and transaction behavior instead of ACH-specific metrics.
+- Do not replace CRA Link with custom customer-hosted pseudo-link forms; use the real Plaid CRA Link experience.
+- Setup and data-returned explanation beats should use Plaid-branded slide template screens (`.slide-root`) instead of customer-branded host UI.
 
 ## Framework QA Learnings
 <!-- 🔄 SHARED — curated prompt/build lessons for this product family.
@@ -150,6 +154,7 @@ Official list: [Plaid Sandbox test credentials — Credit and income testing](ht
 - Reuse the single global `api-response-panel` for all report-insight steps; do not create inline JSON columns inside the step.
 - Insight steps should have explicit, obvious IDs (for example `base-report-insight`) so recording and QA helpers can map JSON correctly.
 - Keep report-ready and report-review steps visually distinct so start/mid/end frames do not blur the async lifecycle.
+- CRA setup/data explanation beats are easier to validate when rendered as Plaid-branded slide steps (`.slide-root`) with customer host chrome reserved for user journey screens.
 
 ## Objections & Responses
 <!-- 🔄 SHARED — AI adds [DRAFT] from Gong; human approves by removing [DRAFT] tag. -->

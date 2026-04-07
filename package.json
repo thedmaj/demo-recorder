@@ -41,6 +41,7 @@
     "@remotion/tailwind": "4.0.434",
     "@remotion/tailwind-v4": "4.0.434",
     "@remotion/transitions": "4.0.434",
+    "adm-zip": "^0.5.17",
     "google-auth-library": "^9.15.1",
     "playwright": "^1.58.2",
     "playwright-core": "^1.58.2",

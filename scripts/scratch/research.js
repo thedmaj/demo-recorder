@@ -16,7 +16,11 @@ const fs   = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const { askPlaidDocs, gleanChat } = require('./utils/mcp-clients');
+const {
+  askPlaidDocs,
+  gleanChat,
+  resolveSolutionsMasterContext,
+} = require('./utils/mcp-clients');
 const { buildResearchPrompt } = require('./utils/prompt-templates');
 const { inferProductFamilyFromText } = require('./utils/product-profiles');
 const {
@@ -451,6 +455,29 @@ function appendResearchToProductFile(productSlug, runId, researchJson) {
   console.log(`  ✓ Appended ${lines.length} finding(s) to ${path.relative(PROJECT_ROOT, productFile)} (confidence >= ${minConfidence})`);
 }
 
+function formatSolutionsMasterContextBlock(ctx) {
+  if (!ctx || typeof ctx !== 'object') return '';
+  const names = Array.isArray(ctx.requestedSolutionNames) ? ctx.requestedSolutionNames : [];
+  const resolved = Array.isArray(ctx.resolvedSolutions) ? ctx.resolvedSolutions : [];
+  const unresolved = Array.isArray(ctx.unresolvedSolutionNames) ? ctx.unresolvedSolutionNames : [];
+  const valueProps = Array.isArray(ctx.valuePropositionStatements) ? ctx.valuePropositionStatements.slice(0, 20) : [];
+  const apis = Array.isArray(ctx.apiNames) ? ctx.apiNames.slice(0, 30) : [];
+  if (!names.length && !resolved.length && !valueProps.length && !apis.length) return '';
+  const lines = [];
+  if (names.length) lines.push(`Requested solutions: ${names.join(' | ')}`);
+  if (resolved.length) lines.push(`Resolved solutions (${resolved.length}): ${resolved.map((s) => s.name).join(' | ')}`);
+  if (unresolved.length) lines.push(`Unresolved solution names: ${unresolved.join(' | ')}`);
+  if (apis.length) lines.push(`APIs/components referenced (sample): ${apis.join(' | ')}`);
+  if (valueProps.length) {
+    lines.push('Value proposition statements from solution plays/content:');
+    valueProps.forEach((v) => lines.push(`- ${v}`));
+  }
+  if (Array.isArray(ctx.warnings) && ctx.warnings.length) {
+    lines.push(`Lookup notes: ${ctx.warnings.slice(0, 6).join(' | ')}`);
+  }
+  return `## SOLUTIONS MASTER FOUNDATIONAL CONTEXT\n\n${lines.join('\n')}`;
+}
+
 /**
  * Transforms the raw context from loadResearchContext() into a system prompt
  * and initial messages array suitable for the Claude API.
@@ -459,12 +486,14 @@ function appendResearchToProductFile(productSlug, runId, researchJson) {
  * they define what to say. Research from AskBill + Glean supplements them with
  * API accuracy, Gong stories, and customer evidence; it does not replace them.
  *
- * @param {{ mode?: string, skillMarkdown?: string, skillLoaded?: boolean }} researchOpts
+ * @param {{ mode?: string, skillMarkdown?: string, skillLoaded?: boolean, solutionsMasterContext?: object }} researchOpts
  */
 function buildResearchMessages(context, productSlug, researchOpts = {}) {
   const mode = researchOpts.mode || 'full';
   const skillMarkdown = (researchOpts.skillMarkdown || '').trim();
   const skillLoaded = !!researchOpts.skillLoaded;
+  const solutionsMasterContext = researchOpts.solutionsMasterContext || null;
+  const solutionsMasterSection = formatSolutionsMasterContextBlock(solutionsMasterContext);
 
   const skillSection = skillMarkdown
     ? `\n\n${skillMarkdown}\n\n` +
@@ -502,14 +531,21 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
       systemPrompt +=
         `RESEARCH MODE: technical gap-fill. The Plaid integration skill (below) already covers most ` +
         `integration patterns. Use ask_plaid_docs only for missing API/schema/sample-response details. ` +
-        `Use glean_chat 0–2 times unless the brief explicitly needs Gong or collateral.\n`;
+        `Use glean_chat 0–2 times unless the brief explicitly needs Gong or collateral. ` +
+        `When you use glean_chat, request only top synthesized findings (no process logs).\n`;
     } else if (mode === 'messaging') {
       systemPrompt +=
         `RESEARCH MODE: messaging-first. Prioritize glean_chat for Gong, collateral, objections, ` +
-        `and customer stories. Use at most 1–2 ask_plaid_docs calls for critical API fact-checking only.\n`;
+        `and customer stories. Use at most 1–2 ask_plaid_docs calls for critical API fact-checking only. ` +
+        `Keep glean_chat outputs concise and ranked by relevance.\n`;
     }
 
-    systemPrompt += valuePropSection + skillSection;
+    if (solutionsMasterSection) {
+      systemPrompt +=
+        `${solutionsMasterSection}\n\n` +
+        'Treat SOLUTIONS MASTER FOUNDATIONAL CONTEXT as the first source for solution scope, components, APIs, and value-proposition statements.\n\n';
+    }
+    systemPrompt += skillSection + valuePropSection;
 
     let userText =
       `Research Plaid products in preparation for building a demo video based on this brief:\n\n` +
@@ -540,15 +576,17 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
     } else if (mode === 'gapfill') {
       userText +=
         `Use a **targeted** research pass:\n` +
-        `1. Identify APIs or response shapes in the brief that are NOT fully specified in the integration skill.\n` +
+        `1. Identify APIs or response shapes in the brief that are NOT fully specified in SOLUTIONS MASTER context and integration skill.\n` +
         `2. Use ask_plaid_docs to fetch exact field names and a realistic sandbox-flavored sample JSON if needed.\n` +
-        `3. Optional: up to 2 glean_chat calls for Gong/collateral only if the brief asks for sales voice.\n\n` +
+        `3. Optional: up to 2 glean_chat calls for Gong/collateral only if the brief asks for sales voice. ` +
+        `For each glean call, request top synthesized most-relevant bullets only.\n\n` +
         `Aim for **3–8** tool calls total.\n\n`;
     } else if (mode === 'messaging') {
       userText +=
         `Focus on **sales and customer evidence**:\n` +
         `1. Multiple glean_chat queries for Gong, objections, success stories, and collateral.\n` +
-        `2. At most 1–2 ask_plaid_docs calls for must-have API terminology.\n\n` +
+        `2. At most 1–2 ask_plaid_docs calls for must-have API terminology.\n` +
+        `3. Keep each glean result to top-ranked synthesized findings only; avoid long transcript dumps.\n\n` +
         `Aim for **4–10** tool calls total.\n\n`;
     }
 
@@ -569,7 +607,11 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
 
   // Structured config.json or default — use the template, prepend value props + skill to system
   const { system, userMessages } = buildResearchPrompt(context.content);
-  let systemOut = system + valuePropSection + skillSection;
+  let systemOut = system;
+  if (solutionsMasterSection) {
+    systemOut += `\n\n${solutionsMasterSection}\n\nTreat this as foundational context before optional gap research.`;
+  }
+  systemOut += valuePropSection + skillSection;
   if (mode === 'gapfill') {
     systemOut += '\n\nRESEARCH MODE: gap-fill — minimal Glean; targeted AskBill for API gaps only.\n';
   } else if (mode === 'messaging') {
@@ -641,6 +683,13 @@ function buildSkipModeResearch(context, bundle, productFamily) {
   };
 }
 
+function compactResearchMessages(messages, keepTail = 12) {
+  if (!Array.isArray(messages) || messages.length <= keepTail + 1) return messages;
+  const first = messages[0];
+  const tail = messages.slice(-keepTail);
+  return [first, ...tail];
+}
+
 // ── Main research loop ─────────────────────────────────────────────────────────
 
 async function runResearch(context, productSlug, researchOpts = {}) {
@@ -654,6 +703,8 @@ async function runResearch(context, productSlug, researchOpts = {}) {
   const messages = [...initialMessages];
   let iteration = 0;
   let finalText = null;
+  let maxTokenRecoveries = 0;
+  const MAX_TOKEN_RECOVERIES = 2;
 
   while (true) {
     iteration++;
@@ -700,10 +751,16 @@ async function runResearch(context, productSlug, researchOpts = {}) {
             const result = await executeTool(block.name, block.input);
             const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
             console.log(`  ✓ ${block.name} → ${resultStr.length} chars`);
+            const cap =
+              block.name === 'glean_chat'
+                ? 1800
+                : block.name === 'ask_plaid_docs'
+                  ? 2600
+                  : 3000;
             return {
               type: 'tool_result',
               tool_use_id: block.id,
-              content: resultStr.substring(0, 8000), // cap to avoid huge context
+              content: resultStr.substring(0, cap), // tighter cap to avoid context bloat
             };
           } catch (err) {
             console.warn(`  ✗ ${block.name} error: ${err.message}`);
@@ -718,6 +775,36 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       );
 
       messages.push({ role: 'user', content: toolResults });
+      const compacted = compactResearchMessages(messages, 14);
+      messages.length = 0;
+      messages.push(...compacted);
+      continue;
+    }
+
+    if (response.stop_reason === 'max_tokens') {
+      console.warn('Research response hit max_tokens; attempting constrained synthesis recovery.');
+      if (maxTokenRecoveries >= MAX_TOKEN_RECOVERIES) {
+        console.warn('Max-token recovery exhausted; stopping loop with fallback.');
+        const textBlock = response.content.find((b) => b.type === 'text');
+        finalText = textBlock?.text || '{}';
+        break;
+      }
+      maxTokenRecoveries += 1;
+      messages.push({ role: 'assistant', content: response.content });
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              'Token budget reached. Do not call additional tools. Immediately call synthesize_research ' +
+              'using the most relevant findings already collected. Keep arrays concise and prioritized.',
+          },
+        ],
+      });
+      const compacted = compactResearchMessages(messages, 10);
+      messages.length = 0;
+      messages.push(...compacted);
       continue;
     }
 
@@ -755,6 +842,27 @@ async function main() {
   }
 
   const productFamilyEarly = inferProductFamilyFromText(promptContent);
+  let solutionsMasterContext = null;
+  try {
+    solutionsMasterContext = await resolveSolutionsMasterContext(promptContent);
+    if (Array.isArray(solutionsMasterContext.requestedSolutionNames) && solutionsMasterContext.requestedSolutionNames.length > 0) {
+      console.log(
+        `  Solutions Master: requested=${solutionsMasterContext.requestedSolutionNames.length}, resolved=${(solutionsMasterContext.resolvedSolutions || []).length}`
+      );
+    }
+  } catch (e) {
+    console.warn(`  Solutions Master lookup unavailable: ${e.message}`);
+    solutionsMasterContext = {
+      requestedSolutionNames: [],
+      resolvedSolutions: [],
+      unresolvedSolutionNames: [],
+      valuePropositionStatements: [],
+      apiNames: [],
+      transportUsed: null,
+      warnings: [e.message],
+    };
+  }
+
   const bundle = getPlaidSkillBundleForFamily(productFamilyEarly, { promptText: promptContent });
   writePlaidSkillManifest(OUT_DIR, {
     sha256: bundle.sha256,
@@ -789,6 +897,7 @@ async function main() {
       mode,
       skillMarkdown: bundle.text,
       skillLoaded: bundle.skillLoaded,
+      solutionsMasterContext,
     });
 
     if (rawResult && typeof rawResult === 'object' && rawResult.structured) {
@@ -831,6 +940,20 @@ async function main() {
   research.skillZipSha256 = bundle.sha256;
   research.plaidIntegrationSkillFiles = (bundle.members || []).map((m) => m.path);
   research.researchMode = research.researchMode || mode;
+  research.solutionsMasterContext = solutionsMasterContext || null;
+  if (solutionsMasterContext && Array.isArray(solutionsMasterContext.valuePropositionStatements)) {
+    research.solutionsMasterValueProps = solutionsMasterContext.valuePropositionStatements;
+  }
+  if (
+    solutionsMasterContext &&
+    Array.isArray(solutionsMasterContext.unresolvedSolutionNames) &&
+    solutionsMasterContext.unresolvedSolutionNames.length > 0
+  ) {
+    research.gapQuestions = Array.isArray(research.gapQuestions) ? research.gapQuestions : [];
+    for (const nm of solutionsMasterContext.unresolvedSolutionNames) {
+      research.gapQuestions.push(`Could not resolve requested solution in Solutions Master: ${nm}`);
+    }
+  }
 
   const gaps = research.gapQuestions;
   if (Array.isArray(gaps) && gaps.length > 0) {
@@ -865,6 +988,16 @@ async function main() {
     ctxPayload.skillZipSha256 = bundle.sha256;
     ctxPayload.researchMode = research.researchMode;
     ctxPayload.plaidIntegrationSkillFiles = research.plaidIntegrationSkillFiles;
+    ctxPayload.solutionsMaster = {
+      requestedSolutionNames: solutionsMasterContext?.requestedSolutionNames || [],
+      resolvedSolutionNames: (solutionsMasterContext?.resolvedSolutions || []).map((s) => s.name),
+      unresolvedSolutionNames: solutionsMasterContext?.unresolvedSolutionNames || [],
+      apiNames: solutionsMasterContext?.apiNames || [],
+      valuePropCount: Array.isArray(solutionsMasterContext?.valuePropositionStatements)
+        ? solutionsMasterContext.valuePropositionStatements.length
+        : 0,
+      transportUsed: solutionsMasterContext?.transportUsed || null,
+    };
     writePipelineRunContext(OUT_DIR, ctxPayload);
   } catch (e) {
     console.warn(`  Could not write pipeline run context: ${e.message}`);

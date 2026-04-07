@@ -1,56 +1,33 @@
 # Human Review Feedback
-Generated: 2026-03-14  |  Run: 2026-03-14-layer-v4
+Generated: 2026-04-07  |  Run: 2026-04-07-Uses-Ynab-To-Manage-Identity-Monitor-Layer-Income-v1
 
 > This file is read by the build stage when running a refinement pass.
-> Edit or delete it between runs as needed.
+> Keep guidance scoped to the current run to avoid cross-demo drift.
 
-## CRITICAL: Add External Account — Missing CTA Button (persists across 3 builds)
+## CRITICAL: Host Welcome Must Be Light + Blue-Accented
 
-The "Link Your Bank" CTA button KEEPS DISAPPEARING in recorded frames. The card renders body copy
-but no button is visible at the bottom. This is a BLOCKER. Rules:
-- Card must use height:auto, overflow:visible — never fixed height
-- Button MUST be inside the card below body copy, always rendered in the DOM
-- `data-testid="link-external-account-btn"`, Chime green (#1EC677), full-width
-- onclick: `if (window._plaidHandler) window._plaidHandler.open()`
-- Do NOT use position:absolute for the button
+For `ynab-welcome`, enforce a clean white/light host canvas and YNAB blue accents.
+Do NOT render a dark navy page background on this step.
+- Use white/light neutral background for the full host canvas
+- Keep branding via YNAB blue accents (buttons, highlights, icon borders)
+- Avoid neon/lime as the dominant accent on this step
+- Ensure all SVG icons are visibly painted (no transparent/invisible fills/strokes)
 
-## CRITICAL: Closing Summary — All 3 Cards Must Show Immediately
+## CRITICAL: Liabilities Insight Must Stay In Liabilities Context
 
-In closing-summary, the Signal card is absent in start/mid frames. ALL THREE CARDS must be
-visible with zero animation delay. Do not stagger entrance animations. Use CSS animations only
-if they complete within 0.1s, or use no animation at all.
+For `liabilities-insight`, preserve `/liabilities/get` context end-to-end:
+- Header/subheader should clearly include `POST /liabilities/get`
+- Response panel must show liabilities-oriented fields (mortgage/debt/APR/balance/payment cues)
+- Keep displayed mortgage balance precision at cents (e.g. `$397,845.12`)
 
-## CRITICAL: Insight Steps — Call _showApiPanelStub() in goToStep Handler
+## IMPORTANT: Transactions and JSON Visibility
 
-For auth-insight, identity-match-insight, signal-insight: the goToStep handler MUST call
-`_showApiPanelStub(data)` with the actual API response data object. Do NOT leave the handler empty.
-Example:
-```
-if (id === 'auth-insight') {
-  _showApiPanelStub({ accounts: [{ name: 'Checking', mask: '0000', balances: { available: 4215.82, current: 4415.82 }, routing_numbers: [{ value: '021000021', type: 'ach' }] }] });
-}
-```
+For `transactions-insight` and other API insight steps:
+- Show recognizable merchant icons/logos next to merchant names
+- Keep JSON panel readable with visible scroll region
+- Ensure key tail fields remain reachable/visible via scrolling (`cursor`, `has_more`, arrays)
 
-## Per-Step Visual Notes
+## IMPORTANT: Value Summary Slide Copy Discipline
 
-### chime-funding-success (funds-available step)
-
-No API JSON panel. Institution name MUST come from window._plaidInstitutionName (not hardcoded).
-Account name from window._plaidAccountName, mask from window._plaidAccountMask.
-
-### insight-auth-get
-
-Show complete account and routing numbers without masking. Account Name, Type (Checking),
-current ($4,415.82) and available ($4,215.82) balance. Call _showApiPanelStub() in goToStep.
-
-### insight-identity-match
-
-Comparison table MUST show numeric scores: Name: 80 (teal), Address: 90, Phone: 80, Email: 0 (amber).
-
-### insight-signal-evaluate
-
-Return risk scores under 19. Call _showApiPanelStub() in goToStep with signal/evaluate response.
-
-### outcome-value / closing-summary
-
-Use 97%+ coverage instead of 95. All 3 product cards must be immediately visible (no stagger).
+For `value-summary-slide`, keep the 4 value pillars concise and tightly aligned to expected copy.
+Avoid adding extra explanatory clauses that drift from the stated pillar language.

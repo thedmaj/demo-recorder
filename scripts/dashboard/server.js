@@ -64,7 +64,7 @@ let logBuffer = [];
 const logClients = new Set();
 
 const PIPELINE_STAGES = [
-  'research', 'ingest', 'brand-extract', 'script', 'script-critique',
+  'research', 'ingest', 'script', 'brand-extract', 'script-critique',
   'embed-script-validate',
   /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
   'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'render', 'ppt', 'touchup',
@@ -200,9 +200,9 @@ function getRunArtifacts(runId) {
 const STAGE_ARTIFACTS = [
   ['research',        'research-notes.md'],
   ['ingest',          'product-context.json'],
-  ['brand-extract',   'demo-script.json'],   // brand is prereq; script existence implies it ran
   ['script',          'demo-script.json'],
-  ['script-critique',       'demo-script.json'],       // critique updates script in-place; use same sentinel
+  ['brand-extract',   'brand-extract.json'],
+  ['script-critique',       'script-critique.json'],
   ['embed-script-validate', 'script-validate-report.json'],
   // ['plaid-link-capture',  'plaid-link-screens/manifest.json'],  // DISABLED
   ['build',               'scratch-app/index.html'],
@@ -944,7 +944,7 @@ app.post('/api/pipeline/run', (req, res) => {
       activeProcess = null;
     }
 
-    const { fromStage, noTouchup, resumeRunId } = req.body || {};
+    const { fromStage, noTouchup, resumeRunId, researchMode } = req.body || {};
     const args = ['scripts/scratch/orchestrator.js'];
     if (fromStage) args.push(`--from=${fromStage}`);
     if (noTouchup) args.push('--no-touchup');
@@ -962,6 +962,11 @@ app.post('/api/pipeline/run', (req, res) => {
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
+    }
+
+    if (researchMode && typeof researchMode === 'string' && researchMode.trim()) {
+      spawnEnv.RESEARCH_MODE = researchMode.trim().toLowerCase();
+      broadcastLog(`[Dashboard] RESEARCH_MODE=${spawnEnv.RESEARCH_MODE}`);
     }
 
     logBuffer = [];
@@ -2086,7 +2091,39 @@ async function launchDemoAppServer(runId) {
     const getPlaid = () => { if (!_plaid) _plaid = require('../scratch/utils/plaid-backend'); return _plaid; };
     demoApp.options('/api/*', (req, res) => res.status(204).end());
     demoApp.post('/api/create-link-token', async (req, res) => {
-      try { res.json(await getPlaid().createLinkToken(req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
+      try {
+        const body = req.body || {};
+        const products = body.products;
+        const isCra = (
+          (Array.isArray(products) && products.some((p) => /cra|consumer_report/i.test(String(p)))) ||
+          /cra|consumer[_\s-]?report|income[_\s-]?insights|check/i.test(String(body.productFamily || body.product_family || '')) ||
+          String(body.credentialScope || body.credential_scope || '').toLowerCase() === 'cra'
+        );
+        const baseOpts = {
+          ...body,
+          products:              body.products,
+          clientName:            body.clientName || body.client_name,
+          userId:                body.userId || body.user_id,
+          phoneNumber:           body.phoneNumber || body.phone_number || null,
+          checkUserIdentity:     body.checkUserIdentity || body.check_user_identity || body.consumer_report_user_identity || null,
+          linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
+          productFamily:         body.productFamily || body.product_family || null,
+          credentialScope:       body.credentialScope || body.credential_scope || null,
+        };
+        if (body.plaid_user_id || body.plaidUserId) {
+          baseOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
+        }
+        if (body.plaid_user_token || body.plaidUserToken) {
+          baseOpts.legacyUserToken = body.plaid_user_token || body.plaidUserToken;
+        }
+        const plaid = getPlaid();
+        const result = isCra
+          ? await plaid.createConsumerReportLinkToken(baseOpts)
+          : await plaid.createLinkToken(baseOpts);
+        res.json(result);
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
     });
     demoApp.post('/api/exchange-public-token', async (req, res) => {
       try { res.json(await getPlaid().exchangePublicToken(req.body.public_token, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }

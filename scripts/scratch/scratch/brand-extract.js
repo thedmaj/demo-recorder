@@ -12,9 +12,10 @@
  *
  * Always regenerates brand/<slug>.json on every pipeline run — no caching.
  *
- * Reads:  out/demo-script.json   (for persona.company + optional brandUrl)
- *         out/ingested-inputs.json (for Brand URL field if present in prompt)
+ * Reads:  out/demo-script.json   (persona.company — present after script stage in orchestrator)
+ *         out/ingested-inputs.json (Brand URL: line; or first https URL in prompt heuristics)
  * Writes: brand/<slug>.json
+ *         PIPELINE_RUN_DIR/brand-extract.json (run sentinel for dashboard)
  *
  * Usage:
  *   node scripts/scratch/scratch/brand-extract.js
@@ -55,26 +56,69 @@ function toSlug(name) {
 
 // ── Load demo-script to get company + brand URL ───────────────────────────────
 
-function loadContext() {
-  let company = null, brandUrl = null;
+/** First marketing-site URL in prompt (skips Plaid/docs links). */
+function inferBrandUrlFromPrompt(promptText) {
+  if (!promptText || typeof promptText !== 'string') return null;
+  const head = promptText.split('\n').slice(0, 50).join('\n');
+  const re = /https?:\/\/[^\s\])"'<>]+/gi;
+  const skip = /plaid\.com|cdn\.|github\.com|localhost|example\.com|googleapis|gstatic|schema\.org/i;
+  const seen = new Set();
+  let m;
+  while ((m = re.exec(head)) !== null) {
+    let raw = m[0].replace(/[.,;]+$/, '');
+    try {
+      const u = new URL(raw);
+      if (skip.test(u.hostname)) continue;
+      const origin = u.origin;
+      if (seen.has(origin)) continue;
+      seen.add(origin);
+      return origin;
+    } catch (_) {}
+  }
+  return null;
+}
+
+function writeRunMeta(payload) {
+  try {
+    const p = path.join(OUT_DIR, 'brand-extract.json');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ ...payload, at: new Date().toISOString() }, null, 2)
+    );
+  } catch (e) {
+    console.warn(`[BrandExtract] Could not write brand-extract.json: ${e.message}`);
+  }
+}
+
+function loadContext(options) {
+  const quiet = options && options.quiet === true;
+  let company = null;
+  let brandUrl = null;
+  let promptText = '';
 
   if (fs.existsSync(SCRIPT_FILE)) {
     try {
       const script = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
       company = script.persona?.company || null;
-    } catch {}
+    } catch (_) {}
   }
 
-  // Look for "Brand URL:" line in ingested-inputs
   if (fs.existsSync(INGEST_FILE)) {
     try {
       const ingest = JSON.parse(fs.readFileSync(INGEST_FILE, 'utf8'));
-      // Support both legacy {rawPrompt/prompt} and current {texts:[{filename,content}]} format
-      const promptText = ingest.rawPrompt || ingest.prompt ||
+      promptText = ingest.rawPrompt || ingest.prompt ||
         (ingest.texts || []).map(t => t.content || '').join('\n');
       const urlMatch = promptText.match(/Brand\s+URL\s*:\s*(https?:\/\/\S+)/i);
-      if (urlMatch) brandUrl = urlMatch[1];
-    } catch {}
+      if (urlMatch) brandUrl = urlMatch[1].replace(/[.,;]+$/, '');
+    } catch (_) {}
+  }
+
+  if (!brandUrl) {
+    const inferred = inferBrandUrlFromPrompt(promptText);
+    if (inferred) {
+      brandUrl = inferred;
+      if (!quiet) console.log(`[BrandExtract] Inferred brand URL from prompt: ${brandUrl}`);
+    }
   }
 
   return { company, brandUrl };
@@ -249,6 +293,10 @@ async function normalizeToBrandProfile(rawData, companyName, slug) {
     logo: {
       svgOrEmoji: 'emoji or null', wordmark: 'COMPANY NAME or null',
       letterSpacing: '0.1em', fontWeight: '700', fontSize: '16px', color: '#hex',
+      imageUrl: 'https absolute URL for horizontal/wordmark logo <img> from raw data, or null',
+      iconUrl: 'https absolute URL for square icon <img> from raw data, or null',
+      shellBg: 'rgba() or #hex background for a logo chip/container to ensure visibility on mixed backgrounds',
+      shellBorder: '#hex or rgba border color for logo chip/container',
     },
     promptInstructions: 'One paragraph describing key layout patterns, nav structure, sidebar, button styles, footer, and any distinctive brand UI patterns for an app demo.',
   };
@@ -262,6 +310,8 @@ async function normalizeToBrandProfile(rawData, companyName, slug) {
     `- fontHeading and fontBody: use the brand's actual font stack from the data\n` +
     `- googleFontsImport: include if a Google Fonts URL was found, else null\n` +
     `- promptInstructions: write a concise, specific paragraph about the brand's UI layout patterns\n` +
+    `- logo.imageUrl / logo.iconUrl: when RAW BRAND DATA includes logoImageUrl or iconImageUrl, copy those exact https URLs into the profile (required for real logo rendering). If raw logos[] has src fields, prefer SVG or PNG wordmark for imageUrl.\n` +
+    `- logo.shellBg / logo.shellBorder: always provide safe-contrast logo container colors; this is required because many logos are transparent or white and disappear on light host backgrounds.\n` +
     `- sidePanels: always dark bg (#111 range) regardless of brand mode; accent = brand CTA color\n` +
     `- Respond with ONLY valid JSON — no markdown fences, no explanation\n\n` +
     `TARGET SCHEMA:\n${JSON.stringify(schemaExample, null, 2)}\n\n` +
@@ -282,37 +332,109 @@ async function normalizeToBrandProfile(rawData, companyName, slug) {
 
 // ── Brandfetch → raw data adapter ─────────────────────────────────────────────
 
+function _bfTypeWeight(t) {
+  const x = String(t || '').toLowerCase();
+  if (x === 'logo') return 4;
+  if (x === 'symbol' || x === 'mark') return 3;
+  if (x === 'other') return 2;
+  if (x === 'icon') return 1;
+  return 2;
+}
+
+function _bfFormatWeight(f) {
+  const g = String((f && f.format) || '').toLowerCase();
+  if (g === 'svg') return 5;
+  if (g === 'png') return 4;
+  if (g === 'webp') return 3;
+  if (g === 'jpeg' || g === 'jpg') return 2;
+  return 1;
+}
+
+function _bfThemeWeight(src, isWordmark) {
+  const s = String(src || '').toLowerCase();
+  if (!s) return 0;
+  // For host apps that are frequently light-themed, prefer dark/neutral wordmarks.
+  if (/\/theme\/dark\//.test(s)) return isWordmark ? 4 : 2;
+  if (/\/theme\/light\//.test(s)) return isWordmark ? -4 : -1;
+  return isWordmark ? 2 : 1;
+}
+
+/** Pick best wordmark + icon URLs (Brandfetch returns many formats; first 3 were often wrong). */
+function pickBrandfetchLogoUrls(data) {
+  let bestWord = { score: -1, src: null };
+  let bestIcon = { score: -1, src: null };
+  for (const logo of data.logos || []) {
+    const tw = _bfTypeWeight(logo.type);
+    const isIcon = String(logo.type || '').toLowerCase() === 'icon';
+    const isWordmark = !isIcon;
+    for (const fmt of logo.formats || []) {
+      if (!fmt.src || typeof fmt.src !== 'string' || !/^https?:\/\//i.test(fmt.src)) continue;
+      const score = tw * 20 + _bfFormatWeight(fmt) + _bfThemeWeight(fmt.src, isWordmark);
+      if (isIcon) {
+        if (score > bestIcon.score) bestIcon = { score, src: fmt.src };
+      } else if (score > bestWord.score) {
+        bestWord = { score, src: fmt.src };
+      }
+    }
+  }
+  const logoImageUrl = bestWord.src || bestIcon.src || null;
+  const iconImageUrl = bestIcon.src || null;
+  return { logoImageUrl, iconImageUrl };
+}
+
 function brandfetchToRaw(data) {
-  // Flatten Brandfetch response into a simple object for Haiku to normalize
   const colors = (data.colors || []).map(c => ({
     hex:  c.hex,
-    type: c.type, // 'dominant', 'background', 'accent', 'border', etc.
+    type: c.type,
     brightness: c.brightness,
   }));
 
   const fonts = (data.fonts || []).map(f => ({
     name:   f.name,
-    type:   f.type, // 'title', 'body'
-    origin: f.origin, // 'google', 'custom', etc.
+    type:   f.type,
+    origin: f.origin,
     url:    f.cssUrl || null,
   }));
 
-  const logos = (data.logos || []).flatMap(l => l.formats || []).map(f => ({
-    src:    f.src,
-    format: f.format,
-    width:  f.width,
-    height: f.height,
-  })).slice(0, 3);
+  const { logoImageUrl, iconImageUrl } = pickBrandfetchLogoUrls(data);
+
+  const logoRows = [];
+  for (const logo of data.logos || []) {
+    for (const fmt of logo.formats || []) {
+      if (!fmt.src || !/^https?:\/\//i.test(fmt.src)) continue;
+      logoRows.push({
+        brandfetchType: logo.type,
+        src:            fmt.src,
+        format:         fmt.format,
+        width:          fmt.width,
+        height:         fmt.height,
+      });
+    }
+  }
+  logoRows.sort((a, b) => {
+    const da = _bfTypeWeight(a.brandfetchType) * 10 + _bfFormatWeight(a);
+    const db = _bfTypeWeight(b.brandfetchType) * 10 + _bfFormatWeight(b);
+    return db - da;
+  });
 
   return {
-    source:      'brandfetch',
-    name:        data.name || data.domain,
-    domain:      data.domain,
-    description: data.description,
+    source:         'brandfetch',
+    name:           data.name || data.domain,
+    domain:         data.domain,
+    description:    data.description,
     colors,
     fonts,
-    logos,
+    logoImageUrl,
+    iconImageUrl,
+    logos:          logoRows.slice(0, 12),
   };
+}
+
+function mergeFetchedLogoUrls(profile, rawData) {
+  if (!profile || !rawData) return;
+  if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
+  if (rawData.logoImageUrl && !profile.logo.imageUrl) profile.logo.imageUrl = rawData.logoImageUrl;
+  if (rawData.iconImageUrl && !profile.logo.iconUrl) profile.logo.iconUrl = rawData.iconImageUrl;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -336,10 +458,12 @@ async function main() {
 
   if (slug === 'plaid') {
     console.log(`[BrandExtract] Brand "${slug}" — no extraction needed (using built-in defaults)`);
+    writeRunMeta({ ok: false, skipped: true, slug, reason: 'plaid-default' });
     return null;
   }
   if (slug === 'unknown' && !url) {
     console.log(`[BrandExtract] Brand "unknown" with no URL — no extraction needed (using built-in defaults)`);
+    writeRunMeta({ ok: false, skipped: true, slug, reason: 'unknown-no-url' });
     return null;
   }
 
@@ -370,6 +494,7 @@ async function main() {
   if (!rawData) {
     console.warn(`[BrandExtract] No brand data found for "${companyName}" — brand/${slug}.json will not be created`);
     console.warn(`[BrandExtract] Tip: add "Brand URL: https://www.${domain}" to inputs/prompt.txt to enable Playwright fallback`);
+    writeRunMeta({ ok: false, skipped: true, slug, domain, reason: 'no-brand-data' });
     return null;
   }
 
@@ -380,6 +505,7 @@ async function main() {
     profile = await normalizeToBrandProfile(rawData, companyName, slug);
   } catch (err) {
     console.error(`[BrandExtract] Haiku normalization failed: ${err.message}`);
+    writeRunMeta({ ok: false, skipped: true, slug, reason: 'normalize-failed', error: err.message });
     return null;
   }
 
@@ -389,14 +515,131 @@ async function main() {
   profile.slug    = slug;
   profile._source = rawData.source;
   profile._extractedAt = new Date().toISOString();
+  profile._extractDomain = domain;
+  mergeFetchedLogoUrls(profile, rawData);
+  if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
+  if (!profile.logo.shellBg) {
+    profile.logo.shellBg = profile.mode === 'light'
+      ? 'rgba(15,23,42,0.06)'
+      : 'rgba(255,255,255,0.12)';
+  }
+  if (!profile.logo.shellBorder) {
+    profile.logo.shellBorder = profile.mode === 'light'
+      ? 'rgba(15,23,42,0.16)'
+      : 'rgba(255,255,255,0.24)';
+  }
 
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
   console.log(`[BrandExtract] Wrote brand/${slug}.json (${profile.name}, mode: ${profile.mode})`);
+  writeRunMeta({
+    ok: true,
+    slug,
+    source: rawData.source,
+    profileFile: `brand/${slug}.json`,
+    domain,
+  });
 
   return profile;
 }
 
-module.exports = { main };
+/** Lowercase hostname without leading www. */
+function normalizeBrandDomain(d) {
+  return String(d || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, '');
+}
+
+/**
+ * Same slug resolution as main() (demo-script persona + optional CLI --brand=).
+ */
+function getBrandSlugForExtract() {
+  const { forcedSlug, forcedUrl } = parseArgs();
+  const { company, brandUrl } = loadContext({ quiet: true });
+  const url = forcedUrl || brandUrl;
+  let derivedCompany = company || forcedSlug;
+  if (!derivedCompany && url) {
+    try {
+      derivedCompany = new URL(url).hostname.replace(/^www\./, '').split('.')[0];
+    } catch (_) {}
+  }
+  const companyName = derivedCompany || 'Unknown';
+  return forcedSlug || toSlug(companyName);
+}
+
+/**
+ * Same marketing-domain resolution as main() (Brand URL line, inferred prompt URL, or guessDomain).
+ */
+function getResolvedBrandDomain() {
+  const { forcedUrl, forcedSlug } = parseArgs();
+  const { company, brandUrl } = loadContext({ quiet: true });
+  const url = forcedUrl || brandUrl;
+  let derivedCompany = company || forcedSlug;
+  if (!derivedCompany && url) {
+    try {
+      derivedCompany = new URL(url).hostname.replace(/^www\./, '').split('.')[0];
+    } catch (_) {}
+  }
+  const companyName = derivedCompany || 'Unknown';
+  const slug = forcedSlug || toSlug(companyName);
+  if (slug === 'unknown' && !url) return null;
+
+  return url
+    ? new URL(url).hostname.replace(/^www\./, '')
+    : guessDomain(companyName);
+}
+
+/** Domain last written by brand-extract for this slug (null if missing / unreadable). */
+function readStoredBrandExtractDomain(slug) {
+  if (!slug || slug === 'plaid') return null;
+  const profilePath = path.join(BRAND_DIR, `${slug}.json`);
+  if (!fs.existsSync(profilePath)) return null;
+  try {
+    const p = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    if (p._extractDomain && typeof p._extractDomain === 'string') return p._extractDomain;
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * When the pipeline resumes after brand-extract (e.g. --from=build), compare the prompt/script
+ * marketing domain to brand/<slug>._extractDomain; run brand-extract if missing or different.
+ *
+ * @param {function(): Promise<void>} runBrandExtractStage  e.g. () => runStage('brand-extract', ...)
+ */
+async function maybeRefreshBrandIfPromptDomainChanged(runBrandExtractStage) {
+  const slug = getBrandSlugForExtract();
+  if (!slug || slug === 'plaid') return;
+
+  const expected = getResolvedBrandDomain();
+  if (!expected) {
+    console.log('[BrandExtract] Pre-build check: could not resolve brand domain from prompt/script — skipping refresh');
+    return;
+  }
+
+  const stored = readStoredBrandExtractDomain(slug);
+  const ne = normalizeBrandDomain(expected);
+  const ns = normalizeBrandDomain(stored);
+  if (stored == null || ne !== ns) {
+    console.log(
+      `[BrandExtract] Pre-build refresh: prompt domain "${ne}" vs stored "${stored == null ? '(no profile)' : ns}" — re-running brand-extract`
+    );
+    await runBrandExtractStage();
+  } else {
+    console.log(`[BrandExtract] Pre-build check: profile domain matches prompt (${ne})`);
+  }
+}
+
+module.exports = {
+  main,
+  normalizeBrandDomain,
+  getBrandSlugForExtract,
+  getResolvedBrandDomain,
+  readStoredBrandExtractDomain,
+  maybeRefreshBrandIfPromptDomainChanged,
+};
 
 if (require.main === module) {
   main().catch(err => {

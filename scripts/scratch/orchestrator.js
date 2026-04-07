@@ -37,12 +37,14 @@ const LATEST_LINK  = path.join(OUT_DIR, 'latest');
 const STAGES = [
   'research',
   'ingest',
-  'brand-extract',
   'script',
+  // brand-extract after script so demo-script.json persona.company exists for Brandfetch / slug
+  'brand-extract',
   'script-critique',
   'embed-script-validate',   // Phase 3: narration/visual coherence check (skips when no GCP creds)
   // 'plaid-link-capture',  // DISABLED — using manual Playwright recording of real Plaid Link
   'build',
+  'plaid-link-qa',
   'build-qa',
   'record',
   'qa',
@@ -189,18 +191,108 @@ function extractProductSlug(promptText) {
   return words.length > 0 ? words.join('-') : 'demo';
 }
 
+function toTitleWord(word) {
+  const s = String(word || '').trim();
+  if (!s) return '';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+function normalizeCompanyToken(raw) {
+  const cleaned = String(raw || '')
+    .replace(/\*\*/g, '')
+    .replace(/[«»"'`]/g, '')
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/[^A-Za-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return 'Demo';
+  const parts = cleaned.split(' ').filter(Boolean).slice(0, 4);
+  const titled = parts.map(toTitleWord).join('-');
+  return titled || 'Demo';
+}
+
+function extractCompanyToken(promptText) {
+  if (!promptText) return 'Demo';
+  const linePatterns = [
+    /\*\*Company\s*\/\s*context:\*\*\s*([^\n]+)/i,
+    /\bCompany\s*\/\s*context:\s*([^\n]+)/i,
+    /\*\*Company:\*\*\s*([^\n]+)/i,
+    /\bCompany:\s*([^\n]+)/i,
+  ];
+  for (const re of linePatterns) {
+    const m = promptText.match(re);
+    if (m && m[1]) {
+      const token = normalizeCompanyToken(m[1]);
+      if (token && token !== 'Demo') return token;
+    }
+  }
+
+  // Fallback to Brand URL domain host label.
+  const brandUrl = promptText.match(/\bBrand URL:\s*(https?:\/\/[^\s]+)/i)?.[1];
+  if (brandUrl) {
+    try {
+      const host = new URL(brandUrl).hostname.replace(/^www\./i, '');
+      const root = host.split('.')[0] || '';
+      const token = normalizeCompanyToken(root);
+      if (token && token !== 'Demo') return token;
+    } catch (_) {}
+  }
+  return 'Demo';
+}
+
+function extractApiTokens(promptText) {
+  const lower = String(promptText || '').toLowerCase();
+  const labels = [];
+  const add = (x) => { if (!labels.includes(x)) labels.push(x); };
+
+  // CRA products collapse to a single CRA label for run naming.
+  if (/\b(cra_base_report|cra_income_insights|consumer report|cra\b|check report|base report|income insights)\b/.test(lower)) {
+    add('CRA');
+  }
+  if (/\bauth\b|\binstant auth\b/.test(lower)) add('Auth');
+  if (/\bidentity verification\b|\bidv\b|\bidentity\b/.test(lower)) add('Identity');
+  if (/\bsignal\b/.test(lower)) add('Signal');
+  if (/\bassets\b/.test(lower)) add('Assets');
+  if (/\bmonitor\b/.test(lower)) add('Monitor');
+  if (/\blayer\b/.test(lower)) add('Layer');
+  if (/\btransfer\b/.test(lower)) add('Transfer');
+  if (/\bincome\b/.test(lower) && !labels.includes('CRA')) add('Income');
+  if (/\bstatements\b/.test(lower)) add('Statements');
+  if (/\bprotect\b/.test(lower)) add('Protect');
+
+  return labels;
+}
+
+function buildRunNameStem(promptText) {
+  const company = extractCompanyToken(promptText);
+  const apis = extractApiTokens(promptText);
+  if (apis.length === 0) {
+    const fallbackSlug = extractProductSlug(promptText);
+    const fallbackLabel = fallbackSlug
+      .split('-')
+      .map(toTitleWord)
+      .join('-') || 'Demo';
+    return `${company}-${fallbackLabel}`;
+  }
+  return `${company}-${apis.join('-')}`;
+}
+
 // ── Versioned output directory ────────────────────────────────────────────────
 
 /**
  * Determines the versioned output directory for this run.
- * Pattern: out/demos/{YYYY-MM-DD}-{product-slug}-v{N}/
- * Increments N if a same-day, same-product directory already exists.
+ * Pattern: out/demos/{YYYY-MM-DD}-{Company}-{APIs}-v{N}/
+ * Increments N if a same-day, same-stem directory already exists.
  */
-function resolveVersionedDir(productSlug) {
+function resolveVersionedDir(runNameStem) {
   fs.mkdirSync(DEMOS_DIR, { recursive: true });
 
   const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  const prefix = `${today}-${productSlug}-v`;
+  const safeStem = String(runNameStem || 'Demo-Demo')
+    .replace(/[^A-Za-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'Demo-Demo';
+  const prefix = `${today}-${safeStem}-v`;
 
   const existing = fs.readdirSync(DEMOS_DIR)
     .filter(name => name.startsWith(prefix))
@@ -300,6 +392,7 @@ async function promptContinue(message) {
 async function runScriptCritique() {
   const runDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
   const scriptFile = path.join(runDir, 'demo-script.json');
+  const critiqueSentinel = path.join(runDir, 'script-critique.json');
   const researchFile = path.join(runDir, 'product-research.json');
   const promptFile = path.join(INPUTS_DIR, 'prompt.txt');
   if (!fs.existsSync(scriptFile)) {
@@ -353,6 +446,24 @@ async function runScriptCritique() {
 
     const critique = JSON.parse(raw);
 
+    try {
+      fs.writeFileSync(
+        critiqueSentinel,
+        JSON.stringify(
+          {
+            at: new Date().toISOString(),
+            passed: !!critique.passed,
+            issueCount: Array.isArray(critique.issues) ? critique.issues.length : 0,
+          },
+          null,
+          2
+        ),
+        'utf8'
+      );
+    } catch (e) {
+      console.warn(`[script-critique] Could not write script-critique.json: ${e.message}`);
+    }
+
     if (!critique.passed) {
       console.warn('[script-critique] Issues found:');
       (critique.issues || []).forEach(i =>
@@ -367,6 +478,15 @@ async function runScriptCritique() {
     }
   } catch {
     console.warn('[script-critique] Could not parse critique response.');
+    try {
+      fs.writeFileSync(
+        critiqueSentinel,
+        JSON.stringify({ at: new Date().toISOString(), passed: null, parseError: true }, null, 2),
+        'utf8'
+      );
+    } catch (e) {
+      console.warn(`[script-critique] Could not write script-critique.json: ${e.message}`);
+    }
   }
 }
 
@@ -841,7 +961,7 @@ function stageArtifactsForRemotion(runDir) {
   const publicDir = path.join(PROJECT_ROOT, 'public');
 
   // Clean old recording/voiceover from public/ to prevent contamination
-  const staleFiles = ['recording.webm', 'recording.mp4', 'voiceover.mp3'];
+  const staleFiles = ['recording.webm', 'recording.mp4', 'recording-studio.mp4', 'voiceover.mp3'];
   for (const f of staleFiles) {
     const p = path.join(publicDir, f);
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
@@ -856,9 +976,9 @@ function stageArtifactsForRemotion(runDir) {
     const label = fs.existsSync(processedRecording) ? 'recording-processed.webm' : 'recording.webm';
     console.log(`[Render] Staged ${label} → public/recording.webm`);
 
-    // Also convert to recording.mp4 — ScratchComposition reads recording.mp4 (not .webm)
-    // during the actual npx remotion render invocation. The old recording.mp4 must be
-    // replaced so it matches the current run's processed recording and sync map timestamps.
+    // Also convert to recording.mp4 — ScratchComposition uses this for final renders.
+    // The old recording.mp4 must be replaced so it matches the current run's processed
+    // recording and sync-map timestamps.
     const mp4Out = path.join(publicDir, 'recording.mp4');
     try { if (fs.existsSync(mp4Out)) fs.unlinkSync(mp4Out); } catch (_) {}
     console.log('[Render] Converting recording.webm → recording.mp4...');
@@ -874,6 +994,30 @@ function stageArtifactsForRemotion(runDir) {
     } else {
       const stderr = conv.stderr?.toString().slice(-300) || '';
       console.warn(`[Render] Warning: recording.mp4 conversion failed — ${stderr}`);
+    }
+
+    // Generate a fresh Studio proxy every run to prevent stale/choppy preview playback.
+    // Key targets:
+    // - 1440x900 preview size for interactive scrubbing performance
+    // - 30fps to match DemoScratch composition fps
+    // - high enough bitrate/quality to avoid "blocky/choppy" perceived motion
+    const studioOut = path.join(publicDir, 'recording-studio.mp4');
+    try { if (fs.existsSync(studioOut)) fs.unlinkSync(studioOut); } catch (_) {}
+    console.log('[Render] Building recording-studio.mp4 (1440x900 @30fps)...');
+    const studioConv = require('child_process').spawnSync('ffmpeg', [
+      '-i', recording,
+      '-vf', 'scale=1440:900:flags=lanczos,fps=30',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18',
+      '-pix_fmt', 'yuv420p',
+      '-an',
+      '-movflags', '+faststart',
+      '-y', studioOut,
+    ], { stdio: 'pipe', timeout: 300000 });
+    if (studioConv.status === 0) {
+      console.log('[Render] recording-studio.mp4 written → public/');
+    } else {
+      const stderr = studioConv.stderr?.toString().slice(-300) || '';
+      console.warn(`[Render] Warning: recording-studio.mp4 conversion failed — ${stderr}`);
     }
   } else {
     console.warn('[Render] Warning: no recording.webm found in run dir');
@@ -921,14 +1065,14 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
     await require('./scratch/ingest').main();
   });
 
-  // Stage 2: brand-extract (Brandfetch → Playwright CSS fallback → Haiku normalisation)
-  await stageRunner('brand-extract', async () => {
-    await require('./scratch/brand-extract').main();
-  });
-
-  // Stage 3: script
+  // Stage 2: script (writes demo-script.json — needed for persona.company in brand-extract)
   await stageRunner('script', async () => {
     await require('./scratch/generate-script').main();
+  });
+
+  // Stage 3: brand-extract (Brandfetch → Playwright CSS fallback → Haiku normalisation)
+  await stageRunner('brand-extract', async () => {
+    await require('./scratch/brand-extract').main();
   });
 
   // Stage 4: script-critique
@@ -986,10 +1130,28 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
         valuePropsMd = fs.readFileSync(fallbackVpFile, 'utf8');
         console.log('[claim-check] Using legacy plaid-value-props.md fallback.');
       }
+      const claimsOverridePath = path.join(INPUTS_DIR, 'claims-override.json');
+      if (fs.existsSync(claimsOverridePath)) {
+        try {
+          const ov = JSON.parse(fs.readFileSync(claimsOverridePath, 'utf8'));
+          const bullets = ov.bullets || ov.claims;
+          if (Array.isArray(bullets) && bullets.length > 0) {
+            const block =
+              '## CLAIMS OVERRIDE (inputs/claims-override.json)\n\n' +
+              bullets.map((b) => `- ${String(b)}`).join('\n');
+            valuePropsMd = valuePropsMd ? `${block}\n\n---\n\n${valuePropsMd}` : block;
+            console.log(`[claim-check] Applied ${bullets.length} claim(s) from claims-override.json`);
+          }
+        } catch (e) {
+          console.warn(`[claim-check] Could not read claims-override.json: ${e.message}`);
+        }
+      }
+
       if (!valuePropsMd) {
-        console.log('[claim-check] No curated product knowledge or plaid-value-props.md found — skipping claim verification.');
+        console.log('[claim-check] No curated product knowledge, plaid-value-props.md, or claims-override.json — skipping claim verification.');
         return;
       }
+
       const client     = new Anthropic();
 
       const response = await client.messages.create({
@@ -1060,9 +1222,32 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   }
   */
 
+  // When resuming past brand-extract (e.g. --from=build), re-run extraction if prompt URL/domain
+  // no longer matches brand/<slug>._extractDomain (or profile predates that field).
+  const brandExtractIdx = STAGES.indexOf('brand-extract');
+  const buildIdx = STAGES.indexOf('build');
+  const willRunBuild =
+    buildIdx >= startIdx && (endIdx == null || endIdx >= buildIdx);
+  const skippedBrandExtract = startIdx > brandExtractIdx;
+  if (willRunBuild && skippedBrandExtract) {
+    const beMod = require('./scratch/brand-extract');
+    await beMod.maybeRefreshBrandIfPromptDomainChanged(async () => {
+      await runStage('brand-extract', async () => {
+        await beMod.main();
+      }, timer);
+    });
+  }
+
   // Stage: build
   await stageRunner('build', async () => {
     await require('./scratch/build-app').main();
+  });
+
+  // Stage: plaid-link-qa — lightweight pre-record smoke test that ensures
+  // live Plaid Link actually launches and /api/create-link-token succeeds.
+  await stageRunner('plaid-link-qa', async () => {
+    delete require.cache[require.resolve('./scratch/plaid-link-qa')];
+    await require('./scratch/plaid-link-qa').main();
   });
 
   // Stage: build-qa — Playwright walkthrough + vision QA vs demo-script (no recording)
@@ -2000,6 +2185,8 @@ async function main() {
 
   // Determine versioned output directory — this becomes the isolated run dir
   const productSlug  = extractProductSlug(promptText);
+  const runNameStem = buildRunNameStem(promptText);
+  console.log(`[Orchestrator] Run naming stem: ${runNameStem}`);
   let versionedDir;
 
   if (process.env.PIPELINE_RUN_DIR && fs.existsSync(process.env.PIPELINE_RUN_DIR)) {
@@ -2013,11 +2200,15 @@ async function main() {
     // When restarting mid-pipeline, reuse the most recent existing run dir so that
     // prior-stage artifacts (demo-script.json, product-research.json, etc.) are available.
     // Search across ALL dates for runs matching the product slug (newest first by version).
-    const slugPart = `-${productSlug}-v`;
+    const stemPart = `-${runNameStem.toLowerCase()}-v`;
+    const slugPart = `-${productSlug.toLowerCase()}-v`; // backward compatibility for older run names
     const demosDir = path.join(path.resolve(__dirname, '../..'), 'out', 'demos');
     fs.mkdirSync(demosDir, { recursive: true });
     const existing = fs.readdirSync(demosDir)
-      .filter(n => n.includes(slugPart))
+      .filter((n) => {
+        const lower = n.toLowerCase();
+        return lower.includes(stemPart) || lower.includes(slugPart);
+      })
       .map(n => {
         const vNum = parseInt(n.slice(n.lastIndexOf('-v') + 2), 10) || 0;
         const mtime = (() => { try { return fs.statSync(path.join(demosDir, n)).mtimeMs; } catch (_) { return 0; } })();
@@ -2031,11 +2222,11 @@ async function main() {
       try { fs.existsSync(LATEST_LINK_PATH) && fs.unlinkSync(LATEST_LINK_PATH); } catch (_) {}
       try { fs.symlinkSync(versionedDir, LATEST_LINK_PATH); } catch (_) {}
     } else {
-      console.warn(`[Orchestrator] No existing run found for slug "${productSlug}" — creating new run dir.`);
-      versionedDir = resolveVersionedDir(productSlug);
+      console.warn(`[Orchestrator] No existing run found for stem "${runNameStem}" — creating new run dir.`);
+      versionedDir = resolveVersionedDir(runNameStem);
     }
   } else {
-    versionedDir = resolveVersionedDir(productSlug);
+    versionedDir = resolveVersionedDir(runNameStem);
   }
 
   // ── PIPELINE_RUN_DIR: all scripts write artifacts here instead of shared out/ ──

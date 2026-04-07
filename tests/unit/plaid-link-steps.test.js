@@ -6,7 +6,10 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
-const { validateDemoScript } = require(path.join(__dirname, '../../scripts/scratch/scratch/generate-script'));
+const {
+  validateDemoScript,
+  mergePreLinkIntoLaunchStep,
+} = require(path.join(__dirname, '../../scripts/scratch/scratch/generate-script'));
 
 describe('plaid-link-launch-validation', () => {
   test('single launch step in live mode → no launch-related errors', () => {
@@ -49,5 +52,53 @@ describe('plaid-link-launch-validation', () => {
       ],
     }, { plaidLinkLive: true });
     assert.ok(result.errors.some(e => /boundary rule/.test(e)));
+  });
+
+  test('standalone pre-link step before launch → error', () => {
+    const result = validateDemoScript({
+      steps: [
+        {
+          id: 'pre-link-explainer',
+          label: 'Why we need to link',
+          narration: 'Taylor reviews why Citi needs account ownership data before funding.',
+          visualState: 'A pre-link explainer card with Link your bank CTA.',
+        },
+        {
+          id: 'plaid-link-flow',
+          plaidPhase: 'launch',
+          narration: 'Recognized as a returning user, Taylor confirms with OTP and links the checking account in seconds.',
+        },
+      ],
+    }, { plaidLinkLive: true });
+    assert.ok(result.errors.some(e => /Merge pre-Link explainer \+ launch into one step/.test(e)));
+  });
+
+  test('mergePreLinkIntoLaunchStep collapses immediate pre-link step', () => {
+    const script = {
+      steps: [
+        {
+          id: 'pre-link-explainer',
+          label: 'Link your bank',
+          narration: 'Citi explains security and data use.',
+          durationHintMs: 6000,
+          interaction: { action: 'click', target: '[data-testid="link-your-bank"]' },
+          visualState: 'Pre-link trust screen with CTA.',
+        },
+        {
+          id: 'plaid-link-flow',
+          plaidPhase: 'launch',
+          narration: 'Recognized as a returning user, Taylor confirms with OTP and links the checking account in seconds.',
+          durationHintMs: 18000,
+          visualState: 'Plaid modal visible with institution and account selection.',
+        },
+      ],
+    };
+    const merged = mergePreLinkIntoLaunchStep(script);
+    assert.equal(script.steps.length, 1);
+    assert.equal(script.steps[0].id, 'plaid-link-flow');
+    assert.equal(script.steps[0].durationHintMs, 24000);
+    assert.equal(script.steps[0].interaction.target, '[data-testid="link-your-bank"]');
+    assert.ok(/Pre-link trust screen/.test(script.steps[0].visualState));
+    assert.deepEqual(merged, { removedStepId: 'pre-link-explainer', launchStepId: 'plaid-link-flow' });
   });
 });

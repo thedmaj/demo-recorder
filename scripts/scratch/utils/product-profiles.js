@@ -37,9 +37,12 @@ const PRODUCT_FAMILIES = {
     kbSlugs: ['cra-base-report'],
     accuracyRules: [
       'CRA Base Report demos must reflect user creation plus identity-heavy setup before consumer report generation.',
+      'CRA Base Report demos must use the real Plaid Link CRA/Check experience (single plaidPhase "launch" step), not simulated host-only Link steps.',
+      'When CRA_LAYER_TEMPLATE is configured, CRA link initialization should use that template with CRA credentials for CRA/Check Link sessions.',
       'Use consumer-report terminology such as permissible purpose, report readiness, account insights, inflows, outflows, balances, and ownership.',
       'Do not present Base Report as an instant funding or Signal risk flow unless the prompt explicitly combines products.',
       'If report generation is asynchronous, show a readiness or report-available beat instead of pretending the report is instantly returned.',
+      'Any setup or data-returned explanatory scene should be rendered as a Plaid-branded slide (.slide-root), not customer-branded host chrome.',
     ],
     critiqueRules: [
       'Base Report demos should emphasize report generation, readiness, and retrieved report contents rather than ACH rails or transaction risk.',
@@ -52,9 +55,12 @@ const PRODUCT_FAMILIES = {
     kbSlugs: ['income-insights'],
     accuracyRules: [
       'CRA Income Insights demos should use Check / Consumer Report terminology, not traditional Income API terminology.',
+      'CRA Income Insights demos must use the real Plaid Link CRA/Check experience (single plaidPhase "launch" step), not simulated host-only Link steps.',
+      'When CRA_LAYER_TEMPLATE is configured, CRA link initialization should use that template with CRA credentials for CRA/Check Link sessions.',
       'Use CRA products such as "cra_base_report" and "cra_income_insights" for Link configuration in this family.',
       'Retrieve CRA Income Insights with /cra/check_report/income_insights/get, not /credit/bank_income/get or /credit/payroll_income/get.',
       'CRA Income Insights flows are asynchronous and should include a report-ready or report-available beat before reviewing the report.',
+      'Any setup or data-returned explanatory scene should be rendered as a Plaid-branded slide (.slide-root), not customer-branded host chrome.',
     ],
     critiqueRules: [
       'CRA Income Insights demos should focus the reveal on report-derived income understanding, not traditional payroll or bank-income source selection.',
@@ -65,11 +71,13 @@ const PRODUCT_FAMILIES = {
 
 function inferProductFamilyFromText(text = '') {
   const lower = String(text || '').toLowerCase();
-  if (/\b(base report|consumer report|check base report|cra base report)\b/.test(lower)) {
-    return 'cra_base_report';
-  }
+  // Prioritize the more specific CRA income signals before generic/base-report cues.
+  // Income Insights prompts often mention "consumer report" and "base report" as prerequisites.
   if (/\b(cra income insights|income insights|cra_income_insights)\b/.test(lower)) {
     return 'income_insights';
+  }
+  if (/\b(base report|consumer report|check base report|cra base report)\b/.test(lower)) {
+    return 'cra_base_report';
   }
   if (/\b(signal|auth|identity match|account funding|instant account verification|iav|eav|ach risk)\b/.test(lower)) {
     return 'funding';

@@ -1,6 +1,9 @@
 ---
 product: "Plaid <ProductName>"
 slug: "<slug>"
+# claims_source: primary | supplement  — if "primary", prefer this file's proof points
+#   in claim-check when using multi-product demos; avoid duplicating the same stats in
+#   inputs/plaid-value-props.md. Use inputs/claims-override.json for ad-hoc approved bullets.
 api_endpoints:
   - "<endpoint>"
 use_cases:
@@ -33,7 +36,10 @@ version: 1
 - Claim one
 
 ## Proof Points & ROI Metrics
-<!-- ⚠️ HUMAN-OWNED — every claim requires a Source. AI adds [DRAFT] rows only. -->
+<!-- ⚠️ HUMAN-OWNED — every claim requires a Source. AI adds [DRAFT] rows only.
+     SINGLE-SOURCE RULE: Put canonical numbers in EITHER this file OR inputs/plaid-value-props.md
+     (funding family), not both with duplicate stats. For mixed-product demos, use
+     inputs/claims-override.json for an explicit approved list at claim-check time. -->
 
 | Metric | Value | Source | Confidence | Last Verified |
 |--------|-------|--------|------------|---------------|

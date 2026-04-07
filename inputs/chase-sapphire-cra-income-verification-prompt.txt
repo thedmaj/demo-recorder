@@ -1,0 +1,258 @@
+================================================================================
+Chase Sapphire (Credit Card) — CRA Income Verification Demo Specification
+================================================================================
+
+Build a branded demo for **Chase Sapphire** (credit card underwriting, https://www.chase.com)
+showing a claimant/income-verification flow where an applicant uses Plaid Check
+(`cra_base_report` + `cra_income_insights`) to provide report-based income
+context for credit underwriting.
+
+Open with applicant pain (slow income review, manual doc hunting, uncertainty)
+and close with a clear underwriting-ready outcome (faster review with income
+insights in hand).
+
+Messaging priority:
+- Anchor on `inputs/plaid-value-props.md`
+- Anchor on `docs/plaid-demo-script-value-propositions.md`
+- Supplement only for API accuracy and CRA terminology (FCRA / permissible purpose)
+
+Brand URL (optional, for brand-extract): https://www.chase.com
+
+-------------------------------------------------------------------------------
+PLAID PRODUCTS & CONNECTION MODE
+-------------------------------------------------------------------------------
+
+Products featured in the story (approved names only):
+- Plaid Link
+
+Primary product family / flow type:
+- `income_insights`
+
+Product knowledge sources to anchor on:
+- `inputs/products/plaid-income-insights.md`
+- `inputs/products/plaid-cra-base-report.md`
+
+Connection / entry UX:
+- [x] Standard **Plaid Link** only (`/link/token/create`)
+- [ ] Plaid Layer path
+- [ ] IDV session as primary
+
+Recording expectation:
+- [x] Live Plaid Link in headless recording (real iframe — follow `CLAUDE.md`
+      single `plaidPhase: "launch"` step; no simulated Link screens)
+- [ ] Simulated / host-only steps for Link (only if pipeline mode allows — note exception)
+
+Sandbox / test data:
+- Use defaults from `inputs/plaid-link-sandbox.md`
+- Non-OAuth sandbox institution: **First Platypus Bank** (`ins_109508`)
+- CRA Link personas: `user_credit_*` (do NOT use `user_bank_income`)
+
+-------------------------------------------------------------------------------
+USER MODEL / REQUIRED DATA (CRITICAL: PLAID CHECK)
+-------------------------------------------------------------------------------
+
+This flow depends on Plaid Check user creation because consumer report generation
+is async.
+
+Required user object fields for `/user/create`:
+- `client_user_id` (any unique string from the demo system)
+- `identity` with:
+  - `name`: `given_name`, `family_name`
+  - `date_of_birth` (YYYY-MM-DD)
+  - `emails`: array with at least one `{ email, primary: true }`
+  - `phone_numbers`: array with at least one `{ number, primary: true }`
+  - `addresses`: array with at least one `{ street, city, region, postal_code, country, primary: true }`
+  - (optional for demo realism) `id_numbers` with `type: "us_ssn"`
+
+Identity / permissible-purpose / underwriting notes:
+- This is a credit/underwriting income verification flow (extension of credit).
+- Plaid Check link token must include:
+  - `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`
+- Use language that is compliant and avoids guarantees:
+  - Income Insights is an input to underwriting; lenders remain responsible for decisions.
+
+-------------------------------------------------------------------------------
+CRITICAL UI — HOST VS PLAID LAYERS
+-------------------------------------------------------------------------------
+
+Host app (Chase-style branded application surface):
+- Branded credit card application UI (income verification stepper, applicant profile, status)
+- Never show raw API JSON or developer panels in the recorded host experience
+- `#api-response-panel`: `display:none` on non-insight host steps.
+
+Plaid insight screens:
+- Include at least one full-viewport Plaid insight beat for:
+  - `income-insights-insight` (POST /cra/check_report/income_insights/get)
+- Use the single global `#api-response-panel` for JSON display.
+- JSON panel should be **collapsible** and **collapsed by default** (class `api-json-collapsed`).
+
+Plaid-branded slide requirement:
+- Any "setup" or "data returned/report returned" explanatory beat must use a Plaid-branded slide (`.slide-root`) rather than Chase host chrome.
+- Keep customer-branded host screens for applicant journey moments (application entry, CTA, final outcome).
+
+-------------------------------------------------------------------------------
+MANDATORY FLOW ORDER (STORYBOARD + NARRATION + goToStep MUST ALIGN)
+-------------------------------------------------------------------------------
+
+List the logical order after Link succeeds:
+
+| # | Beat type | What happens | Key API or UX |
+|---|-----------|--------------|----------------|
+| 1 | host | Applicant opens Chase Sapphire application and reaches income verification step | CTA: "Verify income with bank" |
+| 2 | Link | Applicant taps Link and completes bank connection inside Plaid Link modal | Link products: `cra_base_report`, `cra_income_insights` |
+| 3 | host | Report generation is in progress; show a “processing / report ready soon” state | **REQUIRED**: report-ready beat before reviewing results |
+| 4 | Plaid insight | Show Income Insights for underwriting with key income context in the left panel | Insight API: `/cra/check_report/income_insights/get` |
+| 5 | host | Underwriting-ready outcome: show verified income context used for decisioning (no over-claims) | CTA/outcome: "Continue application" |
+
+Hard rules:
+- Include a “report ready / processing” beat before the Income Insights step (pipeline validation).
+- Include an insight step whose `apiResponse.endpoint` is exactly:
+  - `"/cra/check_report/income_insights/get"`
+- The Plaid Link beat must use one real SDK launch step (`"plaidPhase": "launch"`) and capture the actual CRA Link modal flow.
+- Do not retrieve income via traditional endpoints:
+  - Do NOT use `/credit/bank_income/get` or `/credit/payroll_income/get`
+
+Async lifecycle / readiness model:
+- After Link consent, report generation is async.
+- Narrate that the system notifies your platform when the report is ready for retrieval.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA (CHASE-LIKE CREDIT APPLICANT)
+-------------------------------------------------------------------------------
+
+Persona name:
+- Ava Johnson
+
+Role / context:
+- Applying for a Chase Sapphire credit card and needs income verification for underwriting.
+
+Host-app account / product context:
+- Application dashboard showing applicant profile and an “Income verification” progress indicator.
+
+Structured data (tables encouraged):
+
+| Field | Value | Notes for narration or JSON |
+|-------|-------|------------------------------|
+| client_user_id | ava-chase-sapphire-001 | Used in `/user/create` |
+| applicant name | Ava Johnson | KYC-like name for the app |
+| phone | +12125550199 | E.164 |
+| email | ava.johnson@example.com | |
+| street | 55 W Elm St | |
+| city/state/zip | Austin, TX 78701 | |
+| report window | last 12 months | Expressed as `cra_options.days_requested: 365` |
+
+Dynamic Link metadata:
+- Use `window._plaidInstitutionName`, `window._plaidAccountName`, `window._plaidAccountMask`
+  for any institution/account labels after Link.
+- Never hardcode real bank display names in HTML.
+
+Income insights fields to visualize (left panel + narration alignment):
+- Focus on underwriting-usable, report-derived attributes such as:
+  - `historical_average_monthly_income`
+  - `forecasted_average_monthly_income`
+  - income categories and frequency (e.g., salary/gig/retirement-like streams)
+  - `next_payment_date` (predicted timing) if present in the returned structure
+
+Narration boundary / reveal moment:
+- The reveal beat is when the Income Insights insight screen appears and underwriters
+  can see categorized income context for decisioning.
+
+-------------------------------------------------------------------------------
+HOST APP SHELL (LAYOUT INTENT)
+-------------------------------------------------------------------------------
+
+Describe the app layout intent:
+- Header: Chase-like card application branding, applicant name, progress stepper
+- Main card: "Income Verification" with a single primary CTA to launch Plaid Link
+- After Link: show a dedicated report-generation status panel (no JSON)
+- On Insight: show a summary panel and a "Continue application" button
+
+Viewport:
+- design for 1440×900 (recording resolution).
+
+-------------------------------------------------------------------------------
+NARRATION & PACING (TARGETS)
+-------------------------------------------------------------------------------
+
+Steps:
+- 8 steps typical (allow minor adjustment by the script generator)
+
+Per-step narration:
+- 20–35 words target
+
+Opening (first ~15s):
+- Make the problem concrete: income verification delays and friction.
+
+Climax (Income Insights screen):
+- Explain what changes with report-derived income context and how it supports underwriting.
+
+Closing:
+- "Faster review, less manual follow-up" with compliance-safe language (can help).
+
+-------------------------------------------------------------------------------
+VALUE PROP SALES MESSAGING (GLEAN-BASED, COMPLIANCE-SAFE)
+-------------------------------------------------------------------------------
+
+Use these verbatim (or closely) for the demo narration and on-screen value callouts.
+
+Demo narration (8 bullets; each <= 25 words):
+1. “A Sapphire-style application shouldn’t depend on PDFs and manual income rework—verify income from the bank with a familiar Plaid Link experience.”
+2. “After you connect, Consumer Report by Plaid Check generates report-ready income insights for credit underwriting.”
+3. “Income Insights categorizes income streams and summarizes historical averages alongside forecasted monthly income.”
+4. “It also surfaces underwriting-usable attributes like income frequency and the predicted next payment date, when available.”
+5. “Underwriters can use this report-derived context as an important input to ability-to-pay and debt-to-income review.”
+6. “This keeps income information inside the same consumer-report workflow—built for FCRA-regulated credit decisioning.”
+7. “If the applicant’s income picture looks complex or variable, the report gives reviewers a structured way to drill in.”
+8. “Net-net, it can support faster review and fewer follow-ups—while keeping the decision responsibly under your underwriting policy.”
+
+Executive value props (5 bullets):
+- “Increase underwriting confidence with report-derived, bank-connected income context—without switching users to a separate workflow.”
+- “Support faster credit reviews by moving income insights from manual steps into a structured Consumer Report by Plaid Check surface.”
+- “Improve decision consistency by standardizing income categories, averages, and forecasted income signals for reviewers.”
+- “Strengthen FCRA-aligned credit data handling by using Plaid Check for permissible-purpose consumer reporting.”
+- “Deliver a borrower-friendly experience with Plaid Link, while keeping lender decisioning fully policy-driven.”
+
+Objection handling (4 lines):
+- Speed: “Income Insights is generated after Link, so the report can be ready soon for review—reducing days-long manual loops.”
+- Compliance/FCRA: “Income Insights is part of Consumer Report by Plaid Check, designed for permissible purpose credit decisioning workflows.”
+- Data quality: “Attributes are derived from bank transaction history and normalized for underwriting use; treat them as key inputs, not sole answers.”
+- Borrower experience: “Applicants connect in a familiar Plaid flow, avoiding paper chasing and upload friction.”
+
+Compliance-safe wording guidance:
+- Prefer “can help,” “supports,” “designed for,” and “an input to underwriting.”
+- Do not promise approvals, fraud elimination, or specific SLA guarantees.
+- Emphasize that lenders remain responsible for final credit policy decisions.
+
+-------------------------------------------------------------------------------
+OPTIONAL: PRODUCT-SPECIFIC APPENDIX (IMPLEMENTATION DETAILS FOR SCRIPT)
+-------------------------------------------------------------------------------
+
+AskBill implementation highlights (use for accurate API wiring + request payloads):
+- `/user/create`
+  - capture `user_id` (or equivalent identifier returned by Plaid)
+- `/link/token/create`
+  - `products`: `["cra_base_report", "cra_income_insights"]`
+  - `cra_options.days_requested`: recommended `365` (minimums apply; keep realistic)
+  - `consumer_report_permissible_purpose`: `"EXTENSION_OF_CREDIT"`
+  - include a webhook URL in `webhook` so your backend receives `USER_CHECK_REPORT_READY`
+- `/cra/check_report/income_insights/get`
+  - request with `user_id` (recommended)
+  - populate `apiResponse.response` with a realistic (not tiny) report JSON
+    so the JSON panel shows the key income insight fields you narrated.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT CHECKLIST (HUMAN OR AI)
+-------------------------------------------------------------------------------
+
+Before saving as `inputs/prompt.txt` and running the pipeline:
+- [ ] Story order includes Link → report-ready beat → Income Insights insight beat → outcome
+- [ ] Income insight step uses endpoint exactly `/cra/check_report/income_insights/get`
+- [ ] Report-ready beat is present (processing / ready soon / notified)
+- [ ] Link token products include `cra_base_report` and `cra_income_insights`
+- [ ] `consumer_report_permissible_purpose` is `"EXTENSION_OF_CREDIT"`
+- [ ] Avoid unapproved numeric claims; prefer compliance-safe “can help / supports / designed to”
+- [ ] No usage of `/credit/bank_income/get` or `/credit/payroll_income/get`
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

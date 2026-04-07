@@ -1,319 +1,129 @@
-TD Bank (United States) Account Funding Demo — Branded Demo Specification
-============================================================================
+================================================================================
+YNAB Personal Financial Insights — One View Of Money
+================================================================================
 
-Build a branded demo for TD Bank (U.S. retail banking, https://www.td.com) showing an external account funding flow. The consumer links an external bank account using Plaid (Plaid Layer OR Plaid Link, depending on demo mode), then the backend runs Identity Match, Auth, a funding-amount capture step in the host app, and Signal Evaluate before showing instant funds approval.
+**Host:** **YNAB** — personal finance / budgeting app  
+**Canonical URL:** https://www.ynab.com/  
+**Brand URL** (optional): https://www.ynab.com/
 
-Open with the use case narrative and close with a strong value proposition. Messaging priority remains: anchor on `inputs/plaid-value-props.md` and `docs/plaid-demo-script-value-propositions.md` (verbatim or closely adapted), supplemented only for API accuracy.
+**User journey (one sentence):**  
+A digital-native young professional links financial accounts in YNAB to view spending, investments, and liabilities in one unified money dashboard.
 
--------------------------------------------------------------------------------
-CRITICAL UI REQUIREMENT — PLAID INSIGHT SCREENS AND JSON (NON-NEGOTIABLE)
--------------------------------------------------------------------------------
-
-For EVERY behind-the-scenes Plaid-branded full-viewport insight screen (after each API milestone below), the implementation MUST use the global `api-response-panel` overlay as the ONE mechanism for showing raw Plaid API JSON:
-
-  1. The panel is labeled clearly (e.g. "API response" or "Response JSON") in the Plaid insight chrome.
-  2. It shows the JSON response body for the API that screen represents (pretty-printed, monospace 14–15px).
-  3. It is COLLAPSIBLE / TOGGLEABLE via chevron or "Show JSON" / "Hide JSON" behavior.
-  4. It animates consistently with the host app (e.g. slide in from the right, ~400ms), matching the `api-response-panel` behavior described in the demo DOM contract.
-  5. It appears on Plaid insight steps ONLY — never on TD consumer-facing screens.
-
-Do NOT build a second inline JSON column or step-specific `*-json-panel` inside the insight step div. Raw API JSON belongs exclusively in the global `api-response-panel`.
-
-The consumer-facing TD UX must never show raw JSON, field names, or API payloads.
+**Story arc (short prose):**  
+Start with YNAB's core budgeting promise ("give every dollar a job"), then show how synced transaction data keeps the budget current without manual cleanup. Expand from budgeting into a full financial picture by layering in investment holdings and liabilities, then close with proactive "what to do next" guidance that makes YNAB feel like a long-term financial command center.
 
 -------------------------------------------------------------------------------
-MANDATORY BACKEND API SEQUENCE (STORYBOARD AND NARRATION MUST MATCH THIS ORDER)
+PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
-After `public_token` exchange yields an `access_token` (and you have the selected `account_id` from Link onSuccess or accounts list), the demo's LOGICAL and SEQUENCED flow SHALL be:
+**Products featured (approved names only):**  
+Plaid Link, Plaid Transactions, Plaid Liabilities, Plaid Investments
 
-  1. POST /identity/match — Confirm account ownership first
-       - Compare KYC PII on file at TD (demo host) to identity on file at the linked institution.
-       - Narration: ownership verification before moving money; nickname/typo tolerance.
-       - Plaid insight screen: Identity Match. Global `api-response-panel`: full `/identity/match` JSON.
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):  
+Personal Financial Insights
 
-  2. POST /auth/get — Retrieve rails for ACH funding
-       - Use `access_token`; pass `account_ids` scoped to the funding account when limiting scope.
-       - Narration: Auth supplies ACH account and routing numbers for the funding leg.
-       - Plaid insight screen: Auth. Global `api-response-panel`: full `/auth/get` JSON.
+**Primary product family** (pick one — aligns with pipeline profiles):  
+`transactions`
 
-  3. HOST APP STEP (TD consumer UX, not Plaid branded)
-       - Prompt the end user for the funding amount (USD) they want to move into their TD account.
-       - Validate input (positive decimal, reasonable max for demo). Store as the amount passed to Signal.
-       - No JSON panel on this screen. Side panels remain hidden.
+**Primary messaging file for this demo** (pick one to own stats):  
+`inputs/products/plaid-transactions.md`
 
-  4. POST /signal/evaluate — ACH return risk for the specific funding amount
-       - Required inputs include: `access_token`, `account_id`, `amount` as a USD decimal (NOT cents), and `client_transaction_id` (unique, max 36 chars).
-       - Strongly recommended for model quality: `client_user_id`, `user` object (name, phone, email, address), `device` (ip, user_agent), and optional `ruleset_key`.
-       - Plaid insight screen: Signal. Global `api-response-panel`: full `/signal/evaluate` JSON.
-
-  5. TD consumer UX — Instant approval outcome
-       - After Signal `ruleset.result` is `ACCEPT` (happy path), return to TD-branded UI and show that funds are approved instantly / available per demo copy (no micro-deposits).
-
-Do NOT present Auth before Identity Match in narration, `goToStep` ordering, or insight screen order. Link/Layer connection still happens before any of these backend calls.
-
-Technical note (Plaid): `/identity/match` and `/auth/get` do not have a hard Plaid dependency order; this spec chooses ownership-first ordering for demo logic and sales narrative. `/accounts/get` may be used as needed to resolve accounts.
+**Research depth:** gapfill
 
 -------------------------------------------------------------------------------
-SIGNAL SCORE DIRECTION (OFFICIAL SEMANTICS — DO NOT INVERT)
+CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-Per Plaid Signal documentation (see https://plaid.com/docs/api/products/signal/#signalevaluate):
-
-  - `bank_initiated_return_risk.score` and `customer_initiated_return_risk.score` are on a 1–99 scale.
-  - HIGHER numeric score = HIGHER ACH return risk.
-  - LOWER numeric score = LOWER return risk.
-
-For the instant-funding happy path, use LOW risk scores (illustrative: single-digit to low teens) together with `ruleset.result: "ACCEPT"`. Values must be consistent with the JSON shown in the collapsible panel.
-
-`ruleset.result` may be `ACCEPT`, `REVIEW`, or `REROUTE` — happy path uses `ACCEPT`.
+  [x] **Live Plaid Link** — real SDK (`plaidPhase: "launch"` single step per `CLAUDE.md`)
+  [ ] **Plaid Layer** / OAuth / IDV — note if applicable
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`
 
 -------------------------------------------------------------------------------
-DEMO MODES — PLAID LAYER HAPPY PATH AND PLAID LINK HAPPY PATH
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-The demo application MUST support TWO distinct entry paths that are functionally equivalent from TD's perspective but showcase different Plaid connection UX:
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | YNAB welcome and "Connect your accounts" onboarding panel | Position YNAB as a financial command center, not just a budgeting tracker | `Get started` |
+| 2 | host | Budget overview with income vs spending trend card and category totals | Show "living budget" value: categories auto-update from fresh transaction sync | `Link an account` |
+| 3 | host | Single pre-Link explainer: secure connection and what data powers insights | Trust + value framing before Link launch | CTA ends narration: `Continue with Plaid` |
+| 4 | link | Real Plaid Link flow (remember-me/OTP, institution select, account select, success) | Narrate only what is visible inside the modal | Link complete |
+| 5 | slide | Transactions insight: `POST /transactions/sync` with category, merchant logo/name, amount, date, pending/posted | Budget trust is built on clean merchant and category detail plus sync deltas (added/modified/removed) | Category + merchant insight |
+| 6 | slide | Investments insight: `POST /investments/holdings/get` with account type, ticker, quantity, price, market value | Move from spending-only view to asset visibility and allocation clarity | Portfolio clarity |
+| 7 | slide | Liabilities insight: `POST /liabilities/get` with mortgage APR, payment due date, opening vs current balance | Show debt structure and cost-of-debt context, not just total balance | Liability transparency |
+| 8 | host | Unified accounts view showing account name/type, cashflow, investments, liabilities, and next-step recommendations | Turn fragmented data into proactive plan decisions (spend, save, payoff priorities) | `Review plan` |
+| 9 | slide | Final value summary slide with top research-backed messaging for personal financial insights | Close with outcomes: less app switching, faster clarity, and better month-to-month decisions | `Start budgeting with confidence` |
 
-  A) Plaid Layer mode (template-driven onboarding)
-       - Token creation uses Layer session flow: `POST /session/token/create` with `user.client_user_id` and Dashboard `template_id` as required by your environment.
-       - Response provides a Link token used to initialize the same Plaid Link client SDK on the frontend.
-       - Document explicit URL or query parameter, e.g. `?connection_mode=layer` or route `/demo/fund/layer`.
+**Research-informed value proposition talking points (use in narration + final summary slide):**  
+- "From fragmented account data to one connected financial picture: cash flow, investments, and liabilities in one place."  
+- "Transactions Sync keeps the budget current with clean merchant/category detail, so users spend less time reconciling and more time deciding."  
+- "Investments + liabilities turn a budgeting app into a full financial operating system with net-worth context."  
+- "Use debt structure signals like APR, due date, and balance trend to plan realistic payoff priorities."  
+- "Position the user outcome as proactive guidance ("what should I do next?"), not passive tracking."
 
-  B) Standard Plaid Link mode
-       - Token creation uses `POST /link/token/create` with `products` including at least `auth` and `signal`, and identity configured per below.
-       - Document explicit URL or query parameter, e.g. `?connection_mode=link` or route `/demo/fund/link`.
+**Product-specific reminders** (delete if N/A):  
+- Link: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"` step.  
+- Transactions: emphasize merchant name/logo, category (primary + detailed if present), amount, date, pending vs posted, and sync updates (added/modified/removed).  
+- Investments: emphasize account name/type, holdings ticker symbol, quantity, current price, and market value.  
+- Liabilities: emphasize mortgage APR, due date, minimum/payment amount, and opening vs current balance deltas.
 
-Requirements:
-  - Both modes MUST converge on the same post-connection sequence: exchange token, then Identity Match, Auth, amount entry, Signal, instant approval.
-  - README or in-app dev banner (non-recorded): list the two URLs/parameters so producers can record Layer and Link versions without code changes.
-  - Simulated UI (if not live Plaid) must reflect mode: Layer flow shows template-driven steps; Link flow shows standard Link steps appropriate to the recording script.
+**Compliance / user data (one line):**  
+Use representative user-consented account data and avoid implying advisory guarantees; frame outputs as insight tools for budgeting and planning.
 
 -------------------------------------------------------------------------------
-DEMO INTENT
+PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-- Hyper-realistic large online banking app — simulate a mature U.S. retail banking portal (TD-style): menus, headers, accounts, transfers, activity, settings, help.
-- Realistic TD banking UI — brand colors, typography, logo, motion, and layout guidance live in `brand/td.json`, which is always freshly generated by `brand-extract.js` (Brandfetch) at the start of each pipeline run. Do NOT hardcode brand tokens; do NOT reuse stale brand JSON from prior runs. Follow `brand.promptInstructions` for shell layout.
-- Persona: Primary KYC name on file at TD differs slightly from the name at the external bank to showcase Identity Match fuzzy matching (define exact strings in demo data tables below). TD checking account with masked last four; external institution name and account mask come from Plaid Link `onSuccess` metadata only — never hardcode institution display strings in HTML.
-- Strict separation of layers: TD consumer UX and Plaid insight screens MUST NOT appear as a combined single viewport. TD steps = TD branding only, panels hidden. Insight steps = Plaid dark navy system + global `api-response-panel` overlay for JSON.
+**Name / role:** Maya Chen, 28, product designer (digital-native young professional)  
+**Company / context:** Uses YNAB to manage monthly budget, monitor investment holdings, and track mortgage liability in one dashboard  
+**Sample fields that must appear on screen:** account name, account type, transaction category, merchant name/logo, amount, date, holding ticker, quantity, price, market value, mortgage APR, opening balance, current balance
+
+Recommended structured data:
+- `client_user_id`: `ynab-maya-001`
+- `user_name`: `Maya Chen`
+- `monthly_income`: `7800.00`
+- `monthly_spending`: `6125.42`
+- `mortgage_opening_balance`: `420000.00`
+- `mortgage_current_balance`: `397845.12`
+- `mortgage_apr`: `5.62`
 
 -------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use YNAB-style modern consumer-finance UI patterns: clean cards, strong information hierarchy, calm trust language, and clear budget-first framing.  
+Keep host screens YNAB-branded and reserve Plaid-only styling for API insight/summary slides.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
 [[SLIDE_OUTPUT_BEGIN]]
-SLIDE OUTPUT (POWERPOINT SUPPLEMENT)
--------------------------------------------------------------------------------
+Create 4 Plaid-branded slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+1) Transactions (`POST /transactions/sync`) — category, merchant logo/name, amount, date
+2) Investments (`POST /investments/holdings/get`) — ticker, quantity, price, value
+3) Liabilities (`POST /liabilities/get`) — mortgage APR, opening balance, current balance
+4) Final value summary slide — top research-backed value propositions for Personal Financial Insights
 
-In addition to the recorded demo steps, generate up to 2 supplemental **exec/story slides** and up to 3 **technical companion slides** when it improves presenter clarity.
-
-SLIDE REQUIREMENTS (non-negotiable):
-- Slides use **Plaid-only styling** (dark navy background + Plaid teal accent `#00A67E`) and remain independent from TD host-app chrome.
-- Slides must follow the shared slide template contract described in `templates/slide-template/`:
-  - Header: PLAID pill + endpoint label (mono font)
-  - Body: title + short 1–2 sentence subtitle
-  - Optional panels: glassmorphism cards for supporting proof points
-  - Optional callout: one stat badge for emphasis
-- Exec / story slides:
-  - No raw JSON
-  - Use 3–6 short bullet proof points
-- Technical slides:
-  - May include a right-side JSON preview rail using the same API response object as the corresponding `demo-script.json` `apiResponse.response`
-  - Use a two-column layout: messaging/proof points on the left, sample API response on the right
-- Tie messaging directly to nearby Plaid insight steps when beneficial:
-  - Identity Match slide: include 8–10% eligibility logic and match rationale
-  - Auth slide: include 98% account coverage proof point
-  - Signal slide: reinforce amount-aware ACH risk scoring and instant-approval outcome
-
-When slide instructions are present, the pipeline should infer slide placement based on the demo step sequence (no hardcoded positions).
-
+JSON panel contract:
+- Global `#api-response-panel` only
+- hidden by default on page load
+- once visible, JSON body is immediately visible (no JSON toggle/collapse controls)
+- panel body scrolls for long payloads
+- request/response fields must align with slide narrative claims
 [[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
-HOST APP SHELL — LARGE ONLINE BANKING LAYOUT
+PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-Mirror the Chime spec structure (global sticky header, primary nav, main content, breadcrumbs, cards) but executed per TD `brand/td.json`. Prefer white/light backgrounds for the host shell (`#ffffff`, `#f8f9fa`, or brand light neutrals). Plaid insight screens use dark navy (`#0d1117`) and teal accent (`#00A67E`).
+  [x] One primary source for **stats** (value-props **or** product KB — not duplicated)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
 
-### Global header
-  - Logo (left), primary nav (center/right), user menu with avatar/initials, notifications, help/support.
-  - Sticky, 56–64px height.
-
-### Primary navigation (representative)
-  - Home / Accounts overview
-  - Accounts
-  - Transfers (entry: Add external account / Link bank for funding)
-  - Pay & transfer / Bill pay (as appropriate to TD framing)
-  - Activity / Transactions
-  - Profile & settings
-
-### Account funding entry
-  - User enters via Transfers (or equivalent) -> Add external account / Link external bank.
-  - CTA: "Link your bank" — launches Plaid (Layer or Link per mode).
-
-### Step-by-step user journey (consumer UX only)
-  1. Dashboard — primary TD account visible; balances and nav.
-  2. Transfers — external account linking entry point.
-  3. Add external account — short educational copy; primary CTA opens Plaid.
-  4. Plaid modal — user completes connection (Layer template path OR standard Link path).
-  5. Return to TD — external account appears; flow continues to amount entry, then success messaging after approval.
-
-Typography minimums match the Chime reference: page title 24–28px, section 18–20px, body 16px minimum (18px for key stats), captions 14px minimum, JSON 14–15px monospace.
-
--------------------------------------------------------------------------------
-TWO-LAYER VISUAL ARCHITECTURE
--------------------------------------------------------------------------------
-
-### Layer 1 — Consumer experience (TD branded)
-  - TD branding only. Light backgrounds.
-  - `api-response-panel` and `link-events-panel` COLLAPSED/HIDDEN for all consumer steps.
-  - Plaid Link modal uses simulated institution UI; institution and account strings from `window._plaidInstitutionName`, `window._plaidAccountName`, `window._plaidAccountMask` set in `onSuccess`.
-
-### Layer 2 — Plaid insight screens
-  - Full-viewport Plaid-branded screens AFTER: Identity Match, Auth, Signal (each with value line from value props).
-  - Thin teal header bar recommended, e.g. "Plaid API insight" / "Plaid API response".
-  - **Global `api-response-panel` overlay** (mandatory, see top section) shows the response for that API.
-  - Transition: smooth fade/slide ~400ms between TD and Plaid layers.
-
-### Transition mechanic
-  - Alternate: TD consumer step -> Plaid insight -> TD consumer -> Plaid insight -> ... as required by the sequence. Amount entry is TD-only between Auth insight and Signal insight.
-
--------------------------------------------------------------------------------
-REMOTION STUDIO — VIDEO ANIMATION ENHANCEMENTS
--------------------------------------------------------------------------------
-
-Reuse the Chime spec Remotion guidance: `TransitionSeries`, `fade`/`slide`, `springTiming`, panel slide-in 15–20 frames at 30fps for 400ms, staggered breadcrumbs, closing value proposition card.
-
-Additionally storyboard the collapsible JSON panel: e.g. `Sequence` that expands the panel for 2s for technical cut, collapsed for executive cut.
-
--------------------------------------------------------------------------------
-MESSAGING PRIORITY AND STATS
--------------------------------------------------------------------------------
-
-Use `inputs/plaid-value-props.md` and org demo scripts. Core anchors:
-
-  - "Link and fund in seconds, not days."
-  - Identity Match confirms ownership; Auth provides rails; Signal assesses return risk for the specific amount.
-  - Conversion, coverage, Identity Match lift, Signal latency and factor counts — as approved by your collateral.
-
-Narration MUST reflect ownership-first ordering: verify the right person controls the account, then pull rails, then collect amount, then risk-score that transaction.
-
--------------------------------------------------------------------------------
-STORYBOARD — SAMPLE NARRATION (ADAPT FOR TD)
--------------------------------------------------------------------------------
-
-| Step | Scene | Sample narration |
-|------|-------|-------------------|
-| Opening | Use case | "We'll fund a TD account from an external bank: connect with Plaid, verify the accountholder matches TD's KYC, pull ACH rails, enter the transfer amount, score ACH return risk for that amount, and approve good users instantly." |
-| Connection | Layer or Link | "Users connect through Plaid — Layer for a guided template onboarding, or Link for the standard connection experience. Either way you get broad coverage of U.S. depository institutions." |
-| Identity insight | /identity/match | "First we confirm ownership: Identity Match compares TD's customer profile to what's on file at the bank, handling nicknames and formatting differences." |
-| Auth insight | /auth/get | "Auth returns the ACH account and routing numbers so you can actually move money on the ACH network." |
-| Amount | TD screen | "The customer enters how much they want to fund; that amount feeds a transaction-specific risk evaluation." |
-| Signal insight | /signal/evaluate | "Signal evaluates return risk for this debit — bank- and customer-initiated signals — so you can auto-approve low-risk funding and step up the rest." |
-| Closing | Summary | "Ownership first, rails second, amount-aware risk third — instant funding for qualified users without multi-day micro-deposits." |
-
--------------------------------------------------------------------------------
-PLAID LINK / LAYER CONFIGURATION (SANDBOX / RECORDING)
--------------------------------------------------------------------------------
-
-### Products (`/link/token/create` for Link mode)
-  - Include `auth` and `signal` in `products`.
-  - Identity for Identity Match: use `required_if_supported_products: ["identity"]` if Identity may be unsupported at some institutions; OR `products: ["auth", "identity", "signal"]` if the demo requires Identity everywhere (not compatible with micro-deposit-only Items).
-  - Do not duplicate product names across `products` and `required_if_supported_products`.
-
-### Layer mode
-  - `POST /session/token/create` with template from Dashboard; initialize Link with returned link token.
-  - Reference: https://plaid.com/docs/layer/ and https://plaid.com/docs/api/products/layer/
-
-### Link mode (Remember Me style — if reusing Chime recording pattern)
-  - Optional: `phone_number` on `link/token/create` for returning-user demos; institution `ins_109508` only if retained for sandbox recording; OTP and phone values per `CLAUDE.md` / recording script.
-  - If TD demo uses OAuth institutions, adjust script steps accordingly — still enumerate each Link screen as its own `goToStep` with `id`, `narration`, `durationMs`, `linkEvents`.
-
-### Dynamic institution data
-```javascript
-// In onSuccess:
-window._plaidInstitutionName = metadata.institution.name;
-window._plaidAccountName     = metadata.accounts[0].name;
-window._plaidAccountMask     = metadata.accounts[0].mask;
-```
-
-Connected bank icon: Heroicons `building-library` outline — no real bank logos from CDN.
-
--------------------------------------------------------------------------------
-IDENTITY MATCH REFERENCE DATA (TD DEMO — REPLACE CHIME PERSONA)
--------------------------------------------------------------------------------
-
-Use a deliberate mismatch between TD KYC and bank-file identity (fuzzy match wins on name/address/phone; one field weak to show nuance):
-
-| Field | Bank (external) | KYC on file (TD) | Score (illustrative) |
-|-------|-----------------|------------------|------------------------|
-| Name | Robert Timothy Donnelly | Robert T. Donnelly | 80–90 |
-| Address | 1200 Market Street Apt 4B | 1200 Market St #4B | high |
-| City | Philadelphia | Philadelphia | high |
-| State/ZIP | PA 19107 | PA 19107 | high |
-| Phone | +12155550100 | (215) 555-0100 | high |
-| Email | rdonnelly.bank@example.com | r.donnelly@personal.example | 0–40 (show email mismatch) |
-
-Narrate: strong match on name/address/phone despite formatting; email mismatch visible in JSON panel.
-
-Request body highlights (`POST /identity/match`):
-  - `access_token` (required)
-  - `user`: `legal_name`, `phone_number` (E.164 recommended), `email_address`, `address` { street, city, region, postal_code, country }
-  - Optional `account_ids` array to scope match
-
-Response: per-account scores `legal_name.score`, `phone_number.score`, `email_address.score`, `address.score`, booleans such as `is_nickname_match`, `is_postal_code_match`. Scores 0–100; ~70+ often treated as likely match per docs.
-
-Docs: https://plaid.com/docs/api/products/identity/#identitymatch
-
--------------------------------------------------------------------------------
-SIGNAL REFERENCE DATA (HAPPY PATH, CONSISTENT WITH PLAID SEMANTICS)
--------------------------------------------------------------------------------
-
-Illustrative low-risk scores (low number = low return risk):
-
-| Field | Example | Notes |
-|-------|---------|-------|
-| customer_initiated_return_risk.score | 12 | Low dispute risk |
-| bank_initiated_return_risk.score | 10 | Low NSF/closed-account risk |
-| ruleset.result | ACCEPT | Instant approval |
-| core_attributes | days_since_first_plaid_connection, connection counts, balances | As appropriate |
-
-Include `amount` in the request matching the user-entered funding amount. Include `client_transaction_id` unique per evaluation.
-
-Docs: https://plaid.com/docs/api/products/signal/#signalevaluate
-
--------------------------------------------------------------------------------
-TECHNICAL NOTES — DOM CONTRACT AND QUALITY
--------------------------------------------------------------------------------
-
-- Follow Demo DOM Contract in `CLAUDE.md`: `data-testid`, `window.goToStep`, panel IDs, no stuck spinners.
-- `link-events-panel`: hidden in all recordings (developer-only).
-- Zero emoji in generated HTML (Heroicons only per Chime spec).
-- TD logo from `brand/td.json` (`brand.logo`); fallback Heroicons `building-library` if missing.
-- Plaid logo on insight screens per brand assets in template.
-
--------------------------------------------------------------------------------
-ASKBILL / PLAID DOCS TECHNICAL APPENDIX (AUTHORITATIVE FOR INTEGRATION DETAILS)
--------------------------------------------------------------------------------
-
-1. Token exchange: `POST /item/public_token/exchange` -> `access_token`, `item_id`.
-
-2. Optional: `POST /accounts/get` with `access_token` to list accounts and `account_id`s.
-
-3. Identity Match: `POST /identity/match` with `access_token` and `user` PII object; optional account scoping. Identity product must be enabled via Link token configuration.
-
-4. Auth: `POST /auth/get` with `access_token`; optional `account_ids`. ACH numbers in `numbers.ach[]`. Some FIs return tokenized account numbers — see Auth docs.
-
-5. Signal: `POST /signal/evaluate` with `access_token`, `account_id`, `amount` (USD decimal), `client_transaction_id`; recommend `client_user_id`, `user`, `device`, optional `ruleset_key`.
-
-6. Layer vs Link: Link uses `/link/token/create`; Layer uses `/session/token/create` + template; both initialize the Link SDK with a link token.
-
-7. Post-funding lifecycle: For production patterns, consider `/signal/decision/report` and `/signal/return/report` when applicable — omit from short demo unless scripted.
-
-Primary documentation:
-  - Link: https://plaid.com/docs/link/
-  - Layer: https://plaid.com/docs/layer/
-  - Identity Match: https://plaid.com/docs/api/products/identity/#identitymatch
-  - Auth: https://plaid.com/docs/api/products/auth/#authget
-  - Signal: https://plaid.com/docs/api/products/signal/#signalevaluate
-
--------------------------------------------------------------------------------
+================================================================================
 END OF SPECIFICATION
--------------------------------------------------------------------------------
+================================================================================
