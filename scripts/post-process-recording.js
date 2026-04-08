@@ -447,11 +447,18 @@ console.log(`  Input:  ${totalDuration.toFixed(2)}s  →  Output est: ${keptTota
     plaidStepWindows.push(window);
   }
 
+  const plaidLinkSummary = plaidStepWindows.length > 0 ? {
+    totalWindowMs: plaidStepWindows.reduce((sum, w) => sum + (w.durationMs || 0), 0),
+    totalEffectiveMs: plaidStepWindows.reduce((sum, w) => sum + (w.durationMs || 0) + (w.freezeMs || 0), 0),
+    stepCount: plaidStepWindows.length,
+  } : null;
+
   const processedTimingPath = path.join(path.dirname(OUTPUT_PATH), 'processed-step-timing.json');
   fs.writeFileSync(processedTimingPath, JSON.stringify({
     totalProcessedMs: Math.round(keptTotal * 1000),
     keepRanges:       mappedRanges,
     plaidStepWindows, // Processed-space timing for Plaid Link sub-steps
+    plaidLinkSummary,
   }, null, 2));
   console.log(`\n[PostProcess] Wrote processed-step-timing.json`);
   for (const r of mappedRanges) {

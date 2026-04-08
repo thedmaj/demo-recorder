@@ -15,6 +15,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const POINTER_ONLY_OVERLAYS = process.env.REMOTION_POINTER_ONLY !== 'false';
 
 // ── Resolve paths ─────────────────────────────────────────────────────────────
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -148,7 +149,7 @@ function buildRemotionProps() {
 
   // Load overlay-plan.json
   const overlayFile = path.join(runDir, 'overlay-plan.json');
-  if (fs.existsSync(overlayFile)) {
+  if (!POINTER_ONLY_OVERLAYS && fs.existsSync(overlayFile)) {
     try {
       props.enhanceOverlayPlan = JSON.parse(fs.readFileSync(overlayFile, 'utf8'));
     } catch {}
@@ -162,6 +163,9 @@ function buildRemotionProps() {
       const scriptSteps = script.steps || [];
       props.scratchSteps = props.scratchSteps.map(s => {
         const ss = scriptSteps.find(x => x.id === s.id);
+        if (POINTER_ONLY_OVERLAYS) {
+          return { ...s, callouts: [], zoomPunch: null, narration: ss?.narration || '', apiResponse: ss?.apiResponse || null };
+        }
         return { ...s, callouts: ss?.callouts || [], narration: ss?.narration || '', apiResponse: ss?.apiResponse || null };
       });
     } catch {}
@@ -175,16 +179,16 @@ function buildRemotionProps() {
       props.scratchSteps = props.scratchSteps.map(s => {
         const coord = coords[s.id];
         if (!coord) return s;
-        const update = {
-          clickRipple: { xFrac: coord.xFrac, yFrac: coord.yFrac, atFrame: 15 },
-        };
-        if (s.id !== 'wf-link-launch') {
+        const update = { clickRipple: { xFrac: coord.xFrac, yFrac: coord.yFrac, atFrame: 15 } };
+        if (!POINTER_ONLY_OVERLAYS && s.id !== 'wf-link-launch') {
           update.zoomPunch = {
             scale:    1.08,
             peakFrac: 0.5,
             originX:  `${(coord.xFrac * 100).toFixed(1)}%`,
             originY:  `${(coord.yFrac * 100).toFixed(1)}%`,
           };
+        } else if (POINTER_ONLY_OVERLAYS) {
+          update.zoomPunch = null;
         }
         return { ...s, ...update };
       });
@@ -194,40 +198,44 @@ function buildRemotionProps() {
   }
 
   // Auto-overlay: lower-thirds + stat-counters
-  const STAT_RE = /(\d+\.?\d*)\s*([\+%×xX]|percent|seconds?|ms\b)/gi;
-  props.scratchSteps = props.scratchSteps.map(s => {
-    const callouts  = [...(s.callouts || [])];
-    let   zoomPunch = s.zoomPunch;
-    const durationS = (s.durationMs || 0) / 1000;
+  if (!POINTER_ONLY_OVERLAYS) {
+    const STAT_RE = /(\d+\.?\d*)\s*([\+%×xX]|percent|seconds?|ms\b)/gi;
+    props.scratchSteps = props.scratchSteps.map(s => {
+      const callouts  = [...(s.callouts || [])];
+      let   zoomPunch = s.zoomPunch;
+      const durationS = (s.durationMs || 0) / 1000;
 
-    if (s.apiResponse?.endpoint) {
-      const words = (s.narration || '').trim().split(/\s+/).slice(0, 8).join(' ');
-      if (!callouts.some(c => c.type === 'lower-third' && c.title === s.apiResponse.endpoint)) {
-        callouts.push({ type: 'lower-third', title: s.apiResponse.endpoint, subtext: words });
-      }
-      if (!zoomPunch && durationS > 12) {
-        zoomPunch = { scale: 1.06, peakFrac: 0.3, originX: 'center', originY: 'center' };
-      }
-    }
-
-    if (s.id === 'plaid-outcome') {
-      const matches = [...(s.narration || '').matchAll(STAT_RE)];
-      matches.slice(0, 3).forEach((m, i) => {
-        const value  = parseFloat(m[1]);
-        const suffix = m[2].startsWith('percent') ? '%' : m[2];
-        if (!isNaN(value)) {
-          callouts.push({ type: 'stat-counter', value, suffix, label: '', position: `stat-${i + 1}` });
+      if (s.apiResponse?.endpoint) {
+        const words = (s.narration || '').trim().split(/\s+/).slice(0, 8).join(' ');
+        if (!callouts.some(c => c.type === 'lower-third' && c.title === s.apiResponse.endpoint)) {
+          callouts.push({ type: 'lower-third', title: s.apiResponse.endpoint, subtext: words });
         }
-      });
-    }
+        if (!zoomPunch && durationS > 12) {
+          zoomPunch = { scale: 1.06, peakFrac: 0.3, originX: 'center', originY: 'center' };
+        }
+      }
 
-    return { ...s, callouts, zoomPunch: zoomPunch !== undefined ? zoomPunch : s.zoomPunch };
-  });
+      if (s.id === 'plaid-outcome') {
+        const matches = [...(s.narration || '').matchAll(STAT_RE)];
+        matches.slice(0, 3).forEach((m, i) => {
+          const value  = parseFloat(m[1]);
+          const suffix = m[2].startsWith('percent') ? '%' : m[2];
+          if (!isNaN(value)) {
+            callouts.push({ type: 'stat-counter', value, suffix, label: '', position: `stat-${i + 1}` });
+          }
+        });
+      }
+
+      return { ...s, callouts, zoomPunch: zoomPunch !== undefined ? zoomPunch : s.zoomPunch };
+    });
+  } else {
+    props.scratchSteps = props.scratchSteps.map((s) => ({ ...s, callouts: [], zoomPunch: null }));
+  }
 
   // Derive cut frames for CrossDissolve
   const processedTimingFile2 = path.join(runDir, 'processed-step-timing.json');
   props.cutFrames = [];
-  if (fs.existsSync(processedTimingFile2)) {
+  if (!POINTER_ONLY_OVERLAYS && fs.existsSync(processedTimingFile2)) {
     try {
       const pt2  = JSON.parse(fs.readFileSync(processedTimingFile2, 'utf8'));
       const fps2 = 30;
@@ -241,6 +249,7 @@ function buildRemotionProps() {
 
   // Check for staged voiceover
   props.hasVoiceover = fs.existsSync(path.join(PUBLIC_DIR, 'voiceover.mp3'));
+  props.overlayMode = POINTER_ONLY_OVERLAYS ? 'pointer-only' : 'enhanced';
 
   return props;
 }

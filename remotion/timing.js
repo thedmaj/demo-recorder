@@ -3,60 +3,53 @@
 
 const STEP_TIMING = [
   {
-    "id": "problem-intro",
-    "label": "The Problem: Manual Income Verification",
-    "startFrame": 15,
-    "endFrame": 361,
-    "audioEndFrame": 276
+    "id": "att-billing-page",
+    "label": "AT&T Billing — Amount Due",
+    "startFrame": 0,
+    "endFrame": 490,
+    "audioEndFrame": 341
   },
   {
-    "id": "solution-intro",
-    "label": "Introducing Plaid Check Income Insights",
-    "startFrame": 376,
-    "endFrame": 773,
-    "audioEndFrame": 757
+    "id": "payment-method-select",
+    "label": "Payment Method — Pay by Bank",
+    "startFrame": 490,
+    "endFrame": 815,
+    "audioEndFrame": 779
   },
   {
-    "id": "application-income-step",
-    "label": "Applicant Reaches Income Verification",
-    "startFrame": 788,
-    "endFrame": 1062,
-    "audioEndFrame": 1030
+    "id": "plaid-link-flow",
+    "label": "Plaid Link — Bank Connection",
+    "startFrame": 815,
+    "endFrame": 1291,
+    "audioEndFrame": 1113
   },
   {
-    "id": "plaid-link-cra",
-    "label": "Plaid Link — Bank Connection & Consent",
-    "startFrame": 1122,
-    "endFrame": 1851,
-    "audioEndFrame": 1387
+    "id": "auth-verification-slide",
+    "label": "Plaid Auth — Verified Account Details",
+    "startFrame": 1291,
+    "endFrame": 1681,
+    "audioEndFrame": 1624
   },
   {
-    "id": "report-generating",
-    "label": "Report Generation In Progress",
-    "startFrame": 1866,
-    "endFrame": 2121,
-    "audioEndFrame": 2134
+    "id": "payment-review",
+    "label": "Payment Confirmation Review",
+    "startFrame": 1681,
+    "endFrame": 2175,
+    "audioEndFrame": 2037
   },
   {
-    "id": "report-ready",
-    "label": "Report Ready for Retrieval",
-    "startFrame": 2136,
-    "endFrame": 2439,
-    "audioEndFrame": 2383
+    "id": "payment-success",
+    "label": "Payment Success",
+    "startFrame": 2175,
+    "endFrame": 2579,
+    "audioEndFrame": 2544
   },
   {
-    "id": "income-insights-insight",
-    "label": "Income Insights — Underwriting Context",
-    "startFrame": 2454,
-    "endFrame": 2774,
-    "audioEndFrame": 2729
-  },
-  {
-    "id": "underwriting-outcome",
-    "label": "Underwriting-Ready Outcome",
-    "startFrame": 2789,
-    "endFrame": 3147,
-    "audioEndFrame": 3095
+    "id": "value-summary-slide",
+    "label": "Value Summary",
+    "startFrame": 2579,
+    "endFrame": 2933,
+    "audioEndFrame": 2905
   }
 ];
 

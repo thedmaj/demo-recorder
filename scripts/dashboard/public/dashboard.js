@@ -20,6 +20,10 @@
 
   // Original narration values keyed by stepId (for Revert)
   let originalNarrations = {};
+  let storyboardLivePreviewUrl = null;
+  let storyboardSelectedStepId = null;
+  let storyboardMessageBridgeBound = false;
+  let storyboardPreviewSyncing = false;
 
   // Stage list for progress bar
   const STAGES = [
@@ -314,6 +318,8 @@
       const savedRunId = localStorage.getItem('lastRunId');
       const savedExists = savedRunId && data.runs.some(r => r.runId === savedRunId);
       currentRunId = savedExists ? savedRunId : data.runs[0].runId;
+      storyboardLivePreviewUrl = null;
+      storyboardSelectedStepId = null;
       // Update button label
       const label = document.getElementById('build-selector-label');
       if (label) label.textContent = currentRunId;
@@ -368,6 +374,8 @@
         e.stopPropagation();
         const runId = btn.dataset.runId;
         currentRunId = runId;
+        storyboardLivePreviewUrl = null;
+        storyboardSelectedStepId = null;
         localStorage.setItem('lastRunId', runId);
         const label = document.getElementById('build-selector-label');
         if (label) label.textContent = runId;
@@ -383,6 +391,8 @@
         const runId = card.dataset.runId;
         if (!runId) return;
         currentRunId = runId;
+        storyboardLivePreviewUrl = null;
+        storyboardSelectedStepId = null;
         localStorage.setItem('lastRunId', runId);
         const label = document.getElementById('build-selector-label');
         if (label) label.textContent = runId;
@@ -416,8 +426,9 @@
     }).join('');
 
     const product = r.script ? r.script.product : extractProduct(runId);
+    const company = r.script ? r.script.company : '';
     const persona = r.script ? r.script.persona : '';
-    const metaText = [product, persona].filter(Boolean).join(' · ');
+    const metaText = [company, product, persona].filter(Boolean).join(' · ');
 
     const qaText = r.qaScore != null ? `QA: ${r.qaScore}` : '';
     const stageText = isLive && r.currentStage ? `Stage: ${r.currentStage}` : '';
@@ -513,6 +524,7 @@
       const artifacts = run.artifacts || {};
       const script = run.script || {};
       const product = script.product || extractProduct(currentRunId);
+      const company = script.company || '';
       const persona = script.persona || '–';
 
       // SVG icons for each artifact type (20×20 stroke Heroicons style)
@@ -633,11 +645,14 @@
             <p class="run-meta" style="margin-bottom:12px">
               The sync-map has <strong>${audioSync.segmentCount}</strong> speed/freeze segment(s) but the voiceover
               ${audioSync.syncApplied ? 'was resynced before the sync-map changed' : 'has not been resynced yet'}.
-              Audio may be out of sync with the video.
+              Audio may be out of sync with the video. Open Timeline Editor to correct timing visually.
               ${audioSync.resyncedAt ? `<span style="opacity:0.6">Last resynced: ${new Date(audioSync.resyncedAt).toLocaleString()}</span>` : ''}
             </p>
-            <button type="button" class="btn btn-secondary btn-sm" id="overview-resync-btn">⟳ Resync Audio Now</button>
-            <p class="save-hint">Re-stitches existing TTS clips at composition-space timings. No ElevenLabs API calls.</p>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button type="button" class="btn btn-primary btn-sm" id="overview-open-timeline-btn">◫ Open Timeline Editor</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="overview-resync-btn">⟳ Resync Audio</button>
+            </div>
+            <p class="save-hint">Use Timeline Editor for visual correction first; use Resync Audio to restitch clips against the updated sync-map.</p>
           </div>`;
       }
 
@@ -737,7 +752,7 @@
               <a href="/demo-app-preview/${esc(currentRunId)}" target="_blank" style="color:#00A67E">Launch &amp; Edit App</a>
             </div>
             ${canResync
-              ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#fbbf24">⚠</span> <span style="color:#fbbf24">Audio sync is stale — resync recommended</span></div>`
+              ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#fbbf24">⚠</span> <a href="/timeline?run=${encodeURIComponent(currentRunId)}" target="_blank" style="color:#fbbf24">Audio sync is stale — open Timeline Editor to fix</a></div>`
               : ''}
             ${canRender
               ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span style="color:#00A67E">✓</span> <span style="color:rgba(255,255,255,0.7)">Ready to render — voiceover + processed recording available</span></div>`
@@ -753,7 +768,9 @@
         const allRuns = allRunsData.runs || [];
         if (allRuns.length > 1) {
           const rowsHtml = allRuns.map(r => {
-            const rProduct = extractProduct(r.runId);
+            const rScript = r.script || {};
+            const rCompany = rScript.company || '';
+            const rProduct = rScript.product || extractProduct(r.runId);
             const rQa = r.qaScore != null ? `<span class="chip ${scoreChipClass(r.qaScore)}">${r.qaScore}</span>` : '<span style="color:rgba(255,255,255,0.3)">–</span>';
             const rStages = (r.completedStages || []).length + '/' + STAGES.length;
             const rArtifacts = r.artifacts || {};
@@ -765,6 +782,7 @@
               : `<span style="font-size:11px;color:#00A67E">Current</span>`;
             return `<tr>
               <td style="font-size:12px;color:rgba(255,255,255,0.6);white-space:nowrap">${esc(formatDate(r.runId))}</td>
+              <td style="font-size:12px">${esc(rCompany || '–')}</td>
               <td style="font-size:12px">${esc(rProduct)}</td>
               <td>${rQa}</td>
               <td style="font-size:12px;color:rgba(255,255,255,0.5)">${rStages}</td>
@@ -778,6 +796,7 @@
                 <table style="width:100%;border-collapse:collapse;font-size:13px">
                   <thead><tr style="color:rgba(255,255,255,0.35);font-size:10px;text-transform:uppercase;letter-spacing:0.06em">
                     <th style="text-align:left;padding:4px 8px 8px 0">Date</th>
+                    <th style="text-align:left;padding:4px 8px 8px 0">Company</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">Product</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">QA</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">Stages</th>
@@ -793,7 +812,7 @@
       el.innerHTML = `
         <div class="card">
           <div class="run-title">${esc(currentRunId)}</div>
-          <div class="run-meta">${esc(product)} · ${esc(persona)} · ${esc(formatDate(currentRunId))}</div>
+          <div class="run-meta">${esc([company, product, persona, formatDate(currentRunId)].filter(Boolean).join(' · '))}</div>
         </div>
         ${audioSyncWarnHtml}
         ${resumeHtml}
@@ -823,6 +842,8 @@
           const runId = btn.dataset.runId;
           if (!runId) return;
           currentRunId = runId;
+          storyboardLivePreviewUrl = null;
+          storyboardSelectedStepId = null;
           localStorage.setItem('lastRunId', runId);
           const selectorLabel = document.getElementById('build-selector-label');
           if (selectorLabel) selectorLabel.textContent = runId;
@@ -845,6 +866,14 @@
               if (opt) sel.value = stageName;
             }
           }, 150);
+        });
+      }
+
+      // Wire up audio resync button (overview warning card)
+      const overviewOpenTimelineBtn = document.getElementById('overview-open-timeline-btn');
+      if (overviewOpenTimelineBtn) {
+        overviewOpenTimelineBtn.addEventListener('click', () => {
+          window.open(`/timeline?run=${encodeURIComponent(currentRunId)}`, '_blank', 'noopener,noreferrer');
         });
       }
 
@@ -1153,8 +1182,125 @@
 
   // ── Storyboard Tab ─────────────────────────────────────────────────────────
 
+  async function ensureStoryboardLivePreview(runId) {
+    if (!runId) return null;
+    if (storyboardLivePreviewUrl) return storyboardLivePreviewUrl;
+    try {
+      const res = await apiPost('/api/runs/' + runId + '/storyboard-live-preview', {});
+      storyboardLivePreviewUrl = res && res.url ? String(res.url) : null;
+      return storyboardLivePreviewUrl;
+    } catch (_) {
+      storyboardLivePreviewUrl = null;
+      return null;
+    }
+  }
+
+  function postStoryboardPreviewMessage(msg) {
+    const iframe = document.getElementById('sb-live-iframe');
+    if (!iframe || !iframe.contentWindow || !storyboardLivePreviewUrl) return;
+    let origin = '*';
+    try { origin = new URL(storyboardLivePreviewUrl).origin; } catch (_) {}
+    iframe.contentWindow.postMessage(msg, origin);
+  }
+
+  function setStoryboardSelectedStep(stepId, rootEl, opts = {}) {
+    if (!stepId || !rootEl) return;
+    const suppressPost = !!opts.suppressPost;
+    storyboardSelectedStepId = String(stepId).replace(/^step-/, '');
+    rootEl.querySelectorAll('.step-card').forEach((card) => {
+      card.classList.toggle('storyboard-step-selected', card.dataset.stepId === storyboardSelectedStepId);
+    });
+    const sel = document.getElementById('sb-live-step-select');
+    if (sel && sel.value !== storyboardSelectedStepId) sel.value = storyboardSelectedStepId;
+    const liveTa = document.getElementById('sb-live-narration');
+    const stepTa = rootEl.querySelector(`.narration-area[data-step-id="${storyboardSelectedStepId}"]`);
+    if (liveTa && stepTa && liveTa.value !== stepTa.value) liveTa.value = stepTa.value;
+    const title = document.getElementById('sb-live-selected-step');
+    if (title) title.textContent = storyboardSelectedStepId;
+    if (!suppressPost) {
+      postStoryboardPreviewMessage({ type: 'STORYBOARD_SET_STEP', stepId: storyboardSelectedStepId });
+    }
+  }
+
+  function bindStoryboardPreviewMessageBridge() {
+    if (storyboardMessageBridgeBound) return;
+    storyboardMessageBridgeBound = true;
+    window.addEventListener('message', (evt) => {
+      const msg = evt && evt.data ? evt.data : null;
+      if (!msg || typeof msg !== 'object') return;
+      if (!/^(STORYBOARD_PREVIEW_READY|STORYBOARD_STEP_CHANGED)$/i.test(String(msg.type || ''))) return;
+      if (!currentRunId || msg.runId !== currentRunId) return;
+      if (currentTab !== 'storyboard') return;
+      if (!storyboardLivePreviewUrl) return;
+      let expectedOrigin = null;
+      try { expectedOrigin = new URL(storyboardLivePreviewUrl).origin; } catch (_) {}
+      if (expectedOrigin && evt.origin !== expectedOrigin) return;
+
+      const rootEl = document.getElementById('storyboard-content');
+      if (!rootEl) return;
+
+      if (msg.type === 'STORYBOARD_PREVIEW_READY') {
+        if (storyboardSelectedStepId) {
+          postStoryboardPreviewMessage({ type: 'STORYBOARD_SET_STEP', stepId: storyboardSelectedStepId });
+        }
+        return;
+      }
+      if (msg.type === 'STORYBOARD_STEP_CHANGED') {
+        const sid = String(msg.stepId || '').replace(/^step-/, '');
+        if (!sid) return;
+        storyboardPreviewSyncing = true;
+        setStoryboardSelectedStep(sid, rootEl, { suppressPost: true });
+        const narration = typeof msg.narration === 'string' ? msg.narration : null;
+        if (narration != null) {
+          const liveTa = document.getElementById('sb-live-narration');
+          if (liveTa) liveTa.value = narration;
+          const ta = rootEl.querySelector(`.narration-area[data-step-id="${sid}"]`);
+          if (ta && ta.value !== narration) {
+            ta.value = narration;
+            ta.dispatchEvent(new Event('input'));
+          }
+        }
+        storyboardPreviewSyncing = false;
+      }
+    });
+  }
+
+  function renderStoryboardLiveWorkspace(script, liveUrl) {
+    const steps = (script && script.steps) || [];
+    if (!storyboardSelectedStepId || !steps.some(s => s.id === storyboardSelectedStepId)) {
+      storyboardSelectedStepId = steps[0] ? steps[0].id : null;
+    }
+    const options = steps.map((s) => `<option value="${esc(s.id)}"${s.id === storyboardSelectedStepId ? ' selected' : ''}>${esc(s.id)} — ${esc(s.label || '')}</option>`).join('');
+    const selectedStep = steps.find((s) => s.id === storyboardSelectedStepId);
+    const selectedNarration = selectedStep ? String(selectedStep.narration || '') : '';
+    const iframeHtml = liveUrl
+      ? `<iframe id="sb-live-iframe" class="sb-live-iframe" src="${esc(liveUrl)}" title="Live demo app preview"></iframe>`
+      : `<div class="sb-live-empty">Build app preview not available yet. Run build stage, then reload Storyboard.</div>`;
+    return `
+      <div class="card storyboard-live-workspace">
+        <div class="storyboard-live-header">
+          <div class="card-title" style="margin:0">Live Storyboard Workspace</div>
+          <span class="chip">Step: <span id="sb-live-selected-step">${esc(storyboardSelectedStepId || 'none')}</span></span>
+        </div>
+        <div class="storyboard-live-grid">
+          <div class="storyboard-live-preview">${iframeHtml}</div>
+          <div class="storyboard-live-editor">
+            <label>Selected step</label>
+            <select id="sb-live-step-select" class="config-input">${options}</select>
+            <label style="margin-top:10px">Narration (stored in demo script and app screen metadata)</label>
+            <textarea id="sb-live-narration" class="narration-area" style="min-height:180px">${esc(selectedNarration)}</textarea>
+            <div class="step-actions">
+              <button class="btn btn-sm btn-primary" id="sb-live-save-btn">Save narration</button>
+              <button class="btn btn-sm btn-secondary" id="sb-live-revert-btn">Revert</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   async function loadStoryboard() {
     if (!currentRunId) return;
+    bindStoryboardPreviewMessageBridge();
     const el = document.getElementById('storyboard-content');
     el.innerHTML = '<div class="empty-state">Loading storyboard…</div>';
     originalNarrations = {};
@@ -1184,6 +1330,9 @@
         el.innerHTML = '<div class="empty-state">No demo script found for this run.</div>';
         return;
       }
+
+      const livePreviewUrl = await ensureStoryboardLivePreview(currentRunId);
+      const liveWorkspaceHtml = renderStoryboardLiveWorkspace(script, livePreviewUrl);
 
       // Build stepId → frame filenames map
       const frameMap = {};
@@ -1224,9 +1373,36 @@
         autoGapReport.steps.forEach(s => { gapMap[s.stepId] = s; });
       }
 
+      function _toFiniteNumber(v) {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      function _resolveCompStartSeconds(obj) {
+        if (!obj || typeof obj !== 'object') return null;
+        const secDirect = _toFiniteNumber(obj.compStart);
+        if (secDirect != null) return secDirect;
+        const secAlt = _toFiniteNumber(obj.compStartS);
+        if (secAlt != null) return secAlt;
+        const ms = _toFiniteNumber(obj.compStartMs);
+        if (ms != null) return ms / 1000;
+        return null;
+      }
+      function _resolveCompStartMs(obj) {
+        if (!obj || typeof obj !== 'object') return null;
+        const ms = _toFiniteNumber(obj.compStartMs);
+        if (ms != null) return ms;
+        const sec = _resolveCompStartSeconds(obj);
+        if (sec != null) return sec * 1000;
+        return null;
+      }
+
       // Build compStart (rounded to 2dp) → sync-map segment map for speed lookups
       const syncSegByCompStart = {};
-      syncMapSegs.forEach(s => { syncSegByCompStart[s.compStart.toFixed(2)] = s; });
+      syncMapSegs.forEach((s) => {
+        const compStartS = _resolveCompStartSeconds(s);
+        if (compStartS == null) return;
+        syncSegByCompStart[compStartS.toFixed(2)] = s;
+      });
 
       // Compute topic-bleed flags: does step[N]'s narration contain keywords from step[N+1]?
       const STOPWORDS = new Set([
@@ -1335,10 +1511,12 @@
           const compS     = (compDurMs / 1000).toFixed(1);
           const gapS      = (gapInfo.gapMs / 1000).toFixed(1);
           // Speed: prefer sync-map entry (may be a manual override) over auto-gap calculated speed
-          const compStartKey = (gapInfo.compStartMs / 1000).toFixed(2);
+          const gapCompStartMs = _resolveCompStartMs(gapInfo);
+          const compStartKey = gapCompStartMs != null ? (gapCompStartMs / 1000).toFixed(2) : null;
           const syncSeg   = syncSegByCompStart[compStartKey];
-          const dispSpeed = syncSeg ? syncSeg.speed : gapInfo.speed;
-          const speedLabel = dispSpeed ? dispSpeed.toFixed(2) + '×' : '1.00×';
+          const dispSpeedRaw = syncSeg ? syncSeg.speed : gapInfo.speed;
+          const dispSpeed = _toFiniteNumber(dispSpeedRaw);
+          const speedLabel = dispSpeed != null ? dispSpeed.toFixed(2) + '×' : '1.00×';
           const isTooFast  = gapInfo.action === 'warn-too-fast';
           timingBarHtml = `
             <div class="sb-align-timeline" title="Narration ${narrS}s + ${gapS}s gap = ${compS}s comp | Video: ${vidS}s at ${speedLabel}">
@@ -1366,19 +1544,23 @@
         // ── Per-step speed control ───────────────────────────────────────────
         let speedControlHtml = '';
         if (gapInfo) {
-          const compStartKey = (gapInfo.compStartMs / 1000).toFixed(2);
+          const gapCompStartMs = _resolveCompStartMs(gapInfo);
+          const compStartKey = gapCompStartMs != null ? (gapCompStartMs / 1000).toFixed(2) : null;
           const syncSeg      = syncSegByCompStart[compStartKey];
-          const curSpeed     = syncSeg ? syncSeg.speed : (gapInfo.speed || 1.0);
-          const videoStart   = syncSeg ? syncSeg.videoStart : (gapInfo.compStartMs / 1000);
-          const vidDurS      = gapInfo.videoDurationMs / 1000;
-          const previewS     = (vidDurS / curSpeed).toFixed(1);
+          const syncSegSpeed = syncSeg && syncSeg.mode === 'speed' ? _toFiniteNumber(syncSeg.speed) : null;
+          const gapInfoSpeed = _toFiniteNumber(gapInfo.speed);
+          const curSpeed     = syncSegSpeed != null ? syncSegSpeed : (gapInfoSpeed != null ? gapInfoSpeed : 1.0);
+          const syncVideoStart = _toFiniteNumber(syncSeg && syncSeg.videoStart);
+          const videoStart   = syncVideoStart != null ? syncVideoStart : (gapCompStartMs != null ? (gapCompStartMs / 1000) : 0);
+          const vidDurS      = (_toFiniteNumber(gapInfo.videoDurationMs) || 0) / 1000;
+          const previewS     = (curSpeed > 0 ? (vidDurS / curSpeed) : vidDurS).toFixed(1);
           speedControlHtml = `
             <div class="sb-speed-control">
               <span class="sb-speed-label">Speed</span>
               <input type="number" class="sb-speed-input config-input"
                 value="${curSpeed.toFixed(3)}" min="0.1" max="5.0" step="0.05"
                 data-step-id="${esc(sid)}"
-                data-comp-start="${(gapInfo.compStartMs / 1000).toFixed(3)}"
+                data-comp-start="${(gapCompStartMs != null ? (gapCompStartMs / 1000) : 0).toFixed(3)}"
                 data-video-start="${videoStart}"
                 data-video-dur="${vidDurS}">
               <span class="sb-speed-preview" id="sb-speed-preview-${esc(sid)}">→ ${previewS}s</span>
@@ -1660,10 +1842,65 @@
           </div>`;
       })() : '';
 
-      el.innerHTML = actionBarHtml + captureBannerHtml + reorderBannerHtml + feedbackHeaderHtml + timelineHtml + (sceneTiming || '') + `<div class="storyboard-grid" id="storyboard-grid">${cardsHtml}</div>` + '<div id="ai-suggestions-panel" class="suggestion-panel"></div>';
+      el.innerHTML = actionBarHtml + captureBannerHtml + liveWorkspaceHtml + reorderBannerHtml + feedbackHeaderHtml + timelineHtml + (sceneTiming || '') + `<div class="storyboard-grid" id="storyboard-grid">${cardsHtml}</div>` + '<div id="ai-suggestions-panel" class="suggestion-panel"></div>';
 
       // Load AI overlay suggestions (async, non-blocking)
       loadOverlaySuggestions();
+
+      // ── Live storyboard workspace wiring ─────────────────────────────────────
+      const liveStepSelect = document.getElementById('sb-live-step-select');
+      const liveNarration = document.getElementById('sb-live-narration');
+      const liveSaveBtn = document.getElementById('sb-live-save-btn');
+      const liveRevertBtn = document.getElementById('sb-live-revert-btn');
+      const liveIframe = document.getElementById('sb-live-iframe');
+
+      if (liveIframe) {
+        liveIframe.addEventListener('load', () => {
+          if (storyboardSelectedStepId) {
+            postStoryboardPreviewMessage({ type: 'STORYBOARD_SET_STEP', stepId: storyboardSelectedStepId });
+          }
+        });
+      }
+      if (liveStepSelect) {
+        liveStepSelect.addEventListener('change', () => {
+          setStoryboardSelectedStep(liveStepSelect.value, el);
+        });
+      }
+      if (liveNarration) {
+        liveNarration.addEventListener('input', () => {
+          if (storyboardPreviewSyncing) return;
+          const sid = storyboardSelectedStepId;
+          if (!sid) return;
+          const ta = el.querySelector(`.narration-area[data-step-id="${sid}"]`);
+          if (ta && ta.value !== liveNarration.value) {
+            ta.value = liveNarration.value;
+            ta.dispatchEvent(new Event('input'));
+          }
+          postStoryboardPreviewMessage({ type: 'STORYBOARD_SYNC_NARRATION', stepId: sid, narration: liveNarration.value });
+        });
+      }
+      if (liveSaveBtn) {
+        liveSaveBtn.addEventListener('click', async () => {
+          const sid = storyboardSelectedStepId;
+          if (!sid) return;
+          await saveNarration(sid, el);
+          showToast('Narration saved (live workspace)', 'success');
+        });
+      }
+      if (liveRevertBtn) {
+        liveRevertBtn.addEventListener('click', () => {
+          const sid = storyboardSelectedStepId;
+          if (!sid) return;
+          const value = originalNarrations[sid] || '';
+          const ta = el.querySelector(`.narration-area[data-step-id="${sid}"]`);
+          if (ta) {
+            ta.value = value;
+            ta.dispatchEvent(new Event('input'));
+          }
+          if (liveNarration) liveNarration.value = value;
+          postStoryboardPreviewMessage({ type: 'STORYBOARD_SYNC_NARRATION', stepId: sid, narration: value });
+        });
+      }
 
       // Capture screenshots button
       const captureBtn = document.getElementById('capture-screenshots-btn');
@@ -1767,6 +2004,22 @@
           }
         });
       })();
+
+      // Click step thumb/header to sync live preview + narration editor
+      el.addEventListener('click', (evt) => {
+        const target = evt.target;
+        if (!(target instanceof Element)) return;
+        const hit = target.closest('.step-thumb, .step-header, .step-id, .step-label');
+        if (!hit) return;
+        const card = target.closest('.step-card');
+        if (!card || !card.dataset.stepId) return;
+        setStoryboardSelectedStep(card.dataset.stepId, el);
+      });
+
+      // Select first/previous step in live workspace
+      if (storyboardSelectedStepId) {
+        setStoryboardSelectedStep(storyboardSelectedStepId, el);
+      }
 
       // ── Timeline editor interactivity ──────────────────────────────────────────
       (function initTimeline() {
@@ -1944,6 +2197,14 @@
           if (wcEl) {
             wcEl.textContent = wc + ' / 35 words';
             wcEl.className = 'word-count ' + (wc > 35 ? 'over' : wc > 30 ? 'warn' : '');
+          }
+          const sid = ta.dataset.stepId;
+          if (sid && sid === storyboardSelectedStepId) {
+            const liveTa = document.getElementById('sb-live-narration');
+            if (liveTa && liveTa.value !== ta.value) liveTa.value = ta.value;
+            if (!storyboardPreviewSyncing) {
+              postStoryboardPreviewMessage({ type: 'STORYBOARD_SYNC_NARRATION', stepId: sid, narration: ta.value });
+            }
           }
         });
       });
@@ -2488,9 +2749,22 @@
     const ta = parentEl.querySelector(`.narration-area[data-step-id="${stepId}"]`);
     if (!ta) return;
     try {
-      await apiPost('/api/runs/' + currentRunId + '/script', { stepId, narration: ta.value });
+      const result = await apiPost('/api/runs/' + currentRunId + '/script', { stepId, narration: ta.value });
       originalNarrations[stepId] = ta.value;
-      showToast('Narration saved for ' + stepId, 'success');
+      postStoryboardPreviewMessage({ type: 'STORYBOARD_SYNC_NARRATION', stepId, narration: ta.value });
+      const syncAdjust = result && result.syncAdjust ? result.syncAdjust : null;
+      if (syncAdjust && syncAdjust.updated) {
+        showToast(
+          `Narration saved for ${stepId} (timeline extended by ${Math.max(0, Math.round((Number(syncAdjust.narrationMs || 0) - Number(syncAdjust.compDurationMs || 0)) / 1000))}s). Refreshing storyboard timing…`,
+          'success',
+          { duration: 4000 }
+        );
+        // Timing windows/sync-map changed on save; reload storyboard cards + timing bars so
+        // live preview and narration editor stay aligned with the latest timeline contract.
+        await loadStoryboard();
+      } else {
+        showToast('Narration saved for ' + stepId, 'success');
+      }
     } catch (e) {
       showToast('Save failed: ' + e.message, 'error');
     }

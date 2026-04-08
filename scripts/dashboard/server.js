@@ -7,6 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const { execSync, spawn } = require('child_process');
 const chokidar = require('chokidar');
+const { loadTimingContract } = require('../timing-contract');
+const { processedToCompMs } = require('../sync-map-utils');
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -196,6 +198,19 @@ function getRunArtifacts(runId) {
   };
 }
 
+function getRunScriptSummary(runId) {
+  const dir = path.join(DEMOS_DIR, runId);
+  const script = safeReadJson(path.join(dir, 'demo-script.json'));
+  if (!script || typeof script !== 'object') return null;
+  const persona = script.persona && typeof script.persona === 'object' ? script.persona : {};
+  const personaLabel = [persona.name, persona.role].filter(Boolean).join(' · ');
+  return {
+    product: script.product || '',
+    company: persona.company || '',
+    persona: personaLabel,
+  };
+}
+
 // Stage → indicator artifact (ordered by pipeline sequence)
 const STAGE_ARTIFACTS = [
   ['research',        'research-notes.md'],
@@ -376,7 +391,8 @@ function buildRunsList() {
     const artifacts = getRunArtifacts(runId);
     const qa = getLatestQaReport(runId);
     const completedStages = getCompletedStages(runId);
-    return { runId, artifacts, qaScore: qa ? qa.overallScore : null, completedStages };
+    const script = getRunScriptSummary(runId);
+    return { runId, artifacts, qaScore: qa ? qa.overallScore : null, completedStages, script };
   });
 }
 
@@ -400,6 +416,7 @@ app.get('/api/runs/:runId', (req, res) => {
 
     const artifacts = getRunArtifacts(req.params.runId);
     const qa = getLatestQaReport(req.params.runId);
+    const script = getRunScriptSummary(req.params.runId);
     const completedStages = getCompletedStages(req.params.runId);
     const lastCompletedStage = completedStages.length > 0
       ? completedStages[completedStages.length - 1]
@@ -417,7 +434,7 @@ app.get('/api/runs/:runId', (req, res) => {
     res.json({
       runId: req.params.runId, artifacts,
       qaScore: qa ? qa.overallScore : null, manifest,
-      lastCompletedStage, resumeFromStage, completedStages,
+      lastCompletedStage, resumeFromStage, completedStages, script,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -453,8 +470,10 @@ app.get('/api/runs/:runId/audio-sync-status', (req, res) => {
     const dir = getRunDir(req.params.runId);
     const syncMapPath    = path.join(dir, 'sync-map.json');
     const manifestPath   = path.join(dir, 'voiceover-manifest.json');
+    const timelineSyncPath = path.join(dir, 'timeline-sync-status.json');
     const syncMap        = safeReadJson(syncMapPath);
     const manifest       = safeReadJson(manifestPath);
+    const timelineSync   = safeReadJson(timelineSyncPath);
 
     const syncMapExists  = fs.existsSync(syncMapPath);
     const manifestExists = fs.existsSync(manifestPath);
@@ -465,9 +484,21 @@ app.get('/api/runs/:runId/audio-sync-status', (req, res) => {
     const resyncedAt     = manifest?.resyncedAt || null;
     const syncApplied    = manifest?.syncMapApplied === true;
 
-    // Stale = sync-map has real segments AND manifest either predates sync-map or wasn't resynced
-    const isStale = hasSegments && manifestExists &&
+    // Baseline stale = sync-map has real segments AND manifest either predates sync-map or wasn't resynced.
+    let isStale = hasSegments && manifestExists &&
       (!syncApplied || (syncMapMtime != null && manifestMtime != null && syncMapMtime > manifestMtime));
+
+    // If Timeline Editor has a newer explicit sync-health check, trust it as latest state.
+    const timelineCheckedAtMs = timelineSync?.checkedAt ? Date.parse(timelineSync.checkedAt) : null;
+    const timelineHasIssues = timelineSync?.hasSyncIssues === true;
+    const timelineNoIssues = timelineSync?.hasSyncIssues === false;
+    const timelineIsNewerThanSyncMap = timelineCheckedAtMs != null && syncMapMtime != null
+      ? timelineCheckedAtMs >= syncMapMtime
+      : timelineCheckedAtMs != null;
+    if (timelineCheckedAtMs != null && timelineIsNewerThanSyncMap) {
+      if (timelineNoIssues) isStale = false;
+      if (timelineHasIssues) isStale = true;
+    }
 
     res.json({
       syncMapExists,
@@ -477,6 +508,7 @@ app.get('/api/runs/:runId/audio-sync-status', (req, res) => {
       resyncedAt,
       syncApplied,
       isStale,
+      timelineSync: timelineSync || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -739,6 +771,177 @@ app.post('/api/config/prompt', (req, res) => {
 
 // ── Storyboard narration editing ──────────────────────────────────────────────
 
+function injectNarrationStoreIntoHtml(html, steps) {
+  if (typeof html !== 'string' || !Array.isArray(steps)) return html;
+  const narrationMap = {};
+  for (const s of steps) {
+    if (!s || !s.id) continue;
+    narrationMap[s.id] = String(s.narration || '');
+  }
+  const scriptTag = `<script id="storyboard-narration-store" type="application/json">${JSON.stringify(narrationMap).replace(/</g, '\\u003c')}</script>`;
+  const runtimeTag = `<script id="storyboard-narration-runtime">(function(){try{var n=document.getElementById('storyboard-narration-store');window.__stepNarrationStore=n?JSON.parse(n.textContent||'{}'):{};window.getStepNarration=function(id){var key=String(id||'').replace(/^step-/,'');return window.__stepNarrationStore&&window.__stepNarrationStore[key]?window.__stepNarrationStore[key]:'';};}catch(_){window.__stepNarrationStore={};window.getStepNarration=function(){return '';};}})();</script>`;
+  html = html.replace(/<script id="storyboard-narration-store"[\s\S]*?<\/script>\s*/i, '');
+  html = html.replace(/<script id="storyboard-narration-runtime"[\s\S]*?<\/script>\s*/i, '');
+  if (html.includes('</body>')) {
+    return html.replace('</body>', `${scriptTag}\n${runtimeTag}\n</body>`);
+  }
+  return `${html}\n${scriptTag}\n${runtimeTag}\n`;
+}
+
+function syncNarrationStoreForRun(runDir, script) {
+  const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+  if (!fs.existsSync(htmlPath)) return false;
+  const html = fs.readFileSync(htmlPath, 'utf8');
+  const patched = injectNarrationStoreIntoHtml(html, script.steps || []);
+  if (patched !== html) {
+    fs.writeFileSync(htmlPath, patched, 'utf8');
+  }
+  return true;
+}
+
+function estimateNarrationMs(text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
+  // 150 wpm baseline used throughout pipeline prompts.
+  return Math.round((words / 150) * 60 * 1000);
+}
+
+function toFiniteNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Normalize voiceover clip coordinates across manifest versions:
+ * - v2+ manifests provide compStartMs/compEndMs explicitly
+ * - legacy manifests only provide startMs/endMs (composition-space in older runs)
+ */
+function resolveClipCompWindowMs(clip) {
+  if (!clip || typeof clip !== 'object') return { startMs: null, endMs: null };
+  const startMs = toFiniteNumber(clip.compStartMs) ?? toFiniteNumber(clip.startMs);
+  let endMs = toFiniteNumber(clip.compEndMs) ?? toFiniteNumber(clip.endMs);
+  if (endMs == null && startMs != null) {
+    const audioDurMs = toFiniteNumber(clip.audioDurationMs) ?? toFiniteNumber(clip.durationMs);
+    if (audioDurMs != null) endMs = startMs + audioDurMs;
+  }
+  return { startMs, endMs };
+}
+
+function readSyncMapFile(syncPath) {
+  let raw = { segments: [] };
+  if (fs.existsSync(syncPath)) {
+    const parsed = safeReadJson(syncPath);
+    if (Array.isArray(parsed)) raw = { segments: parsed };
+    else if (parsed && Array.isArray(parsed.segments)) raw = parsed;
+  }
+  return raw;
+}
+
+function resolveStepProcessedWindow(runDir, stepId) {
+  const processedTimingPath = path.join(runDir, 'processed-step-timing.json');
+  const rawTimingPath = path.join(runDir, 'step-timing.json');
+  const processed = safeReadJson(processedTimingPath);
+
+  if (processed && Array.isArray(processed.plaidStepWindows)) {
+    const plaid = processed.plaidStepWindows.find((w) => w && w.stepId === stepId);
+    if (plaid && plaid.startMs != null && plaid.endMs != null) {
+      return {
+        startMs: Number(plaid.startMs),
+        endMs: Number(plaid.endMs),
+        source: 'processed-plaid-window',
+      };
+    }
+  }
+
+  const rawTiming = safeReadJson(rawTimingPath);
+  const rawSteps = rawTiming && Array.isArray(rawTiming.steps) ? rawTiming.steps : [];
+  const rawStep = rawSteps.find((s) => s && (s.id === stepId || s.step === stepId));
+  if (!rawStep || rawStep.startMs == null || rawStep.endMs == null) return null;
+
+  if (!(processed && Array.isArray(processed.keepRanges) && processed.keepRanges.length > 0)) {
+    return {
+      startMs: Number(rawStep.startMs),
+      endMs: Number(rawStep.endMs),
+      source: 'raw-step-window',
+    };
+  }
+
+  const ranges = processed.keepRanges;
+  function remapRawMs(rawMs) {
+    const rawS = Number(rawMs) / 1000;
+    for (const r of ranges) {
+      if (rawS >= r.rawStart && rawS <= r.rawEnd) {
+        return Math.round((r.processedStart + (rawS - r.rawStart)) * 1000);
+      }
+      if (rawS < r.rawStart) return Math.round(r.processedStart * 1000);
+    }
+    const last = ranges[ranges.length - 1];
+    return last ? Math.round(last.processedEnd * 1000) : Number(rawMs);
+  }
+
+  return {
+    startMs: remapRawMs(rawStep.startMs),
+    endMs: remapRawMs(rawStep.endMs),
+    source: 'processed-remapped',
+  };
+}
+
+function ensureNarrationFitsStepTimeline(runDir, stepId, narrationText) {
+  const syncPath = path.join(runDir, 'sync-map.json');
+  const syncRaw = readSyncMapFile(syncPath);
+  const existingSegments = syncRaw.segments || [];
+  // Replace prior auto narration adjustments for this step.
+  const baseSegments = existingSegments.filter((s) => !(s && s._autoNarration === true && s._step === stepId));
+
+  const window = resolveStepProcessedWindow(runDir, stepId);
+  if (!window) {
+    // Still persist cleanup if prior autoNarration entries existed.
+    if (baseSegments.length !== existingSegments.length) {
+      const out = { ...(syncRaw._comment ? { _comment: syncRaw._comment } : {}), segments: baseSegments };
+      const tmp = syncPath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(out, null, 2), 'utf8');
+      fs.renameSync(tmp, syncPath);
+    }
+    return { updated: false, reason: 'step-window-not-found' };
+  }
+
+  const narrationMs = estimateNarrationMs(narrationText);
+  const compStartMs = processedToCompMs(window.startMs, baseSegments);
+  const compEndMs = processedToCompMs(window.endMs, baseSegments);
+  const compDurationMs = Math.max(0, compEndMs - compStartMs);
+  const toleranceMs = 100;
+  let updated = baseSegments.length !== existingSegments.length;
+
+  if (narrationMs > 0 && compDurationMs + toleranceMs < narrationMs) {
+    const extendMs = narrationMs - compDurationMs;
+    baseSegments.push({
+      compStart: Number((compEndMs / 1000).toFixed(4)),
+      compEnd: Number(((compEndMs + extendMs) / 1000).toFixed(4)),
+      videoStart: Number((window.endMs / 1000).toFixed(4)),
+      mode: 'freeze',
+      _autoNarration: true,
+      _step: stepId,
+      _reason: `storyboard narration auto-extend: narr ${(narrationMs / 1000).toFixed(2)}s > comp ${(compDurationMs / 1000).toFixed(2)}s`,
+    });
+    updated = true;
+  }
+
+  if (updated) {
+    baseSegments.sort((a, b) => Number(a.compStart || 0) - Number(b.compStart || 0));
+    const out = { ...(syncRaw._comment ? { _comment: syncRaw._comment } : {}), segments: baseSegments };
+    const tmp = syncPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(out, null, 2), 'utf8');
+    fs.renameSync(tmp, syncPath);
+  }
+
+  return {
+    updated,
+    narrationMs,
+    compDurationMs,
+    source: window.source,
+    reason: updated ? 'sync-map-extended' : 'already-fits',
+  };
+}
+
 app.post('/api/runs/:runId/script', (req, res) => {
   try {
     const { stepId, narration } = req.body;
@@ -747,12 +950,6 @@ app.post('/api/runs/:runId/script', (req, res) => {
     }
 
     const wordCount = narration.trim().split(/\s+/).filter(Boolean).length;
-    if (wordCount < 8 || wordCount > 35) {
-      return res.status(400).json({
-        error: `Narration must be 8–35 words (got ${wordCount})`,
-        wordCount,
-      });
-    }
 
     const dir = getRunDir(req.params.runId);
     const scriptPath = path.join(dir, 'demo-script.json');
@@ -769,7 +966,33 @@ app.post('/api/runs/:runId/script', (req, res) => {
     fs.writeFileSync(tmpPath, JSON.stringify(script, null, 2), 'utf8');
     fs.renameSync(tmpPath, scriptPath);
 
-    res.json({ ok: true, wordCount });
+    // Keep narration context accessible from the live app itself so storyboard
+    // editing can stay step-linked during preview sessions.
+    try { syncNarrationStoreForRun(dir, script); } catch (_) {}
+    let syncAdjust = null;
+    try {
+      syncAdjust = ensureNarrationFitsStepTimeline(dir, stepId, narration);
+    } catch (_) {
+      syncAdjust = { updated: false, reason: 'sync-adjust-failed' };
+    }
+
+    res.json({ ok: true, wordCount, syncAdjust });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/runs/:runId/storyboard-live-preview', async (req, res) => {
+  try {
+    const runId = req.params.runId;
+    const runDir = getRunDir(runId);
+    const scriptPath = path.join(runDir, 'demo-script.json');
+    const script = fs.existsSync(scriptPath) ? safeReadJson(scriptPath) : null;
+    if (script && Array.isArray(script.steps)) {
+      try { syncNarrationStoreForRun(runDir, script); } catch (_) {}
+    }
+    const entry = await launchDemoAppServer(runId);
+    res.json({ ok: true, url: entry.url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1447,8 +1670,21 @@ app.post('/api/feedback/export', (req, res) => {
     fs.mkdirSync(INPUTS_DIR, { recursive: true });
     fs.writeFileSync(tmp, content, 'utf8');
     fs.renameSync(tmp, FEEDBACK_FILE);
+    let runFeedbackPath = null;
+    if (runId && typeof runId === 'string' && runId.trim()) {
+      try {
+        const runDir = getRunDir(runId.trim());
+        runFeedbackPath = path.join(runDir, 'build-feedback.md');
+        const runTmp = runFeedbackPath + '.tmp';
+        fs.mkdirSync(runDir, { recursive: true });
+        fs.writeFileSync(runTmp, content, 'utf8');
+        fs.renameSync(runTmp, runFeedbackPath);
+      } catch (e) {
+        console.warn(`[feedback/export] Could not write run-scoped feedback for ${runId}: ${e.message}`);
+      }
+    }
 
-    res.json({ ok: true, path: FEEDBACK_FILE, bytes: content.length });
+    res.json({ ok: true, path: FEEDBACK_FILE, runPath: runFeedbackPath, bytes: content.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1467,13 +1703,18 @@ app.get('/api/runs/:runId/timing', (req, res) => {
     const clipMap = {};
     if (manifest && manifest.clips) {
       for (const clip of manifest.clips) {
+        const compWin = resolveClipCompWindowMs(clip);
+        const clipStartMs = compWin.startMs;
+        const clipEndMs = compWin.endMs;
         // videoDurationMs = the window the step occupies in the composed timeline
-        const videoDurationMs = clip.endMs - clip.startMs;
+        const videoDurationMs = (clipStartMs != null && clipEndMs != null)
+          ? (clipEndMs - clipStartMs)
+          : null;
         clipMap[clip.id] = {
           audioDurationMs: clip.audioFile ? clip.audioDurationMs : null,
           videoDurationMs,
-          startMs: clip.startMs,
-          endMs: clip.endMs,
+          startMs: clipStartMs,
+          endMs: clipEndMs,
         };
       }
     }
@@ -2624,6 +2865,20 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
       }
     }
 
+    // processed-step-timing.json may only include keepRanges/plaidStepWindows (no steps[]).
+    // Fall back to raw step-timing.json so timeline rows still get per-step video windows.
+    if ((!timingSteps || timingSteps.length === 0) && fs.existsSync(rawTimingPath)) {
+      const rawTiming = safeReadJson(rawTimingPath);
+      if (rawTiming && Array.isArray(rawTiming.steps)) {
+        timingSteps = rawTiming.steps.map(t => ({
+          id:               t.id || t.step,
+          recordingOffsetS: t.startMs != null ? t.startMs / 1000 : t.recordingOffsetS,
+          durationS:        t.durationMs != null ? t.durationMs / 1000 : t.durationS,
+        }));
+        if (timingSource === 'processed') timingSource = 'processed+raw-fallback';
+      }
+    }
+
     // Build a map from stepId → {videoStart, videoEnd}
     const timingMap = {};
     if (timingSteps) {
@@ -2686,8 +2941,13 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
         const id  = clip.stepId || clip.id;
         const dur = clip.durationMs != null ? clip.durationMs / 1000
           : clip.audioDurationMs != null ? clip.audioDurationMs / 1000 : null;
+        const compWin = resolveClipCompWindowMs(clip);
         if (id && dur != null) {
-          narrationMap[id] = { durationS: dur, startMs: clip.startMs || null };
+          narrationMap[id] = {
+            durationS: dur,
+            startMs: compWin.startMs,
+            endMs: compWin.endMs,
+          };
         }
       }
     } else {
@@ -2718,10 +2978,46 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
       // Normalise legacy array format
     }
 
-    // 5. Build output steps array
+    // 4b. Optional persisted narration offsets from timeline editor
+    const narrationOffsetsPath = path.join(dir, 'narration-offsets.json');
+    const narrationOffsetsRaw = safeReadJson(narrationOffsetsPath);
+    const narrationOffsetByStep = {};
+    if (Array.isArray(narrationOffsetsRaw)) {
+      for (const row of narrationOffsetsRaw) {
+        if (!row || !row.stepId) continue;
+        const v = Number(row.narrationOffset);
+        if (!Number.isFinite(v)) continue;
+        narrationOffsetByStep[row.stepId] = v;
+      }
+    }
+
+    // 5. Timing contract (optional)
+    const timingContract = loadTimingContract(dir);
+    const contractMap = {};
+    if (timingContract && Array.isArray(timingContract.steps)) {
+      for (const row of timingContract.steps) {
+        if (!row || !row.stepId) continue;
+        contractMap[row.stepId] = row;
+      }
+    }
+
+    // 6. Build output steps array
     const outSteps = script.steps.map(step => {
       const timing    = timingMap[step.id] || {};
       const narration = narrationMap[step.id] || {};
+      // Single source-of-truth alignment:
+      // - storyboard owns narration text in demo-script.json
+      // - audio files may lag behind after text edits
+      // Use max(manifestDuration, estimatedDurationFromText) so timeline/autosync
+      // reflects latest narration intent even before voiceover regeneration.
+      const estimatedNarrationS = estimateNarrationMs(step.narration || '') / 1000;
+      const manifestNarrationS = narration.durationS != null ? Number(narration.durationS) : 0;
+      const resolvedNarrationS = Math.max(manifestNarrationS, estimatedNarrationS);
+      const contract  = contractMap[step.id] || null;
+
+      const persistedNarrationOffset = Object.prototype.hasOwnProperty.call(narrationOffsetByStep, step.id)
+        ? narrationOffsetByStep[step.id]
+        : null;
 
       return {
         id:              step.id,
@@ -2729,11 +3025,21 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
         narration:       step.narration || '',
         videoStart:      timing.videoStart   ?? null,
         videoEnd:        timing.videoEnd     ?? null,
-        narrationDur:    narration.durationS ?? 0,
+        narrationDur:    resolvedNarrationS || 0,
         // Absolute position of this audio clip in the composition timeline
-        narrationCompStart: narration.startMs != null ? narration.startMs / 1000 : null,
-        // Legacy offset kept at 0 — audio is positioned absolutely, not relative to video step
-        narrationOffset: 0,
+        // When persisted timeline offsets exist, prefer relative offset mode.
+        narrationCompStart: persistedNarrationOffset != null
+          ? null
+          : (narration.startMs != null ? narration.startMs / 1000 : null),
+        narrationOffset: persistedNarrationOffset != null ? persistedNarrationOffset : 0,
+        timingContract: contract ? {
+          targetCompDurationMs: contract.targetCompDurationMs ?? null,
+          actualCompDurationMs: contract.actualCompDurationMs ?? null,
+          deltaMs: contract.deltaMs ?? null,
+          status: contract.status || null,
+          isPlaidLink: contract.isPlaidLink === true,
+          plaidLinkPolicy: contract.plaidLinkPolicy || null,
+        } : null,
       };
     });
 
@@ -2745,6 +3051,7 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
       syncMap:       Array.isArray(syncMap)
         ? { segments: syncMap }
         : (syncMap.segments ? syncMap : { segments: [] }),
+      timingContractSummary: timingContract?.summary || null,
     });
   } catch (err) {
     console.error('[timeline-data]', err);
@@ -2757,13 +3064,15 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
 // provided in the request body, then re-sorts by compStart.
 app.post('/api/runs/:runId/sync-map-update', (req, res) => {
   try {
-    const { segments } = req.body || {};
+    const { segments, narrationOffsets, timelineSync } = req.body || {};
     if (!Array.isArray(segments)) {
       return res.status(400).json({ error: 'segments array is required' });
     }
 
     const dir       = getRunDir(req.params.runId);
     const syncPath  = path.join(dir, 'sync-map.json');
+    const narrationOffsetsPath = path.join(dir, 'narration-offsets.json');
+    const timelineSyncPath = path.join(dir, 'timeline-sync-status.json');
 
     // Load existing sync map (may be array or {segments:[...]})
     let existing = { segments: [] };
@@ -2776,8 +3085,14 @@ app.post('/api/runs/:runId/sync-map-update', (req, res) => {
       }
     }
 
-    // Keep only _autoGap entries from the existing map
-    const autoGapSegs = (existing.segments || []).filter(s => s._autoGap === true);
+    // Keep _autoGap entries only when they don't overlap edited/manual segments.
+    // If an edit overlaps an auto-gap segment, edited value should win.
+    const overlaps = (a, b) =>
+      Number(a.compStart) < Number(b.compEnd) && Number(a.compEnd) > Number(b.compStart);
+    const autoGapSegs = (existing.segments || []).filter((s) => {
+      if (s._autoGap !== true) return false;
+      return !segments.some((m) => overlaps(s, m));
+    });
 
     // Validate incoming segments (basic sanity)
     for (const seg of segments) {
@@ -2786,6 +3101,39 @@ app.post('/api/runs/:runId/sync-map-update', (req, res) => {
           error: `Invalid segment: compStart=${seg.compStart} compEnd=${seg.compEnd}`,
         });
       }
+    }
+
+    // Validate optional narration offsets payload
+    if (narrationOffsets != null && !Array.isArray(narrationOffsets)) {
+      return res.status(400).json({ error: 'narrationOffsets must be an array when provided' });
+    }
+    const cleanNarrationOffsets = [];
+    for (const row of (narrationOffsets || [])) {
+      if (!row || typeof row.stepId !== 'string' || !row.stepId.trim()) continue;
+      const off = Number(row.narrationOffset);
+      if (!Number.isFinite(off)) continue;
+      cleanNarrationOffsets.push({
+        stepId: row.stepId,
+        narrationOffset: Math.round(off * 1000) / 1000,
+      });
+    }
+
+    let cleanTimelineSync = null;
+    if (timelineSync && typeof timelineSync === 'object') {
+      const checkedAt = timelineSync.checkedAt || new Date().toISOString();
+      const hasSyncIssues = timelineSync.hasSyncIssues === true;
+      const mismatchedCount = Number.isFinite(Number(timelineSync.mismatchedCount))
+        ? Math.max(0, Number(timelineSync.mismatchedCount))
+        : 0;
+      const maxDeltaS = Number.isFinite(Number(timelineSync.maxDeltaS))
+        ? Math.max(0, Number(timelineSync.maxDeltaS))
+        : 0;
+      cleanTimelineSync = {
+        checkedAt,
+        hasSyncIssues,
+        mismatchedCount,
+        maxDeltaS: Number(maxDeltaS.toFixed(3)),
+      };
     }
 
     // Merge and sort
@@ -2801,7 +3149,24 @@ app.post('/api/runs/:runId/sync-map-update', (req, res) => {
     fs.writeFileSync(tmp, JSON.stringify(out, null, 2), 'utf8');
     fs.renameSync(tmp, syncPath);
 
-    res.json({ ok: true, count: segments.length });
+    if (cleanNarrationOffsets.length > 0) {
+      const tmpOffsets = narrationOffsetsPath + '.tmp';
+      fs.writeFileSync(tmpOffsets, JSON.stringify(cleanNarrationOffsets, null, 2), 'utf8');
+      fs.renameSync(tmpOffsets, narrationOffsetsPath);
+    }
+
+    if (cleanTimelineSync) {
+      const tmpTimelineSync = timelineSyncPath + '.tmp';
+      fs.writeFileSync(tmpTimelineSync, JSON.stringify(cleanTimelineSync, null, 2), 'utf8');
+      fs.renameSync(tmpTimelineSync, timelineSyncPath);
+    }
+
+    res.json({
+      ok: true,
+      count: segments.length,
+      narrationOffsetsCount: cleanNarrationOffsets.length,
+      timelineSyncSaved: !!cleanTimelineSync,
+    });
   } catch (err) {
     console.error('[sync-map-update]', err);
     res.status(500).json({ error: err.message });

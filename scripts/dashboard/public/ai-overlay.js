@@ -601,4 +601,109 @@
     }, 1000);
   }
 
+  // ── Storyboard live-preview bridge ───────────────────────────────────────────
+  // Allows the dashboard storyboard tab (different origin/port) to drive the
+  // live app preview to a selected step and keep narration in sync.
+  function canAcceptMessage(evt) {
+    try {
+      if (!evt || !evt.origin) return false;
+      return evt.origin === DASHBOARD;
+    } catch (_) { return false; }
+  }
+
+  window.addEventListener('message', (evt) => {
+    if (!canAcceptMessage(evt)) return;
+    const msg = evt.data || {};
+    if (!msg || typeof msg !== 'object') return;
+
+    if (msg.type === 'STORYBOARD_SET_STEP') {
+      const sid = String(msg.stepId || '').replace(/^step-/, '');
+      if (sid && typeof window.goToStep === 'function') {
+        try { window.goToStep(sid); } catch (_) {}
+      }
+      return;
+    }
+
+    if (msg.type === 'STORYBOARD_SYNC_NARRATION') {
+      const sid = String(msg.stepId || '').replace(/^step-/, '');
+      const narration = String(msg.narration || '');
+      if (!sid) return;
+      if (!window.__stepNarrationStore || typeof window.__stepNarrationStore !== 'object') {
+        window.__stepNarrationStore = {};
+      }
+      window.__stepNarrationStore[sid] = narration;
+      const tag = document.getElementById('storyboard-narration-store');
+      if (tag) {
+        try {
+          tag.textContent = JSON.stringify(window.__stepNarrationStore).replace(/</g, '\\u003c');
+        } catch (_) {}
+      }
+    }
+  });
+
+  // Emit live step changes back to dashboard so storyboard UI can follow preview navigation.
+  let __lastReportedStep = null;
+  function readNarrationForStep(stepId) {
+    const sid = String(stepId || '').replace(/^step-/, '');
+    if (!sid) return '';
+    if (typeof window.getStepNarration === 'function') {
+      try { return String(window.getStepNarration(sid) || ''); } catch (_) {}
+    }
+    if (window.__stepNarrationStore && typeof window.__stepNarrationStore === 'object') {
+      return String(window.__stepNarrationStore[sid] || '');
+    }
+    return '';
+  }
+  function emitStepChanged(stepId) {
+    const sid = String(stepId || '').replace(/^step-/, '');
+    if (!sid || sid === __lastReportedStep) return;
+    __lastReportedStep = sid;
+    try {
+      window.parent && window.parent.postMessage({
+        type: 'STORYBOARD_STEP_CHANGED',
+        runId: RUN_ID,
+        stepId: sid,
+        narration: readNarrationForStep(sid),
+      }, DASHBOARD);
+    } catch (_) {}
+  }
+  function currentStepId() {
+    try {
+      if (typeof window.getCurrentStep === 'function') {
+        return String(window.getCurrentStep() || '').replace(/^step-/, '');
+      }
+    } catch (_) {}
+    const active = document.querySelector('.step.active');
+    return active && active.dataset && active.dataset.testid
+      ? String(active.dataset.testid).replace(/^step-/, '')
+      : '';
+  }
+  function installStepBridge() {
+    if (typeof window.goToStep !== 'function') return false;
+    if (window.goToStep && window.goToStep.__storyboardBridgeWrapped) return true;
+    const original = window.goToStep;
+    const wrapped = function(id) {
+      const result = original.apply(this, arguments);
+      emitStepChanged(id || currentStepId());
+      return result;
+    };
+    wrapped.__storyboardBridgeWrapped = true;
+    wrapped.__storyboardBridgeOriginal = original;
+    window.goToStep = wrapped;
+    emitStepChanged(currentStepId());
+    return true;
+  }
+  const bridgeTimer = setInterval(() => {
+    if (installStepBridge()) clearInterval(bridgeTimer);
+  }, 120);
+  setTimeout(() => clearInterval(bridgeTimer), 6000);
+  setInterval(() => {
+    const sid = currentStepId();
+    if (sid) emitStepChanged(sid);
+  }, 400);
+
+  try {
+    window.parent && window.parent.postMessage({ type: 'STORYBOARD_PREVIEW_READY', runId: RUN_ID }, DASHBOARD);
+  } catch (_) {}
+
 })();

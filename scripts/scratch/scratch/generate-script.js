@@ -30,6 +30,7 @@ const {
 const {
   getPlaidSkillBundleForFamily,
   getPlaidLinkUxSkillBundle,
+  getEmbeddedLinkSkillBundle,
   writePlaidLinkUxSkillManifest,
 } = require('../utils/plaid-skill-loader');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
@@ -545,9 +546,12 @@ async function main() {
   const skillMd = skillBundle.skillLoaded ? skillBundle.text : '';
   const linkUxSkillBundle = getPlaidLinkUxSkillBundle({ promptText });
   const linkUxSkillMd = linkUxSkillBundle.skillLoaded ? linkUxSkillBundle.text : '';
+  const embeddedLinkSkillBundle = getEmbeddedLinkSkillBundle({ promptText });
+  const embeddedLinkSkillMd = embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text : '';
   if (linkUxSkillBundle.skillLoaded) {
     console.log(`[Script] Plaid Link UX skill loaded (${linkUxSkillBundle.flowType} flow)`);
   }
+  console.log(`[Script] Plaid Link mode detected from prompt: ${embeddedLinkSkillBundle.mode}`);
   writePlaidLinkUxSkillManifest(OUT_DIR, {
     stage: 'script',
     flowType: linkUxSkillBundle.flowType,
@@ -565,6 +569,8 @@ async function main() {
         curatedDigest,
         plaidSkillMarkdown: skillMd,
         plaidLinkUxSkillMarkdown: linkUxSkillMd,
+        plaidLinkMode: embeddedLinkSkillBundle.mode,
+        embeddedLinkSkillMarkdown: embeddedLinkSkillMd,
       }
       : {
         synthesizedInsights: {},
@@ -575,6 +581,8 @@ async function main() {
         curatedDigest,
         plaidSkillMarkdown: skillMd,
         plaidLinkUxSkillMarkdown: linkUxSkillMd,
+        plaidLinkMode: embeddedLinkSkillBundle.mode,
+        embeddedLinkSkillMarkdown: embeddedLinkSkillMd,
       };
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -642,6 +650,7 @@ async function main() {
     console.error('[Script] Claude response did not contain valid steps array');
     process.exit(1);
   }
+  demoScript.plaidLinkMode = embeddedLinkSkillBundle.mode;
 
   const mergedLaunch = mergePreLinkIntoLaunchStep(demoScript);
   if (mergedLaunch) {

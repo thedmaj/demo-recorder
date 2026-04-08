@@ -20,9 +20,11 @@ require('dotenv').config({ override: true });
 
 const fs            = require('fs');
 const path          = require('path');
+const crypto        = require('crypto');
 const { execSync }  = require('child_process');
 const readline      = require('readline');
 const Anthropic     = require('@anthropic-ai/sdk');
+const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../validate-narration-sync');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +33,7 @@ const INPUTS_DIR   = path.join(PROJECT_ROOT, 'inputs');
 const OUT_DIR      = path.join(PROJECT_ROOT, 'out');
 const DEMOS_DIR    = path.join(OUT_DIR, 'demos');
 const LATEST_LINK  = path.join(OUT_DIR, 'latest');
+const PROMPT_REGISTRY_FILE = path.join(OUT_DIR, 'prompt-fingerprint-registry.json');
 
 // ── Stage ordering ────────────────────────────────────────────────────────────
 
@@ -90,6 +93,82 @@ function loadPrompt() {
     return fs.readFileSync(promptFile, 'utf8').trim();
   }
   return null;
+}
+
+function normalizePromptForFingerprint(promptText) {
+  return String(promptText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+function fingerprintPrompt(promptText) {
+  const normalized = normalizePromptForFingerprint(promptText);
+  if (!normalized) return null;
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
+function loadPromptRegistry() {
+  try {
+    if (!fs.existsSync(PROMPT_REGISTRY_FILE)) return { prompts: {} };
+    const parsed = JSON.parse(fs.readFileSync(PROMPT_REGISTRY_FILE, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : { prompts: {} };
+  } catch (_) {
+    return { prompts: {} };
+  }
+}
+
+function savePromptRegistry(registry) {
+  try {
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+    fs.writeFileSync(PROMPT_REGISTRY_FILE, JSON.stringify(registry, null, 2), 'utf8');
+  } catch (err) {
+    console.warn(`[Orchestrator] Could not persist prompt fingerprint registry: ${err.message}`);
+  }
+}
+
+function detectFirstUsePrompt(promptText) {
+  const fingerprint = fingerprintPrompt(promptText);
+  if (!fingerprint) return { fingerprint: null, firstUse: false, registry: loadPromptRegistry() };
+  const registry = loadPromptRegistry();
+  const seen = !!(registry.prompts && registry.prompts[fingerprint]);
+  return { fingerprint, firstUse: !seen, registry };
+}
+
+function recordPromptUse({ registry, fingerprint, runDir }) {
+  if (!registry || !fingerprint) return;
+  registry.prompts = registry.prompts || {};
+  const prev = registry.prompts[fingerprint] || {};
+  const useCount = Number(prev.useCount || 0) + 1;
+  registry.prompts[fingerprint] = {
+    firstSeenAt: prev.firstSeenAt || new Date().toISOString(),
+    lastSeenAt: new Date().toISOString(),
+    useCount,
+    lastRunDir: runDir || prev.lastRunDir || null,
+  };
+  savePromptRegistry(registry);
+}
+
+function applyFreshCleanup(runDir) {
+  if (!runDir || !fs.existsSync(runDir)) return;
+  const targets = [
+    path.join(runDir, 'scratch-app'),
+    path.join(runDir, 'qa-frames'),
+    path.join(runDir, 'build-qa-diagnostics.json'),
+    path.join(runDir, 'api-panel-qa.json'),
+    path.join(runDir, 'build-layer-report.json'),
+    path.join(runDir, 'build-app-raw-response.txt'),
+  ];
+  for (const t of targets) {
+    try {
+      if (!fs.existsSync(t)) continue;
+      const st = fs.statSync(t);
+      if (st.isDirectory()) fs.rmSync(t, { recursive: true, force: true });
+      else fs.unlinkSync(t);
+    } catch (err) {
+      console.warn(`[Orchestrator] Fresh cleanup skipped for ${path.basename(t)}: ${err.message}`);
+    }
+  }
 }
 
 // ── Mode classification ───────────────────────────────────────────────────────
@@ -607,6 +686,7 @@ function resolveStartIndex(fromStage) {
 function buildRemotionProps() {
   // Read from isolated run dir (PIPELINE_RUN_DIR) instead of shared out/
   const runDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+  const pointerOnlyOverlays = process.env.REMOTION_POINTER_ONLY !== 'false';
 
   const props = {
     scratchDurationFrames: 4500,
@@ -751,7 +831,7 @@ function buildRemotionProps() {
 
   // Load overlay-plan.json
   const overlayFile = path.join(runDir, 'overlay-plan.json');
-  if (fs.existsSync(overlayFile)) {
+  if (!pointerOnlyOverlays && fs.existsSync(overlayFile)) {
     try {
       props.enhanceOverlayPlan = JSON.parse(fs.readFileSync(overlayFile, 'utf8'));
     } catch {}
@@ -766,6 +846,9 @@ function buildRemotionProps() {
       demoScriptSteps = script.steps || [];
       props.scratchSteps = props.scratchSteps.map(s => {
         const ss = demoScriptSteps.find(x => x.id === s.id);
+        if (pointerOnlyOverlays) {
+          return { ...s, callouts: [], zoomPunch: null, narration: ss?.narration || '', apiResponse: ss?.apiResponse || null };
+        }
         return { ...s, callouts: ss?.callouts || [], narration: ss?.narration || '', apiResponse: ss?.apiResponse || null };
       });
     } catch {}
@@ -784,13 +867,15 @@ function buildRemotionProps() {
           clickRipple: { xFrac: coord.xFrac, yFrac: coord.yFrac, atFrame: 15 },
         };
         // Targeted zoom — skip for wf-link-launch (already speed-adjusted by SYNC_MAP_S)
-        if (s.id !== 'wf-link-launch') {
+        if (!pointerOnlyOverlays && s.id !== 'wf-link-launch') {
           update.zoomPunch = {
             scale:   1.08,
             peakFrac: 0.5,
             originX: `${(coord.xFrac * 100).toFixed(1)}%`,
             originY: `${(coord.yFrac * 100).toFixed(1)}%`,
           };
+        } else if (pointerOnlyOverlays) {
+          update.zoomPunch = null;
         }
         return { ...s, ...update };
       });
@@ -801,45 +886,49 @@ function buildRemotionProps() {
 
   // 2. Lower-thirds for API insight steps + reveal zoom for long API steps
   // 3. Badge callouts for outcome step with stat-counter entries from narration
-  const STAT_RE = /(\d+\.?\d*)\s*([\+%×xX]|percent|seconds?|ms\b)/gi;
-  props.scratchSteps = props.scratchSteps.map(s => {
-    const callouts   = [...(s.callouts || [])];
-    let   zoomPunch  = s.zoomPunch;
-    const durationS  = (s.durationMs || 0) / 1000;
+  if (!pointerOnlyOverlays) {
+    const STAT_RE = /(\d+\.?\d*)\s*([\+%×xX]|percent|seconds?|ms\b)/gi;
+    props.scratchSteps = props.scratchSteps.map(s => {
+      const callouts   = [...(s.callouts || [])];
+      let   zoomPunch  = s.zoomPunch;
+      const durationS  = (s.durationMs || 0) / 1000;
 
-    // Lower-third for steps with an API response endpoint
-    if (s.apiResponse?.endpoint) {
-      const words = (s.narration || '').trim().split(/\s+/).slice(0, 8).join(' ');
-      // Only add if not already present
-      if (!callouts.some(c => c.type === 'lower-third' && c.title === s.apiResponse.endpoint)) {
-        callouts.push({ type: 'lower-third', title: s.apiResponse.endpoint, subtext: words });
-      }
-      // Gentle reveal zoom at 30% into step for long API steps (no click coord zoom)
-      if (!zoomPunch && durationS > 12) {
-        zoomPunch = { scale: 1.06, peakFrac: 0.3, originX: 'center', originY: 'center' };
-      }
-    }
-
-    // Stat-counter callouts for the outcome step
-    if (s.id === 'plaid-outcome') {
-      const narration = s.narration || '';
-      const matches   = [...narration.matchAll(STAT_RE)];
-      matches.slice(0, 3).forEach((m, i) => {
-        const value  = parseFloat(m[1]);
-        const suffix = m[2].startsWith('percent') ? '%' : m[2];
-        if (!isNaN(value)) {
-          callouts.push({ type: 'stat-counter', value, suffix, label: '', position: `stat-${i + 1}` });
+      // Lower-third for steps with an API response endpoint
+      if (s.apiResponse?.endpoint) {
+        const words = (s.narration || '').trim().split(/\s+/).slice(0, 8).join(' ');
+        // Only add if not already present
+        if (!callouts.some(c => c.type === 'lower-third' && c.title === s.apiResponse.endpoint)) {
+          callouts.push({ type: 'lower-third', title: s.apiResponse.endpoint, subtext: words });
         }
-      });
-    }
+        // Gentle reveal zoom at 30% into step for long API steps (no click coord zoom)
+        if (!zoomPunch && durationS > 12) {
+          zoomPunch = { scale: 1.06, peakFrac: 0.3, originX: 'center', originY: 'center' };
+        }
+      }
 
-    return { ...s, callouts, zoomPunch: zoomPunch !== undefined ? zoomPunch : s.zoomPunch };
-  });
+      // Stat-counter callouts for the outcome step
+      if (s.id === 'plaid-outcome') {
+        const narration = s.narration || '';
+        const matches   = [...narration.matchAll(STAT_RE)];
+        matches.slice(0, 3).forEach((m, i) => {
+          const value  = parseFloat(m[1]);
+          const suffix = m[2].startsWith('percent') ? '%' : m[2];
+          if (!isNaN(value)) {
+            callouts.push({ type: 'stat-counter', value, suffix, label: '', position: `stat-${i + 1}` });
+          }
+        });
+      }
+
+      return { ...s, callouts, zoomPunch: zoomPunch !== undefined ? zoomPunch : s.zoomPunch };
+    });
+  } else {
+    props.scratchSteps = props.scratchSteps.map((s) => ({ ...s, callouts: [], zoomPunch: null }));
+  }
 
   // 4. Derive cut frame positions from processed-step-timing.json for CrossDissolve
   const processedTimingFile2 = path.join(runDir, 'processed-step-timing.json');
   props.cutFrames = [];
-  if (fs.existsSync(processedTimingFile2)) {
+  if (!pointerOnlyOverlays && fs.existsSync(processedTimingFile2)) {
     try {
       const pt2  = JSON.parse(fs.readFileSync(processedTimingFile2, 'utf8'));
       const fps2 = 30;
@@ -857,6 +946,7 @@ function buildRemotionProps() {
   if (!props.hasVoiceover) {
     console.log('[Render] No voiceover.mp3 found — rendering video-only (no audio)');
   }
+  props.overlayMode = pointerOnlyOverlays ? 'pointer-only' : 'enhanced';
 
   return props;
 }
@@ -951,6 +1041,25 @@ function checkAudioQuality(runDir) {
 
   const passed = issues.filter(i => !i.includes('failed')).length === 0;
   return { passed, issues };
+}
+
+function assertNarrationSyncOrThrow(runDir, contextLabel = 'pre-render') {
+  const report = validateNarrationSync(runDir);
+  const reportPath = writeNarrationSyncReport(runDir, report);
+  if (!report.ok) {
+    const sample = report.violations.slice(0, 8).map((v) => `${v.code}: ${v.message}`).join('\n  - ');
+    throw new Error(
+      `CRITICAL: Narration/screen sync governor failed (${contextLabel}). ` +
+      `${report.violations.length} violation(s).\n` +
+      `Report: ${reportPath}\n  - ${sample}`
+    );
+  }
+  if (report.warnings.length > 0) {
+    console.warn(`[narration-sync] PASS with ${report.warnings.length} warning(s) (${contextLabel}).`);
+    console.warn(`[narration-sync] Report: ${reportPath}`);
+  } else {
+    console.log(`[narration-sync] PASS (${contextLabel})`);
+  }
 }
 
 /**
@@ -1239,8 +1348,22 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   }
 
   // Stage: build
+  const layeredBuildEnabled = process.env.LAYERED_BUILD_ENABLED === 'true' || process.env.LAYERED_BUILD_ENABLED === '1';
+  const mobileVisualEnabled = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
+  const mobileRuntimeEnabled = process.env.MOBILE_RUNTIME_ENABLED === 'true' || process.env.MOBILE_RUNTIME_ENABLED === '1';
+  const buildViewMode = String(process.env.BUILD_VIEW_MODE || 'desktop').toLowerCase();
+  if (layeredBuildEnabled || mobileVisualEnabled || mobileRuntimeEnabled) {
+    console.log(
+      `[Orchestrator] Build lanes — layered=${layeredBuildEnabled}, mobile-visual=${mobileVisualEnabled}, ` +
+      `mobile-runtime=${mobileRuntimeEnabled}, viewMode=${buildViewMode}`
+    );
+  }
   await stageRunner('build', async () => {
-    await require('./scratch/build-app').main();
+    await require('./scratch/build-app').main({
+      layeredBuildEnabled,
+      mobileVisualEnabled,
+      buildViewMode,
+    });
   });
 
   // Stage: plaid-link-qa — lightweight pre-record smoke test that ensures
@@ -1253,7 +1376,10 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   // Stage: build-qa — Playwright walkthrough + vision QA vs demo-script (no recording)
   await stageRunner('build-qa', async () => {
     delete require.cache[require.resolve('./scratch/build-qa')];
-    await require('./scratch/build-qa').main();
+    await require('./scratch/build-qa').main({
+      mobileVisualEnabled,
+      buildViewMode,
+    });
   });
 
   // Post-build preview: launch a local server and open the app in the browser so a human
@@ -1637,7 +1763,9 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   // Stage: voiceover — runs after post-process so timing reflects the edited video.
   if (shouldRun('voiceover')) {
     await runStage('voiceover', async () => {
-      execSync('node scripts/generate-voiceover.js --scratch', {
+      // In scratch mode, skip initial stitching here to avoid duplicate work.
+      // resync-audio is the authoritative stitch stage after auto-gap.
+      execSync('node scripts/generate-voiceover.js --scratch --no-stitch', {
         stdio: 'inherit',
         cwd: PROJECT_ROOT,
       });
@@ -1684,6 +1812,8 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
         cwd:  PROJECT_ROOT,
         env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
       });
+      // Hard governor: after resync, narration must still map to the intended screen windows.
+      assertNarrationSyncOrThrow(versionedDir, 'post-resync-audio');
     }, timer);
   }
 
@@ -1701,6 +1831,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
           cwd:   PROJECT_ROOT,
           env:   { ...process.env, PIPELINE_RUN_DIR: versionedDir },
         });
+        assertNarrationSyncOrThrow(versionedDir, 'post-embed-sync-resync');
       }
     }, timer);
   }
@@ -1762,12 +1893,20 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
           const voiceoverPath = path.join(audioDir, 'voiceover.mp3');
           try { if (fs.existsSync(voiceoverPath)) fs.unlinkSync(voiceoverPath); } catch (_) {}
 
-          // Re-run generate-voiceover.js to regenerate only the deleted clips
+          // Re-run generate-voiceover.js to regenerate only the deleted clips.
+          // Skip stitching here; resync-audio performs a single authoritative stitch.
           console.log('[Audio QA] Re-running voiceover generation for affected clips...');
-          execSync('node scripts/generate-voiceover.js --scratch', {
+          execSync('node scripts/generate-voiceover.js --scratch --no-stitch', {
             stdio: 'inherit',
             cwd: PROJECT_ROOT,
           });
+          // Keep audio timeline and sync-governor state coherent after regeneration.
+          execSync('node scripts/resync-audio.js', {
+            stdio: 'inherit',
+            cwd: PROJECT_ROOT,
+            env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
+          });
+          assertNarrationSyncOrThrow(versionedDir, 'post-audio-qa-regeneration');
           console.log('[Audio QA] Regeneration complete.');
         } else {
           console.log('[Audio QA] Per-clip stutter/freeze check: all clips clean.');
@@ -1829,6 +1968,9 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   // Stage: render
   if (shouldRun('render')) {
     await runStage('render', async () => {
+      // Final hard-stop governor before render output is produced.
+      assertNarrationSyncOrThrow(versionedDir, 'pre-render');
+
       // ── Pre-flight: verify required artifacts exist ───────────────────────
       // Missing artifacts produce silent failures (no audio, 0-frame video, desync).
       const preflight = [
@@ -2143,6 +2285,7 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
 
 async function main() {
   const { mode: cliMode, fromStage, toStage, noTouchup, recordMode } = parseArgs();
+  let effectiveFromStage = fromStage;
 
   let endIdx = null;
   if (toStage) {
@@ -2168,6 +2311,15 @@ async function main() {
     console.log(`[Orchestrator] Prompt: "${promptText.substring(0, 120).replace(/\n/g, ' ')}..."`);
   } else {
     console.log('[Orchestrator] No prompt.txt found — using defaults.');
+  }
+  const { fingerprint: promptFingerprint, firstUse: promptFirstUse, registry: promptRegistry } = detectFirstUsePrompt(promptText);
+  const autoFresh = !!promptFirstUse;
+  if (autoFresh) {
+    console.log('[Orchestrator] First use of this prompt.txt detected — enabling automatic fresh run behavior.');
+    if (effectiveFromStage) {
+      console.log(`[Orchestrator] Ignoring --from=${effectiveFromStage} for first-use prompt; running from beginning to avoid stale artifacts.`);
+      effectiveFromStage = null;
+    }
   }
 
   // Determine mode
@@ -2196,7 +2348,7 @@ async function main() {
     const LATEST_LINK_PATH = path.join(path.resolve(__dirname, '../..'), 'out', 'latest');
     try { fs.existsSync(LATEST_LINK_PATH) && fs.unlinkSync(LATEST_LINK_PATH); } catch (_) {}
     try { fs.symlinkSync(versionedDir, LATEST_LINK_PATH); } catch (_) {}
-  } else if (fromStage) {
+  } else if (effectiveFromStage) {
     // When restarting mid-pipeline, reuse the most recent existing run dir so that
     // prior-stage artifacts (demo-script.json, product-research.json, etc.) are available.
     // Search across ALL dates for runs matching the product slug (newest first by version).
@@ -2231,11 +2383,16 @@ async function main() {
 
   // ── PIPELINE_RUN_DIR: all scripts write artifacts here instead of shared out/ ──
   process.env.PIPELINE_RUN_DIR = versionedDir;
+  if (autoFresh) {
+    applyFreshCleanup(versionedDir);
+    console.log('[Orchestrator] Applied fresh cleanup for first-use prompt run.');
+  }
+  recordPromptUse({ registry: promptRegistry, fingerprint: promptFingerprint, runDir: versionedDir });
   console.log(`[Orchestrator] Run directory (isolated): ${versionedDir}`);
   console.log(`[Orchestrator] Symlink: ${LATEST_LINK}`);
 
   // Determine start index (for --from)
-  const startIdx = resolveStartIndex(fromStage);
+  const startIdx = resolveStartIndex(effectiveFromStage);
 
   // Log Plaid Link mode
   const plaidLinkLive = process.env.PLAID_LINK_LIVE === 'true';

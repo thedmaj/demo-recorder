@@ -10,8 +10,8 @@ use_cases:
   - instant-account-verification
   - external-account-verification
 last_human_review: "2026-03-12"
-last_ai_update: "2026-03-12T00:00:00Z"
-needs_review: false
+last_ai_update: "2026-04-08T16:48:23.031Z"
+needs_review: true
 approved: true
 version: 1
 ---
@@ -134,6 +134,18 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-04-08 — Run: 2026-04-08-Pays-Monthly-Wireless-Fiber-Auth-Identity-Layer-v5 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"Coverage: 98%+ of U.S. depository accounts including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-04-08 — Run: 2026-04-08-Pays-Monthly-Wireless-Fiber-Auth-Identity-Layer-v4 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"Coverage: 98%+ of U.S. depository accounts including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
 
 ### 2026-03-12 — File created from inputs/plaid-value-props.md [human]
 Initial content migrated from monolithic value-props file. All proof points and talk tracks pre-approved.

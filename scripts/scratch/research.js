@@ -705,10 +705,20 @@ async function runResearch(context, productSlug, researchOpts = {}) {
   let finalText = null;
   let maxTokenRecoveries = 0;
   const MAX_TOKEN_RECOVERIES = 2;
+  const MAX_TOOL_LOOPS = mode === 'gapfill' ? 8 : mode === 'messaging' ? 12 : 18;
+  let forcedSynthesisPrompted = false;
 
   while (true) {
     iteration++;
     process.stdout.write(`[Research loop ${iteration}] Calling Claude...`);
+
+    // Defensive guard: never send an empty message list to Anthropic.
+    if (!Array.isArray(messages) || messages.length === 0) {
+      messages.push({
+        role: 'user',
+        content: 'Continue with targeted research and call synthesize_research once ready.',
+      });
+    }
 
     const response = await client.messages.create({
       model: 'claude-opus-4-6',
@@ -731,12 +741,52 @@ async function runResearch(context, productSlug, researchOpts = {}) {
 
     if (response.stop_reason === 'tool_use') {
       const toolBlocks = response.content.filter(b => b.type === 'tool_use');
+      if (!toolBlocks.length) {
+        // Avoid creating an empty tool_result message, which can cause invalid request payloads.
+        messages.push({ role: 'assistant', content: response.content });
+        messages.push({
+          role: 'user',
+          content: 'No tool calls were emitted. Continue and call synthesize_research with current findings.',
+        });
+        continue;
+      }
 
       // Check for synthesize_research — this is the final structured output
       const synthesizeBlock = toolBlocks.find(b => b.name === 'synthesize_research');
       if (synthesizeBlock) {
         console.log('\nResearch complete — structured synthesis received via tool call.\n');
         return { structured: synthesizeBlock.input };
+      }
+
+      if (iteration >= MAX_TOOL_LOOPS) {
+        console.warn(
+          `Research tool-loop cap reached (${MAX_TOOL_LOOPS}) for mode=${mode}; forcing synthesis.`
+        );
+        messages.push({ role: 'assistant', content: response.content });
+        const skippedToolResults = toolBlocks.map((block) => ({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: 'Skipped due to research tool-loop cap; synthesize using collected evidence.',
+          is_error: true,
+        }));
+        messages.push({ role: 'user', content: skippedToolResults });
+        if (forcedSynthesisPrompted) {
+          finalText = '{}';
+          break;
+        }
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Tool budget reached. Do not call any more tools. Immediately call synthesize_research ' +
+                'using the best available findings and include any unresolved items in gapQuestions.',
+            },
+          ],
+        });
+        forcedSynthesisPrompted = true;
+        continue;
       }
 
       console.log(`  → ${toolBlocks.length} tool call(s): ${toolBlocks.map(b => `${b.name}("${(b.input.question || b.input.query || '').substring(0, 50)}")`).join(', ')}`);

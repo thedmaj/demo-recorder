@@ -1177,6 +1177,64 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   flex-direction: column;
 }
 
+.storyboard-live-workspace {
+  padding: 14px;
+}
+
+.storyboard-live-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.storyboard-live-grid {
+  display: grid;
+  grid-template-columns: minmax(520px, 1fr) 360px;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.storyboard-live-preview {
+  min-height: 360px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.sb-live-iframe {
+  width: 100%;
+  min-height: 360px;
+  height: 56vh;
+  border: none;
+  display: block;
+  background: #fff;
+}
+
+.sb-live-empty {
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 13px;
+  padding: 14px;
+  text-align: center;
+}
+
+.storyboard-live-editor {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.storyboard-step-selected {
+  border-color: rgba(0, 166, 126, 0.5) !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 166, 126, 0.35);
+}
+
 .step-card {
   display: flex;
   flex-direction: row;

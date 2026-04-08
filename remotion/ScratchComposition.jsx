@@ -61,6 +61,24 @@ const PLAID_WHITE = '#ffffff';
 const PLAID_TEAL  = '#00A67E';
 const FONT_STACK  = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
 
+// Ensure interpolate() input ranges are strictly increasing, even on short steps.
+function strictlyIncreasingRange(values, minStep = 0.001) {
+  const out = [];
+  for (let i = 0; i < values.length; i++) {
+    const n = Number(values[i] ?? 0);
+    if (!Number.isFinite(n)) {
+      out.push(i === 0 ? 0 : out[i - 1] + minStep);
+      continue;
+    }
+    if (i === 0) {
+      out.push(n);
+    } else {
+      out.push(Math.max(n, out[i - 1] + minStep));
+    }
+  }
+  return out;
+}
+
 // ── Cut definition ────────────────────────────────────────────────────────────
 // Set to past end-of-video to effectively disable the Remotion-level cut.
 // All editing is handled by ffmpeg in post-process-recording.js. The sync map
@@ -173,7 +191,13 @@ function SceneTransitionFade({ durationFrames, children }) {
 function SceneTransition({ relFrame, fps, durationFrames, type = 'fade-up', atFrame = 0, exitFrames = 15, children }) {
   // Always call hooks unconditionally (React rules)
   const enterSpring = useSpring(relFrame, fps, { atFrame, damping: 16, stiffness: 140 });
-  const opacity     = interpolate(relFrame, [atFrame, atFrame + 12, durationFrames - exitFrames, durationFrames], [0, 1, 1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const transitionRange = strictlyIncreasingRange([atFrame, atFrame + 12, durationFrames - exitFrames, durationFrames]);
+  const opacity = interpolate(
+    relFrame,
+    transitionRange,
+    [0, 1, 1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
 
   // 'fade' type: delegate to library-standard fade via @remotion/transitions
   if (type === 'fade') {
@@ -251,9 +275,10 @@ function VideoSegmentOverlay({ fromS, toS, label, color = 'rgba(0,166,126,0.08)'
 
 // ── Reusable fade helper ───────────────────────────────────────────────────────
 function useFade(frame, inStart, inEnd, outStart, outEnd) {
+  const range = strictlyIncreasingRange([inStart, inEnd, outStart, outEnd]);
   return interpolate(
     frame,
-    [inStart, inEnd, outStart, outEnd],
+    range,
     [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );
@@ -296,8 +321,9 @@ function getCursorPos(events, frame, fps) {
   } else if (!next) {
     // After last click — hold position, then fade at step end
     const fadeStart = prev.atFrame + 20;
+    const fadeRange = strictlyIncreasingRange([fadeStart, last.stepEndF]);
     xFrac = prev.xFrac;  yFrac = prev.yFrac;
-    opacity = interpolate(frame, [fadeStart, last.stepEndF],
+    opacity = interpolate(frame, fadeRange,
       [1, 0], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
   } else {
     // Moving: spring from prev click position toward next click position
@@ -458,8 +484,9 @@ function SpotlightPulse({ steps, frame, fps }) {
   const pulse = Math.sin(relFrame * 0.125) * 18;
 
   // Fade out over last 20 frames of step
+  const fadeRange = strictlyIncreasingRange([0, 10, durFrames - 20, durFrames]);
   const fadeOpacity = interpolate(relFrame,
-    [0, 10, durFrames - 20, durFrames],
+    fadeRange,
     [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
 
@@ -763,9 +790,10 @@ function ZoomPunchWrapper({ step, frame, children }) {
   const punchIn   = startFrame + 10;
   const punchOut  = endFrame   - 10;
 
+  const zoomRange = strictlyIncreasingRange([startFrame, punchIn, peakFrame, punchOut, endFrame]);
   const scale = interpolate(
     frame,
-    [startFrame, punchIn, peakFrame, punchOut, endFrame],
+    zoomRange,
     [1.0, 1.0, targetScale, targetScale, 1.0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );

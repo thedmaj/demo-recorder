@@ -30,6 +30,11 @@ const MANIFEST_FILE    = path.join(OUT_DIR, 'voiceover-manifest.json');
 const AUDIO_DIR        = path.join(OUT_DIR, 'audio');
 const VOICEOVER_OUTPUT = path.join(AUDIO_DIR, 'voiceover.mp3');
 
+function toFiniteNumber(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 // ── Stitch audio clips with silence gaps ──────────────────────────────────────
 
 function stitchAudio(clips, outputPath) {
@@ -107,25 +112,40 @@ function main() {
     }
   }
 
-  // Remap each clip's startMs from processed video time → composition time
+  // Remap each clip from processed video time → composition time.
+  // IMPORTANT: Use explicit processed* coordinates when present so repeated
+  // resync runs are idempotent and do not "double remap" comp-space values.
   const fps = 30;
   let anyChanged = false;
   const remappedClips = rawClips.map(clip => {
-    // The manifest stores startMs in processed video coordinates.
-    // Convert to composition coordinates using the inverse sync map.
-    const compStartMs = processedToCompMs(clip.startMs, syncMap);
-    const compEndMs   = processedToCompMs(clip.endMs,   syncMap);
-    const deltaS      = (compStartMs - clip.startMs) / 1000;
+    const processedStartMs = toFiniteNumber(clip.processedStartMs)
+      ?? toFiniteNumber(clip._processedStartMs)
+      ?? toFiniteNumber(clip.startMs)
+      ?? 0;
+    const processedEndMs = toFiniteNumber(clip.processedEndMs)
+      ?? toFiniteNumber(clip._processedEndMs)
+      ?? toFiniteNumber(clip.endMs)
+      ?? processedStartMs;
+
+    const compStartMs = processedToCompMs(processedStartMs, syncMap);
+    const compEndMs   = processedToCompMs(processedEndMs,   syncMap);
+    const prevCompStartMs = toFiniteNumber(clip.compStartMs) ?? toFiniteNumber(clip.startMs) ?? compStartMs;
+    const deltaS      = (compStartMs - prevCompStartMs) / 1000;
     if (Math.abs(deltaS) > 0.05) {
       anyChanged = true;
       const sign = deltaS >= 0 ? '+' : '';
       console.log(
-        `  ${clip.id}: ${(clip.startMs / 1000).toFixed(2)}s → comp ${(compStartMs / 1000).toFixed(2)}s ` +
+        `  ${clip.id}: ${(prevCompStartMs / 1000).toFixed(2)}s → comp ${(compStartMs / 1000).toFixed(2)}s ` +
         `(${sign}${deltaS.toFixed(2)}s)`
       );
     }
     return {
       ...clip,
+      timingSpaceVersion: 2,
+      processedStartMs,
+      processedEndMs,
+      compStartMs,
+      compEndMs,
       startMs:      compStartMs,
       endMs:        compEndMs,
       startFrame:   Math.round(compStartMs / 1000 * fps),
@@ -141,14 +161,15 @@ function main() {
   // Re-stitch voiceover.mp3 with corrected clip positions
   stitchAudio(remappedClips, VOICEOVER_OUTPUT);
 
-  // Write updated manifest (preserve original processedMs in _processedStartMs for reference)
-  const updatedClips = remappedClips.map((clip, i) => ({
+  const updatedClips = remappedClips.map((clip) => ({
     ...clip,
-    _processedStartMs: rawClips[i].startMs, // retain original for debugging
+    // Legacy field retained for backwards compatibility with old dashboard/debug tooling.
+    _processedStartMs: clip.processedStartMs,
   }));
 
   const updatedManifest = {
     ...manifest,
+    timingSpaceVersion: 2,
     clips:      updatedClips,
     resyncedAt: new Date().toISOString(),
     syncMapApplied: syncMap.length > 0,

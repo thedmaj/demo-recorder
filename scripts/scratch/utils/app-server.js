@@ -25,6 +25,7 @@
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const { resolveMode, getLinkModeAdapter } = require('./link-mode');
 
 // ── MIME type map (common assets used in demo apps) ──────────────────────────
 const MIME_TYPES = {
@@ -129,6 +130,11 @@ async function handleApiRoute(req, res, urlPath) {
   try {
     switch (urlPath) {
       case '/api/create-link-token': {
+        const resolvedLinkMode = resolveMode({
+          explicitMode: body.linkMode || body.link_mode,
+          promptText: JSON.stringify(body || {}),
+        });
+        const linkModeAdapter = getLinkModeAdapter(resolvedLinkMode);
         const products = body.products;
         const isCra = (
           (Array.isArray(products) && products.some((p) => /cra|consumer_report/i.test(String(p)))) ||
@@ -145,16 +151,19 @@ async function handleApiRoute(req, res, urlPath) {
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
           productFamily:        body.productFamily || body.product_family || null,
           credentialScope:      body.credentialScope || body.credential_scope || null,
+          linkMode:             resolvedLinkMode,
+          hosted_link:          body.hosted_link && typeof body.hosted_link === 'object' ? body.hosted_link : undefined,
         };
+        const modeScopedOpts = linkModeAdapter.prepareCreateLinkTokenBody(baseOpts);
         if (body.plaid_user_id || body.plaidUserId) {
-          baseOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
+          modeScopedOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
         }
         if (body.plaid_user_token || body.plaidUserToken) {
-          baseOpts.legacyUserToken = body.plaid_user_token || body.plaidUserToken;
+          modeScopedOpts.legacyUserToken = body.plaid_user_token || body.plaidUserToken;
         }
         const result = isCra
-          ? await plaid.createConsumerReportLinkToken(baseOpts)
-          : await plaid.createLinkToken(baseOpts);
+          ? await plaid.createConsumerReportLinkToken(modeScopedOpts)
+          : await plaid.createLinkToken(modeScopedOpts);
         sendJson(res, 200, result);
         return true;
       }

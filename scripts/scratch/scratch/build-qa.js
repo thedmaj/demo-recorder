@@ -27,6 +27,8 @@ const { chromium } = require('playwright');
 const fs           = require('fs');
 const path         = require('path');
 const { startServer } = require('../utils/app-server');
+const { gleanChat } = require('../utils/mcp-clients');
+const { loadTimingContract } = require('../../timing-contract');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const OUT_DIR      = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
@@ -35,10 +37,13 @@ const PW_SCRIPT    = path.join(SCRATCH_DIR, 'playwright-script.json');
 const DEMO_SCRIPT  = path.join(OUT_DIR, 'demo-script.json');
 const FRAMES_DIR   = path.join(OUT_DIR, 'qa-frames');
 const DIAG_OUT     = path.join(OUT_DIR, 'build-qa-diagnostics.json');
+const SLIDE_MESSAGING_OUT = path.join(OUT_DIR, 'slide-messaging-suggestions.json');
+const VOICEOVER_MANIFEST_FILE = path.join(OUT_DIR, 'voiceover-manifest.json');
 
 const MAX_WAIT     = parseInt(process.env.BUILD_QA_MAX_WAIT_MS || '15000', 10);
 const PLAID_CLICK_WAIT = parseInt(process.env.BUILD_QA_PLAID_CLICK_MS || '10000', 10);
 const RECORD_PARITY = process.env.BUILD_QA_RECORD_PARITY === 'true' || process.env.BUILD_QA_RECORD_PARITY === '1';
+const MOBILE_VISUAL_ENABLED = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
 const HEADLESS      = process.env.BUILD_QA_HEADLESS != null
   ? !(process.env.BUILD_QA_HEADLESS === 'false' || process.env.BUILD_QA_HEADLESS === '0')
   : !RECORD_PARITY;
@@ -48,6 +53,10 @@ const RESPONSIVE_DESKTOP_VIEWPORTS = [
   { width: 1280, height: 800, label: '1280x800' },
   { width: 1440, height: 900, label: '1440x900' },
   { width: 1728, height: 1117, label: '1728x1117' },
+];
+const MOBILE_VISUAL_VIEWPORTS = [
+  { width: 390, height: 844, label: '390x844' },
+  { width: 430, height: 932, label: '430x932' },
 ];
 
 function getPlaidLaunchStepId(demoScript) {
@@ -148,6 +157,32 @@ async function locateVisible(page, selector) {
   return loc;
 }
 
+function extractDataTestid(selector) {
+  const m = String(selector || '').match(/^\[data-testid="([^"]+)"\]$/);
+  return m ? m[1] : null;
+}
+
+async function locateVisibleWithFallback(page, selector) {
+  try {
+    return await locateVisible(page, selector);
+  } catch (primaryErr) {
+    const testid = extractDataTestid(selector);
+    if (testid) {
+      const base = testid.replace(/-dup\d+$/, '');
+      const candidates = [
+        `[data-testid="${testid}"]`,
+        `[data-testid="${base}"]`,
+        `[data-testid^="${base}-dup"]`,
+      ];
+      for (const candidate of candidates) {
+        const loc = page.locator(candidate).filter({ visible: true }).first();
+        if (await loc.count()) return loc;
+      }
+    }
+    throw primaryErr;
+  }
+}
+
 async function evaluateStepState(page, stepId) {
   return page.evaluate((id) => {
     const stepEl = document.querySelector(`[data-testid="step-${id}"]`);
@@ -214,41 +249,48 @@ function detectHostUiStatLeak(step, state) {
   return 'Host UI contains presentation-style internal stats without clear user-facing benefit.';
 }
 
-async function evaluateIconLegibility(page) {
+async function evaluateAssetAuthenticity(page) {
   return page.evaluate(() => {
-    const svgs = Array.from(document.querySelectorAll('svg'));
-    const malformed = [];
-    const tiny = [];
-    const invisible = [];
-    for (const svg of svgs) {
-      const rect = svg.getBoundingClientRect();
-      const style = window.getComputedStyle(svg);
-      const viewBox = svg.getAttribute('viewBox') || '';
-      const hasDrawable = Boolean(svg.querySelector('path, circle, rect, line, polyline, polygon, g'));
-      const idHint = svg.getAttribute('data-testid') || svg.getAttribute('aria-label') || svg.className || 'svg-icon';
-      if (!viewBox || !hasDrawable) malformed.push(String(idHint).slice(0, 64));
-      if (rect.width > 0 && rect.height > 0 && (rect.width < 12 || rect.height < 12)) tiny.push(String(idHint).slice(0, 64));
-      const hidden = style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || '1') <= 0;
-      // Avoid false positives on container SVGs where paint is inherited by child paths.
-      const drawnNodes = Array.from(svg.querySelectorAll('path, circle, rect, line, polyline, polygon, g'));
-      const hasPaintedChild = drawnNodes.some((node) => {
-        const nodeStyle = window.getComputedStyle(node);
-        const fill = String(nodeStyle.fill || '').toLowerCase();
-        const stroke = String(nodeStyle.stroke || '').toLowerCase();
-        const strokeWidth = String(nodeStyle.strokeWidth || '').toLowerCase();
-        const fillPainted = fill && fill !== 'none' && fill !== 'transparent';
-        const strokePainted = stroke && stroke !== 'none' && stroke !== 'transparent' && strokeWidth !== '0px';
-        return fillPainted || strokePainted;
-      });
-      const noPaint = !hasPaintedChild && (style.fill === 'none' || style.fill === 'transparent') &&
-        (style.stroke === 'none' || style.stroke === 'transparent' || style.strokeWidth === '0px');
-      if ((rect.width > 0 && rect.height > 0 && hidden) || noPaint) invisible.push(String(idHint).slice(0, 64));
-    }
+    const hostLogo = document.querySelector('[data-testid="host-bank-logo-img"], [data-testid="host-bank-icon-img"]');
+    const hostLogoShell = document.querySelector('[data-testid="host-bank-logo-shell"]');
+    const logoTag = hostLogo ? String(hostLogo.tagName || '').toUpperCase() : '';
+    const logoSrc = hostLogo?.getAttribute('src') || '';
+    const shellInlineSvg = !!(hostLogoShell && hostLogoShell.querySelector('svg'));
+    const shellText = hostLogoShell ? (hostLogoShell.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    const shellLooksLikeTextLogo = !!shellText && shellText.length <= 6 && /^[a-z0-9&.\- ]+$/i.test(shellText);
+
+    const allSvgs = Array.from(document.querySelectorAll('svg'));
+    const nonPanelInlineSvgs = allSvgs.filter((svg) => {
+      return !svg.closest('#api-response-panel') && !svg.closest('#link-events-panel');
+    });
+
+    const dataUriImgs = Array.from(document.querySelectorAll('img')).filter((img) => {
+      const src = String(img.getAttribute('src') || '').trim().toLowerCase();
+      return src.startsWith('data:');
+    });
+
+    const syntheticIconNodes = Array.from(document.querySelectorAll('.merchant-icon, .sum-icon, [data-testid*="icon"]')).filter((el) => {
+      const txt = (el.textContent || '').replace(/\s+/g, '').trim();
+      const hasSingleGlyph = txt.length > 0 && txt.length <= 2;
+      const hasInlineSvg = !!el.querySelector('svg');
+      const isImg = el.tagName === 'IMG' || !!el.querySelector('img');
+      return (hasSingleGlyph || hasInlineSvg) && !isImg;
+    });
+
     return {
-      totalSvgIcons: svgs.length,
-      malformed: malformed.slice(0, 8),
-      tiny: tiny.slice(0, 8),
-      invisible: invisible.slice(0, 8),
+      logoTag,
+      logoSrc,
+      shellInlineSvg,
+      shellLooksLikeTextLogo,
+      nonPanelInlineSvgCount: nonPanelInlineSvgs.length,
+      nonPanelInlineSvgHints: nonPanelInlineSvgs.slice(0, 8).map((svg) =>
+        String(svg.getAttribute('data-testid') || svg.getAttribute('aria-label') || svg.className || 'inline-svg').slice(0, 64)
+      ),
+      dataUriImageCount: dataUriImgs.length,
+      syntheticIconCount: syntheticIconNodes.length,
+      syntheticIconHints: syntheticIconNodes.slice(0, 8).map((el) =>
+        String(el.getAttribute('data-testid') || el.className || el.tagName || 'icon-node').slice(0, 64)
+      ),
     };
   });
 }
@@ -389,41 +431,59 @@ async function evaluateResponsiveState(page, stepId) {
 async function runResponsiveChecks(page, demoScript) {
   const diagnostics = [];
   const firstStepId = (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || null;
-  const iconLegibility = await evaluateIconLegibility(page);
-  if (iconLegibility.totalSvgIcons === 0) {
+  const assetAuth = await evaluateAssetAuthenticity(page);
+  if (assetAuth.logoTag && assetAuth.logoTag !== 'IMG') {
     diagnostics.push({
       stepId: firstStepId || 'build',
-      category: 'icon-legibility',
-      severity: 'warning',
-      issue: 'No SVG icons detected. Iconography may be missing or rasterized.',
-      suggestion: 'Use recognizable inline SVG icons for core actions and status states.',
-    });
-  }
-  if (iconLegibility.malformed.length > 0) {
-    diagnostics.push({
-      stepId: firstStepId || 'build',
-      category: 'icon-legibility',
+      category: 'asset-authenticity',
       severity: 'critical',
-      issue: `Malformed SVG icons detected (${iconLegibility.malformed.join(', ')}).`,
-      suggestion: 'Ensure each icon has a valid viewBox and drawable path/shape content.',
+      issue: `Host logo element is ${assetAuth.logoTag}, not IMG.`,
+      suggestion: 'Use a real logo image from a trusted brand/logo library source (no generated vector/text logos).',
     });
   }
-  if (iconLegibility.tiny.length > 0) {
+  if (assetAuth.logoSrc && /^(data:|blob:)/i.test(assetAuth.logoSrc)) {
     diagnostics.push({
       stepId: firstStepId || 'build',
-      category: 'icon-legibility',
-      severity: 'warning',
-      issue: `Some SVG icons are too small to recognize (${iconLegibility.tiny.join(', ')}).`,
-      suggestion: 'Use icon sizes >= 12px with adequate spacing for readability.',
-    });
-  }
-  if (iconLegibility.invisible.length > 0) {
-    diagnostics.push({
-      stepId: firstStepId || 'build',
-      category: 'icon-legibility',
+      category: 'asset-authenticity',
       severity: 'critical',
-      issue: `Some SVG icons appear invisible/unpainted (${iconLegibility.invisible.join(', ')}).`,
-      suggestion: 'Ensure icon fill/stroke colors are visible and not transparent/none.',
+      issue: 'Host logo uses data/blob URL instead of a real hosted brand asset.',
+      suggestion: 'Use a real hosted logo asset (e.g., brand library/CDN), not generated inline/base64 logo content.',
+    });
+  }
+  if (assetAuth.shellInlineSvg || assetAuth.shellLooksLikeTextLogo) {
+    diagnostics.push({
+      stepId: firstStepId || 'build',
+      category: 'asset-authenticity',
+      severity: 'critical',
+      issue: 'Host logo shell appears to contain generated/fake logo graphics (inline SVG or short text mark).',
+      suggestion: 'Do not generate logos. Use only real brand logo assets from the logo library.',
+    });
+  }
+  if (assetAuth.nonPanelInlineSvgCount > 0) {
+    diagnostics.push({
+      stepId: firstStepId || 'build',
+      category: 'asset-authenticity',
+      severity: 'warning',
+      issue: `Inline SVG icons detected in app UI (${assetAuth.nonPanelInlineSvgHints.join(', ')}).`,
+      suggestion: 'Use approved icon-library assets only; inline SVG is acceptable when copied verbatim from that library.',
+    });
+  }
+  if (assetAuth.syntheticIconCount > 0) {
+    diagnostics.push({
+      stepId: firstStepId || 'build',
+      category: 'asset-authenticity',
+      severity: 'critical',
+      issue: `Synthetic icon placeholders detected (${assetAuth.syntheticIconHints.join(', ')}).`,
+      suggestion: 'Replace synthetic/handmade icon placeholders with real icon library assets.',
+    });
+  }
+  if (assetAuth.dataUriImageCount > 0) {
+    diagnostics.push({
+      stepId: firstStepId || 'build',
+      category: 'asset-authenticity',
+      severity: 'warning',
+      issue: `Data-URI images detected (${assetAuth.dataUriImageCount}).`,
+      suggestion: 'Prefer real hosted logo/icon assets from approved libraries over generated embedded images.',
     });
   }
 
@@ -491,6 +551,299 @@ async function runResponsiveChecks(page, demoScript) {
     }
   }
   return diagnostics;
+}
+
+async function runMobileVisualChecks(page, demoScript) {
+  const diagnostics = [];
+  const firstStepId = (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build';
+  const shellPresent = await page.evaluate(() => {
+    const shellNode = document.querySelector('[data-testid="mobile-simulator-shell"]');
+    const runtimeToggle = document.querySelector('[data-testid="mobile-view-toggle"], #mobile-view-toggle');
+    const runtimeApi = typeof window.setDemoViewMode === 'function';
+    return Boolean(shellNode || runtimeToggle || runtimeApi);
+  });
+  if (!shellPresent) {
+    diagnostics.push({
+      stepId: firstStepId,
+      category: 'mobile-visual-contract',
+      severity: 'warning',
+      issue: 'Mobile visual mode enabled but no simulator shell or runtime view toggle was found.',
+      suggestion: 'Provide either [data-testid="mobile-simulator-shell"] or a runtime toggle API/button (setDemoViewMode/mobile-view-toggle).',
+    });
+  }
+  for (const vp of MOBILE_VISUAL_VIEWPORTS) {
+    await page.setViewportSize({ width: vp.width, height: vp.height });
+    await page.waitForTimeout(150);
+    const snapshot = await page.evaluate(() => {
+      const active = document.querySelector('.step.active');
+      if (!active) return { activeExists: false };
+      const rect = active.getBoundingClientRect();
+      return {
+        activeExists: true,
+        scrollW: document.documentElement.scrollWidth,
+        vw: window.innerWidth,
+        rectLeft: rect.left,
+        rectRight: rect.right,
+      };
+    });
+    if (!snapshot.activeExists) continue;
+    if ((snapshot.scrollW || 0) > (snapshot.vw || 0) + 4) {
+      diagnostics.push({
+        stepId: firstStepId,
+        category: 'mobile-visual-overflow',
+        severity: 'warning',
+        issue: `Mobile visual overflow at ${vp.label} (scrollWidth=${snapshot.scrollW}, viewportWidth=${snapshot.vw}).`,
+        suggestion: 'Constrain mobile-simulated layout width and avoid fixed desktop containers in mobile visual mode.',
+      });
+    }
+    if ((snapshot.rectLeft || 0) < -2 || (snapshot.rectRight || 0) > (snapshot.vw || 0) + 2) {
+      diagnostics.push({
+        stepId: firstStepId,
+        category: 'mobile-visual-overflow',
+        severity: 'warning',
+        issue: `Active step is partially clipped at ${vp.label}.`,
+        suggestion: 'Ensure mobile-simulated container is centered and fully visible in narrow viewport checks.',
+      });
+    }
+  }
+  return diagnostics;
+}
+
+async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
+  const diagnostics = [];
+  const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  if (!launchStep) return diagnostics;
+  const launchId = launchStep.id;
+  try {
+    await page.evaluate((id) => {
+      if (typeof window.setDemoViewMode === 'function') window.setDemoViewMode('mobile-simulated');
+      if (typeof window.goToStep === 'function') window.goToStep(id);
+    }, launchId);
+    await page.waitForTimeout(250);
+  } catch (err) {
+    diagnostics.push({
+      stepId: launchId,
+      category: 'plaid-link-mobile-launch',
+      severity: 'critical',
+      issue: `Could not prepare mobile-simulated Plaid launch step: ${err.message}`,
+      suggestion: 'Ensure runtime view toggle and goToStep are initialized before mobile Plaid launch QA.',
+    });
+    return diagnostics;
+  }
+
+  const launchBtn = '[data-testid="link-external-account-btn"]';
+  try {
+    const loc = await locateVisible(page, launchBtn);
+    const beforeErrors = pageErrors.length;
+    await loc.click({ timeout: 8000, force: true });
+    await page.waitForTimeout(400);
+    const hasHandler = await page.evaluate(() => Boolean(window._plaidHandler));
+    if (!hasHandler) {
+      diagnostics.push({
+        stepId: launchId,
+        category: 'plaid-link-mobile-launch',
+        severity: 'critical',
+        issue: 'Plaid handler is not initialized when launching from mobile-simulated view.',
+        suggestion: 'Ensure click bindings and Plaid token bootstrap complete before launch on mobile-simulated steps.',
+      });
+    }
+    const newErrors = pageErrors.slice(beforeErrors);
+    const bindError = newErrors.find((e) => /Cannot read properties of null \(reading 'addEventListener'\)/i.test(String(e || '')));
+    if (bindError) {
+      diagnostics.push({
+        stepId: launchId,
+        category: 'plaid-link-mobile-launch',
+        severity: 'critical',
+        issue: `Runtime JS binding error during mobile launch: ${bindError}`,
+        suggestion: 'Guard addEventListener bindings against missing nodes and normalize testid selector drift.',
+      });
+    }
+  } catch (err) {
+    diagnostics.push({
+      stepId: launchId,
+      category: 'plaid-link-mobile-launch',
+      severity: 'critical',
+      issue: `Could not click mobile Plaid launch button "${launchBtn}": ${err.message}`,
+      suggestion: 'Ensure the launch CTA exists and remains visible in mobile-simulated mode.',
+    });
+  }
+  return diagnostics;
+}
+
+function inferQaPhase(diag) {
+  const c = String(diag?.category || '').toLowerCase();
+  if (/selector-missing|navigation-mismatch|responsive-layout|mobile-visual|duplicate-bank-mark|missing-logo/.test(c)) {
+    return 'framework';
+  }
+  if (/api-story-alignment|panel-|missing-panel|plaid-link|action-failure|runtime-js-error/.test(c)) {
+    return 'data-interaction';
+  }
+  return 'visual-polish';
+}
+
+function parseJsonFromText(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  try { return JSON.parse(text); } catch (_) {}
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  if (fenced) {
+    try { return JSON.parse(fenced.trim()); } catch (_) {}
+  }
+  const obj = text.match(/\{[\s\S]*\}/);
+  if (obj) {
+    try { return JSON.parse(obj[0]); } catch (_) {}
+  }
+  return null;
+}
+
+async function collectSlideMessagingContext(page, demoScript) {
+  const slides = (demoScript.steps || []).filter((step) => isSlideLikeStep(step));
+  const rows = [];
+  for (const step of slides) {
+    try {
+      await page.evaluate((id) => {
+        if (typeof window.goToStep === 'function') window.goToStep(id);
+      }, step.id);
+      await page.waitForTimeout(120);
+      const snap = await page.evaluate((id) => {
+        const active = document.querySelector('.step.active');
+        const target = document.querySelector(`[data-testid="step-${id}"]`);
+        const text = (target?.innerText || active?.innerText || '').replace(/\s+/g, ' ').trim();
+        return {
+          hasSlideRoot: Boolean(target?.querySelector('.slide-root') || active?.querySelector('.slide-root')),
+          renderedText: text.slice(0, 1800),
+        };
+      }, step.id);
+      rows.push({
+        stepId: step.id,
+        label: step.label || '',
+        narration: step.narration || '',
+        visualState: step.visualState || '',
+        renderedText: snap.renderedText || '',
+        hasSlideRoot: !!snap.hasSlideRoot,
+      });
+    } catch (_) {
+      rows.push({
+        stepId: step.id,
+        label: step.label || '',
+        narration: step.narration || '',
+        visualState: step.visualState || '',
+        renderedText: '',
+        hasSlideRoot: false,
+      });
+    }
+  }
+  return rows;
+}
+
+function buildSlideMessagingPrompt(demoScript, slideRows) {
+  const persona = demoScript.persona || {};
+  const lines = [];
+  lines.push('You are enhancing business/value messaging for Plaid demo slides.');
+  lines.push('Use concise, buyer-facing value language tied to the demo use case.');
+  lines.push('Return JSON only.');
+  lines.push('');
+  lines.push('Required output schema:');
+  lines.push('{');
+  lines.push('  "slides": [');
+  lines.push('    {');
+  lines.push('      "stepId": "<slide step id>",');
+  lines.push('      "additionalValueClaims": [');
+  lines.push('        { "claim": "<string>", "whyItMatters": "<string>", "reference": "<source hint or rationale>" }');
+  lines.push('      ]');
+  lines.push('    }');
+  lines.push('  ],');
+  lines.push('  "globalSuggestions": ["<string>", "..."]');
+  lines.push('}');
+  lines.push('');
+  lines.push('Rules:');
+  lines.push('- Add 2 to 4 additional value claims per slide.');
+  lines.push('- Do not restate existing claims verbatim.');
+  lines.push('- Keep claims specific, outcome-oriented, and plausible.');
+  lines.push('- Avoid unsourced hard metrics unless clearly justified.');
+  lines.push('');
+  lines.push(`Demo product: ${demoScript.product || ''}`);
+  lines.push(`Persona: ${persona.name || ''} | Company: ${persona.company || ''} | Use case: ${persona.useCase || ''}`);
+  lines.push('');
+  lines.push('Slide messaging context:');
+  lines.push(JSON.stringify(slideRows, null, 2));
+  return lines.join('\n');
+}
+
+async function evaluateSlideValueMessaging(page, demoScript) {
+  const slides = (demoScript.steps || []).filter((step) => isSlideLikeStep(step));
+  if (!slides.length) {
+    return {
+      artifact: { generatedAt: new Date().toISOString(), skipped: true, reason: 'No slide steps found.' },
+      diagnostics: [],
+    };
+  }
+  const slideRows = await collectSlideMessagingContext(page, demoScript);
+  const prompt = buildSlideMessagingPrompt(demoScript, slideRows);
+  const artifact = {
+    generatedAt: new Date().toISOString(),
+    slideCount: slides.length,
+    input: slideRows,
+    rawResponse: '',
+    parsed: null,
+    parseError: null,
+  };
+  const diagnostics = [];
+  try {
+    artifact.rawResponse = await gleanChat(prompt);
+    artifact.parsed = parseJsonFromText(artifact.rawResponse);
+    if (!artifact.parsed) {
+      artifact.parseError = 'Could not parse JSON from gleanChat response';
+      diagnostics.push({
+        stepId: slides[0].id,
+        category: 'slide-value-messaging',
+        severity: 'warning',
+        issue: 'Glean slide messaging response was not valid JSON.',
+        suggestion: 'Refine the slide-messaging prompt schema and retry the non-blocking messaging pass.',
+      });
+      return { artifact, diagnostics };
+    }
+    const suggestionsByStep = Array.isArray(artifact.parsed.slides) ? artifact.parsed.slides : [];
+    for (const row of suggestionsByStep) {
+      const sid = row && row.stepId ? row.stepId : (slides[0] && slides[0].id) || 'slide';
+      const claims = Array.isArray(row?.additionalValueClaims) ? row.additionalValueClaims.slice(0, 4) : [];
+      for (const claim of claims) {
+        const text = claim && claim.claim ? String(claim.claim).trim() : '';
+        if (!text) continue;
+        diagnostics.push({
+          stepId: sid,
+          category: 'slide-value-messaging',
+          severity: 'warning',
+          issue: `Suggested value-add claim: ${text}`,
+          suggestion: claim?.whyItMatters
+            ? `Why it matters: ${String(claim.whyItMatters).trim()}`
+            : 'Apply this suggestion if it improves buyer-facing value clarity.',
+        });
+      }
+    }
+    const globals = Array.isArray(artifact.parsed.globalSuggestions) ? artifact.parsed.globalSuggestions.slice(0, 4) : [];
+    for (const g of globals) {
+      const text = String(g || '').trim();
+      if (!text) continue;
+      diagnostics.push({
+        stepId: slides[0].id,
+        category: 'slide-value-messaging',
+        severity: 'warning',
+        issue: `Global slide messaging suggestion: ${text}`,
+        suggestion: 'Incorporate this guidance in slide copy refinement if aligned with the use case.',
+      });
+    }
+  } catch (err) {
+    artifact.parseError = `Glean pass failed: ${err.message}`;
+    diagnostics.push({
+      stepId: slides[0].id,
+      category: 'slide-value-messaging',
+      severity: 'warning',
+      issue: `Non-blocking slide messaging pass failed: ${err.message}`,
+      suggestion: 'Verify Glean MCP availability/credentials. Build QA remains valid without this pass.',
+    });
+  }
+  return { artifact, diagnostics };
 }
 
 async function ensureApiPanelContractForStep(page, stepId) {
@@ -629,6 +982,18 @@ function buildStepAssertions(step, state) {
       suggestion: 'Render slide scenes using the shared slide template contract.',
     });
   }
+  if (isSlideLikeStep(step)) {
+    const textLen = String(state.activeStepText || '').trim().length;
+    if (!state.stepVisible || textLen < 80) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'blank-slide',
+        severity: 'critical',
+        issue: 'Slide step appears blank or near-empty during capture.',
+        suggestion: 'Ensure the slide renders visible heading/body/CTA content before frame capture.',
+      });
+    }
+  }
   const hostStatLeak = detectHostUiStatLeak(step, state);
   if (hostStatLeak) {
     diagnostics.push({
@@ -688,14 +1053,14 @@ async function runPlaywrightRow(page, stepEntry) {
       if (a.type === 'wait') await page.waitForTimeout(a.ms || 1000);
       else if (a.type === 'click') {
         try {
-          const loc = await locateVisible(page, a.selector);
+          const loc = await locateVisibleWithFallback(page, a.selector);
           await loc.click({ timeout: 8000, force: true });
         } catch (err) {
           captureError('selector-missing', `Could not click selector "${a.selector}": ${err.message}`, 'Ensure the expected interactive element exists, is visible, and has the required data-testid.');
         }
       } else if (a.type === 'fill') {
         try {
-          const loc = await locateVisible(page, a.selector);
+          const loc = await locateVisibleWithFallback(page, a.selector);
           await loc.fill(a.value || '');
         } catch (err) {
           captureError('selector-missing', `Could not fill selector "${a.selector}": ${err.message}`, 'Ensure the expected input exists, is visible, and uses the correct selector.');
@@ -725,14 +1090,28 @@ async function runPlaywrightRow(page, stepEntry) {
     }
   } else if (stepEntry.action === 'click') {
     try {
-      const loc = await locateVisible(page, stepEntry.target);
+      const targetStepId = stepEntry.stepId || stepEntry.id || null;
+      if (targetStepId) {
+        await page.evaluate((id) => {
+          if (typeof window.goToStep === 'function') window.goToStep(id);
+        }, targetStepId);
+        await page.waitForTimeout(120);
+      }
+      const loc = await locateVisibleWithFallback(page, stepEntry.target);
       await loc.click({ timeout: 8000, force: true });
     } catch (err) {
       captureError('selector-missing', `Could not click selector "${stepEntry.target}": ${err.message}`, 'Ensure the expected clickable element exists, is visible, and uses the requested selector.');
     }
   } else if (stepEntry.action === 'fill') {
     try {
-      const loc = await locateVisible(page, stepEntry.target);
+      const targetStepId = stepEntry.stepId || stepEntry.id || null;
+      if (targetStepId) {
+        await page.evaluate((id) => {
+          if (typeof window.goToStep === 'function') window.goToStep(id);
+        }, targetStepId);
+        await page.waitForTimeout(120);
+      }
+      const loc = await locateVisibleWithFallback(page, stepEntry.target);
       await loc.fill(stepEntry.value || '');
     } catch (err) {
       captureError('selector-missing', `Could not fill selector "${stepEntry.target}": ${err.message}`, 'Ensure the expected input exists, is visible, and can be filled by Playwright.');
@@ -742,7 +1121,7 @@ async function runPlaywrightRow(page, stepEntry) {
   return { dwellMs, errors };
 }
 
-async function main() {
+async function main(opts = {}) {
   if (!fs.existsSync(path.join(SCRATCH_DIR, 'index.html'))) {
     console.error('[build-qa] Missing scratch-app/index.html — run build stage first');
     process.exit(1);
@@ -763,6 +1142,9 @@ async function main() {
   const playwrightScript = JSON.parse(fs.readFileSync(PW_SCRIPT, 'utf8'));
   const demoScript       = JSON.parse(fs.readFileSync(DEMO_SCRIPT, 'utf8'));
   const demoStepIds      = (demoScript.steps || []).map(s => s.id);
+  const mobileVisualEnabled = opts.mobileVisualEnabled != null
+    ? !!opts.mobileVisualEnabled
+    : MOBILE_VISUAL_ENABLED;
 
   const server = await startServer(3739, SCRATCH_DIR);
   const url    = server.url;
@@ -776,6 +1158,10 @@ async function main() {
     deviceScaleFactor: RECORD_PARITY ? 2 : 1,
   });
   const page = await context.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (err) => {
+    pageErrors.push(String((err && err.message) || err || 'unknown pageerror'));
+  });
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(800);
 
@@ -875,6 +1261,161 @@ async function main() {
       suggestion: 'Verify viewport resizing and client-side step navigation are operational during build-qa.',
     });
   }
+  if (mobileVisualEnabled) {
+    try {
+      diagnostics.push(...(await runMobileVisualChecks(page, demoScript)));
+    } catch (err) {
+      diagnostics.push({
+        stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+        category: 'mobile-visual-contract',
+        severity: 'warning',
+        issue: `Mobile visual checks failed to execute: ${err.message}`,
+        suggestion: 'Verify mobile visual viewport checks can resize and inspect the active step in build-qa.',
+      });
+    }
+  }
+  try {
+    diagnostics.push(...(await runMobilePlaidLaunchCheck(page, demoScript, pageErrors)));
+  } catch (err) {
+    diagnostics.push({
+      stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+      category: 'plaid-link-mobile-launch',
+      severity: 'warning',
+      issue: `Mobile Plaid launch smoke check failed to execute: ${err.message}`,
+      suggestion: 'Verify mobile-simulated launch check can run after walkthrough.',
+    });
+  }
+
+  const runtimeBindingError = pageErrors.find((e) => /Cannot read properties of null \(reading 'addEventListener'\)/i.test(String(e || '')));
+  if (runtimeBindingError) {
+    diagnostics.push({
+      stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+      category: 'runtime-js-error',
+      severity: 'critical',
+      issue: `Runtime JS error detected: ${runtimeBindingError}`,
+      suggestion: 'Guard event listener bindings against missing selectors; this can break Plaid initialization and step navigation.',
+    });
+  }
+
+  // Non-blocking slide value-messaging enhancement pass (Glean-backed).
+  // This adds advisory diagnostics and writes a standalone artifact for refinement input.
+  try {
+    const slideMsg = await evaluateSlideValueMessaging(page, demoScript);
+    if (slideMsg && slideMsg.artifact) {
+      fs.writeFileSync(SLIDE_MESSAGING_OUT, JSON.stringify(slideMsg.artifact, null, 2));
+    }
+    if (slideMsg && Array.isArray(slideMsg.diagnostics) && slideMsg.diagnostics.length > 0) {
+      diagnostics.push(...slideMsg.diagnostics);
+    }
+  } catch (err) {
+    diagnostics.push({
+      stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+      category: 'slide-value-messaging',
+      severity: 'warning',
+      issue: `Slide value messaging pass crashed: ${err.message}`,
+      suggestion: 'Treat as non-blocking and inspect Glean/tool logs if suggestions are missing.',
+    });
+  }
+
+  // Hard timing guardrail (non-visual): narration must fit within adjusted composition windows.
+  const timingContract = loadTimingContract(OUT_DIR);
+  const timingViolations = [];
+  const timingDupes = [];
+  const timingCoverageGaps = [];
+  const narrationWindowMismatches = [];
+  if (timingContract && Array.isArray(timingContract.steps)) {
+    const byId = new Map();
+    const sortedTiming = [...timingContract.steps]
+      .filter((r) => r && Number.isFinite(Number(r.compStartMs)) && Number.isFinite(Number(r.compEndMs)))
+      .sort((a, b) => Number(a.compStartMs) - Number(b.compStartMs));
+
+    for (const row of timingContract.steps) {
+      const sid = String(row?.stepId || '').trim();
+      if (!sid) continue;
+      if (!byId.has(sid)) byId.set(sid, 0);
+      byId.set(sid, byId.get(sid) + 1);
+    }
+    for (const [stepId, count] of byId.entries()) {
+      if (count > 1) {
+        timingDupes.push({ stepId, count });
+        diagnostics.push({
+          stepId,
+          category: 'timing-duplicate-step-window',
+          severity: 'critical',
+          issue: `Step "${stepId}" has ${count} timing windows in timing-contract.json.`,
+          suggestion: 'Collapse duplicate contiguous windows so one screen maps to one narration timeline window.',
+        });
+      }
+    }
+
+    for (let i = 1; i < sortedTiming.length; i++) {
+      const prevEnd = Number(sortedTiming[i - 1].compEndMs || 0);
+      const curStart = Number(sortedTiming[i].compStartMs || 0);
+      const gapMs = Math.round(curStart - prevEnd);
+      if (gapMs > 250) {
+        timingCoverageGaps.push({ gapMs, fromStep: sortedTiming[i - 1].stepId, toStep: sortedTiming[i].stepId });
+        diagnostics.push({
+          stepId: sortedTiming[i].stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
+          category: 'timing-coverage-gap',
+          severity: 'warning',
+          issue: `Uncovered composition gap of ${gapMs}ms between "${sortedTiming[i - 1].stepId}" and "${sortedTiming[i].stepId}".`,
+          suggestion: 'Ensure sync-map explicitly governs contiguous comp regions with no large unowned gaps.',
+        });
+      }
+    }
+
+    // Hard governor: narration clip start must land inside one of its own step windows.
+    // This catches cross-screen narration bleed caused by stale/duplicate timing windows.
+    try {
+      if (fs.existsSync(VOICEOVER_MANIFEST_FILE)) {
+        const manifest = JSON.parse(fs.readFileSync(VOICEOVER_MANIFEST_FILE, 'utf8'));
+        const clips = Array.isArray(manifest?.clips) ? manifest.clips : [];
+        for (const clip of clips) {
+          const cid = String(clip?.id || '').trim();
+          if (!cid) continue;
+          const clipStart = Number(clip.startMs);
+          if (!Number.isFinite(clipStart)) continue;
+          const windows = sortedTiming.filter((r) => String(r.stepId || '') === cid);
+          if (windows.length === 0) continue;
+          const inOwnWindow = windows.some((w) => clipStart >= Number(w.compStartMs || 0) - 120 && clipStart <= Number(w.compEndMs || 0) + 120);
+          if (!inOwnWindow) {
+            narrationWindowMismatches.push({ stepId: cid, clipStartMs: clipStart });
+            diagnostics.push({
+              stepId: cid,
+              category: 'narration-screen-mismatch',
+              severity: 'critical',
+              issue: `Narration starts at ${clipStart}ms outside its own screen timing window(s).`,
+              suggestion: 'Rebuild timing windows and sync-map so each narration clip starts within its step window only.',
+            });
+          }
+        }
+      }
+    } catch (err) {
+      diagnostics.push({
+        stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+        category: 'narration-screen-mismatch',
+        severity: 'warning',
+        issue: `Could not evaluate narration-to-screen mapping: ${err.message}`,
+        suggestion: 'Inspect voiceover-manifest.json and timing-contract.json for stale timing artifacts.',
+      });
+    }
+
+    for (const row of timingContract.steps) {
+      if (row && row.status === 'overrun') {
+        const policyHint = row.isPlaidLink
+          ? ` Policy=${row.plaidLinkPolicy || 'default'}.`
+          : '';
+        diagnostics.push({
+          stepId: row.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
+          category: 'narration-overrun',
+          severity: 'critical',
+          issue: `Narration exceeds visible composition window by ${Math.abs(Number(row.deltaMs || 0))}ms.${policyHint}`,
+          suggestion: 'Increase visual duration (sync-map freeze) or shorten narration/gap so actual >= target.',
+        });
+        timingViolations.push(row);
+      }
+    }
+  }
 
   await context.close();
   await browser.close();
@@ -906,22 +1447,27 @@ async function main() {
   }
 
   console.log(`[build-qa] Running vision QA on ${prebuiltStepFrames.length} step(s)...`);
+  const normalizedDiagnostics = diagnostics.map((d) => ({ ...d, phase: d.phase || inferQaPhase(d) }));
   const categoryCounts = {};
+  const phaseCounts = {};
   const criticalStepIds = new Set();
-  for (const d of diagnostics) {
+  for (const d of normalizedDiagnostics) {
     const c = d.category || 'uncategorized';
     categoryCounts[c] = (categoryCounts[c] || 0) + 1;
+    const p = d.phase || 'unknown';
+    phaseCounts[p] = (phaseCounts[p] || 0) + 1;
     if (d.severity === 'critical' && d.stepId) criticalStepIds.add(d.stepId);
   }
   fs.writeFileSync(DIAG_OUT, JSON.stringify({
     generatedAt: new Date().toISOString(),
     recordParity: RECORD_PARITY,
     headless: HEADLESS,
-    diagnostics,
+    diagnostics: normalizedDiagnostics,
     summary: {
       categoryCounts,
+      phaseCounts,
       criticalStepIds: [...criticalStepIds],
-      totalDiagnostics: diagnostics.length,
+      totalDiagnostics: normalizedDiagnostics.length,
     },
   }, null, 2));
   delete require.cache[require.resolve('./qa-review')];
@@ -930,9 +1476,33 @@ async function main() {
   const report = await qaReview.main({
     buildOnly: true,
     prebuiltStepFrames,
-    buildQaDiagnostics: diagnostics,
+    buildQaDiagnostics: normalizedDiagnostics,
     iteration: 'build',
   });
+
+  // Hard guardrail: do not allow a blank/empty final value-summary slide to pass overall build QA.
+  try {
+    const valueSummary = (report?.steps || []).find((s) => s.stepId === 'value-summary-slide');
+    const hasBlankSlideDiag = normalizedDiagnostics.some((d) => d.stepId === 'value-summary-slide' && d.category === 'blank-slide');
+    if (report && report.passed && (hasBlankSlideDiag || (valueSummary && Number(valueSummary.score || 0) <= 20))) {
+      report.passed = false;
+      report.overrideReason = 'Blank or near-empty value-summary-slide detected; forcing build QA fail.';
+      const outPath = path.join(OUT_DIR, 'qa-report-build.json');
+      fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
+      console.warn('[build-qa] Forced fail: blank value-summary-slide guardrail triggered');
+    }
+  } catch (_) {}
+
+  // Hard guardrail: timing-contract overrun means narration outlasts visuals.
+  try {
+    if (report && report.passed && (timingViolations.length > 0 || timingDupes.length > 0 || narrationWindowMismatches.length > 0)) {
+      report.passed = false;
+      report.overrideReason = `Timing governor violation: overruns=${timingViolations.length}, duplicateWindows=${timingDupes.length}, narrationWindowMismatches=${narrationWindowMismatches.length}.`;
+      const outPath = path.join(OUT_DIR, 'qa-report-build.json');
+      fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
+      console.warn('[build-qa] Forced fail: timing governor guardrail triggered');
+    }
+  } catch (_) {}
 
   const strict = process.env.BUILD_QA_STRICT === 'true' || process.env.BUILD_QA_STRICT === '1';
   if (strict && report && !report.passed) {

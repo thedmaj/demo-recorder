@@ -24,6 +24,7 @@ const path       = require('path');
 
 const {
   buildAppArchitectureBriefPrompt,
+  buildAppFrameworkPlanPrompt,
   buildAppGenerationPrompt,
 } = require('../utils/prompt-templates');
 const { inferProductFamily } = require('../utils/product-profiles');
@@ -32,8 +33,10 @@ const { readPipelineRunContext } = require('../utils/run-context');
 const {
   getPlaidSkillBundleForFamily,
   getPlaidLinkUxSkillBundle,
+  getEmbeddedLinkSkillBundle,
   writePlaidLinkUxSkillManifest,
 } = require('../utils/plaid-skill-loader');
+const { resolveMode, getLinkModeAdapter } = require('../utils/link-mode');
 const { askPlaidDocs } = require('../utils/mcp-clients');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -47,12 +50,42 @@ const SCRATCH_APP_DIR = path.join(OUT_DIR, 'scratch-app');
 const HTML_OUT        = path.join(SCRATCH_APP_DIR, 'index.html');
 const PLAYWRIGHT_OUT  = path.join(SCRATCH_APP_DIR, 'playwright-script.json');
 const FEEDBACK_FILE   = path.join(INPUTS_DIR, 'build-feedback.md');
+const RUN_FEEDBACK_FILE = path.join(OUT_DIR, 'build-feedback.md');
 const PROMPT_FILE     = path.join(INPUTS_DIR, 'prompt.txt');
+const ASSETS_DIR      = path.join(PROJECT_ROOT, 'assets');
+
+const PLAID_LOGO_ASSET_MAP = [
+  {
+    source: 'Plaid-Logo horizontal black with white background.png',
+    target: 'plaid-logo-horizontal-black-white-background.png',
+  },
+  {
+    source: 'plaid logo horizontal white text transparent background.png',
+    target: 'plaid-logo-horizontal-white-text-transparent-background.png',
+  },
+  {
+    source: 'Plaid vertical logo white text transparent background.png',
+    target: 'plaid-logo-vertical-white-text-transparent-background.png',
+  },
+  {
+    source: 'plaid logo text white background.png',
+    target: 'plaid-logo-text-white-background.png',
+  },
+  {
+    source: 'plaid logo no text white background.png',
+    target: 'plaid-logo-no-text-white-background.png',
+  },
+  {
+    source: 'plaid logo no text black background.png',
+    target: 'plaid-logo-no-text-black-background.png',
+  },
+];
 
 // Delimiter that separates HTML from Playwright JSON in Claude's response
 const PLAYWRIGHT_MARKER = '<!-- PLAYWRIGHT_SCRIPT_JSON -->';
 const BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json');
 const API_PANEL_QA_FILE = path.join(OUT_DIR, 'api-panel-qa.json');
+const BUILD_LAYER_REPORT_FILE = path.join(OUT_DIR, 'build-layer-report.json');
 
 /**
  * @param {Array<{ category?: string, severity?: string, stepId?: string }>} diagnostics
@@ -100,6 +133,71 @@ function parseJsonFromText(raw) {
     try { return JSON.parse(obj[0]); } catch (_) {}
   }
   return null;
+}
+
+function parseFeedbackMarkdown(raw) {
+  const text = String(raw || '');
+  const runMatch = text.match(/\bRun:\s*([^\n]+)/i);
+  const runId = runMatch ? String(runMatch[1] || '').trim() : '';
+  const globalMatch = text.match(/##\s+Global HTML Notes\s*\n([\s\S]*?)(?=\n##\s+|\n#\s+|$)/i);
+  const globalNotes = globalMatch ? String(globalMatch[1] || '').trim() : '';
+
+  const perStep = {};
+  const perStepSection = text.match(/##\s+Per-Step Visual Notes\s*\n([\s\S]*?)$/i);
+  if (perStepSection && perStepSection[1]) {
+    const body = perStepSection[1];
+    const stepBlocks = body.split(/\n###\s+/).map((b) => b.trim()).filter(Boolean);
+    for (const block of stepBlocks) {
+      const nl = block.indexOf('\n');
+      if (nl < 0) continue;
+      const stepId = block.slice(0, nl).trim();
+      const note = block.slice(nl + 1).trim();
+      if (stepId && note) perStep[stepId] = note;
+    }
+  }
+  return { runId, globalNotes, perStep };
+}
+
+function buildScopedHumanFeedback(raw, currentRunId, demoStepIds) {
+  const parsed = parseFeedbackMarkdown(raw);
+  const targetRun = String(currentRunId || '').trim();
+  if (!parsed.runId) {
+    return { text: null, reason: 'Feedback file is unbound (missing Run: header), ignored for safety.' };
+  }
+  if (parsed.runId !== targetRun) {
+    return { text: null, reason: `Feedback run mismatch (feedback run=${parsed.runId}, current run=${targetRun}), ignored.` };
+  }
+  const validIds = new Set(Array.isArray(demoStepIds) ? demoStepIds : []);
+  const filteredStepEntries = Object.entries(parsed.perStep || {})
+    .filter(([stepId]) => validIds.has(stepId));
+  const dropped = Object.keys(parsed.perStep || {}).length - filteredStepEntries.length;
+
+  const lines = [];
+  if (parsed.globalNotes) {
+    lines.push('## Global HTML Notes');
+    lines.push('');
+    lines.push(parsed.globalNotes);
+    lines.push('');
+  }
+  if (filteredStepEntries.length > 0) {
+    lines.push('## Per-Step Visual Notes');
+    lines.push('');
+    for (const [stepId, note] of filteredStepEntries) {
+      lines.push(`### ${stepId}`);
+      lines.push('');
+      lines.push(note);
+      lines.push('');
+    }
+  }
+  const out = lines.join('\n').trim();
+  if (!out) {
+    return { text: null, reason: 'No scoped feedback matched current run/step IDs.' };
+  }
+  const meta = dropped > 0 ? ` (dropped ${dropped} non-matching step note(s))` : '';
+  return {
+    text: out,
+    reason: `Scoped feedback applied for run ${targetRun}${meta}.`,
+  };
 }
 
 function isNonEmptyObject(value) {
@@ -176,12 +274,17 @@ async function hydrateApiSamplesForRelevantSlides(demoScript, productFamily) {
 
 const ARCH_MODEL         = 'claude-opus-4-6';
 const ARCH_MAX_TOKENS    = 1024;
+const FRAMEWORK_MODEL    = 'claude-opus-4-6';
+const FRAMEWORK_MAX_TOKENS = 1800;
 const BUILD_MODEL        = 'claude-opus-4-6';
 const BUILD_BUDGET_TOKENS = 12000;
 const BUILD_MAX_TOKENS   = 32000;
 
 // ── Live Plaid Link flag ──────────────────────────────────────────────────────
 const PLAID_LINK_LIVE = process.env.PLAID_LINK_LIVE === 'true';
+const LAYERED_BUILD_ENABLED = process.env.LAYERED_BUILD_ENABLED === 'true' || process.env.LAYERED_BUILD_ENABLED === '1';
+const MOBILE_VISUAL_ENABLED = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
+const BUILD_VIEW_MODE = String(process.env.BUILD_VIEW_MODE || 'desktop').toLowerCase();
 
 // ── Plaid Link capture screenshots ───────────────────────────────────────────
 const PLAID_LINK_SCREENS_DIR = path.join(OUT_DIR, 'plaid-link-screens');
@@ -200,6 +303,31 @@ function loadDesignPlugin() {
   const css  = fs.existsSync(ASSETLIB_CSS) ? fs.readFileSync(ASSETLIB_CSS, 'utf8') : '';
   console.log(`[Build] Design plugin loaded: assetlib/index.html (${Math.round(html.length / 1024)}KB), plaid-link.css (${Math.round(css.length / 1024)}KB)`);
   return { html, css };
+}
+
+function copyPlaidLogoAssetsToScratchRoot() {
+  let copied = 0;
+  const missing = [];
+  for (const asset of PLAID_LOGO_ASSET_MAP) {
+    const src = path.join(ASSETS_DIR, asset.source);
+    const dest = path.join(SCRATCH_APP_DIR, asset.target);
+    if (!fs.existsSync(src)) {
+      missing.push(asset.source);
+      continue;
+    }
+    try {
+      fs.copyFileSync(src, dest);
+      copied++;
+    } catch (err) {
+      console.warn(`[Build] Could not copy Plaid logo asset "${asset.source}": ${err.message}`);
+    }
+  }
+  if (copied > 0) {
+    console.log(`[Build] Copied ${copied} Plaid logo asset(s) to scratch-app root`);
+  }
+  if (missing.length > 0) {
+    console.warn(`[Build] Missing Plaid logo assets in assets/: ${missing.join(', ')}`);
+  }
 }
 
 // ── Brand profile loading ─────────────────────────────────────────────────────
@@ -255,9 +383,15 @@ function loadBrand(demoScript) {
 function parseArgs() {
   const qaArg    = process.argv.find(a => a.startsWith('--qa='));
   const brandArg = process.argv.find(a => a.startsWith('--brand='));
+  const viewModeArg = process.argv.find(a => a.startsWith('--view-mode='));
+  const layeredArg = process.argv.includes('--layered-build');
+  const mobileVisualArg = process.argv.includes('--mobile-visual');
   return {
     qaReportPath: qaArg    ? qaArg.replace('--qa=', '')    : null,
     brandSlug:    brandArg ? brandArg.replace('--brand=', '') : null,
+    buildViewMode: viewModeArg ? viewModeArg.replace('--view-mode=', '').trim().toLowerCase() : null,
+    layeredBuildEnabled: layeredArg,
+    mobileVisualEnabled: mobileVisualArg,
   };
 }
 
@@ -299,6 +433,21 @@ function normalizeLaunchPlaywrightRow(playwrightScript, demoScript) {
   if (!row.waitMs || row.waitMs < 120000) row.waitMs = 120000;
 }
 
+function normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript) {
+  const rows = playwrightScript?.steps;
+  if (!Array.isArray(rows) || !rows.length) return;
+  const steps = demoScript.steps || [];
+  const finalStep = steps[steps.length - 1];
+  if (!finalStep) return;
+  const isSlide = String(finalStep.sceneType || '').toLowerCase() === 'slide' || /slide/i.test(`${finalStep.id || ''} ${finalStep.label || ''}`);
+  if (!isSlide) return;
+  const row = rows.find((r) => (r.stepId || r.id) === finalStep.id);
+  if (!row) return;
+  row.action = 'goToStep';
+  row.target = finalStep.id;
+  if (!row.waitMs || row.waitMs < 3000) row.waitMs = 4000;
+}
+
 function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
   if (!PLAID_LINK_LIVE) return { html, injected: false };
   const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
@@ -317,6 +466,58 @@ function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
     return `${pre}${tagOpen} data-testid="link-external-account-btn">`;
   });
   return { html: patched, injected: patched !== html };
+}
+
+function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter) {
+  if (!PLAID_LINK_LIVE || !linkModeAdapter || linkModeAdapter.id !== 'embedded') return { html, injected: false };
+  if (!html.includes('data-testid="link-external-account-btn"') || !html.includes('</body>')) {
+    return { html, injected: false };
+  }
+  if (html.includes('window.__embeddedLinkRuntimePatched')) return { html, injected: false };
+  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  const launchStepId = launch?.id || null;
+  const patch = `<script>
+(function() {
+  if (window.__embeddedLinkRuntimePatched) return;
+  window.__embeddedLinkRuntimePatched = true;
+  window.__plaidLinkMode = 'embedded';
+  window.__embeddedLinkOpenAttempts = [];
+  window.__embeddedLinkError = null;
+  async function launchEmbeddedLink() {
+    var payload = { linkMode: 'embedded', link_mode: 'embedded' };
+    try {
+      var res = await fetch('/api/create-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      var txt = await res.text();
+      var data = {};
+      try { data = txt ? JSON.parse(txt) : {}; } catch (_) { data = { raw: txt }; }
+      window.__embeddedLinkLastTokenResponse = { status: res.status, body: data };
+      if (!res.ok) throw new Error((data && (data.error || data.error_message || data.display_message)) || ('HTTP ' + res.status));
+      if (!data.link_token) throw new Error('Embedded Link token response missing link_token');
+      if (!data.hosted_link_url) throw new Error('Embedded Link token response missing hosted_link_url');
+      var opened = window.open(data.hosted_link_url, '_blank', 'noopener,noreferrer');
+      window.__embeddedLinkOpenAttempts.push({ url: data.hosted_link_url, at: Date.now(), opened: !!opened });
+      if (!opened) throw new Error('Popup blocked while opening hosted_link_url');
+      window.__embeddedLinkOpened = true;
+      ${launchStepId ? `if (typeof window.goToStep === 'function') window.goToStep('${launchStepId}');` : ''}
+    } catch (err) {
+      window.__embeddedLinkError = String((err && err.message) || err || 'embedded-link-launch-failed');
+      console.error('Embedded Link launch failed:', window.__embeddedLinkError);
+    }
+  }
+  document.addEventListener('click', function(e) {
+    var btn = e.target && e.target.closest ? e.target.closest('[data-testid="link-external-account-btn"]') : null;
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    launchEmbeddedLink();
+  }, true);
+})();
+</script>`;
+  return { html: html.replace('</body>', `${patch}\n</body>`), injected: true };
 }
 
 // ── Response parsing ──────────────────────────────────────────────────────────
@@ -597,6 +798,8 @@ async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
   const { system, userMessages } = buildAppArchitectureBriefPrompt(demoScript, {
     plaidLinkLive: PLAID_LINK_LIVE,
     plaidSkillBrief: briefOpts.plaidSkillBrief || '',
+    plaidLinkMode: briefOpts.plaidLinkMode || 'modal',
+    embeddedLinkSkillBrief: briefOpts.embeddedLinkSkillBrief || '',
   });
 
   const response = await client.messages.create({
@@ -612,6 +815,83 @@ async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
 }
 
 /**
+ * Optional layered-build call: produce a deterministic framework/data/polish contract.
+ */
+async function getFrameworkPlan(client, demoScript, architectureBrief, frameworkOpts = {}) {
+  console.log('[Build] Call 1b: Generating layered framework plan...');
+  const { system, userMessages } = buildAppFrameworkPlanPrompt(demoScript, architectureBrief, {
+    mobileVisualEnabled: !!frameworkOpts.mobileVisualEnabled,
+    buildViewMode: frameworkOpts.buildViewMode || 'desktop',
+  });
+  const response = await client.messages.create({
+    model: FRAMEWORK_MODEL,
+    max_tokens: FRAMEWORK_MAX_TOKENS,
+    system,
+    messages: userMessages,
+  });
+  const raw = extractText(response.content);
+  try {
+    const parsed = JSON.parse(raw);
+    console.log('[Build] Layered framework plan received');
+    return parsed;
+  } catch (_) {
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+    if (fenced) {
+      try {
+        const parsed = JSON.parse(fenced.trim());
+        console.log('[Build] Layered framework plan received (fenced JSON)');
+        return parsed;
+      } catch (_) {}
+    }
+  }
+  console.warn('[Build] Layered framework plan was not valid JSON; continuing without structured layer plan');
+  return null;
+}
+
+function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisualEnabled }) {
+  const layer1Issues = [];
+  const layer2Issues = [];
+  const layer3Issues = [];
+  const stepIds = (demoScript.steps || []).map((s) => s.id);
+  const pwRows = (playwrightScript && Array.isArray(playwrightScript.steps)) ? playwrightScript.steps : [];
+
+  for (const stepId of stepIds) {
+    const stepDivRx = new RegExp(`<div[^>]+data-testid="step-${stepId}"[^>]+class="[^"]*\\bstep\\b`, 'i');
+    if (!stepDivRx.test(html)) {
+      layer1Issues.push(`Missing step container: step-${stepId}`);
+    }
+  }
+  if (!html.includes('window.goToStep')) layer1Issues.push('Missing window.goToStep');
+  if (!html.includes('window.getCurrentStep')) layer1Issues.push('Missing window.getCurrentStep');
+  if (!html.includes('id="api-response-panel"')) layer1Issues.push('Missing api-response-panel shell');
+  if (!html.includes('id="link-events-panel"')) layer1Issues.push('Missing link-events-panel shell');
+
+  for (const row of pwRows) {
+    if (!row || !row.id || !stepIds.includes(row.id)) {
+      layer2Issues.push(`Playwright row has unknown id: ${row && row.id ? row.id : '<missing>'}`);
+    }
+  }
+  if (!pwRows.length) layer2Issues.push('Playwright script contains zero steps');
+  if (PLAID_LINK_LIVE && !html.includes('data-testid="link-external-account-btn"')) {
+    layer2Issues.push('Missing canonical Plaid launch CTA data-testid="link-external-account-btn"');
+  }
+
+  if (!html.includes('renderjson.min.js')) {
+    layer3Issues.push('Missing renderjson viewer script');
+  }
+  if (mobileVisualEnabled && !html.includes('mobile-simulator-shell')) {
+    layer3Issues.push('Mobile visual mode enabled but no mobile-simulator-shell marker found');
+  }
+
+  return {
+    layer1Framework: { passed: layer1Issues.length === 0, issues: layer1Issues },
+    layer2DataInteraction: { passed: layer2Issues.length === 0, issues: layer2Issues },
+    layer3VisualPolish: { passed: layer3Issues.length === 0, issues: layer3Issues },
+    overallPassed: layer1Issues.length === 0 && layer2Issues.length === 0 && layer3Issues.length === 0,
+  };
+}
+
+/**
  * Call 2: Full app generation (claude-opus-4-6, streaming, extended thinking).
  * Streams progress dots to stdout.
  */
@@ -622,11 +902,14 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   const designPlugin = loadDesignPlugin();
   const slideRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/SLIDE_RULES.md');
   const slideCssPath = path.join(PROJECT_ROOT, 'templates/slide-template/slide.css');
+  const layerMockTemplatePath = path.join(PROJECT_ROOT, 'templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md');
   let slideTemplateRules = '';
   let slideTemplateCss = '';
+  let layerMockTemplate = '';
   try {
     if (fs.existsSync(slideRulesPath)) slideTemplateRules = fs.readFileSync(slideRulesPath, 'utf8');
     if (fs.existsSync(slideCssPath)) slideTemplateCss = fs.readFileSync(slideCssPath, 'utf8');
+    if (fs.existsSync(layerMockTemplatePath)) layerMockTemplate = fs.readFileSync(layerMockTemplatePath, 'utf8');
   } catch (e) {
     console.warn('[Build] Warning: could not load slide template assets:', e.message);
   }
@@ -640,6 +923,7 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       brand,
       slideTemplateRules,
       slideTemplateCss,
+      layerMockTemplate,
       qaFrames:           refinementOpts.qaFrames   || [],
       prevTestids:        refinementOpts.prevTestids || [],
       humanFeedback:      refinementOpts.humanFeedback || '',
@@ -651,6 +935,10 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       buildQaDiagnosticSummary: refinementOpts.buildQaDiagnosticSummary || null,
       plaidSkillMarkdown: refinementOpts.plaidSkillMarkdown || '',
       plaidLinkUxSkillMarkdown: refinementOpts.plaidLinkUxSkillMarkdown || '',
+      layeredBuildEnabled: !!refinementOpts.layeredBuildEnabled,
+      layeredBuildPlan: refinementOpts.layeredBuildPlan || null,
+      mobileVisualEnabled: !!refinementOpts.mobileVisualEnabled,
+      buildViewMode: refinementOpts.buildViewMode || 'desktop',
     }
   );
 
@@ -689,8 +977,16 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
 
 async function main(opts = {}) {
   // Accept qaReportFile from orchestrator, fall back to CLI args
-  const { qaReportPath: cliQaPath } = parseArgs();
+  const parsedArgs = parseArgs();
+  const { qaReportPath: cliQaPath } = parsedArgs;
   const qaReportPath = opts.qaReportFile || cliQaPath;
+  const layeredBuildEnabled = opts.layeredBuildEnabled != null
+    ? !!opts.layeredBuildEnabled
+    : (parsedArgs.layeredBuildEnabled || LAYERED_BUILD_ENABLED);
+  const mobileVisualEnabled = opts.mobileVisualEnabled != null
+    ? !!opts.mobileVisualEnabled
+    : (parsedArgs.mobileVisualEnabled || MOBILE_VISUAL_ENABLED);
+  const buildViewMode = (opts.buildViewMode || parsedArgs.buildViewMode || BUILD_VIEW_MODE || 'desktop').toLowerCase();
 
   // Validate inputs
   if (!fs.existsSync(SCRIPT_FILE)) {
@@ -704,7 +1000,13 @@ async function main(opts = {}) {
 
   const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
   console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
+  console.log(`[Build] Layered build: ${layeredBuildEnabled ? 'ENABLED' : 'disabled'}`);
+  console.log(`[Build] Mobile visual mode: ${mobileVisualEnabled ? 'ENABLED' : 'disabled'} (viewMode=${buildViewMode})`);
   const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
+  const plaidLinkMode = resolveMode({ demoScript, promptText });
+  const linkModeAdapter = getLinkModeAdapter(plaidLinkMode);
+  demoScript.plaidLinkMode = plaidLinkMode;
+  console.log(`[Build] Plaid Link mode: ${plaidLinkMode}`);
   const productFamily = inferProductFamily({ promptText, demoScript });
   const apiPanelQa = await hydrateApiSamplesForRelevantSlides(demoScript, productFamily);
   try {
@@ -757,8 +1059,12 @@ async function main(opts = {}) {
     );
   }
   const linkUxSkillBundle = getPlaidLinkUxSkillBundle({ promptText, demoScript });
+  const embeddedLinkSkillBundle = getEmbeddedLinkSkillBundle({ promptText, demoScript });
   if (linkUxSkillBundle.skillLoaded) {
     console.log(`[Build] Plaid Link UX skill: loaded (${linkUxSkillBundle.flowType} flow)`);
+  }
+  if (embeddedLinkSkillBundle.skillLoaded) {
+    console.log('[Build] Embedded Link skill: loaded');
   }
   writePlaidLinkUxSkillManifest(OUT_DIR, {
     stage: 'build',
@@ -846,18 +1152,30 @@ async function main(opts = {}) {
 
   // ── Load human reviewer feedback (optional) ──────────────────────────────
   let humanFeedback = null;
-  if (fs.existsSync(FEEDBACK_FILE)) {
+  const feedbackSources = [RUN_FEEDBACK_FILE, FEEDBACK_FILE];
+  const currentRunId = path.basename(OUT_DIR);
+  for (const sourcePath of feedbackSources) {
+    if (!fs.existsSync(sourcePath)) continue;
     try {
-      humanFeedback = fs.readFileSync(FEEDBACK_FILE, 'utf8').trim();
-      if (humanFeedback) {
-        const lineCount = humanFeedback.split('\n').length;
-        console.log(`[Build] Human feedback loaded: inputs/build-feedback.md (${lineCount} lines)`);
-        console.log('[Build] ⭐ Human feedback will be injected as highest-priority guidance');
-      } else {
-        humanFeedback = null;
+      const rawFeedback = fs.readFileSync(sourcePath, 'utf8').trim();
+      if (!rawFeedback) continue;
+      const scoped = buildScopedHumanFeedback(
+        rawFeedback,
+        currentRunId,
+        (demoScript.steps || []).map((s) => s.id)
+      );
+      if (!scoped.text) {
+        console.log(`[Build] Human feedback skipped (${path.relative(PROJECT_ROOT, sourcePath)}): ${scoped.reason}`);
+        continue;
       }
+      humanFeedback = scoped.text;
+      const lineCount = humanFeedback.split('\n').length;
+      console.log(`[Build] Human feedback loaded: ${path.relative(PROJECT_ROOT, sourcePath)} (${lineCount} lines)`);
+      console.log(`[Build] ${scoped.reason}`);
+      console.log('[Build] ⭐ Human feedback will be injected as highest-priority guidance');
+      break;
     } catch (err) {
-      console.warn(`[Build] Could not read inputs/build-feedback.md: ${err.message}`);
+      console.warn(`[Build] Could not read ${path.relative(PROJECT_ROOT, sourcePath)}: ${err.message}`);
     }
   }
 
@@ -890,13 +1208,25 @@ async function main(opts = {}) {
   const plaidLinkScreens = [];
 
   fs.mkdirSync(SCRATCH_APP_DIR, { recursive: true });
+  copyPlaidLogoAssetsToScratchRoot();
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   // ── Call 1: Architecture brief ────────────────────────────────────────────
   const architectureBrief = await getArchitectureBrief(client, demoScript, {
     plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
+    plaidLinkMode,
+    embeddedLinkSkillBrief: embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text.slice(0, 6000) : '',
   });
+
+  // ── Call 1b: Optional layered framework contract ──────────────────────────
+  let layeredBuildPlan = null;
+  if (layeredBuildEnabled) {
+    layeredBuildPlan = await getFrameworkPlan(client, demoScript, architectureBrief, {
+      mobileVisualEnabled,
+      buildViewMode,
+    });
+  }
 
   // ── Call 2: Full app generation (streaming) ───────────────────────────────
   const rawResponse = await generateApp(client, demoScript, architectureBrief, qaReport, brand,
@@ -913,6 +1243,12 @@ async function main(opts = {}) {
       buildQaDiagnosticSummary,
       plaidSkillMarkdown: skillBundle.skillLoaded ? skillBundle.text : '',
       plaidLinkUxSkillMarkdown: linkUxSkillBundle.skillLoaded ? linkUxSkillBundle.text : '',
+      embeddedLinkSkillMarkdown: embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text : '',
+      plaidLinkMode,
+      layeredBuildEnabled,
+      layeredBuildPlan,
+      mobileVisualEnabled,
+      buildViewMode,
     });
 
   // ── Parse response ────────────────────────────────────────────────────────
@@ -953,6 +1289,32 @@ async function main(opts = {}) {
 
   repairPlaywrightInsightNavigation(playwrightScript, demoScript);
   normalizeLaunchPlaywrightRow(playwrightScript, demoScript);
+  normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript);
+
+  const layerReport = validateLayerContracts({
+    html,
+    playwrightScript,
+    demoScript,
+    mobileVisualEnabled,
+  });
+  try {
+    fs.writeFileSync(BUILD_LAYER_REPORT_FILE, JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      layeredBuildEnabled,
+      mobileVisualEnabled,
+      buildViewMode,
+      layeredBuildPlan,
+      validation: layerReport,
+    }, null, 2));
+    if (layeredBuildEnabled) {
+      const l1 = layerReport.layer1Framework.issues.length;
+      const l2 = layerReport.layer2DataInteraction.issues.length;
+      const l3 = layerReport.layer3VisualPolish.issues.length;
+      console.log(`[Build] Layered contract report written: L1 issues=${l1}, L2 issues=${l2}, L3 issues=${l3}`);
+    }
+  } catch (e) {
+    console.warn(`[Build] Could not write build-layer-report.json: ${e.message}`);
+  }
 
   // ── Validate DOM contract ──────────────────────────────────────────────────
   // These are hard errors — a contract violation means the recording will fail.
@@ -971,7 +1333,10 @@ async function main(opts = {}) {
   const stepsToCheck = PLAID_LINK_LIVE
     ? stepIds.filter(id => !PLAID_SIM_STEP_PATTERN.test(id))
     : stepIds;
-  const missingSteps = stepsToCheck.filter(id => !html.includes(`data-testid="step-${id}"`));
+  const missingSteps = stepsToCheck.filter((id) => {
+    const stepDivRx = new RegExp(`<div[^>]+data-testid="step-${id}"[^>]+class="[^"]*\\bstep\\b`, 'i');
+    return !stepDivRx.test(html);
+  });
   if (missingSteps.length > 0) {
     domErrors.push(`Missing data-testid for steps: ${missingSteps.join(', ')}`);
   }
@@ -1086,7 +1451,11 @@ async function main(opts = {}) {
   const interactionTargetSet = new Set(
     (demoScript.steps || []).map(s => s.interaction?.target).filter(Boolean)
   );
-  const testidMatches = [...html.matchAll(/data-testid="([^"]+)"/g)];
+  // IMPORTANT: only count real DOM attributes, not JS selector strings in <script>.
+  const htmlForTestidScan = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '');
+  const testidMatches = [...htmlForTestidScan.matchAll(/data-testid="([^"]+)"/g)];
   const testidCounts = {};
   for (const m of testidMatches) {
     testidCounts[m[1]] = (testidCounts[m[1]] || 0) + 1;
@@ -1095,9 +1464,18 @@ async function main(opts = {}) {
     .filter(([, count]) => count > 1)
     .map(([id]) => id);
   if (dupeTestids.length > 0) {
+    const stepContainerIds = new Set((stepsToCheck || []).map((id) => `step-${id}`));
+    const protectedStepDupes = dupeTestids.filter((id) => stepContainerIds.has(id));
+    if (protectedStepDupes.length > 0) {
+      domErrors.push(
+        `Duplicate step container data-testid detected: ${protectedStepDupes.join(', ')}. ` +
+        `Step IDs must be unique and cannot be auto-renamed.`
+      );
+    }
     // Separate into auto-fixable (not a recording target) vs hard errors
-    const fixableDupes = dupeTestids.filter(id => !interactionTargetSet.has(id));
-    const hardDupes    = dupeTestids.filter(id =>  interactionTargetSet.has(id));
+    const mutableDupes = dupeTestids.filter((id) => !stepContainerIds.has(id));
+    const fixableDupes = mutableDupes.filter(id => !interactionTargetSet.has(id));
+    const hardDupes    = mutableDupes.filter(id =>  interactionTargetSet.has(id));
 
     // Auto-fix ALL duplicates: keep first occurrence, rename the rest.
     // For interaction targets this is still safe — the recording clicks the first (usually
@@ -1180,6 +1558,25 @@ async function main(opts = {}) {
     }
     if (!html.includes('data-testid="link-external-account-btn"')) {
       domErrors.push('Missing canonical launch CTA target: data-testid="link-external-account-btn".');
+    }
+    const embeddedPatch = injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter);
+    html = embeddedPatch.html;
+    if (embeddedPatch.injected) {
+      console.log('[Build] Injected embedded-Link runtime launch handler');
+    }
+  }
+
+  if (layeredBuildEnabled) {
+    for (const issue of (layerReport.layer1Framework.issues || [])) {
+      domErrors.push(`[Layer1] ${issue}`);
+    }
+    for (const issue of (layerReport.layer2DataInteraction.issues || [])) {
+      domErrors.push(`[Layer2] ${issue}`);
+    }
+    const layer3Issues = layerReport.layer3VisualPolish.issues || [];
+    if (layer3Issues.length) {
+      console.warn('[Build] Layer3 polish warnings:');
+      layer3Issues.forEach((msg) => console.warn(`  - ${msg}`));
     }
   }
 
@@ -1392,6 +1789,173 @@ async function main(opts = {}) {
 </script>`;
     html = html.replace('</body>', `${collapsePatch}\n</body>`);
     console.log('[Build] Disabled legacy API JSON toggle controls');
+  }
+
+  // ── Runtime mobile view toggle (desktop/mobile-auto/mobile-simulated) ─────
+  // Applies simulated device shell ONLY to non-slide steps. Slide template steps
+  // with .slide-root remain full-frame.
+  if (mobileVisualEnabled && html.includes('</body>') && !html.includes('window.__mobileViewRuntimeApplied')) {
+    if (html.includes('</head>') && !html.includes('id="mobile-view-runtime-styles"')) {
+      const mobileViewStyles = `<style id="mobile-view-runtime-styles">
+#mobile-view-toggle{
+  position:fixed; top:68px; left:16px; z-index:12000;
+  background:rgba(17,17,17,0.86); color:#fff; border:1px solid rgba(255,255,255,0.2);
+  border-radius:10px; padding:8px 12px; font-size:12px; font-weight:700;
+  letter-spacing:.02em; cursor:pointer; backdrop-filter:blur(8px);
+}
+#mobile-view-toggle:hover{background:rgba(30,30,30,0.92);}
+body.mobile-shell-enabled .app-main{
+  background:radial-gradient(circle at 50% 10%, rgba(255,255,255,0.06), rgba(0,0,0,0));
+}
+body.mobile-shell-enabled .step.mobile-shell-target{
+  position:absolute !important;
+  left:50% !important; top:50% !important;
+  width:min(390px, calc(100vw - 32px)) !important;
+  height:min(844px, calc(100vh - 32px)) !important;
+  transform:translate(-50%, -50%) !important;
+  border-radius:34px !important;
+  border:1px solid rgba(255,255,255,0.18) !important;
+  box-shadow:0 24px 60px rgba(0,0,0,0.42), 0 0 0 10px rgba(255,255,255,0.04) !important;
+  overflow:hidden !important;
+}
+</style>`;
+      html = html.replace('</head>', `${mobileViewStyles}\n</head>`);
+      console.log('[Build] Injected runtime mobile-view toggle styles');
+    }
+    const mobileViewPatch = `<script>
+(function() {
+  if (window.__mobileViewRuntimeApplied) return;
+  window.__mobileViewRuntimeApplied = true;
+  var mode = '${buildViewMode}';
+  var mq = window.matchMedia ? window.matchMedia('(max-width: 480px)') : null;
+
+  function activeStep() { return document.querySelector('.step.active'); }
+  function activeStepId() {
+    var a = activeStep();
+    return a && a.dataset && a.dataset.testid ? String(a.dataset.testid).replace(/^step-/, '') : '';
+  }
+  function isSlideStep(id) {
+    if (!id) return false;
+    var node = document.querySelector('[data-testid="step-' + id + '"]');
+    return !!(node && node.querySelector('.slide-root'));
+  }
+  function shouldShellForCurrentStep() {
+    var id = activeStepId();
+    if (!id || isSlideStep(id)) return false;
+    if (mode === 'mobile-simulated') return true;
+    if (mode === 'mobile-auto') return !!(mq && mq.matches);
+    return false;
+  }
+  function applyMode() {
+    var a = activeStep();
+    document.querySelectorAll('.step.mobile-shell-target').forEach(function(s){ s.classList.remove('mobile-shell-target'); });
+    if (!a) {
+      document.body.classList.remove('mobile-shell-enabled');
+      return;
+    }
+    if (shouldShellForCurrentStep()) {
+      a.classList.add('mobile-shell-target');
+      document.body.classList.add('mobile-shell-enabled');
+    } else {
+      document.body.classList.remove('mobile-shell-enabled');
+    }
+    if (window.__mobileViewToggleBtn) {
+      window.__mobileViewToggleBtn.textContent = 'View: ' + mode;
+      window.__mobileViewToggleBtn.setAttribute('data-view-mode', mode);
+    }
+  }
+  function setMode(next) {
+    var normalized = String(next || '').toLowerCase();
+    if (['desktop','mobile-auto','mobile-simulated'].indexOf(normalized) === -1) normalized = 'desktop';
+    mode = normalized;
+    document.body.setAttribute('data-view-mode', mode);
+    applyMode();
+    return mode;
+  }
+  function toggleMode() {
+    if (mode === 'desktop') return setMode('mobile-auto');
+    if (mode === 'mobile-auto') return setMode('mobile-simulated');
+    return setMode('desktop');
+  }
+
+  var prevGoToStep = window.goToStep;
+  if (typeof prevGoToStep === 'function') {
+    window.goToStep = function(id) {
+      prevGoToStep(id);
+      applyMode();
+    };
+  }
+  window.setDemoViewMode = setMode;
+  window.getDemoViewMode = function(){ return mode; };
+  window.toggleDemoViewMode = toggleMode;
+
+  var btn = document.getElementById('mobile-view-toggle');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'mobile-view-toggle';
+    btn.setAttribute('data-testid', 'mobile-view-toggle');
+    btn.type = 'button';
+    btn.textContent = 'View: ' + mode;
+    btn.addEventListener('click', function(){ toggleMode(); });
+    document.body.appendChild(btn);
+  }
+  window.__mobileViewToggleBtn = btn;
+  if (mq && typeof mq.addEventListener === 'function') {
+    mq.addEventListener('change', function(){ if (mode === 'mobile-auto') applyMode(); });
+  } else if (mq && typeof mq.addListener === 'function') {
+    mq.addListener(function(){ if (mode === 'mobile-auto') applyMode(); });
+  }
+  setMode(mode);
+})();
+</script>`;
+    html = html.replace('</body>', `${mobileViewPatch}\n</body>`);
+    console.log('[Build] Injected runtime mobile-view toggle (desktop/mobile-auto/mobile-simulated)');
+  }
+
+  // ── Harden generated click bindings (avoid null.addEventListener crash) ────
+  // Some model outputs bind listeners to deduped selectors (e.g. -dup2) that do
+  // not exist at runtime. That throws and aborts the script before Plaid init.
+  // Convert direct querySelector(...).addEventListener(...) chains into a safe
+  // binder with fallback selector resolution.
+  if (html.includes('document.querySelector(') && html.includes('.addEventListener(')) {
+    const bindPattern = /document\.querySelector\(([^)]+)\)\.addEventListener\(\s*(['"][^'"]+['"])\s*,\s*/g;
+    const converted = html.replace(bindPattern, 'window.__safeBind($1, $2, ');
+    if (converted !== html) {
+      html = converted;
+      if (!html.includes('window.__safeBind') && html.includes('</body>')) {
+        // no-op
+      }
+      const safeBindShim = `<script>
+(function() {
+  if (window.__safeBind) return;
+  function fallbackByTestid(selector) {
+    if (typeof selector !== 'string') return null;
+    var m = selector.match(/^\\[data-testid="([^"]+)"\\]$/);
+    if (!m) return null;
+    var raw = m[1];
+    var base = raw.replace(/-dup\\d+$/, '');
+    var byBase = document.querySelector('[data-testid="' + base + '"]');
+    if (byBase) return byBase;
+    var byRawDup = document.querySelector('[data-testid^="' + raw + '-dup"]');
+    if (byRawDup) return byRawDup;
+    var byBaseDup = document.querySelector('[data-testid^="' + base + '-dup"]');
+    if (byBaseDup) return byBaseDup;
+    return null;
+  }
+  window.__safeBind = function(selector, eventName, handler, options) {
+    var el = document.querySelector(selector) || fallbackByTestid(selector);
+    if (!el || typeof el.addEventListener !== 'function') {
+      console.warn('[Build] __safeBind skipped missing selector:', selector);
+      return false;
+    }
+    el.addEventListener(eventName, handler, options);
+    return true;
+  };
+})();
+</script>`;
+      html = html.replace('</body>', `${safeBindShim}\n</body>`);
+      console.log('[Build] Hardened generated addEventListener bindings with __safeBind');
+    }
   }
 
   // ── Enforce 98% U.S. depository account coverage stat (Auth) ───────────────

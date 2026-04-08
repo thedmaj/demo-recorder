@@ -23,6 +23,24 @@ const PLAID_WHITE = '#ffffff';
 const PLAID_TEAL  = '#00A67E';
 const FONT_STACK  = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
 
+// Ensure interpolate() input ranges are strictly increasing, even for short windows.
+function strictlyIncreasingRange(values, minStep = 0.001) {
+  const out = [];
+  for (let i = 0; i < values.length; i++) {
+    const n = Number(values[i] ?? 0);
+    if (!Number.isFinite(n)) {
+      out.push(i === 0 ? 0 : out[i - 1] + minStep);
+      continue;
+    }
+    if (i === 0) {
+      out.push(n);
+    } else {
+      out.push(Math.max(n, out[i - 1] + minStep));
+    }
+  }
+  return out;
+}
+
 // ── Helper: milliseconds to frame number ──────────────────────────────────────
 function msToFrame(ms, fps) {
   return Math.round(ms / 1000 * fps);
@@ -30,9 +48,10 @@ function msToFrame(ms, fps) {
 
 // ── Reusable fade helper ───────────────────────────────────────────────────────
 function useFade(frame, inStart, inEnd, outStart, outEnd) {
+  const range = strictlyIncreasingRange([inStart, inEnd, outStart, outEnd]);
   return interpolate(
     frame,
-    [inStart, inEnd, outStart, outEnd],
+    range,
     [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );
@@ -77,9 +96,10 @@ function computeZoom(zoomPunches, frame, fps, width, height) {
   const rampFrames = Math.min(15, Math.floor((endF - startF) * 0.2));
   const targetScale = active.scale || 1.15;
 
+  const zoomRange = strictlyIncreasingRange([startF, startF + rampFrames, endF - rampFrames, endF]);
   const scale = interpolate(
     frame,
-    [startF, startF + rampFrames, endF - rampFrames, endF],
+    zoomRange,
     [1.0, targetScale, targetScale, 1.0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );
@@ -268,9 +288,10 @@ function renderHighlights(highlights, frame, fps) {
     const relFrame       = frame - startF;
     const durationFrames = endF - startF;
 
+    const borderRange = strictlyIncreasingRange([0, 10, durationFrames - 10, durationFrames]);
     const borderOpacity = interpolate(
       relFrame,
-      [0, 10, durationFrames - 10, durationFrames],
+      borderRange,
       [0, 1, 1, 0],
       { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
     );

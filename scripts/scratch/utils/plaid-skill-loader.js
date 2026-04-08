@@ -15,10 +15,12 @@ try {
 } catch (_) {
   AdmZip = null;
 }
+const { detectModeFromText } = require('./link-mode');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const DEFAULT_SKILL_REL = path.join('skills', 'plaid-integration.skill');
 const DEFAULT_LINK_UX_SKILL_REL = path.join('skills', 'plaid-link-prelink-ui-skill.md');
+const DEFAULT_EMBEDDED_LINK_SKILL_REL = path.join('skills', 'plaid-link-embedded-link-skill.md');
 const ZIP_INTERNAL_PREFIX = 'plaid-integration/';
 
 /** @type {Record<string, string[]>} base paths inside plaid-integration/ */
@@ -76,6 +78,12 @@ function getDefaultPlaidLinkUxSkillPath() {
   const env = process.env.PLAID_LINK_UX_SKILL_PATH;
   if (env && fs.existsSync(env)) return path.resolve(env);
   return path.join(PROJECT_ROOT, DEFAULT_LINK_UX_SKILL_REL);
+}
+
+function getDefaultEmbeddedLinkSkillPath() {
+  const env = process.env.PLAID_LINK_EMBEDDED_SKILL_PATH;
+  if (env && fs.existsSync(env)) return path.resolve(env);
+  return path.join(PROJECT_ROOT, DEFAULT_EMBEDDED_LINK_SKILL_REL);
 }
 
 function sha256File(absPath) {
@@ -146,6 +154,15 @@ function detectPlaidLinkUxFlowType(signals = {}) {
   const creditRe =
     /\b(lending|underwriting|loan approval|credit decision|bnpl|buy now pay later|second-look|repayment setup|loan repayment|credit card payment)\b/;
   return creditRe.test(text) ? 'credit-specific' : 'generic';
+}
+
+/**
+ * Detect requested Link implementation mode from prompt/script signals.
+ * embedded: Hosted Link / Embedded Link / Pay by Bank embedded requirements
+ * modal: default Plaid.create modal flow.
+ */
+function detectPlaidLinkImplementationMode(signals = {}) {
+  return detectModeFromText(`${signals.promptText || ''}\n${JSON.stringify(signals.demoScript || {})}`);
 }
 
 function extractSectionByHeading(markdown, headingRe) {
@@ -227,6 +244,39 @@ function getPlaidLinkUxSkillBundle(opts = {}) {
     skillLoaded: block.trim().length > 0,
     markdownPath,
     flowType,
+    chars: block.length,
+  };
+}
+
+/**
+ * Returns embedded-Link implementation guidance when prompt/script signals request it.
+ * @param {{ markdownPath?: string, maxChars?: number, promptText?: string, demoScript?: object }} opts
+ * @returns {{ text: string, skillLoaded: boolean, markdownPath: string|null, mode: 'embedded'|'modal', chars: number }}
+ */
+function getEmbeddedLinkSkillBundle(opts = {}) {
+  const markdownPath = opts.markdownPath || getDefaultEmbeddedLinkSkillPath();
+  const maxChars = opts.maxChars != null ? opts.maxChars : LINK_UX_MAX_CHARS;
+  const mode = detectPlaidLinkImplementationMode({ promptText: opts.promptText, demoScript: opts.demoScript });
+  if (mode !== 'embedded') {
+    return { text: '', skillLoaded: false, markdownPath: markdownPath || null, mode, chars: 0 };
+  }
+  if (!markdownPath || !fs.existsSync(markdownPath)) {
+    return { text: '', skillLoaded: false, markdownPath: markdownPath || null, mode, chars: 0 };
+  }
+  const raw = fs.readFileSync(markdownPath, 'utf8');
+  let block =
+    '## PLAID EMBEDDED LINK IMPLEMENTATION SKILL\n\n' +
+    `Mode selected: ${mode}.\n` +
+    `Source: ${path.relative(PROJECT_ROOT, markdownPath)}\n\n` +
+    raw.trim();
+  if (block.length > maxChars) {
+    block = `${block.slice(0, Math.max(0, maxChars - 100))}\n\n… [plaid-link-embedded-link-skill.md truncated by PLAID_LINK_UX_SKILL_MAX_CHARS]\n`;
+  }
+  return {
+    text: block,
+    skillLoaded: block.trim().length > 0,
+    markdownPath,
+    mode,
     chars: block.length,
   };
 }
@@ -373,15 +423,19 @@ module.exports = {
   PROJECT_ROOT,
   DEFAULT_SKILL_REL,
   DEFAULT_LINK_UX_SKILL_REL,
+  DEFAULT_EMBEDDED_LINK_SKILL_REL,
   getDefaultSkillZipPath,
   getDefaultPlaidLinkUxSkillPath,
+  getDefaultEmbeddedLinkSkillPath,
   sha256File,
   openSkillZip,
   readZipMember,
   resolveMemberPaths,
   getPlaidSkillBundleForFamily,
   getPlaidLinkUxSkillBundle,
+  getEmbeddedLinkSkillBundle,
   detectPlaidLinkUxFlowType,
+  detectPlaidLinkImplementationMode,
   writePlaidSkillManifest,
   writePlaidLinkUxSkillManifest,
   resolveResearchMode,

@@ -10,7 +10,8 @@
  *   buildResearchPrompt(config)
  *   buildScriptGenerationPrompt(ingestedInputs, productResearch)
  *   buildAppArchitectureBriefPrompt(demoScript)
- *   buildAppGenerationPrompt(demoScript, architectureBrief, qaReport?)
+ *   buildAppFrameworkPlanPrompt(demoScript, architectureBrief, opts?)
+ *   buildAppGenerationPrompt(demoScript, architectureBrief, qaReport?, opts?)
  *   buildQAReviewPrompt(step, framesBase64, expectedState)
  *   buildSegmentationPrompt(videoAnalysis, productResearch)
  *   buildNarrationPolishPrompt(steps, productResearch)
@@ -350,6 +351,75 @@ function renderBrandBlock(brand) {
   return lines.join('\n');
 }
 
+function shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled) {
+  if (!mobileVisualEnabled || !demoScript || !Array.isArray(demoScript.steps)) return false;
+  const product = String(demoScript.product || '').toLowerCase();
+  if (product.includes('layer')) return true;
+  return demoScript.steps.some((step) => {
+    const hay = [
+      step?.id,
+      step?.label,
+      step?.visualState,
+      step?.narration,
+    ].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes('layer') && (hay.includes('phone') || hay.includes('mobile'));
+  });
+}
+
+function inferLayerDataSharingUseCase(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return 'account_verification';
+  const chunks = [];
+  chunks.push(String(demoScript.product || ''));
+  for (const step of demoScript.steps) {
+    chunks.push(String(step?.id || ''));
+    chunks.push(String(step?.label || ''));
+    chunks.push(String(step?.visualState || ''));
+    chunks.push(String(step?.narration || ''));
+    if (step?.apiResponse?.endpoint) chunks.push(String(step.apiResponse.endpoint));
+    if (step?.apiResponse?.method) chunks.push(String(step.apiResponse.method));
+    if (step?.apiResponse?.request) chunks.push(JSON.stringify(step.apiResponse.request));
+    if (step?.apiResponse?.response) chunks.push(JSON.stringify(step.apiResponse.response));
+  }
+  const hay = chunks.join(' ').toLowerCase();
+  const isCra = /\bcra\b|consumer report|check report|income insights|cra_base_report|\/cra\/|\/user\/create|permissible purpose|extension_of_credit/.test(hay);
+  if (isCra) return 'cra';
+  const isIdentity =
+    /\bidentity verification\b|\bidv\b|\bkyc\b|ssn|date[_\s-]?of[_\s-]?birth|dob|identity_verification|\/identity_verification\//.test(hay);
+  if (isIdentity) return 'identity_verification';
+  return 'account_verification';
+}
+
+function buildLayerShareFieldGuardrailBlock(demoScript) {
+  const useCase = inferLayerDataSharingUseCase(demoScript);
+  const byUseCase = {
+    account_verification:
+      `Use case resolved: ACCOUNT_VERIFICATION / PAY-BY-BANK / ACCOUNT LINKING.\n` +
+      `Required default share fields: name, phone, address, email (if available), bank account context.\n` +
+      `Forbidden by default: date_of_birth, ssn, ssn_last_4.\n` +
+      `Only include DOB/SSN fields when the script explicitly states compliance/KYC requirements.`,
+    identity_verification:
+      `Use case resolved: IDENTITY_VERIFICATION.\n` +
+      `Required share fields: name, address, phone, date_of_birth, ssn (or ssn_last_4), and email when used.\n` +
+      `DOB/SSN context MUST be visible on the Layer confirmation/share screen.\n` +
+      `Do not downgrade to account-link-only fields for this flow.`,
+    cra:
+      `Use case resolved: CRA / CONSUMER REPORT.\n` +
+      `Required identity share fields: name, address, date_of_birth, ssn (or ssn_last_4), phone, email (per account config).\n` +
+      `Bank account rows are optional and should appear only when the story/template requires account-derived data.\n` +
+      `Treat this as strict identity consent context, not a lightweight account-link flow.`,
+  };
+  return (
+    `## LAYER SHARE FIELD GUARDRAIL (NON-NEGOTIABLE)\n\n` +
+    `${byUseCase[useCase]}\n\n` +
+    `Generation checks (must pass):\n` +
+    `- Screen 1 phone capture copy must frame onboarding/signup/application start, not an eligibility check.\n` +
+    `- Never show user-facing phrases like "eligibility check" or "checking eligibility" on screen 1.\n` +
+    `- Field list on mock Layer share screen must match resolved use case above.\n` +
+    `- If this contract conflicts with generic UI habits, this contract wins.\n` +
+    `- Do not use one universal field list across all Layer stories.\n`
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Research prompt
 // ─────────────────────────────────────────────────────────────────────────────
@@ -461,6 +531,14 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
     productResearch && typeof productResearch.plaidLinkUxSkillMarkdown === 'string'
       ? productResearch.plaidLinkUxSkillMarkdown.trim()
       : '';
+  const embeddedLinkMode =
+    productResearch && typeof productResearch.plaidLinkMode === 'string'
+      ? String(productResearch.plaidLinkMode).toLowerCase()
+      : 'modal';
+  const embeddedLinkSkillBlock =
+    productResearch && typeof productResearch.embeddedLinkSkillMarkdown === 'string'
+      ? productResearch.embeddedLinkSkillMarkdown.trim()
+      : '';
 
   const system =
     `You are a senior Plaid demo designer with deep knowledge of Plaid's product ` +
@@ -534,6 +612,14 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       text:
         `${linkUxSkillBlock}\n\n` +
         `Use this specifically for pre-Link and pre-Plaid UX composition, copy hierarchy, CTA labels, and security/value framing.`,
+    });
+  }
+  if (embeddedLinkSkillBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `${embeddedLinkSkillBlock}\n\n` +
+        `This requirement is mode-specific. If mode is embedded, do not default back to modal Link assumptions.`,
     });
   }
 
@@ -677,6 +763,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `Output ONLY a JSON object matching this schema — no prose, no markdown fences:\n\n` +
       `{\n` +
       `  "product": "<string>",\n` +
+      `  "plaidLinkMode": "<modal|embedded>",\n` +
       `  "persona": {\n` +
       `    "name": "<string>",\n` +
       `    "role": "<string>",\n` +
@@ -727,14 +814,26 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `Do not label insight steps as slide unless they intentionally render .slide-root.\n\n` +
       `FINAL VALUE SUMMARY SLIDE RULE (CRITICAL):\n` +
       `The LAST step in the demo MUST be a Plaid-branded value-summary slide (sceneType:"slide").\n` +
+      `Use step id "value-summary-slide" exactly for the final step unless the user explicitly overrides.\n` +
       `This summary slide must synthesize the strongest messaging discovered in PRODUCT RESEARCH,\n` +
       `especially synthesizedInsights.valuePropositions and, when present, SOLUTIONS MASTER\n` +
       `value proposition statements.\n` +
       `Use concise user-benefit language and outcomes. Avoid decorative internal model metrics\n` +
-      `or scorecards unless they directly explain a user action or decision.\n\n` +
+      `or scorecards unless they directly explain a user action or decision.\n` +
+      `The final slide visualState must require visible content (Plaid branding, 3-4 value bullets,\n` +
+      `and a visible CTA), never a blank placeholder surface.\n\n` +
       `ACCURACY RULES (CRITICAL — confirmed via Plaid internal docs and curated product knowledge):\n` +
       `${formatProductAccuracyRules(productProfile)}\n` +
       `- Latency claims: "in real time" is safe. "under one second" is unverified — avoid.`,
+  });
+
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## PLAID LINK IMPLEMENTATION MODE\n\n` +
+      `Detected mode from prompt context: ${embeddedLinkMode}\n` +
+      `- If mode is "embedded": output "plaidLinkMode":"embedded" and keep Link narration/UI assumptions aligned to hosted/embedded flow.\n` +
+      `- If mode is "modal": output "plaidLinkMode":"modal" and use standard in-page Plaid Link assumptions.\n`,
   });
 
   return {
@@ -769,6 +868,11 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
       `${String(opts.plaidSkillBrief).trim().slice(0, 12000)}\n\n` +
       `Use the skill for Link/token/product ordering; the DOM contract in the next build step is authoritative for the demo app.\n\n`;
   }
+  if (opts.embeddedLinkSkillBrief && String(opts.embeddedLinkSkillBrief).trim()) {
+    userText +=
+      `## EMBEDDED LINK SKILL (mode-specific)\n\n` +
+      `${String(opts.embeddedLinkSkillBrief).trim().slice(0, 6000)}\n\n`;
+  }
 
   userText +=
     `Given the following demo script, describe the frontend architecture ` +
@@ -782,17 +886,76 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
     `generator, not a human developer. No JSON required.\n\n`;
 
   if (opts.plaidLinkLive) {
+    const mode = String(opts.plaidLinkMode || demoScript?.plaidLinkMode || 'modal').toLowerCase() === 'embedded'
+      ? 'embedded'
+      : 'modal';
     userText +=
       `IMPORTANT — LIVE PLAID LINK MODE:\n` +
-      `The Plaid Link flow steps will use the REAL Plaid Link SDK (loaded from cdn.plaid.com).\n` +
-      `The app must fetch a link_token from POST /api/create-link-token on page load, then ` +
-      `initialize Plaid.create() with onSuccess/onEvent/onExit callbacks.\n` +
-      `Do NOT describe a mock Plaid Link modal — the real SDK renders its own iframe.\n` +
-      `The architecture should account for: link_token fetch on init, Link open on button click, ` +
-      `event forwarding to link-events-panel, and post-Link API calls (auth, identity, signal).\n\n`;
+      `Resolved mode: ${mode}.\n` +
+      (mode === 'embedded'
+        ? `Use Hosted/Embedded Link assumptions: token create + hosted_link_url launch behavior.\n` +
+          `Do not rely on modal-only iframe assumptions for launch success.\n`
+        : `Use standard Plaid.create modal assumptions (iframe appears in-app after open()).\n`) +
+      `Do NOT describe a mock Plaid Link modal unless explicitly requested by mode.\n` +
+      `The architecture should account for token create success checks and deterministic launch signaling.\n\n`;
   }
 
   userText += `DEMO SCRIPT:\n${toJSON(demoScript)}`;
+
+  return {
+    system,
+    userMessages: [{ role: 'user', content: userText }],
+  };
+}
+
+/**
+ * Build a deterministic layer contract plan used by layered builds.
+ *
+ * @param {object} demoScript
+ * @param {string} architectureBrief
+ * @param {object} [opts]
+ * @param {boolean} [opts.mobileVisualEnabled]
+ * @param {string} [opts.buildViewMode]  desktop | mobile-auto | mobile-simulated
+ * @returns {{ system: string, userMessages: Array }}
+ */
+function buildAppFrameworkPlanPrompt(demoScript, architectureBrief, opts = {}) {
+  const mode = String(opts.buildViewMode || 'desktop').toLowerCase();
+  const mobileVisualEnabled = !!opts.mobileVisualEnabled;
+  const system =
+    `You are a frontend architecture planner for deterministic demo generation. ` +
+    `Output concise implementation contracts only.`;
+
+  const userText =
+    `Create a Layered Build Contract in JSON for a demo app generator.\n\n` +
+    `Return ONLY valid JSON with this schema:\n` +
+    `{\n` +
+    `  "layer1Framework": {\n` +
+    `    "requiredDomContracts": ["..."],\n` +
+    `    "requiredSelectors": ["..."],\n` +
+    `    "requiredPanels": ["..."],\n` +
+    `    "navigationContract": ["..."]\n` +
+    `  },\n` +
+    `  "layer2DataInteraction": {\n` +
+    `    "apiPanelContract": ["..."],\n` +
+    `    "plaidLaunchContract": ["..."],\n` +
+    `    "playwrightContract": ["..."]\n` +
+    `  },\n` +
+    `  "layer3VisualPolish": {\n` +
+    `    "brandPolishChecks": ["..."],\n` +
+    `    "copyFidelityChecks": ["..."],\n` +
+    `    "iconLogoChecks": ["..."]\n` +
+    `  },\n` +
+    `  "viewMode": "${mode}",\n` +
+    `  "mobileVisualEnabled": ${mobileVisualEnabled ? 'true' : 'false'},\n` +
+    `  "mobileVisualContract": ["..."]\n` +
+    `}\n\n` +
+    `Requirements:\n` +
+    `- Keep each array concise (3-8 items).\n` +
+    `- Use concrete contract statements, not generic advice.\n` +
+    `- Include selectors/data-testid requirements from the demo script.\n` +
+    `- mobileVisualContract can be empty if mobileVisualEnabled is false.\n\n` +
+    `DEMO SCRIPT:\n${toJSON(demoScript)}\n\n` +
+    `ARCHITECTURE BRIEF:\n${architectureBrief}`;
 
   return {
     system,
@@ -821,6 +984,11 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
  * @param {object}  [opts.brand]             Brand profile from brand/*.json. Falls back to Plaid defaults.
  * @param {string}  [opts.plaidSkillMarkdown] Plaid integration skill bundle (repo ZIP excerpts)
  * @param {string}  [opts.plaidLinkUxSkillMarkdown] Plaid Link UX markdown skill excerpt
+ * @param {boolean} [opts.layeredBuildEnabled] Enable framework->data->polish layering contract
+ * @param {object|null} [opts.layeredBuildPlan] Layer contract JSON from framework planning pass
+ * @param {boolean} [opts.mobileVisualEnabled] Enable mobile-visual simulator constraints
+ * @param {string} [opts.buildViewMode] desktop | mobile-auto | mobile-simulated
+ * @param {string} [opts.layerMockTemplate] Optional reusable Layer mobile mock library markdown
  * @returns {{ system: string, userMessages: Array }}
  */
 function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null, opts = {}) {
@@ -840,6 +1008,17 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
   const linkUxSkillBlock = typeof opts.plaidLinkUxSkillMarkdown === 'string'
     ? opts.plaidLinkUxSkillMarkdown.trim()
     : '';
+  const embeddedLinkSkillBlock = typeof opts.embeddedLinkSkillMarkdown === 'string'
+    ? opts.embeddedLinkSkillMarkdown.trim()
+    : '';
+  const plaidLinkMode = String(opts.plaidLinkMode || demoScript?.plaidLinkMode || 'modal').toLowerCase() === 'embedded'
+    ? 'embedded'
+    : 'modal';
+  const layeredBuildEnabled = !!opts.layeredBuildEnabled;
+  const mobileVisualEnabled = !!opts.mobileVisualEnabled;
+  const buildViewMode = String(opts.buildViewMode || 'desktop').toLowerCase();
+  const layerMockTemplate = typeof opts.layerMockTemplate === 'string' ? opts.layerMockTemplate.trim() : '';
+  const useLayerMobileMockTemplate = shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled);
   const buildQaDiagBlock = formatBuildQaDiagnosticSummary(opts.buildQaDiagnosticSummary);
 
   let cdnRule =
@@ -896,7 +1075,29 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `- Desktop responsive requirement (MANDATORY): support 1280×800, 1440×900, and 1728×1117 without horizontal clipping or overflow.\n` +
     `  Keep recording parity at 1440×900, but do NOT hard-lock html/body to fixed pixel width/height.\n` +
     `  Use fluid desktop layout (e.g. width:100vw; height:100vh; max-width patterns inside containers).\n` +
+    (layeredBuildEnabled
+      ? `LAYERED BUILD CONTRACT (MANDATORY):\n` +
+        `  - Implement in three logical layers in one final artifact:\n` +
+        `    Layer 1 framework: step shells, nav, panels, required data-testid + goToStep/getCurrentStep contracts.\n` +
+        `    Layer 2 data/interaction: API panel endpoint+JSON wiring, Plaid launch CTA and Link bootstrap, Playwright step mapping.\n` +
+        `    Layer 3 visual/polish: brand fidelity, icon/logo legibility, concise copy matching visualState.\n` +
+        `  - Do not skip Layer 1 structural integrity to chase visual polish.\n` +
+        `  - If conflicts occur: preserve Layer 1 and Layer 2 contracts first, then simplify Layer 3.\n`
+      : '') +
+    (mobileVisualEnabled
+      ? `MOBILE VISUAL MODE:\n` +
+        `  - Build viewMode support: desktop, mobile-auto, mobile-simulated.\n` +
+        `  - Default viewMode: ${buildViewMode}.\n` +
+        `  - In mobile-simulated mode, render host UI within a phone-like shell wrapper\n` +
+        `    data-testid="mobile-simulator-shell" with constrained viewport (~390x844).\n` +
+        `  - This mode is PRESENTATION-ONLY. Do not claim it validates true Plaid mobile runtime behavior.\n`
+      : '') +
     `- Each step: <div data-testid="step-{id}" class="step"> (only one .active at a time)\n` +
+    `- Final summary slide contract (CRITICAL):\n` +
+    `    - The step id "value-summary-slide" must render as <div data-testid="step-value-summary-slide" class="step">.\n` +
+    `    - Do NOT rename or suffix this testid (no -dup variants).\n` +
+    `    - If sceneType is slide, include a visible .slide-root subtree with non-empty heading, value bullets, and CTA text.\n` +
+    `    - Never return a blank placeholder/filler container for this step.\n` +
     `- Global functions:\n` +
     `    window.goToStep(id)       — activate a step by id, fire its link events and API panel\n` +
     `    window.getCurrentStep()   — return the data-testid of the currently active step\n` +
@@ -923,6 +1124,17 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - Outline style for UI chrome; solid style for active/filled states.\n` +
     `  - If Heroicons lacks the exact icon, use the closest semantic Heroicons match — never emoji.\n` +
     `  - Feature cards (e.g. link external account): use a clear semantic icon such as "link" or "building-library" — not abstract or merged paths.\n` +
+    `PLAID LOGO ASSET CONTRACT (MANDATORY):\n` +
+    `  - Never create/draw the Plaid logo from scratch (no inline SVG logo art, no text-only "Plaid" logo, no CSS-generated logo shapes).\n` +
+    `  - Use ONLY one of these local files from the HTML root (scratch-app root):\n` +
+    `      ./plaid-logo-horizontal-black-white-background.png\n` +
+    `      ./plaid-logo-horizontal-white-text-transparent-background.png\n` +
+    `      ./plaid-logo-vertical-white-text-transparent-background.png\n` +
+    `      ./plaid-logo-text-white-background.png\n` +
+    `      ./plaid-logo-no-text-white-background.png\n` +
+    `      ./plaid-logo-no-text-black-background.png\n` +
+    `  - Choose the file by filename description (horizontal/vertical, white-background, black-background, no-text).\n` +
+    `  - Use an <img> tag for Plaid logo usage. Do not hotlink Plaid logo from remote URLs.\n` +
     `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses.\n` +
     `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
     `    - Default UX: keep #api-response-panel hidden on initial page load (display:none).\n` +
@@ -1027,11 +1239,59 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `Apply this guidance to host pre-Link UX steps and CTA copy where relevant. Do not contradict DOM contract constraints.`,
     });
   }
+  if (embeddedLinkSkillBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `${embeddedLinkSkillBlock}\n\n` +
+        `Treat this as implementation-critical whenever Plaid Link mode is embedded.`,
+    });
+  }
+  if (useLayerMobileMockTemplate && layerMockTemplate) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## LAYER MOBILE MOCK TEMPLATE LIBRARY (REUSABLE)\n\n` +
+        `${layerMockTemplate}\n\n` +
+        `Apply this template when rendering mobile-simulated Layer moments.\n` +
+        `Critical requirements:\n` +
+        `- Keep screen 1 host-owned (eligibility capture) and screens 2-4 Layer-owned mock panels.\n` +
+        `- Screen 1 should ask for phone to begin onboarding/signup/application; do not present it as an eligibility-check message.\n` +
+        `- Use brand accent token from HOST APP DESIGN SYSTEM (brand.colors.accentCta) in place of hardcoded green.\n` +
+        `- Replace company, contact, and account tokens to match other steps in this demo.\n` +
+        `- Keep all layer mock screens within the existing mobile simulator shell pattern.\n` +
+        `- For mock mode, do not depend on live SDK iframe visibility for these 3 Layer screens.\n`,
+    });
+  }
+  if (useLayerMobileMockTemplate) {
+    contentBlocks.push({
+      type: 'text',
+      text: buildLayerShareFieldGuardrailBlock(demoScript),
+    });
+  }
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## PLAID LINK MODE\n\n` +
+      `Resolved Plaid Link mode for this build: ${plaidLinkMode}\n` +
+      `- embedded: hosted_link token config + hosted_link_url launch behavior.\n` +
+      `- modal: in-page Plaid.create handler flow.\n`,
+  });
 
   if (buildQaDiagBlock) {
     contentBlocks.push({
       type: 'text',
       text: buildQaDiagBlock,
+    });
+  }
+
+  if (layeredBuildEnabled && opts.layeredBuildPlan) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## LAYERED BUILD PLAN\n\n` +
+        `Use this contract as hard requirements while generating the final app artifact:\n` +
+        `${toJSON(opts.layeredBuildPlan)}`,
     });
   }
 
@@ -1730,6 +1990,7 @@ module.exports = {
   buildResearchPrompt,
   buildScriptGenerationPrompt,
   buildAppArchitectureBriefPrompt,
+  buildAppFrameworkPlanPrompt,
   buildAppGenerationPrompt,
   buildQAReviewPrompt,
   buildSegmentationPrompt,

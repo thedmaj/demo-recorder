@@ -77,6 +77,7 @@ fs.mkdirSync(AUDIO_DIR,  { recursive: true });
 // (produced by the scratch pipeline). Otherwise falls back to the hardcoded IDV scripts.
 
 const USE_SCRATCH = process.argv.includes('--scratch');
+const SKIP_STITCH = process.argv.includes('--no-stitch');
 const DEMO_SCRIPT_PATH = path.join(OUT_DIR, 'demo-script.json');
 
 function loadVoiceoverScripts() {
@@ -420,6 +421,27 @@ function remapStepTimingsToProcessed(stepTimings, processedTiming) {
   }));
 }
 
+/**
+ * Collapses contiguous duplicate step IDs into one canonical timing window.
+ * This prevents repeated narration clips from being generated when playwright
+ * rows mark the same screen multiple times in sequence.
+ */
+function collapseContiguousStepTimings(stepTimings) {
+  const out = [];
+  for (const step of (stepTimings || [])) {
+    if (!step || !step.id) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.id === step.id) {
+      prev.startMs = Math.min(prev.startMs, step.startMs);
+      prev.endMs = Math.max(prev.endMs, step.endMs);
+      if (!prev.label && step.label) prev.label = step.label;
+      continue;
+    }
+    out.push({ ...step });
+  }
+  return out;
+}
+
 // ── Stitch audio clips with silence gaps ──────────────────────────────────────
 
 function stitchAudio(clips, outputPath) {
@@ -532,6 +554,17 @@ async function main() {
     console.warn('  Run the post-process stage first: npm run post-process\n');
   }
 
+  // Hard governor: one canonical timing window per contiguous screen block.
+  // This prevents narration from being duplicated across repeated goToStep rows
+  // and keeps each narration associated to its intended screen window only.
+  const beforeCollapseCount = stepTimings.length;
+  stepTimings = collapseContiguousStepTimings(stepTimings);
+  if (stepTimings.length !== beforeCollapseCount) {
+    console.log(
+      `Collapsed contiguous duplicate step windows: ${beforeCollapseCount} → ${stepTimings.length}\n`
+    );
+  }
+
   // Apply SYNC_MAP_S inverse to convert processed video times → composition times.
   // SYNC_MAP_S entries (speed-up or freeze windows) change when video frames appear
   // in the composition. Voiceover clips must be placed at composition time, not raw
@@ -543,11 +576,19 @@ async function main() {
   if (syncMap.length > 0) {
     stepTimings = stepTimings.map(step => ({
       ...step,
-      startMs: processedToCompMs(step.startMs, syncMap),
-      endMs:   processedToCompMs(step.endMs,   syncMap),
+      processedStartMs: step.startMs,
+      processedEndMs:   step.endMs,
+      startMs:          processedToCompMs(step.startMs, syncMap),
+      endMs:            processedToCompMs(step.endMs,   syncMap),
     }));
     console.log(`Applied sync-map (${syncMap.length} segment(s)) — audio placed at composition-space times\n`);
   } else {
+    // Keep explicit processed-space coordinates even when mapping is identity.
+    stepTimings = stepTimings.map(step => ({
+      ...step,
+      processedStartMs: step.startMs,
+      processedEndMs:   step.endMs,
+    }));
     console.log('No sync-map segments — audio placed at processed video times (1:1 with composition)\n');
   }
 
@@ -583,6 +624,13 @@ async function main() {
     clips.push({
       id:             step.id,
       label:          step.label,
+      timingSpaceVersion: 2,
+      // Immutable source-of-truth coordinates (used by resync-audio remapping)
+      processedStartMs: step.processedStartMs,
+      processedEndMs:   step.processedEndMs,
+      // Composition-space clip placement for current sync-map
+      compStartMs:    clipStartMs,
+      compEndMs:      step.endMs,
       startMs:        clipStartMs,
       endMs:          step.endMs,
       audioDurationMs,
@@ -595,12 +643,21 @@ async function main() {
     console.log();
   }
 
-  // Stitch into single voiceover.mp3 in the run directory
+  // Stitch into single voiceover.mp3 in the run directory unless explicitly skipped.
+  // Pipeline optimization: resync-audio is the authoritative stitch stage after auto-gap.
   const voiceoverPath = path.join(AUDIO_DIR, 'voiceover.mp3');
-  stitchAudio(clips, voiceoverPath);
+  if (!SKIP_STITCH) {
+    stitchAudio(clips, voiceoverPath);
+  } else {
+    console.log('Skipping stitch (--no-stitch): clips + manifest generated, resync-audio should stitch final voiceover.mp3');
+  }
 
   // Write manifest for Remotion
-  fs.writeFileSync(MANIFEST_FILE, JSON.stringify({ voiceoverFile: voiceoverPath, clips }, null, 2));
+  fs.writeFileSync(MANIFEST_FILE, JSON.stringify({
+    timingSpaceVersion: 2,
+    voiceoverFile: voiceoverPath,
+    clips,
+  }, null, 2));
   console.log(`✓ Manifest: out/voiceover-manifest.json`);
 
   // Write timing.js for Remotion import

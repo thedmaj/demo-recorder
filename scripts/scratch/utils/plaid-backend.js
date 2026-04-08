@@ -22,6 +22,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { resolveMode, getLinkModeAdapter } = require('./link-mode');
 
 // ── Base URL ──────────────────────────────────────────────────────────────────
 
@@ -273,7 +274,14 @@ const CREATE_LINK_TOKEN_WRAPPER_KEYS = new Set([
   'legacy_user_token',
   'checkUserIdentity',
   'check_user_identity',
+  'linkMode',
+  'link_mode',
+  'hosted_link',
 ]);
+
+function resolveLinkMode(opts = {}) {
+  return resolveMode({ explicitMode: opts.linkMode || opts.link_mode, promptText: opts.hosted_link ? 'hosted link' : '' });
+}
 
 async function createLinkToken(opts = {}) {
   const products = opts.products ?? ['auth', 'identity'];
@@ -284,6 +292,8 @@ async function createLinkToken(opts = {}) {
   const linkCustomizationName = resolveLinkCustomizationName(opts);
   const productFamily = opts.productFamily ?? opts.product_family ?? null;
   const credentialScope = opts.credentialScope ?? opts.credential_scope ?? null;
+  const linkMode = resolveLinkMode(opts);
+  const linkModeAdapter = getLinkModeAdapter(linkMode);
   const plaidCheckUserId = opts.plaidCheckUserId ?? opts.plaid_check_user_id ?? null;
   const legacyUserToken = opts.userToken ?? opts.user_token ?? null;
 
@@ -313,6 +323,11 @@ async function createLinkToken(opts = {}) {
     console.log(`[plaid-backend] Using Link customization: "${linkCustomizationName}"`);
   }
 
+  const modeBody = linkModeAdapter.prepareCreateLinkTokenBody(body);
+  const bodyForCreate = { ...modeBody };
+  if (linkMode === 'embedded') console.log('[plaid-backend] Link mode: embedded (hosted_link enabled)');
+  else console.log('[plaid-backend] Link mode: modal');
+
   for (const [key, val] of Object.entries(opts)) {
     if (val === undefined || CREATE_LINK_TOKEN_WRAPPER_KEYS.has(key)) continue;
     body[key] = val;
@@ -320,13 +335,13 @@ async function createLinkToken(opts = {}) {
 
   let data;
   try {
-    data = await plaidPost('/link/token/create', body, { productFamily, credentialScope });
+    data = await plaidPost('/link/token/create', bodyForCreate, { productFamily, credentialScope });
   } catch (err) {
     const msg = String(err && err.message ? err.message : err);
-    if (body.link_customization_name && /link_customization_name was not found/i.test(msg)) {
-      const fallbackBody = { ...body };
+    if (bodyForCreate.link_customization_name && /link_customization_name was not found/i.test(msg)) {
+      const fallbackBody = { ...bodyForCreate };
       delete fallbackBody.link_customization_name;
-      console.warn(`[plaid-backend] Link customization "${body.link_customization_name}" unavailable for this credential scope; retrying without customization.`);
+      console.warn(`[plaid-backend] Link customization "${bodyForCreate.link_customization_name}" unavailable for this credential scope; retrying without customization.`);
       data = await plaidPost('/link/token/create', fallbackBody, { productFamily, credentialScope });
     } else {
       throw err;
@@ -334,6 +349,7 @@ async function createLinkToken(opts = {}) {
   }
 
   console.log(`[plaid-backend] Link token created: ${data.link_token?.substring(0, 30)}...`);
+  data.plaid_link_mode = linkMode;
   return data;
 }
 
@@ -629,6 +645,8 @@ async function createConsumerReportLinkToken(flat = {}) {
     linkCustomizationName: flat.linkCustomizationName ?? flat.link_customization_name ?? null,
     productFamily: flat.productFamily ?? flat.product_family ?? null,
     credentialScope: flat.credentialScope ?? flat.credential_scope ?? null,
+    linkMode: flat.linkMode ?? flat.link_mode ?? null,
+    hosted_link: flat.hosted_link && typeof flat.hosted_link === 'object' ? flat.hosted_link : undefined,
     consumer_report_permissible_purpose: flat.consumer_report_permissible_purpose,
     cra_options: flat.cra_options,
     plaidCheckUserId: plaidUserId || undefined,

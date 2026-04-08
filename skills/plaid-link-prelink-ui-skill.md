@@ -164,6 +164,34 @@ Well-designed screens build curiosity, trust, and motivation to complete the flo
 
 ---
 
+## I-2b. Layer Share-Screen Field Rules (Use-Case Based)
+
+When building mocked or real Layer confirmation/share screens, field selection must match the story use case.
+
+### Screen 1 language rule (phone entry)
+- The first host screen should frame phone capture as onboarding/signup/application start.
+- Do not tell users this step is an eligibility check.
+- Keep eligibility determination behind the scenes and out of primary user copy.
+
+### Account verification / pay-by-bank / account linking
+- Show: Name, phone, address, email (if available), bank account details.
+- Do NOT include DOB or SSN by default.
+- If DOB/SSN appear in this flow, only include them when explicitly required by the prompt or compliance narrative.
+
+### Identity verification use cases
+- Show: Name, address, phone, DOB, SSN (or SSN last4), plus email when used.
+- In this flow, DOB + SSN are expected and should be visible in the share confirmation list.
+
+### CRA / consumer report use cases
+- Treat as strict identity flow for share fields.
+- Show at minimum: Name, address, DOB, SSN (or SSN last4), phone, and email where required by account configuration.
+- Bank account rows may be present when the story combines CRA with account-derived insights.
+
+### General implementation rule
+- Layer template requirements are the source of truth for which fields are required vs optional.
+- Mock screens should represent that template intent accurately.
+- If story type changes, update field list accordingly; do not reuse a one-size-fits-all share panel.
+
 ## I-3. Layout Patterns by Use Case
 
 ### Pattern A: Payment App (Venmo-style)

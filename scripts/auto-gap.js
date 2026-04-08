@@ -41,6 +41,7 @@ require('dotenv').config();
 const fs   = require('fs');
 const path = require('path');
 const { processedToCompMs } = require('./sync-map-utils');
+const { createTimingContract, writeTimingContract, DEFAULTS: TIMING_DEFAULTS } = require('./timing-contract');
 
 const OUT_DIR          = process.env.PIPELINE_RUN_DIR || path.resolve(__dirname, '../out');
 const MANIFEST_FILE    = path.join(OUT_DIR, 'voiceover-manifest.json');
@@ -57,6 +58,10 @@ const MIN_THRESHOLD_MS = 300;
 
 // Hard ceiling on speedup ratio to avoid frantic video.
 const MAX_SPEED = 2.5;
+const PLAID_LINK_BASE_MAX_MS = parseInt(process.env.PLAID_LINK_BASE_MAX_MS || String(TIMING_DEFAULTS.PLAID_LINK_BASE_MAX_MS), 10);
+const PLAID_LINK_OVER_15_BUFFER_MS = parseInt(process.env.PLAID_LINK_OVER_15_BUFFER_MS || String(TIMING_DEFAULTS.PLAID_LINK_OVER_15_BUFFER_MS), 10);
+const NARRATION_SYNC_TOLERANCE_MS = parseInt(process.env.NARRATION_SYNC_TOLERANCE_MS || String(TIMING_DEFAULTS.NARRATION_SYNC_TOLERANCE_MS), 10);
+const AUTO_GAP_PRESERVE_MANUAL = process.env.AUTO_GAP_PRESERVE_MANUAL === 'true';
 
 // ── Gap classification ────────────────────────────────────────────────────────
 
@@ -78,6 +83,28 @@ function gapReasonLabel(stepId, demoStep) {
   if (/outcome|approv|verif(y|ied)|complet|reveal/.test(id)) return 'outcome-reveal';
   if (/^(intro|problem|overview|start|begin|context|setup)/.test(id)) return 'intro-context';
   return 'default-nav';
+}
+
+function isPlaidLinkStep(stepId, demoStep) {
+  if (demoStep && demoStep.plaidPhase === 'launch') return true;
+  const id = String(stepId || '').toLowerCase();
+  return /(^wf-link-launch$)|link.?(consent|otp|account|select|success|launch|external)|plaid/.test(id);
+}
+
+function collapseContiguousClips(clips) {
+  const out = [];
+  for (const clip of (clips || [])) {
+    if (!clip || !clip.id) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.id === clip.id) {
+      prev.startMs = Math.min(prev.startMs, clip.startMs);
+      prev.endMs = Math.max(prev.endMs, clip.endMs);
+      prev.audioDurationMs = Math.max(prev.audioDurationMs || 0, clip.audioDurationMs || 0);
+      continue;
+    }
+    out.push({ ...clip });
+  }
+  return out;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -177,12 +204,16 @@ async function main() {
     } catch {}
   }
 
-  // Preserve manual sync-map entries; strip previously auto-generated ones
+  // Preserve manual sync-map entries only when explicitly requested.
+  // Default behavior is full deterministic rebuild so each comp region is governed
+  // by current narration/screen timing and cannot drift between screens.
   let existingSyncMap = { _comment: '', segments: [] };
   if (fs.existsSync(SYNC_MAP_FILE)) {
     try { existingSyncMap = JSON.parse(fs.readFileSync(SYNC_MAP_FILE, 'utf8')); } catch {}
   }
-  const manualSegments = (existingSyncMap.segments || []).filter(s => !s._autoGap);
+  const manualSegments = AUTO_GAP_PRESERVE_MANUAL
+    ? (existingSyncMap.segments || []).filter(s => !s._autoGap)
+    : [];
   const removedCount = (existingSyncMap.segments || []).length - manualSegments.length;
   if (removedCount > 0) console.log(`[auto-gap] Cleared ${removedCount} previous auto-gap entry(ies). Recomputing.\n`);
 
@@ -192,7 +223,11 @@ async function main() {
   let clippedCount  = 0;
   let frozenCount   = 0;
 
-  const sortedClips = [...clips].sort((a, b) => a.startMs - b.startMs);
+  const sortedClipsRaw = [...clips].sort((a, b) => a.startMs - b.startMs);
+  const sortedClips = collapseContiguousClips(sortedClipsRaw);
+  if (sortedClips.length !== sortedClipsRaw.length) {
+    console.log(`[auto-gap] Collapsed contiguous duplicate clip windows: ${sortedClipsRaw.length} → ${sortedClips.length}\n`);
+  }
 
   // Cursor map so duplicate stepIds in step-timing.json (e.g. chime-link-entry ×2 for the
   // wf-link-launch block) are matched in order rather than always finding the first.
@@ -237,7 +272,20 @@ async function main() {
     const gapMs           = (overrides[clip.id]?.gapMs != null) ? overrides[clip.id].gapMs : classifiedGapMs;
     const isOverridden    = gapMs !== classifiedGapMs;
 
-    const targetMs  = narrationMs + gapMs;
+    let targetMs  = narrationMs + gapMs;
+    const plaidLinkStep = isPlaidLinkStep(clip.id, demoStep);
+    let plaidLinkPolicy = null;
+    if (plaidLinkStep && narrationMs > 0) {
+      if (narrationMs <= PLAID_LINK_BASE_MAX_MS) {
+        // Hard cap Link timeline at 15s unless narration itself exceeds it.
+        targetMs = Math.min(targetMs, PLAID_LINK_BASE_MAX_MS);
+        plaidLinkPolicy = '15s-cap';
+      } else {
+        // If the Link talk track is longer than 15s, visuals must expand to match.
+        targetMs = Math.max(targetMs, narrationMs + PLAID_LINK_OVER_15_BUFFER_MS);
+        plaidLinkPolicy = 'expanded-to-talktrack';
+      }
+    }
     const overrunMs = videoDurationMs - targetMs; // positive = video too long; negative = narration too long
 
     // Current comp position — take the max of the video-derived position and the running comp cursor.
@@ -275,6 +323,7 @@ async function main() {
           videoStart: parseFloat((videoStartMs / 1000).toFixed(4)),
           mode:       'speed',
           speed:      Math.round(speed * 1000) / 1000,
+          _step:      clip.id,
           _autoGap:   true,
           _reason:    `auto-gap clip: video ${(videoDurationMs/1000).toFixed(2)}s > narr ${(narrationMs/1000).toFixed(2)}s + gap ${(gapMs/1000).toFixed(2)}s`,
         });
@@ -284,18 +333,33 @@ async function main() {
 
     } else if (overrunMs < -MIN_THRESHOLD_MS && narrationMs > 0) {
       // ── FREEZE: narration is longer than the video — hold last frame ─────────
-      // The video plays normally at 1× speed (no explicit entry needed for the play portion).
-      // A freeze entry holds the last frame from videoEnd until narration + gap finishes.
+      // Hard governor: explicitly encode both the play portion and freeze extension
+      // so this step is fully governed within its own composition window.
       freezeDurMs = Math.abs(overrunMs); // = targetMs - videoDurationMs
-      const freezeCompStartMs = compStartMs + videoDurationMs;
+      const playCompStartMs   = compStartMs;
+      const playCompEndMs     = compStartMs + videoDurationMs;
+      const freezeCompStartMs = playCompEndMs;
       const freezeCompEndMs   = compStartMs + targetMs;
       compEndMs               = freezeCompEndMs;
 
+      if (videoDurationMs > 0) {
+        newSegments.push({
+          compStart:  parseFloat((playCompStartMs / 1000).toFixed(4)),
+          compEnd:    parseFloat((playCompEndMs   / 1000).toFixed(4)),
+          videoStart: parseFloat((videoStartMs    / 1000).toFixed(4)),
+          mode:       'speed',
+          speed:      1,
+          _step:      clip.id,
+          _autoGap:   true,
+          _reason:    'auto-gap governed base-play segment',
+        });
+      }
       newSegments.push({
         compStart:  parseFloat((freezeCompStartMs / 1000).toFixed(4)),
         compEnd:    parseFloat((freezeCompEndMs   / 1000).toFixed(4)),
         videoStart: parseFloat((videoEndMs        / 1000).toFixed(4)),
         mode:       'freeze',
+        _step:      clip.id,
         _autoGap:   true,
         _reason:    `auto-gap freeze: narr ${(narrationMs/1000).toFixed(2)}s + gap ${(gapMs/1000).toFixed(2)}s > video ${(videoDurationMs/1000).toFixed(2)}s`,
       });
@@ -304,7 +368,34 @@ async function main() {
       frozenCount++;
 
     } else {
+      // Within tolerance: still emit a governed segment so timing ownership is explicit.
       action = 'ok';
+      const governedEndMs = compStartMs + targetMs;
+      if (videoDurationMs <= 0) {
+        newSegments.push({
+          compStart:  parseFloat((compStartMs   / 1000).toFixed(4)),
+          compEnd:    parseFloat((governedEndMs / 1000).toFixed(4)),
+          videoStart: parseFloat((videoStartMs  / 1000).toFixed(4)),
+          mode:       'freeze',
+          _step:      clip.id,
+          _autoGap:   true,
+          _reason:    'auto-gap governed zero-video window',
+        });
+      } else {
+        const nearOneSpeed = Math.max(0.01, videoDurationMs / Math.max(1, targetMs));
+        newSegments.push({
+          compStart:  parseFloat((compStartMs   / 1000).toFixed(4)),
+          compEnd:    parseFloat((governedEndMs / 1000).toFixed(4)),
+          videoStart: parseFloat((videoStartMs  / 1000).toFixed(4)),
+          mode:       'speed',
+          speed:      Math.round(nearOneSpeed * 1000) / 1000,
+          _step:      clip.id,
+          _autoGap:   true,
+          _reason:    'auto-gap governed near-1x segment',
+        });
+      }
+      newSegments.sort((a, b) => a.compStart - b.compStart);
+      compEndMs = governedEndMs;
     }
 
     // Advance the comp cursor so the next step starts at or after this step's end.
@@ -323,6 +414,8 @@ async function main() {
       freezeDurMs:     Math.round(freezeDurMs),
       action,
       speed:           speed !== null ? Math.round(speed * 100) / 100 : null,
+      isPlaidLink:     plaidLinkStep,
+      plaidLinkPolicy,
       compStartMs:     Math.round(compStartMs),
       compEndMs:       Math.round(compEndMs),
     });
@@ -343,6 +436,67 @@ async function main() {
 
   const totalSavingsMs = reportSteps.reduce((a, s) => a + (s.action==='clip'||s.action==='warn-too-fast' ? Math.max(0,s.overrunMs) : 0), 0);
   const totalFreezeMs  = reportSteps.reduce((a, s) => a + s.freezeDurMs, 0);
+
+  // Ensure explicit sync governance for the full composition range covered by steps.
+  // This avoids "unowned" comp-time islands that can drift audio across screens.
+  const coverageStartS = reportSteps.length > 0
+    ? Math.min(...reportSteps.map((s) => Number(s.compStartMs || 0))) / 1000
+    : 0;
+  const coverageEndS = reportSteps.length > 0
+    ? Math.max(...reportSteps.map((s) => Number(s.compEndMs || 0))) / 1000
+    : 0;
+  function segVideoAtCompEnd(seg) {
+    if (!seg) return 0;
+    const c0 = Number(seg.compStart || 0);
+    const c1 = Number(seg.compEnd || c0);
+    const v0 = Number(seg.videoStart || 0);
+    if (seg.mode === 'speed') {
+      const sp = Number(seg.speed || 1);
+      return v0 + Math.max(0, c1 - c0) * Math.max(0.01, sp);
+    }
+    // freeze holds one frame/timepoint
+    return v0;
+  }
+  const sortedForCoverage = [...newSegments].sort((a, b) => Number(a.compStart || 0) - Number(b.compStart || 0));
+  const coverageFills = [];
+  let cursorCompS = coverageStartS;
+  let cursorVideoS = coverageStartS;
+  for (const seg of sortedForCoverage) {
+    const segStart = Number(seg.compStart || 0);
+    const segEnd = Number(seg.compEnd || segStart);
+    if (segEnd <= coverageStartS || segStart >= coverageEndS) continue;
+    if (segStart > cursorCompS + 0.001) {
+      coverageFills.push({
+        compStart: parseFloat(cursorCompS.toFixed(4)),
+        compEnd: parseFloat(Math.min(segStart, coverageEndS).toFixed(4)),
+        videoStart: parseFloat(cursorVideoS.toFixed(4)),
+        mode: 'speed',
+        speed: 1,
+        _autoGap: true,
+        _reason: 'auto-gap coverage-fill: explicit governance for uncovered comp range',
+      });
+    }
+    cursorCompS = Math.max(cursorCompS, segEnd);
+    cursorVideoS = segVideoAtCompEnd(seg);
+    if (cursorCompS >= coverageEndS) break;
+  }
+  if (cursorCompS < coverageEndS - 0.001) {
+    coverageFills.push({
+      compStart: parseFloat(cursorCompS.toFixed(4)),
+      compEnd: parseFloat(coverageEndS.toFixed(4)),
+      videoStart: parseFloat(cursorVideoS.toFixed(4)),
+      mode: 'speed',
+      speed: 1,
+      _autoGap: true,
+      _reason: 'auto-gap coverage-fill: explicit governance for uncovered comp tail',
+    });
+  }
+  if (coverageFills.length > 0) {
+    newSegments.push(...coverageFills);
+    newSegments.sort((a, b) => Number(a.compStart || 0) - Number(b.compStart || 0));
+    console.log(`[auto-gap] Added ${coverageFills.length} explicit coverage-fill segment(s).`);
+  }
+
   console.log(
     `\n[auto-gap] ${clippedCount} clipped, ${frozenCount} frozen, ${reportSteps.filter(s=>s.action==='ok').length} ok.` +
     (totalSavingsMs > 0 ? ` Trimmed ${(totalSavingsMs/1000).toFixed(1)}s dead air.` : '') +
@@ -378,6 +532,20 @@ async function main() {
   };
   fs.writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2));
   console.log(`[auto-gap] ✓ auto-gap-report.json`);
+  const timingContract = createTimingContract({
+    runDir: OUT_DIR,
+    source: 'auto-gap',
+    generatedAt: report.generatedAt,
+    steps: reportSteps,
+    syncMapSegments: newSegments,
+    policy: {
+      PLAID_LINK_BASE_MAX_MS,
+      PLAID_LINK_OVER_15_BUFFER_MS,
+    },
+    toleranceMs: NARRATION_SYNC_TOLERANCE_MS,
+  });
+  const contractPath = writeTimingContract(OUT_DIR, timingContract);
+  console.log(`[auto-gap] ✓ ${path.basename(contractPath)}`);
   console.log('[auto-gap] Done. resync-audio will update audio positions next.');
 }
 
