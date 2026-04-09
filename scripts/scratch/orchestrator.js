@@ -25,6 +25,12 @@ const { execSync }  = require('child_process');
 const readline      = require('readline');
 const Anthropic     = require('@anthropic-ai/sdk');
 const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../validate-narration-sync');
+const {
+  requireRunDir,
+  ensureRunManifest,
+  snapshotRunInputs,
+  writeRunDirMarker,
+} = require('./utils/run-io');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -73,16 +79,18 @@ function parseArgs() {
   const modeArg       = args.find(a => a.startsWith('--mode='));
   const fromArg       = args.find(a => a.startsWith('--from='));
   const toArg         = args.find(a => a.startsWith('--to='));
+  const runIdArg      = args.find(a => a.startsWith('--run-id='));
   const recordModeArg = args.find(a => a.startsWith('--record-mode='));
   const noTouchup     = args.includes('--no-touchup');
 
   const mode       = modeArg       ? modeArg.replace('--mode=', '').toLowerCase()        : null;
   const fromStage  = fromArg       ? fromArg.replace('--from=', '').toLowerCase()         : null;
   const toStage    = toArg         ? toArg.replace('--to=', '').toLowerCase()             : null;
+  const runId      = runIdArg      ? runIdArg.replace('--run-id=', '').trim()             : null;
   const recordMode = recordModeArg ? recordModeArg.replace('--record-mode=', '').toLowerCase()
                                    : (process.env.RECORD_MODE || '').toLowerCase() || null;
 
-  return { mode, fromStage, toStage, noTouchup, recordMode };
+  return { mode, fromStage, toStage, runId, noTouchup, recordMode };
 }
 
 // ── Prompt file loading ───────────────────────────────────────────────────────
@@ -386,16 +394,18 @@ function resolveVersionedDir(runNameStem) {
 
   fs.mkdirSync(fullPath, { recursive: true });
 
-  // Update out/latest symlink
-  try { fs.unlinkSync(LATEST_LINK); } catch (_) {}
+  setLatestLink(fullPath);
 
+  return fullPath;
+}
+
+function setLatestLink(targetDir) {
+  try { fs.existsSync(LATEST_LINK) && fs.unlinkSync(LATEST_LINK); } catch (_) {}
   try {
-    fs.symlinkSync(fullPath, LATEST_LINK);
+    fs.symlinkSync(targetDir, LATEST_LINK);
   } catch (err) {
     console.warn(`[Orchestrator] Could not create symlink out/latest: ${err.message}`);
   }
-
-  return fullPath;
 }
 
 // ── Elapsed time tracker ──────────────────────────────────────────────────────
@@ -438,7 +448,7 @@ async function promptContinue(message) {
   // Non-TTY path (spawned by dashboard with piped stdin):
   // Accept ENTER via the pipe (dashboard POST /api/pipeline/stdin → '\n'),
   // OR wait for a signal file written by the dashboard at {runDir}/continue.signal.
-  const runDir = process.env.PIPELINE_RUN_DIR || path.join(__dirname, '../../out/latest');
+  const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
   const signalFile = path.join(runDir, 'continue.signal');
   // Remove stale signal file from a prior run
   try { fs.unlinkSync(signalFile); } catch (_) {}
@@ -469,7 +479,7 @@ async function promptContinue(message) {
 // ── Script critique (inline, no separate file) ────────────────────────────────
 
 async function runScriptCritique() {
-  const runDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+  const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
   const scriptFile = path.join(runDir, 'demo-script.json');
   const critiqueSentinel = path.join(runDir, 'script-critique.json');
   const researchFile = path.join(runDir, 'product-research.json');
@@ -685,7 +695,7 @@ function resolveStartIndex(fromStage) {
 
 function buildRemotionProps() {
   // Read from isolated run dir (PIPELINE_RUN_DIR) instead of shared out/
-  const runDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+  const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
   const pointerOnlyOverlays = process.env.REMOTION_POINTER_ONLY !== 'false';
 
   const props = {
@@ -1199,7 +1209,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   // Flags unapproved numbers or misattributed claims before they reach the final video.
   if (shouldRun('script-critique')) {
     await runStage('claim-check', async () => {
-      const runDir     = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+      const runDir     = requireRunDir(PROJECT_ROOT, 'orchestrator');
       const scriptFile = path.join(runDir, 'demo-script.json');
       const promptFile = path.join(INPUTS_DIR, 'prompt.txt');
 
@@ -2284,7 +2294,7 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const { mode: cliMode, fromStage, toStage, noTouchup, recordMode } = parseArgs();
+  const { mode: cliMode, fromStage, toStage, runId: explicitRunId, noTouchup, recordMode } = parseArgs();
   let effectiveFromStage = fromStage;
 
   let endIdx = null;
@@ -2322,6 +2332,14 @@ async function main() {
     }
   }
 
+  if (effectiveFromStage && !explicitRunId && !process.env.PIPELINE_RUN_DIR) {
+    console.error(
+      '[Orchestrator] --from requires explicit run identity. ' +
+      'Pass --run-id=<runId> or set PIPELINE_RUN_DIR.'
+    );
+    process.exit(1);
+  }
+
   // Determine mode
   let mode;
   if (cliMode) {
@@ -2336,53 +2354,51 @@ async function main() {
   }
 
   // Determine versioned output directory — this becomes the isolated run dir
-  const productSlug  = extractProductSlug(promptText);
   const runNameStem = buildRunNameStem(promptText);
   console.log(`[Orchestrator] Run naming stem: ${runNameStem}`);
   let versionedDir;
 
   if (process.env.PIPELINE_RUN_DIR && fs.existsSync(process.env.PIPELINE_RUN_DIR)) {
     // Dashboard (or other caller) already specified the exact run directory — use it directly.
-    versionedDir = process.env.PIPELINE_RUN_DIR;
+    versionedDir = path.resolve(process.env.PIPELINE_RUN_DIR);
     console.log(`[Orchestrator] Using caller-specified run dir: ${versionedDir}`);
-    const LATEST_LINK_PATH = path.join(path.resolve(__dirname, '../..'), 'out', 'latest');
-    try { fs.existsSync(LATEST_LINK_PATH) && fs.unlinkSync(LATEST_LINK_PATH); } catch (_) {}
-    try { fs.symlinkSync(versionedDir, LATEST_LINK_PATH); } catch (_) {}
-  } else if (effectiveFromStage) {
-    // When restarting mid-pipeline, reuse the most recent existing run dir so that
-    // prior-stage artifacts (demo-script.json, product-research.json, etc.) are available.
-    // Search across ALL dates for runs matching the product slug (newest first by version).
-    const stemPart = `-${runNameStem.toLowerCase()}-v`;
-    const slugPart = `-${productSlug.toLowerCase()}-v`; // backward compatibility for older run names
-    const demosDir = path.join(path.resolve(__dirname, '../..'), 'out', 'demos');
-    fs.mkdirSync(demosDir, { recursive: true });
-    const existing = fs.readdirSync(demosDir)
-      .filter((n) => {
-        const lower = n.toLowerCase();
-        return lower.includes(stemPart) || lower.includes(slugPart);
-      })
-      .map(n => {
-        const vNum = parseInt(n.slice(n.lastIndexOf('-v') + 2), 10) || 0;
-        const mtime = (() => { try { return fs.statSync(path.join(demosDir, n)).mtimeMs; } catch (_) { return 0; } })();
-        return { name: n, vNum, mtime };
-      })
-      .sort((a, b) => b.mtime - a.mtime); // newest-modified first
-    if (existing.length > 0) {
-      versionedDir = path.join(demosDir, existing[0].name);
-      console.log(`[Orchestrator] Reusing run dir for --from restart: ${versionedDir}`);
-      const LATEST_LINK_PATH = path.join(path.resolve(__dirname, '../..'), 'out', 'latest');
-      try { fs.existsSync(LATEST_LINK_PATH) && fs.unlinkSync(LATEST_LINK_PATH); } catch (_) {}
-      try { fs.symlinkSync(versionedDir, LATEST_LINK_PATH); } catch (_) {}
-    } else {
-      console.warn(`[Orchestrator] No existing run found for stem "${runNameStem}" — creating new run dir.`);
-      versionedDir = resolveVersionedDir(runNameStem);
+    setLatestLink(versionedDir);
+  } else if (explicitRunId) {
+    // Explicit run target for restarts/resumes (no heuristic directory selection).
+    const candidate = path.join(DEMOS_DIR, explicitRunId);
+    if (!fs.existsSync(candidate)) {
+      console.error(`[Orchestrator] --run-id not found: ${explicitRunId}`);
+      process.exit(1);
     }
+    versionedDir = candidate;
+    console.log(`[Orchestrator] Using explicit run id: ${explicitRunId}`);
+    setLatestLink(versionedDir);
+  } else if (effectiveFromStage) {
+    console.error('[Orchestrator] --from restart requires explicit run identity (--run-id or PIPELINE_RUN_DIR).');
+    process.exit(1);
   } else {
     versionedDir = resolveVersionedDir(runNameStem);
   }
 
   // ── PIPELINE_RUN_DIR: all scripts write artifacts here instead of shared out/ ──
   process.env.PIPELINE_RUN_DIR = versionedDir;
+  writeRunDirMarker(versionedDir);
+  const runManifest = ensureRunManifest(versionedDir, {
+    runId: path.basename(versionedDir),
+    mode,
+    runNameStem,
+    promptFingerprint,
+    sourcePromptFile: path.join(INPUTS_DIR, 'prompt.txt'),
+    sourcePromptHash: promptFingerprint || null,
+  });
+  snapshotRunInputs(versionedDir, {
+    promptText: promptText || '',
+    sourcePromptFile: path.join(INPUTS_DIR, 'prompt.txt'),
+    researchMode: process.env.RESEARCH_MODE || null,
+    cli: { cliMode, fromStage, toStage, explicitRunId, noTouchup, recordMode },
+  });
+  process.env.PIPELINE_RUN_ID = runManifest.runId;
+  process.env.PIPELINE_RUN_MANIFEST = path.join(versionedDir, 'run-manifest.json');
   if (autoFresh) {
     applyFreshCleanup(versionedDir);
     console.log('[Orchestrator] Applied fresh cleanup for first-use prompt run.');

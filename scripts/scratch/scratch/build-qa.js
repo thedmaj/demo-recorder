@@ -29,15 +29,21 @@ const path         = require('path');
 const { startServer } = require('../utils/app-server');
 const { gleanChat } = require('../utils/mcp-clients');
 const { loadTimingContract } = require('../../timing-contract');
+const { requireRunDir, getRunLayout } = require('../utils/run-io');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
-const OUT_DIR      = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
-const SCRATCH_DIR  = path.join(OUT_DIR, 'scratch-app');
+const OUT_DIR      = requireRunDir(PROJECT_ROOT, 'build-qa');
+const RUN_LAYOUT   = getRunLayout(OUT_DIR);
+const SCRATCH_DIR  = fs.existsSync(path.join(RUN_LAYOUT.buildDir, 'scratch-app'))
+  ? path.join(RUN_LAYOUT.buildDir, 'scratch-app')
+  : path.join(OUT_DIR, 'scratch-app');
 const PW_SCRIPT    = path.join(SCRATCH_DIR, 'playwright-script.json');
 const DEMO_SCRIPT  = path.join(OUT_DIR, 'demo-script.json');
-const FRAMES_DIR   = path.join(OUT_DIR, 'qa-frames');
-const DIAG_OUT     = path.join(OUT_DIR, 'build-qa-diagnostics.json');
-const SLIDE_MESSAGING_OUT = path.join(OUT_DIR, 'slide-messaging-suggestions.json');
+const FRAMES_DIR   = path.join(RUN_LAYOUT.qaDir, 'frames');
+const LEGACY_FRAMES_DIR = path.join(OUT_DIR, 'qa-frames');
+const DIAG_OUT     = path.join(RUN_LAYOUT.qaDir, 'build-qa-diagnostics.json');
+const LEGACY_DIAG_OUT = path.join(OUT_DIR, 'build-qa-diagnostics.json');
+const SLIDE_MESSAGING_OUT = path.join(RUN_LAYOUT.qaDir, 'slide-messaging-suggestions.json');
 const VOICEOVER_MANIFEST_FILE = path.join(OUT_DIR, 'voiceover-manifest.json');
 
 const MAX_WAIT     = parseInt(process.env.BUILD_QA_MAX_WAIT_MS || '15000', 10);
@@ -1020,6 +1026,10 @@ async function captureStepFrames(page, stepId, rowIndex, dwellMs) {
     if (waitMs > 0) await page.waitForTimeout(waitMs);
     const out = path.join(FRAMES_DIR, `${stepId}-buildqa-${rowIndex}-${label}.png`);
     await page.screenshot({ path: out, fullPage: false });
+    if (LEGACY_FRAMES_DIR !== FRAMES_DIR) {
+      const legacyOut = path.join(LEGACY_FRAMES_DIR, `${stepId}-buildqa-${rowIndex}-${label}.png`);
+      fs.copyFileSync(out, legacyOut);
+    }
     frames.push({ label, path: out });
   };
 
@@ -1151,6 +1161,7 @@ async function main(opts = {}) {
   console.log(`[build-qa] Serving app at ${url}`);
 
   fs.mkdirSync(FRAMES_DIR, { recursive: true });
+  fs.mkdirSync(LEGACY_FRAMES_DIR, { recursive: true });
 
   const browser = await chromium.launch({ headless: HEADLESS });
   const context = await browser.newContext({
@@ -1303,6 +1314,7 @@ async function main(opts = {}) {
     const slideMsg = await evaluateSlideValueMessaging(page, demoScript);
     if (slideMsg && slideMsg.artifact) {
       fs.writeFileSync(SLIDE_MESSAGING_OUT, JSON.stringify(slideMsg.artifact, null, 2));
+      fs.writeFileSync(path.join(OUT_DIR, 'slide-messaging-suggestions.json'), JSON.stringify(slideMsg.artifact, null, 2));
     }
     if (slideMsg && Array.isArray(slideMsg.diagnostics) && slideMsg.diagnostics.length > 0) {
       diagnostics.push(...slideMsg.diagnostics);
@@ -1470,6 +1482,7 @@ async function main(opts = {}) {
       totalDiagnostics: normalizedDiagnostics.length,
     },
   }, null, 2));
+  fs.writeFileSync(LEGACY_DIAG_OUT, fs.readFileSync(DIAG_OUT, 'utf8'), 'utf8');
   delete require.cache[require.resolve('./qa-review')];
   const qaReview = require('./qa-review');
 

@@ -20,13 +20,18 @@ const path = require('path');
 const { chromium } = require('playwright');
 const { startServer } = require('../utils/app-server');
 const { resolveMode, getLinkModeAdapter } = require('../utils/link-mode');
+const { requireRunDir, getRunLayout } = require('../utils/run-io');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
-const OUT_DIR = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
-const SCRATCH_DIR = path.join(OUT_DIR, 'scratch-app');
+const OUT_DIR = requireRunDir(PROJECT_ROOT, 'plaid-link-qa');
+const RUN_LAYOUT = getRunLayout(OUT_DIR);
+const SCRATCH_DIR = fs.existsSync(path.join(RUN_LAYOUT.buildDir, 'scratch-app'))
+  ? path.join(RUN_LAYOUT.buildDir, 'scratch-app')
+  : path.join(OUT_DIR, 'scratch-app');
 const PW_SCRIPT = path.join(SCRATCH_DIR, 'playwright-script.json');
 const DEMO_SCRIPT = path.join(OUT_DIR, 'demo-script.json');
-const REPORT_FILE = path.join(OUT_DIR, 'plaid-link-qa.json');
+const REPORT_FILE = path.join(RUN_LAYOUT.qaDir, 'plaid-link-qa.json');
+const LEGACY_REPORT_FILE = path.join(OUT_DIR, 'plaid-link-qa.json');
 
 const QA_WAIT_MS = parseInt(process.env.PLAID_LINK_QA_WAIT_MS || '20000', 10);
 const QA_PORT = parseInt(process.env.PLAID_LINK_QA_PORT || '3739', 10);
@@ -36,8 +41,14 @@ const HEADLESS = !(
 );
 
 function writeReport(payload) {
+  fs.mkdirSync(path.dirname(REPORT_FILE), { recursive: true });
   fs.writeFileSync(
     REPORT_FILE,
+    JSON.stringify({ ...payload, checkedAt: new Date().toISOString() }, null, 2),
+    'utf8'
+  );
+  fs.writeFileSync(
+    LEGACY_REPORT_FILE,
     JSON.stringify({ ...payload, checkedAt: new Date().toISOString() }, null, 2),
     'utf8'
   );

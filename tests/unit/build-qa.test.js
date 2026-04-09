@@ -3,6 +3,8 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 
+process.env.PIPELINE_RUN_DIR ||= path.join(__dirname, '../../out');
+
 const {
   computeCaptureDelays,
   normalizeGoToStepExpression,

@@ -24,6 +24,9 @@
   let storyboardSelectedStepId = null;
   let storyboardMessageBridgeBound = false;
   let storyboardPreviewSyncing = false;
+  let _overviewLoadToken = 0;
+  let _filesLoadToken = 0;
+  let _storyboardLoadToken = 0;
 
   // Stage list for progress bar
   const STAGES = [
@@ -509,16 +512,19 @@
 
   async function loadOverview() {
     if (!currentRunId) return;
+    const runIdAtStart = currentRunId;
+    const loadToken = ++_overviewLoadToken;
     const el = document.getElementById('overview-content');
     el.innerHTML = '<div class="empty-state">Loading…</div>';
 
     try {
       const [runData, qaData, audioSyncData, reviewQueueData] = await Promise.allSettled([
-        api('/api/runs/' + currentRunId),
-        api('/api/runs/' + currentRunId + '/qa'),
-        api('/api/runs/' + currentRunId + '/audio-sync-status'),
+        api('/api/runs/' + runIdAtStart),
+        api('/api/runs/' + runIdAtStart + '/qa'),
+        api('/api/runs/' + runIdAtStart + '/audio-sync-status'),
         api('/api/valueprop/review-queue'),
       ]);
+      if (loadToken !== _overviewLoadToken || runIdAtStart !== currentRunId) return;
 
       const run = runData.status === 'fulfilled' ? runData.value : {};
       const qa = qaData.status === 'fulfilled' ? qaData.value : null;
@@ -1111,11 +1117,14 @@
 
   async function loadFiles() {
     if (!currentRunId) return;
+    const runIdAtStart = currentRunId;
+    const loadToken = ++_filesLoadToken;
     const el = document.getElementById('files-content');
     el.innerHTML = '<div class="empty-state">Loading files…</div>';
 
     try {
-      const data = await api('/api/runs/' + currentRunId);
+      const data = await api('/api/runs/' + runIdAtStart);
+      if (loadToken !== _filesLoadToken || runIdAtStart !== currentRunId) return;
       const files = data.files || [];
 
       // Group files
@@ -1303,6 +1312,8 @@
 
   async function loadStoryboard() {
     if (!currentRunId) return;
+    const runIdAtStart = currentRunId;
+    const loadToken = ++_storyboardLoadToken;
     bindStoryboardPreviewMessageBridge();
     const el = document.getElementById('storyboard-content');
     el.innerHTML = '<div class="empty-state">Loading storyboard…</div>';
@@ -1311,13 +1322,14 @@
 
     try {
       const [scriptData, qaData, framesData, timingData, autoGapData, syncMapData] = await Promise.allSettled([
-        api('/api/runs/' + currentRunId + '/script'),
-        api('/api/runs/' + currentRunId + '/qa'),
-        api('/api/runs/' + currentRunId + '/frames'),
-        api('/api/runs/' + currentRunId + '/timing'),
-        api('/api/runs/' + currentRunId + '/auto-gap'),
-        api('/api/runs/' + currentRunId + '/sync-map'),
+        api('/api/runs/' + runIdAtStart + '/script'),
+        api('/api/runs/' + runIdAtStart + '/qa'),
+        api('/api/runs/' + runIdAtStart + '/frames'),
+        api('/api/runs/' + runIdAtStart + '/timing'),
+        api('/api/runs/' + runIdAtStart + '/auto-gap'),
+        api('/api/runs/' + runIdAtStart + '/sync-map'),
       ]);
+      if (loadToken !== _storyboardLoadToken || runIdAtStart !== currentRunId) return;
 
       const script    = scriptData.status  === 'fulfilled' ? scriptData.value  : null;
       const qa        = qaData.status      === 'fulfilled' ? qaData.value      : null;
@@ -1334,7 +1346,8 @@
         return;
       }
 
-      const livePreviewUrl = await ensureStoryboardLivePreview(currentRunId);
+      const livePreviewUrl = await ensureStoryboardLivePreview(runIdAtStart);
+      if (loadToken !== _storyboardLoadToken || runIdAtStart !== currentRunId) return;
       const liveWorkspaceHtml = renderStoryboardLiveWorkspace(script, livePreviewUrl);
 
       // Build stepId → frame filenames map
@@ -3206,7 +3219,12 @@
       const noTouchup = document.getElementById('no-touchup-check').checked;
       setBtnLoading(btn, true, 'Starting…');
       try {
-        await runPipeline( { noTouchup });
+        const started = await runPipeline({ noTouchup, createNewRun: true });
+        if (started && started.runId) {
+          currentRunId = started.runId;
+          localStorage.setItem('lastRunId', currentRunId);
+          await loadRuns();
+        }
         showToast('Pipeline started', 'success');
         setPipelineRunning(true);
       } catch (e) {
@@ -3646,8 +3664,14 @@
   async function updateStudioStatus() {
     const btn = document.getElementById('studio-btn');
     if (!btn) return;
+    if (!currentRunId) {
+      btn.className = 'disabled';
+      btn.textContent = 'Open Remotion Studio';
+      btn.onclick = null;
+      return;
+    }
     try {
-      const status = await api('/api/studio/status');
+      const status = await api('/api/studio/status?runId=' + encodeURIComponent(currentRunId));
       if (!status.mp4Ready) {
         btn.className = 'disabled';
         btn.textContent = 'Open Remotion Studio';
@@ -3694,7 +3718,8 @@
   async function _pollRecordingStatus() {
     try {
       const runId = currentRunId || '';
-      const status = await api('/api/recording/status' + (runId ? '?runId=' + encodeURIComponent(runId) : ''));
+      if (!runId) return;
+      const status = await api('/api/recording/status?runId=' + encodeURIComponent(runId));
       if (status.state !== _lastRecordingState) {
         _lastRecordingState = status.state;
         _renderRecordingBadge(status.state);

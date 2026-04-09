@@ -27,10 +27,12 @@ require('dotenv').config({ override: true });
 const fs        = require('fs');
 const path      = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
+const { requireRunDir, getRunLayout } = require('../utils/run-io');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
-const OUT_DIR      = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
-const BRAND_DIR    = path.join(PROJECT_ROOT, 'brand');
+const OUT_DIR      = requireRunDir(PROJECT_ROOT, 'brand-extract');
+const RUN_LAYOUT   = getRunLayout(OUT_DIR);
+const BRAND_DIR    = RUN_LAYOUT.brandDir;
 const SCRIPT_FILE  = path.join(OUT_DIR, 'demo-script.json');
 const INGEST_FILE  = path.join(OUT_DIR, 'ingested-inputs.json');
 
@@ -81,10 +83,13 @@ function inferBrandUrlFromPrompt(promptText) {
 function writeRunMeta(payload) {
   try {
     const p = path.join(OUT_DIR, 'brand-extract.json');
+    const scoped = path.join(RUN_LAYOUT.brandDir, 'brand-extract.json');
+    const body = JSON.stringify({ ...payload, at: new Date().toISOString() }, null, 2);
     fs.writeFileSync(
       p,
-      JSON.stringify({ ...payload, at: new Date().toISOString() }, null, 2)
+      body
     );
+    fs.writeFileSync(scoped, body);
   } catch (e) {
     console.warn(`[BrandExtract] Could not write brand-extract.json: ${e.message}`);
   }
@@ -530,12 +535,12 @@ async function main() {
   }
 
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
-  console.log(`[BrandExtract] Wrote brand/${slug}.json (${profile.name}, mode: ${profile.mode})`);
+  console.log(`[BrandExtract] Wrote ${path.relative(PROJECT_ROOT, profilePath)} (${profile.name}, mode: ${profile.mode})`);
   writeRunMeta({
     ok: true,
     slug,
     source: rawData.source,
-    profileFile: `brand/${slug}.json`,
+    profileFile: path.relative(OUT_DIR, profilePath),
     domain,
   });
 

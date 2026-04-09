@@ -195,6 +195,21 @@ function latestRunId() {
   }
 }
 
+function allocateDashboardRunDir() {
+  fs.mkdirSync(DEMOS_DIR, { recursive: true });
+  const today = new Date().toISOString().split('T')[0];
+  const prefix = `${today}-dashboard-run-v`;
+  const nums = safeReaddir(DEMOS_DIR)
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => parseInt(name.slice(prefix.length), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const next = nums.length ? Math.max(...nums) + 1 : 1;
+  const runId = `${prefix}${next}`;
+  const runDir = path.join(DEMOS_DIR, runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  return { runId, runDir };
+}
+
 function getRunArtifacts(runId) {
   const dir = path.join(DEMOS_DIR, runId);
   function fileInfo(relPath) {
@@ -1197,13 +1212,14 @@ app.post('/api/pipeline/run', (req, res) => {
       activeProcess = null;
     }
 
-    const { fromStage, noTouchup, resumeRunId, researchMode } = req.body || {};
+    const { fromStage, noTouchup, resumeRunId, createNewRun, researchMode } = req.body || {};
     const args = ['scripts/scratch/orchestrator.js'];
     if (fromStage) args.push(`--from=${fromStage}`);
     if (noTouchup) args.push('--no-touchup');
 
-    // Build spawn env — pass PIPELINE_RUN_DIR to resume into an existing run directory
+    // Build spawn env — all pipeline launches must be bound to an explicit run directory.
     const spawnEnv = { ...process.env };
+    let targetRunId = null;
     if (resumeRunId) {
       try {
         const resumeDir = getRunDir(resumeRunId);
@@ -1211,10 +1227,20 @@ app.post('/api/pipeline/run', (req, res) => {
           return res.status(404).json({ error: `Run directory not found: ${resumeRunId}` });
         }
         spawnEnv.PIPELINE_RUN_DIR = resumeDir;
+        targetRunId = resumeRunId;
         broadcastLog(`[Dashboard] Resuming into run directory: ${resumeDir}`);
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
+    } else if (createNewRun) {
+      const allocated = allocateDashboardRunDir();
+      spawnEnv.PIPELINE_RUN_DIR = allocated.runDir;
+      targetRunId = allocated.runId;
+      broadcastLog(`[Dashboard] Allocated new run directory: ${allocated.runDir}`);
+    } else {
+      return res.status(400).json({
+        error: 'runId is required. Pass resumeRunId for restart or createNewRun=true for full runs.',
+      });
     }
 
     if (researchMode && typeof researchMode === 'string' && researchMode.trim()) {
@@ -1246,7 +1272,7 @@ app.post('/api/pipeline/run', (req, res) => {
       activeProcess = null;
     });
 
-    res.json({ pid: activeProcess.pid });
+    res.json({ pid: activeProcess.pid, runId: targetRunId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2192,11 +2218,11 @@ app.put('/api/valueprop/:name', (req, res) => {
 
 app.get('/api/studio/status', (req, res) => {
   try {
-    const runId = latestRunId();
+    const runId = String(req.query.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'runId is required' });
+    getRunDir(runId);
     let mp4Ready = false;
-    if (runId) {
-      mp4Ready = fs.existsSync(path.join(DEMOS_DIR, runId, 'demo-scratch.mp4'));
-    }
+    mp4Ready = fs.existsSync(path.join(DEMOS_DIR, runId, 'demo-scratch.mp4'));
 
     let running = false;
     try {
@@ -2206,7 +2232,7 @@ app.get('/api/studio/status', (req, res) => {
       running = false;
     }
 
-    res.json({ running, mp4Ready, latestRunId: runId });
+    res.json({ running, mp4Ready, runId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2284,8 +2310,9 @@ app.post('/api/studio/advance', (req, res) => {
 
 app.get('/api/recording/status', (req, res) => {
   try {
-    const runId = req.query.runId || latestRunId();
-    if (!runId) return res.json({ state: 'idle', runId: null });
+    const runId = String(req.query.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'runId is required' });
+    getRunDir(runId);
 
     const dir      = path.join(DEMOS_DIR, runId);
     const tmpDir   = path.join(dir, '_recording-tmp');

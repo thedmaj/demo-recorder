@@ -38,19 +38,22 @@ const {
 } = require('../utils/plaid-skill-loader');
 const { resolveMode, getLinkModeAdapter } = require('../utils/link-mode');
 const { askPlaidDocs } = require('../utils/mcp-clients');
+const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 const PROJECT_ROOT    = path.resolve(__dirname, '../../..');
-const OUT_DIR         = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
+const OUT_DIR         = requireRunDir(PROJECT_ROOT, 'build-app');
+const RUN_LAYOUT      = getRunLayout(OUT_DIR);
 const INPUTS_DIR      = path.join(PROJECT_ROOT, 'inputs');
 const SCRIPT_FILE     = path.join(OUT_DIR, 'demo-script.json');
 const RESEARCH_FILE   = path.join(OUT_DIR, 'product-research.json');
-const SCRATCH_APP_DIR = path.join(OUT_DIR, 'scratch-app');
+const SCRATCH_APP_DIR = path.join(RUN_LAYOUT.buildDir, 'scratch-app');
+const LEGACY_SCRATCH_APP_DIR = path.join(OUT_DIR, 'scratch-app');
 const HTML_OUT        = path.join(SCRATCH_APP_DIR, 'index.html');
 const PLAYWRIGHT_OUT  = path.join(SCRATCH_APP_DIR, 'playwright-script.json');
 const FEEDBACK_FILE   = path.join(INPUTS_DIR, 'build-feedback.md');
-const RUN_FEEDBACK_FILE = path.join(OUT_DIR, 'build-feedback.md');
+const RUN_FEEDBACK_FILE = path.join(RUN_LAYOUT.feedbackDir, 'build-feedback.md');
 const PROMPT_FILE     = path.join(INPUTS_DIR, 'prompt.txt');
 const ASSETS_DIR      = path.join(PROJECT_ROOT, 'assets');
 
@@ -83,9 +86,11 @@ const PLAID_LOGO_ASSET_MAP = [
 
 // Delimiter that separates HTML from Playwright JSON in Claude's response
 const PLAYWRIGHT_MARKER = '<!-- PLAYWRIGHT_SCRIPT_JSON -->';
-const BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json');
-const API_PANEL_QA_FILE = path.join(OUT_DIR, 'api-panel-qa.json');
-const BUILD_LAYER_REPORT_FILE = path.join(OUT_DIR, 'build-layer-report.json');
+const BUILD_QA_DIAG_FILE = path.join(RUN_LAYOUT.qaDir, 'build-qa-diagnostics.json');
+const LEGACY_BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json');
+const API_PANEL_QA_FILE = path.join(RUN_LAYOUT.buildDir, 'api-panel-qa.json');
+const BUILD_LAYER_REPORT_FILE = path.join(RUN_LAYOUT.buildDir, 'build-layer-report.json');
+const BUILD_METADATA_FILE = path.join(RUN_LAYOUT.buildDir, 'build-metadata.json');
 
 /**
  * @param {Array<{ category?: string, severity?: string, stepId?: string }>} diagnostics
@@ -331,7 +336,7 @@ function copyPlaidLogoAssetsToScratchRoot() {
 }
 
 // ── Brand profile loading ─────────────────────────────────────────────────────
-const BRAND_DIR = path.join(PROJECT_ROOT, 'brand');
+const BRAND_DIR = RUN_LAYOUT.brandDir;
 
 /**
  * Resolves and loads a brand profile JSON.
@@ -364,16 +369,16 @@ function loadBrand(demoScript) {
 
   const profilePath = path.join(BRAND_DIR, `${slug}.json`);
   if (!fs.existsSync(profilePath)) {
-    console.warn(`[Build] Brand profile not found: brand/${slug}.json — using Plaid defaults`);
+    console.warn(`[Build] Brand profile not found: ${path.relative(PROJECT_ROOT, profilePath)} — using Plaid defaults`);
     return null;
   }
 
   try {
     const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
-    console.log(`[Build] Brand profile loaded: brand/${slug}.json (${profile.name}, mode: ${profile.mode})`);
+    console.log(`[Build] Brand profile loaded: ${path.relative(PROJECT_ROOT, profilePath)} (${profile.name}, mode: ${profile.mode})`);
     return profile;
   } catch (err) {
-    console.warn(`[Build] Could not parse brand/${slug}.json: ${err.message} — using Plaid defaults`);
+    console.warn(`[Build] Could not parse ${path.relative(PROJECT_ROOT, profilePath)}: ${err.message} — using Plaid defaults`);
     return null;
   }
 }
@@ -772,6 +777,70 @@ function parseAppResponse(raw, opts = {}) {
   return { html: htmlPart, playwrightScript };
 }
 
+function computeScriptSignature(demoScript) {
+  const stable = {
+    title: demoScript?.title || '',
+    product: demoScript?.product || '',
+    steps: (demoScript?.steps || []).map((s) => ({
+      id: s?.id || '',
+      label: s?.label || '',
+      interaction: s?.interaction?.target || '',
+      endpoint: s?.apiResponse?.endpoint || '',
+      sceneType: s?.sceneType || '',
+    })),
+  };
+  return require('crypto')
+    .createHash('sha256')
+    .update(JSON.stringify(stable))
+    .digest('hex');
+}
+
+function readBuildMetadata() {
+  if (!fs.existsSync(BUILD_METADATA_FILE)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(BUILD_METADATA_FILE, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeBuildMetadata(meta) {
+  fs.mkdirSync(path.dirname(BUILD_METADATA_FILE), { recursive: true });
+  fs.writeFileSync(BUILD_METADATA_FILE, JSON.stringify(meta, null, 2), 'utf8');
+}
+
+function extractRunIdsFromText(text) {
+  const ids = new Set();
+  const re = /(\d{4}-\d{2}-\d{2}-[a-z0-9-]+-v\d+)/gi;
+  let m;
+  while ((m = re.exec(String(text || ''))) !== null) ids.add(m[1]);
+  return [...ids];
+}
+
+function scanArtifactForForeignRunIds(filePath, currentRunId) {
+  if (!filePath || !fs.existsSync(filePath)) return [];
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return extractRunIdsFromText(raw).filter((id) => id !== currentRunId);
+  } catch (_) {
+    return [];
+  }
+}
+
+function assertNoForeignRunReferences({ currentRunId, artifactPaths }) {
+  const offenders = [];
+  for (const p of artifactPaths || []) {
+    const foreign = scanArtifactForForeignRunIds(p, currentRunId);
+    if (foreign.length > 0) offenders.push({ path: p, foreignRunIds: foreign });
+  }
+  if (offenders.length > 0) {
+    const detail = offenders
+      .map((o) => `${path.basename(o.path)} -> ${[...new Set(o.foreignRunIds)].join(', ')}`)
+      .join('; ');
+    throw new Error(`Cross-run contamination check failed (${currentRunId}): ${detail}`);
+  }
+}
+
 /**
  * Extracts the text content from a Claude response (handles both streaming
  * accumulated text and non-streaming content arrays).
@@ -999,6 +1068,8 @@ async function main(opts = {}) {
   }
 
   const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
+  const runManifest = readRunManifest(OUT_DIR);
+  const activeRunId = runManifest?.runId || RUN_LAYOUT.runId;
   console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
   console.log(`[Build] Layered build: ${layeredBuildEnabled ? 'ENABLED' : 'disabled'}`);
   console.log(`[Build] Mobile visual mode: ${mobileVisualEnabled ? 'ENABLED' : 'disabled'} (viewMode=${buildViewMode})`);
@@ -1034,9 +1105,12 @@ async function main(opts = {}) {
     }
   }
   let buildQaDiagnosticSummary = null;
-  if (fs.existsSync(BUILD_QA_DIAG_FILE)) {
+  const buildQaDiagPath = fs.existsSync(BUILD_QA_DIAG_FILE)
+    ? BUILD_QA_DIAG_FILE
+    : (fs.existsSync(LEGACY_BUILD_QA_DIAG_FILE) ? LEGACY_BUILD_QA_DIAG_FILE : null);
+  if (buildQaDiagPath) {
     try {
-      const dq = JSON.parse(fs.readFileSync(BUILD_QA_DIAG_FILE, 'utf8'));
+      const dq = JSON.parse(fs.readFileSync(buildQaDiagPath, 'utf8'));
       buildQaDiagnosticSummary = dq.summary && dq.summary.categoryCounts
         ? {
           categoryCounts: dq.summary.categoryCounts,
@@ -1044,7 +1118,7 @@ async function main(opts = {}) {
         }
         : summarizeBuildQaDiagnostics(dq.diagnostics);
       if (Object.keys(buildQaDiagnosticSummary.categoryCounts || {}).length) {
-        console.log('[Build] Loaded build-qa-diagnostics.json summary for prompt context');
+        console.log(`[Build] Loaded ${path.relative(PROJECT_ROOT, buildQaDiagPath)} summary for prompt context`);
       }
     } catch (e) {
       console.warn(`[Build] Could not parse build-qa-diagnostics.json: ${e.message}`);
@@ -1099,11 +1173,21 @@ async function main(opts = {}) {
   let qaReport    = null;
   let qaFrames    = [];   // base64 PNG frames for failed steps (visual context for build agent)
   let prevTestids = [];   // data-testid inventory from previous build (structural context)
+  const resolvedQaPath = qaReportPath
+    ? (path.isAbsolute(qaReportPath) ? qaReportPath : path.join(PROJECT_ROOT, qaReportPath))
+    : null;
+
+  assertNoForeignRunReferences({
+    currentRunId: activeRunId,
+    artifactPaths: [
+      resolvedQaPath,
+      fs.existsSync(PLAYWRIGHT_OUT) ? PLAYWRIGHT_OUT : null,
+      fs.existsSync(HTML_OUT) ? HTML_OUT : null,
+      buildQaDiagPath,
+    ].filter(Boolean),
+  });
 
   if (qaReportPath) {
-    const resolvedQaPath = path.isAbsolute(qaReportPath)
-      ? qaReportPath
-      : path.join(PROJECT_ROOT, qaReportPath);
     if (fs.existsSync(resolvedQaPath)) {
       try {
         qaReport = JSON.parse(fs.readFileSync(resolvedQaPath, 'utf8'));
@@ -1111,7 +1195,9 @@ async function main(opts = {}) {
 
         // Load QA frame images for steps that failed — visual context for the build agent.
         // Without frames, the agent is fixing visual problems from a text description alone.
-        const framesDir   = path.join(OUT_DIR, 'qa-frames');
+        const framesDirPrimary = path.join(RUN_LAYOUT.qaDir, 'frames');
+        const framesDirLegacy = path.join(OUT_DIR, 'qa-frames');
+        const framesDir = fs.existsSync(framesDirPrimary) ? framesDirPrimary : framesDirLegacy;
         const failedSteps = (qaReport.stepsWithIssues || []).map(s => s.stepId);
         if (failedSteps.length > 0 && fs.existsSync(framesDir)) {
           if (failedSteps.length > 8) {
@@ -1152,7 +1238,7 @@ async function main(opts = {}) {
 
   // ── Load human reviewer feedback (optional) ──────────────────────────────
   let humanFeedback = null;
-  const feedbackSources = [RUN_FEEDBACK_FILE, FEEDBACK_FILE];
+  const feedbackSources = [RUN_FEEDBACK_FILE, path.join(OUT_DIR, 'build-feedback.md'), FEEDBACK_FILE];
   const currentRunId = path.basename(OUT_DIR);
   for (const sourcePath of feedbackSources) {
     if (!fs.existsSync(sourcePath)) continue;
@@ -1253,9 +1339,17 @@ async function main(opts = {}) {
 
   // ── Parse response ────────────────────────────────────────────────────────
   let html, playwrightScript;
+  const scriptSignature = computeScriptSignature(demoScript);
+  const priorBuildMeta = readBuildMetadata();
+  const allowPlaywrightFallback = !!(
+    priorBuildMeta &&
+    priorBuildMeta.runId === (runManifest?.runId || RUN_LAYOUT.runId) &&
+    priorBuildMeta.scriptSignature === scriptSignature
+  );
   try {
     ({ html, playwrightScript } = parseAppResponse(rawResponse, {
-      fallbackPlaywrightPath: fs.existsSync(PLAYWRIGHT_OUT) ? PLAYWRIGHT_OUT : null,
+      fallbackPlaywrightPath:
+        allowPlaywrightFallback && fs.existsSync(PLAYWRIGHT_OUT) ? PLAYWRIGHT_OUT : null,
     }));
   } catch (err) {
     console.error(err.message);
@@ -1271,7 +1365,7 @@ async function main(opts = {}) {
   {
     const need = demoScript.steps.length;
     const have = (playwrightScript.steps || []).length;
-    if (have < need && fs.existsSync(PLAYWRIGHT_OUT)) {
+    if (have < need && allowPlaywrightFallback && fs.existsSync(PLAYWRIGHT_OUT)) {
       try {
         const prev = JSON.parse(fs.readFileSync(PLAYWRIGHT_OUT, 'utf8'));
         const ps = prev && prev.steps;
@@ -1280,7 +1374,8 @@ async function main(opts = {}) {
           for (let i = merged.length; i < need; i++) merged.push(ps[i]);
           playwrightScript = { steps: merged };
           console.warn(
-            `[Build] Playwright steps: merged ${have} new row(s) + ${need - have} from previous build (truncated JSON recovery).`
+            `[Build] Playwright steps: merged ${have} new row(s) + ${need - have} from previous build ` +
+            `(same-run/same-script recovery).`
           );
         }
       } catch (_) {}
@@ -2098,6 +2193,20 @@ body.mobile-shell-enabled .step.mobile-shell-target{
   // ── Write outputs ──────────────────────────────────────────────────────────
   fs.writeFileSync(HTML_OUT, html, 'utf8');
   fs.writeFileSync(PLAYWRIGHT_OUT, JSON.stringify(playwrightScript, null, 2), 'utf8');
+  fs.mkdirSync(LEGACY_SCRATCH_APP_DIR, { recursive: true });
+  fs.writeFileSync(path.join(LEGACY_SCRATCH_APP_DIR, 'index.html'), html, 'utf8');
+  fs.writeFileSync(
+    path.join(LEGACY_SCRATCH_APP_DIR, 'playwright-script.json'),
+    JSON.stringify(playwrightScript, null, 2),
+    'utf8'
+  );
+  writeBuildMetadata({
+    runId: (runManifest?.runId || RUN_LAYOUT.runId),
+    scriptSignature,
+    writtenAt: new Date().toISOString(),
+    htmlPath: path.relative(OUT_DIR, HTML_OUT),
+    playwrightPath: path.relative(OUT_DIR, PLAYWRIGHT_OUT),
+  });
 
   console.log(`[Build] Written: scratch-app/index.html (${Math.round(html.length / 1024)}KB)`);
   console.log(`[Build] Written: scratch-app/playwright-script.json (${playwrightScript.steps.length} steps)`);
