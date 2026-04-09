@@ -58,6 +58,62 @@ describe('createLinkToken Plaid body', () => {
     const payload = JSON.parse(lastInit.body);
     assert.deepEqual(payload.cra_options, { days_requested: 90 });
   });
+
+  test('strips link mode helper fields from /link/token/create payload', async () => {
+    const plaid = require(BACKEND_PATH);
+    await plaid.createLinkToken({
+      products: ['cra_base_report', 'cra_income_insights'],
+      userId: 'u3',
+      credentialScope: 'cra',
+      consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT',
+      linkMode: 'modal',
+      link_mode: 'modal',
+    });
+    const payload = JSON.parse(lastInit.body);
+    assert.equal(payload.linkMode, undefined);
+    assert.equal(payload.link_mode, undefined);
+  });
+
+  test('retries token create after removing unsupported linkMode fields', async () => {
+    let callCount = 0;
+    global.fetch = async (_url, init) => {
+      callCount += 1;
+      lastInit = init;
+      const payload = JSON.parse(init.body || '{}');
+      if (callCount === 1 && (payload.linkMode || payload.link_mode)) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({
+            error_message: 'the following fields are not recognized by this endpoint: linkMode',
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          link_token: 'link-sandbox-test-token-2',
+          expiration: '2099-01-01T00:00:00Z',
+          request_id: 'req-test-retry',
+        }),
+      };
+    };
+    const plaid = require(BACKEND_PATH);
+    const res = await plaid.createLinkToken({
+      products: ['cra_base_report'],
+      userId: 'u4',
+      credentialScope: 'cra',
+      consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT',
+      linkMode: 'modal',
+      link_mode: 'modal',
+    });
+    assert.equal(res.link_token, 'link-sandbox-test-token-2');
+    assert.ok(callCount >= 1);
+    const payload = JSON.parse(lastInit.body);
+    assert.equal(payload.linkMode, undefined);
+    assert.equal(payload.link_mode, undefined);
+  });
 });
 
 describe('createConsumerReportLinkToken CRA legacy compatibility', () => {

@@ -1162,6 +1162,12 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - Internal model metrics belong in Plaid insight/slide contexts, not core customer UI chrome.\n` +
     `- All interactive elements must have data-testid attributes in kebab-case that match\n` +
     `  the interaction.target field in demo-script.json exactly.\n` +
+    `CONSOLE ERROR TRIAGE (MANDATORY):\n` +
+    `  - Add runtime guards so token/bootstrap failures are visible and actionable.\n` +
+    `  - Capture and log fetch failures for /api/create-link-token, including HTTP status and error payload.\n` +
+    `  - If the error message indicates unrecognized request fields, strip helper keys (e.g. linkMode, link_mode)\n` +
+    `    from the token request payload and retry once with sanitized body.\n` +
+    `  - Never fail silently; expose a clear console.error with remediation context.\n` +
     `- Plaid Link event names to use verbatim:\n` +
     `    OPEN, LAYER_READY, LAYER_NOT_AVAILABLE, SELECT_INSTITUTION, SELECT_BRAND,\n` +
     `    SELECT_DEGRADED_INSTITUTION, ERROR, EXIT, HANDOFF, TRANSITION_VIEW,\n` +

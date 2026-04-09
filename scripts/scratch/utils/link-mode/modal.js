@@ -3,7 +3,9 @@
 function prepareCreateLinkTokenBody(body) {
   const out = { ...(body || {}) };
   delete out.hosted_link;
-  out.linkMode = 'modal';
+  // Plaid /link/token/create does not accept mode helper fields.
+  delete out.linkMode;
+  delete out.link_mode;
   return out;
 }
 

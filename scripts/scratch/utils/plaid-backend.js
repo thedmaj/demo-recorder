@@ -330,14 +330,30 @@ async function createLinkToken(opts = {}) {
 
   for (const [key, val] of Object.entries(opts)) {
     if (val === undefined || CREATE_LINK_TOKEN_WRAPPER_KEYS.has(key)) continue;
-    body[key] = val;
+    bodyForCreate[key] = val;
   }
+
+  // Defensive strip: helper fields are valid for our server wrapper, not Plaid APIs.
+  delete bodyForCreate.linkMode;
+  delete bodyForCreate.link_mode;
 
   let data;
   try {
     data = await plaidPost('/link/token/create', bodyForCreate, { productFamily, credentialScope });
   } catch (err) {
     const msg = String(err && err.message ? err.message : err);
+    const unrecognizedModeField =
+      /not recognized by this endpoint/i.test(msg) && /linkmode|link_mode/i.test(msg);
+    if (unrecognizedModeField) {
+      const retryBody = { ...bodyForCreate };
+      delete retryBody.linkMode;
+      delete retryBody.link_mode;
+      console.warn('[plaid-backend] Retrying /link/token/create after removing unsupported mode fields.');
+      data = await plaidPost('/link/token/create', retryBody, { productFamily, credentialScope });
+      data.plaid_link_mode = linkMode;
+      console.log(`[plaid-backend] Link token created: ${data.link_token?.substring(0, 30)}...`);
+      return data;
+    }
     if (bodyForCreate.link_customization_name && /link_customization_name was not found/i.test(msg)) {
       const fallbackBody = { ...bodyForCreate };
       delete fallbackBody.link_customization_name;

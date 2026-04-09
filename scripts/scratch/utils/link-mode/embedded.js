@@ -2,7 +2,9 @@
 
 function prepareCreateLinkTokenBody(body) {
   const out = { ...(body || {}) };
-  out.linkMode = 'embedded';
+  // Plaid /link/token/create does not accept mode helper fields.
+  delete out.linkMode;
+  delete out.link_mode;
   const hosted = (out.hosted_link && typeof out.hosted_link === 'object') ? { ...out.hosted_link } : {};
   const completionRedirect = process.env.PLAID_HOSTED_LINK_COMPLETION_REDIRECT_URI;
   if (completionRedirect && typeof completionRedirect === 'string' && completionRedirect.trim()) {
