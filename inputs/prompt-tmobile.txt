@@ -1,0 +1,151 @@
+================================================================================
+T-Mobile Device Financing Underwriting - Expand Approvals with CRA + Income
+================================================================================
+
+**Host:** **T-Mobile** - telecom / consumer financing
+**Canonical URL:** https://www.t-mobile.com/
+**Brand URL** (from Salesforce): https://tmobile.com
+
+**Opportunity context (Salesforce):**
+- Opportunity: `ENT | T-Mobile | Credit Underwriting for Phones`
+- Stage: `Mutual Alignment`
+- Amount: `$669,688.53`
+- Use case: `Credit Scoring & Underwriting; Income Verification`
+- Pain point: `want to serve underbanked/thin file customers and offer financing terms`
+- Technical context: `Second look for customer with thin or no credit history`
+- Primary product signal: `CRA: Base Report; CRA: Base Report (Refresh)`
+- Account industry: `Telco, Media & Entertainment` (Vertical: `Consumer Payments`)
+
+**User journey (one sentence):**
+A T-Mobile applicant who is thin-file applies for phone financing, consents to secure data sharing through Plaid Link, and receives a second-look underwriting decision powered by CRA and income insights.
+
+**Story arc (short prose):**
+Open on T-Mobile device checkout where a customer chooses installment financing. Show that legacy underwriting can miss qualified thin-file applicants. Introduce Plaid-powered second look: user consents once, T-Mobile retrieves CRA base report and income insights, then returns an explainable approve outcome with terms.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Consumer Report (CRA Base Report), Plaid Consumer Report (CRA Income Insights)
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):
+Consumer Report Underwriting, Income Verification, Instant Onboarding & Verification
+
+**Primary product family** (pick one - aligns with pipeline profiles):
+`income_insights`
+
+**Primary messaging file for this demo** (pick one to own stats):
+`inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** - real SDK (`plaidPhase: "launch"` single step per `CLAUDE.md`)
+  [ ] **Plaid Layer** / OAuth / IDV - not primary in this story
+  [x] **Sandbox / persona** - defaults per `inputs/plaid-link-sandbox.md`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | T-Mobile device checkout and financing option card | Frame thin-file decline risk and missed approvals | `Apply for financing` |
+| 2 | host | Financing application start (phone + basic applicant info) | Explain fast second-look path without extra paperwork | `Continue` |
+| 3 | host | Single pre-Link explainer card for underwriting consent | Clarify what data is used and why, then end on trigger | CTA ends narration: `Continue with Plaid` |
+| 4 | link | Real Plaid Link CRA flow (consent, verification, account connection if prompted) | Narrate only what is visible in Link | `Connected successfully` |
+| 5 | slide | `POST /user/create` + `POST /link/token/create` CRA token setup | Explain identity context + permissible purpose for consumer report | `Session ready` |
+| 6 | slide | `POST /cra/check_report/base_report/get` result | Show second-look credit context for thin-file applicants | `Base report complete` |
+| 7 | slide | `POST /cra/check_report/income_insights/get` result | Show income-backed affordability insight | `Income insights complete` |
+| 8 | host | Underwriting decision screen with approved financing terms | Emphasize explainable approval for thin-file customer | `Accept financing offer` |
+| 9 | host | Confirmation: device financing activated | Close on conversion and responsible approvals | `Done` |
+| 10 | slide | Final value summary slide | Business outcomes: more qualified approvals, better risk posture | `Launch second-look underwriting` |
+
+**Product-specific reminders** (delete if N/A):
+- Link: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"` step.
+- Link narration boundary: pre-Link step ends on button trigger; Link step narration starts with modal content only.
+- CRA: keep asynchronous report lifecycle clear before insight retrieval.
+- CRA data-sharing context: include identity fields required for underwriting/compliance context.
+
+**Compliance / user data (one line):**
+Use only consented user data; include CRA permissible purpose context and avoid promising guaranteed approval.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Thompson, 29, T-Mobile applicant
+**Company / context:** Applying for smartphone installment financing with thin credit history
+**Sample fields that must appear on screen:** applicant name, phone, requested device, financing amount, decision status, approval terms, report-ready status, income insight summary
+
+Recommended structured data:
+- `client_user_id`: `tmobile-maya-001`
+- `user_name`: `Maya Thompson`
+- `applicant_phone`: `+1 (415) 555-0188`
+- `device_name`: `Galaxy S26`
+- `device_price`: `1099.00`
+- `down_payment`: `99.00`
+- `financed_amount`: `1000.00`
+- `monthly_term`: `24`
+- `monthly_payment`: `41.67`
+- `underwriting_decision`: `APPROVE`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use T-Mobile-inspired commerce + financing UI patterns with strong magenta accent, clean cards, and clear underwriting status communication.
+Keep host screens customer-branded and reserve Plaid-branded design for API insight / summary slides only.
+
+**Viewport:** 1440x900.
+
+-------------------------------------------------------------------------------
+INFERRED API STACK (IMPLEMENTATION INTENT)
+-------------------------------------------------------------------------------
+
+Use these endpoints and sequencing for this use case:
+1. `POST /user/create` (or account-compatible identity payload path)
+2. `POST /link/token/create` with CRA products:
+   - `products: ['cra_base_report', 'cra_income_insights']`
+   - `consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT'`
+   - `cra_options.days_requested` as appropriate
+3. `POST /cra/check_report/base_report/get`
+4. `POST /cra/check_report/income_insights/get`
+
+If account configuration is CRA base-report-only, still keep storyboard language for second-look underwriting but adapt insight slide to available report outputs.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Create 4 Plaid-branded slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+1) CRA token setup slide (`/user/create` + `/link/token/create`) with key request fields
+2) CRA Base Report slide (`/cra/check_report/base_report/get`) with high-signal underwriting attributes
+3) CRA Income Insights slide (`/cra/check_report/income_insights/get`) with affordability indicators
+4) Final value summary slide with 3-5 underwriting outcome claims tied to this telco financing story
+
+JSON panel contract:
+- Global `#api-response-panel` only
+- hidden by default on page load
+- once visible, JSON body is immediately visible (no JSON toggle/collapse controls)
+- panel body scrolls for long payloads
+- request/response fields must align with slide narrative claims
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (value-props **or** product KB - not duplicated)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================
