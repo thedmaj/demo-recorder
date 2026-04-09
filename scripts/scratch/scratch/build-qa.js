@@ -193,6 +193,41 @@ async function locateVisibleWithFallback(page, selector) {
   }
 }
 
+async function forceStepActive(page, stepId) {
+  if (!stepId || typeof stepId !== 'string') return { ok: false, reason: 'invalid-step-id' };
+  return page.evaluate((id) => {
+    const expected = `step-${id}`;
+    const target = document.querySelector(`[data-testid="${expected}"]`);
+    if (!target) return { ok: false, reason: 'step-not-found', expected };
+    const activeBefore = document.querySelector('.step.active')?.getAttribute('data-testid') || null;
+    if (typeof window.goToStep === 'function') {
+      try { window.goToStep(id); } catch (_) {}
+    }
+    let activeAfter = document.querySelector('.step.active')?.getAttribute('data-testid') || null;
+    // Recovery fallback: if goToStep didn't activate the expected step, force class alignment.
+    if (activeAfter !== expected) {
+      document.querySelectorAll('.step.active').forEach((el) => el.classList.remove('active'));
+      target.classList.add('active');
+      activeAfter = document.querySelector('.step.active')?.getAttribute('data-testid') || null;
+    }
+    return {
+      ok: activeAfter === expected,
+      expected,
+      activeBefore,
+      activeAfter,
+      recovered: activeBefore !== activeAfter && activeAfter === expected,
+    };
+  }, stepId);
+}
+
+async function getDomStepInventory(page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('.step[data-testid]'))
+      .map((el) => String(el.getAttribute('data-testid') || ''))
+      .filter(Boolean)
+  );
+}
+
 async function evaluateStepState(page, stepId) {
   return page.evaluate((id) => {
     const stepEl = document.querySelector(`[data-testid="step-${id}"]`);
@@ -767,6 +802,8 @@ function buildSlideMessagingPrompt(demoScript, slideRows) {
   lines.push('}');
   lines.push('');
   lines.push('Rules:');
+  lines.push('- Return exactly one valid JSON object and nothing else.');
+  lines.push('- Do not wrap JSON in markdown fences.');
   lines.push('- Add 2 to 4 additional value claims per slide.');
   lines.push('- Do not restate existing claims verbatim.');
   lines.push('- Keep claims specific, outcome-oriented, and plausible.');
@@ -800,16 +837,24 @@ async function evaluateSlideValueMessaging(page, demoScript) {
   };
   const diagnostics = [];
   try {
-    artifact.rawResponse = await gleanChat(prompt);
+    artifact.rawResponse = await gleanChat(prompt, { responseMode: 'json' });
     artifact.parsed = parseJsonFromText(artifact.rawResponse);
     if (!artifact.parsed) {
-      artifact.parseError = 'Could not parse JSON from gleanChat response';
+      const retryPrompt =
+        `${prompt}\n\n` +
+        'Retry now. Output must be valid JSON only with no extra text.';
+      const retryRaw = await gleanChat(retryPrompt, { responseMode: 'json' });
+      artifact.retryRawResponse = retryRaw;
+      artifact.parsed = parseJsonFromText(retryRaw);
+    }
+    if (!artifact.parsed) {
+      artifact.parseError = 'Could not parse JSON from gleanChat response (after strict retry)';
       diagnostics.push({
         stepId: slides[0].id,
         category: 'slide-value-messaging',
         severity: 'warning',
         issue: 'Glean slide messaging response was not valid JSON.',
-        suggestion: 'Refine the slide-messaging prompt schema and retry the non-blocking messaging pass.',
+        suggestion: 'Glean was asked for strict JSON and retried once. Inspect MCP response format or tighten schema fields.',
       });
       return { artifact, diagnostics };
     }
@@ -1106,9 +1151,14 @@ async function runPlaywrightRow(page, stepEntry) {
     try {
       const targetStepId = stepEntry.stepId || stepEntry.id || null;
       if (targetStepId) {
-        await page.evaluate((id) => {
-          if (typeof window.goToStep === 'function') window.goToStep(id);
-        }, targetStepId);
+        const aligned = await forceStepActive(page, targetStepId);
+        if (!aligned?.ok) {
+          captureError(
+            'navigation-mismatch',
+            `Could not align active step before click for "${targetStepId}" (activeAfter=${aligned?.activeAfter || 'none'}).`,
+            'Ensure goToStep can activate the expected step container before interaction.'
+          );
+        }
         await page.waitForTimeout(120);
       }
       const loc = await locateVisibleWithFallback(page, stepEntry.target);
@@ -1120,9 +1170,14 @@ async function runPlaywrightRow(page, stepEntry) {
     try {
       const targetStepId = stepEntry.stepId || stepEntry.id || null;
       if (targetStepId) {
-        await page.evaluate((id) => {
-          if (typeof window.goToStep === 'function') window.goToStep(id);
-        }, targetStepId);
+        const aligned = await forceStepActive(page, targetStepId);
+        if (!aligned?.ok) {
+          captureError(
+            'navigation-mismatch',
+            `Could not align active step before fill for "${targetStepId}" (activeAfter=${aligned?.activeAfter || 'none'}).`,
+            'Ensure goToStep can activate the expected step container before interaction.'
+          );
+        }
         await page.waitForTimeout(120);
       }
       const loc = await locateVisibleWithFallback(page, stepEntry.target);
@@ -1190,6 +1245,45 @@ async function main(opts = {}) {
     diagnostics.push(...scanMissingBrandLogo(html, demoScript));
   } catch (_) {}
 
+  // Sanity guard: ensure the loaded page actually contains the expected step containers.
+  // Without this, downstream selector checks produce misleading false negatives.
+  const expectedStepTestids = new Set(demoStepIds.map((id) => `step-${id}`));
+  let domStepIds = [];
+  try {
+    await page.waitForSelector('.step[data-testid]', { timeout: 12000 });
+    domStepIds = await getDomStepInventory(page);
+    const overlap = domStepIds.filter((id) => expectedStepTestids.has(id));
+    if (!domStepIds.length || overlap.length === 0) {
+      throw new Error(
+        `Loaded page step inventory does not match demo-script. expected=${demoStepIds.length}, ` +
+        `dom=${domStepIds.length}, overlap=${overlap.length}`
+      );
+    }
+  } catch (err) {
+    diagnostics.push({
+      stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+      category: 'qa-target-mismatch',
+      severity: 'critical',
+      issue: `Build-QA loaded an unexpected page shape: ${err.message}`,
+      suggestion: 'Verify SCRATCH_DIR points to the current run scratch-app and that .step[data-testid] containers are rendered before walkthrough.',
+    });
+    fs.writeFileSync(DIAG_OUT, JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      recordParity: RECORD_PARITY,
+      headless: HEADLESS,
+      diagnostics,
+      summary: {
+        categoryCounts: { 'qa-target-mismatch': 1 },
+        phaseCounts: { buildQa: 1 },
+        criticalStepIds: [(demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'],
+        totalDiagnostics: diagnostics.length,
+        domStepIds,
+      },
+    }, null, 2));
+    fs.writeFileSync(LEGACY_DIAG_OUT, fs.readFileSync(DIAG_OUT, 'utf8'), 'utf8');
+    throw err;
+  }
+
   const rows = playwrightScript.steps || [];
   console.log(`[build-qa] Walking ${rows.length} playwright row(s)...`);
   const launchStepId = getPlaidLaunchStepId(demoScript);
@@ -1198,6 +1292,20 @@ async function main(opts = {}) {
     const row = rows[i];
     const stepId = row.stepId || row.id;
     const step = stepMap.get(stepId);
+    if (step && typeof stepId === 'string' && stepId.trim()) {
+      try {
+        const preAlign = await forceStepActive(page, stepId);
+        if (!preAlign?.ok) {
+          diagnostics.push({
+            stepId,
+            category: 'navigation-mismatch',
+            severity: 'warning',
+            issue: `Pre-row step alignment failed for "${stepId}" (reason=${preAlign?.reason || 'unknown'}, activeAfter=${preAlign?.activeAfter || 'none'}).`,
+            suggestion: 'Verify generated goToStep wiring and step container IDs in built HTML.',
+          });
+        }
+      } catch (_) {}
+    }
     const result = await runPlaywrightRow(page, row);
     diagnostics.push(...result.errors);
 
@@ -1206,9 +1314,7 @@ async function main(opts = {}) {
     // before build-qa captures the current step's expected state.
     if (step && typeof stepId === 'string' && stepId.trim()) {
       try {
-        await page.evaluate((id) => {
-          if (typeof window.goToStep === 'function') window.goToStep(id);
-        }, stepId);
+        await forceStepActive(page, stepId);
         await page.waitForTimeout(120);
       } catch (_) {}
     }
@@ -1216,9 +1322,7 @@ async function main(opts = {}) {
     // Align active host step with demo-script for Plaid launch: button may live on prior step DOM.
     if (isPlaidLaunchRow(row, launchStepId)) {
       try {
-        await page.evaluate((id) => {
-          if (typeof window.goToStep === 'function') window.goToStep(id);
-        }, stepId);
+        await forceStepActive(page, stepId);
         await page.waitForTimeout(400);
       } catch (_) {}
     }
