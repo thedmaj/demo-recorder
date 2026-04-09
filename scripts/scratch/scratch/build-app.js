@@ -1918,14 +1918,13 @@ body.mobile-shell-enabled .step.mobile-shell-target{
   // Convert direct querySelector(...).addEventListener(...) chains into a safe
   // binder with fallback selector resolution.
   if (html.includes('document.querySelector(') && html.includes('.addEventListener(')) {
+    const hadSafeBindBefore = html.includes('window.__safeBind');
     const bindPattern = /document\.querySelector\(([^)]+)\)\.addEventListener\(\s*(['"][^'"]+['"])\s*,\s*/g;
     const converted = html.replace(bindPattern, 'window.__safeBind($1, $2, ');
     if (converted !== html) {
       html = converted;
-      if (!html.includes('window.__safeBind') && html.includes('</body>')) {
-        // no-op
-      }
-      const safeBindShim = `<script>
+      if (!hadSafeBindBefore && html.includes('</body>')) {
+        const safeBindShim = `<script>
 (function() {
   if (window.__safeBind) return;
   function fallbackByTestid(selector) {
@@ -1953,7 +1952,8 @@ body.mobile-shell-enabled .step.mobile-shell-target{
   };
 })();
 </script>`;
-      html = html.replace('</body>', `${safeBindShim}\n</body>`);
+        html = html.replace('</body>', `${safeBindShim}\n</body>`);
+      }
       console.log('[Build] Hardened generated addEventListener bindings with __safeBind');
     }
   }

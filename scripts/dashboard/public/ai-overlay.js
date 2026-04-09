@@ -658,6 +658,7 @@
     const sid = String(stepId || '').replace(/^step-/, '');
     if (!sid || sid === __lastReportedStep) return;
     __lastReportedStep = sid;
+    if (!window.parent || window.parent === window) return;
     try {
       window.parent && window.parent.postMessage({
         type: 'STORYBOARD_STEP_CHANGED',
@@ -702,6 +703,7 @@
     if (sid) emitStepChanged(sid);
   }, 400);
 
+  if (!window.parent || window.parent === window) return;
   try {
     window.parent && window.parent.postMessage({ type: 'STORYBOARD_PREVIEW_READY', runId: RUN_ID }, DASHBOARD);
   } catch (_) {}

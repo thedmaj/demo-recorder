@@ -229,6 +229,8 @@ describe('createConsumerReportLinkToken CRA bootstrap payload', () => {
       products: ['cra_base_report', 'cra_income_insights'],
       credentialScope: 'cra',
       consumer_report_permissible_purpose: 'EXTENSION_OF_CREDIT',
+      linkMode: 'modal',
+      link_mode: 'modal',
     });
     const userCreateCall = calls.find((c) => String(c.url).includes('/user/create'));
     assert.ok(userCreateCall, 'expected /user/create call');
@@ -242,6 +244,8 @@ describe('createConsumerReportLinkToken CRA bootstrap payload', () => {
     assert.ok(linkTokenCall, 'expected /link/token/create call');
     const linkTokenPayload = JSON.parse(linkTokenCall.init.body);
     assert.equal(linkTokenPayload.user_id, 'usr_test_123');
+    assert.equal(linkTokenPayload.linkMode, undefined);
+    assert.equal(linkTokenPayload.link_mode, undefined);
   });
 
   test('retries /user/create with legacy consumer_report_user_identity when identity field is unsupported', async () => {

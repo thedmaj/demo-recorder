@@ -116,6 +116,36 @@ describe('prompt-templates', () => {
       'Prompt should include host UI metrics leakage guardrail');
   });
 
+  test('buildAppGenerationPrompt() includes AskBill verification for link/token/create payload syntax', () => {
+    const result = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Simple single-page demo app'
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('ASKBILL PLAID LINK TOKEN PARAMETER VERIFICATION'),
+      'Prompt should include AskBill link/token/create parameter verification guardrail');
+    assert.ok(fullText.includes('linkMode/link_mode as INTERNAL wrapper-only variables'),
+      'Prompt should enforce linkMode/link_mode as internal-only fields');
+    assert.ok(fullText.includes('MUST NEVER be included in the payload sent to Plaid /link/token/create'),
+      'Prompt should forbid sending internal mode fields to Plaid');
+  });
+
+  test('buildAppGenerationPrompt() includes global refinement feedback contracts', () => {
+    const result = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Simple single-page demo app'
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('GLOBAL REFINEMENT FEEDBACK (NON-NEGOTIABLE)'),
+      'Prompt should include global refinement feedback block');
+    assert.ok(fullText.includes('STEP ACTIVATION CONTRACT'),
+      'Prompt should require non-empty active-step state');
+    assert.ok(fullText.includes('LINK LAUNCH CONTRACT'),
+      'Prompt should include required link launch selector visibility contract');
+    assert.ok(fullText.includes('API PANEL CONTRACT'),
+      'Prompt should include non-empty API panel contract');
+  });
+
   test('buildScriptGenerationPrompt() lifts slide block out of prompt.txt duplication', () => {
     const promptText = `Intro\n[[SLIDE_OUTPUT_BEGIN]]\nSlide rules here\n[[SLIDE_OUTPUT_END]]\nOutro`;
     const result = templates.buildScriptGenerationPrompt(

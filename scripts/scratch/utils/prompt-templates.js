@@ -1160,6 +1160,13 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - Avoid showing Identity score / Signal score / LOW RISK / ACCEPT / coverage % as decorative stat cards in host steps.\n` +
     `  - Prefer user-meaningful outcomes in host UI: "Account funded", "Transfer posted", "Verified", "Next step".\n` +
     `  - Internal model metrics belong in Plaid insight/slide contexts, not core customer UI chrome.\n` +
+    `GLOBAL REFINEMENT FEEDBACK (NON-NEGOTIABLE):\n` +
+    `  - STEP ACTIVATION CONTRACT: On initial load, exactly one .step must be active, and getCurrentStep() must not return empty during walkthrough.\n` +
+    `  - NAVIGATION CONTRACT: goToStep(id) must activate [data-testid="step-\${id}"] reliably and never leave active step as none.\n` +
+    `  - SELECTOR CONTRACT: Every selector used by playwright-script.json must exist and be visible on the target step before interaction.\n` +
+    `  - LINK LAUNCH CONTRACT: Required launch selectors (apply-financing-btn, continue-application-btn, link-external-account-btn) must be present and visible when referenced.\n` +
+    `  - API PANEL CONTRACT: For API insight steps, #api-response-panel must render non-empty JSON from step API data when shown; never display an empty visible panel.\n` +
+    `  - API STORY ALIGNMENT CONTRACT: Endpoint label, response fields, and narration must describe the same API context.\n` +
     `- All interactive elements must have data-testid attributes in kebab-case that match\n` +
     `  the interaction.target field in demo-script.json exactly.\n` +
     `CONSOLE ERROR TRIAGE (MANDATORY):\n` +
@@ -1168,6 +1175,14 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - If the error message indicates unrecognized request fields, strip helper keys (e.g. linkMode, link_mode)\n` +
     `    from the token request payload and retry once with sanitized body.\n` +
     `  - Never fail silently; expose a clear console.error with remediation context.\n` +
+    `ASKBILL PLAID LINK TOKEN PARAMETER VERIFICATION (NON-NEGOTIABLE):\n` +
+    `  - Before finalizing any /api/create-link-token request body in generated app code, verify Plaid /link/token/create\n` +
+    `    request parameter names and nesting against AskBill.\n` +
+    `  - Use AskBill-verified exact field syntax (for example: client_name, products, user.client_user_id,\n` +
+    `    country_codes, language, and CRA-specific fields only when explicitly required).\n` +
+    `  - Treat linkMode/link_mode as INTERNAL wrapper-only variables used by local server logic.\n` +
+    `    They MUST NEVER be included in the payload sent to Plaid /link/token/create.\n` +
+    `  - If uncertain about any field name or location, re-check AskBill and omit unknown keys rather than guessing.\n` +
     `- Plaid Link event names to use verbatim:\n` +
     `    OPEN, LAYER_READY, LAYER_NOT_AVAILABLE, SELECT_INSTITUTION, SELECT_BRAND,\n` +
     `    SELECT_DEGRADED_INSTITUTION, ERROR, EXIT, HANDOFF, TRANSITION_VIEW,\n` +
