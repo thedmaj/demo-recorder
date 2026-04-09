@@ -31,6 +31,11 @@ const {
   snapshotRunInputs,
   writeRunDirMarker,
 } = require('./utils/run-io');
+const {
+  initPipelineBuildLog,
+  appendPipelineLogSection,
+  appendPipelineLogJson,
+} = require('./utils/pipeline-logger');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -420,10 +425,19 @@ function makeTimer() {
       console.log(`\n${'─'.repeat(60)}`);
       console.log(`[Stage: ${stage}] Starting...`);
       console.log(`${'─'.repeat(60)}`);
+      appendPipelineLogSection(`[MILESTONE] Stage ${stage} started`, [
+        `stage=${stage}`,
+        'status=started',
+      ]);
     },
     endStage(stage) {
       const elapsed = ((Date.now() - (stageStart[stage] || Date.now())) / 1000).toFixed(1);
       console.log(`[Stage: ${stage}] Done in ${elapsed}s`);
+      appendPipelineLogSection(`[MILESTONE] Stage ${stage} completed`, [
+        `stage=${stage}`,
+        `status=completed`,
+        `elapsedSeconds=${elapsed}`,
+      ]);
     },
     totalElapsed() {
       return ((Date.now() - pipelineStart) / 1000).toFixed(1);
@@ -660,6 +674,12 @@ async function runStage(stageName, fn, timer) {
   } catch (err) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     console.error(`\n[Stage: ${stageName}] ERROR after ${elapsed}s: ${err.message}`);
+    appendPipelineLogSection(`[MILESTONE] Stage ${stageName} failed`, [
+      `stage=${stageName}`,
+      'status=failed',
+      `elapsedSeconds=${elapsed}`,
+      `error=${err.message}`,
+    ]);
     if (err.stack) console.error(err.stack.split('\n').slice(1, 4).join('\n'));
 
     // Critical errors always halt — downstream stages would produce garbage output.
@@ -2399,9 +2419,27 @@ async function main() {
   });
   process.env.PIPELINE_RUN_ID = runManifest.runId;
   process.env.PIPELINE_RUN_MANIFEST = path.join(versionedDir, 'run-manifest.json');
+  process.env.PIPELINE_BUILD_LOG_FILE = path.join(versionedDir, 'artifacts', 'logs', 'pipeline-build.log.md');
+  initPipelineBuildLog({
+    runDir: versionedDir,
+    runId: runManifest.runId,
+    mode,
+    fromStage: effectiveFromStage || null,
+    toStage: endIdx == null ? null : STAGES[endIdx],
+    promptSnippet: promptText ? promptText.substring(0, 200).replace(/\n/g, ' ') : null,
+  });
+  appendPipelineLogJson('[RUN] Invocation context', {
+    runId: runManifest.runId,
+    runDir: versionedDir,
+    mode,
+    runNameStem,
+    promptFingerprint: promptFingerprint || null,
+    cli: { cliMode, fromStage, toStage, explicitRunId, noTouchup, recordMode },
+  }, { runDir: versionedDir });
   if (autoFresh) {
     applyFreshCleanup(versionedDir);
     console.log('[Orchestrator] Applied fresh cleanup for first-use prompt run.');
+    appendPipelineLogSection('[RUN] Fresh cleanup', ['autoFresh=true', 'status=applied'], { runDir: versionedDir });
   }
   recordPromptUse({ registry: promptRegistry, fingerprint: promptFingerprint, runDir: versionedDir });
   console.log(`[Orchestrator] Run directory (isolated): ${versionedDir}`);
@@ -2422,6 +2460,12 @@ async function main() {
     ? STAGES.slice(startIdx)
     : STAGES.slice(startIdx, endIdx + 1);
   console.log(`[Orchestrator] Mode: ${mode.toUpperCase()} | Stages: ${stagePlan.join(' → ')}`);
+  appendPipelineLogSection('[RUN] Stage plan', [
+    `mode=${mode}`,
+    `fromIndex=${startIdx}`,
+    `toIndex=${endIdx == null ? 'end' : endIdx}`,
+    `stages=${stagePlan.join(' -> ')}`,
+  ], { runDir: versionedDir });
   console.log('');
 
   // Ensure run directory exists
@@ -2449,6 +2493,10 @@ async function main() {
   console.log(` Output: ${versionedDir}`);
   console.log('='.repeat(60));
   console.log('');
+  appendPipelineLogSection('[RUN] Pipeline complete', [
+    `totalSeconds=${total}`,
+    `outputDir=${versionedDir}`,
+  ], { runDir: versionedDir });
 }
 
 main().catch(err => {

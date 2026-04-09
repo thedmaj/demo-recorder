@@ -29,6 +29,11 @@ const {
   resolveResearchMode,
   effectiveResearchMode,
 } = require('./utils/plaid-skill-loader');
+const {
+  appendPipelineLogSection,
+  appendPipelineLogJson,
+  appendResearchToolExchange,
+} = require('./utils/pipeline-logger');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const OUT_DIR      = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
@@ -699,6 +704,16 @@ async function runResearch(context, productSlug, researchOpts = {}) {
   const { system, messages: initialMessages } = buildResearchMessages(context, productSlug, researchOpts);
 
   console.log(`Starting product research (mode=${mode}) with Claude + AskBill + Glean...\n`);
+  appendPipelineLogSection('[RESEARCH] Started', [
+    `mode=${mode}`,
+    `contextType=${context.type}`,
+    `productSlug=${productSlug || 'unknown'}`,
+  ], { runDir: OUT_DIR });
+  appendPipelineLogJson('[RESEARCH] Prompt scaffolding', {
+    mode,
+    systemPromptPreview: String(system || '').slice(0, 3000),
+    initialMessageCount: Array.isArray(initialMessages) ? initialMessages.length : 0,
+  }, { runDir: OUT_DIR });
 
   const messages = [...initialMessages];
   let iteration = 0;
@@ -755,6 +770,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       const synthesizeBlock = toolBlocks.find(b => b.name === 'synthesize_research');
       if (synthesizeBlock) {
         console.log('\nResearch complete — structured synthesis received via tool call.\n');
+        appendPipelineLogJson('[RESEARCH] Structured synthesis (tool)', synthesizeBlock.input, { runDir: OUT_DIR });
         return { structured: synthesizeBlock.input };
       }
 
@@ -790,6 +806,11 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       }
 
       console.log(`  → ${toolBlocks.length} tool call(s): ${toolBlocks.map(b => `${b.name}("${(b.input.question || b.input.query || '').substring(0, 50)}")`).join(', ')}`);
+      appendPipelineLogSection('[RESEARCH] Tool batch', [
+        `iteration=${iteration}`,
+        `toolCount=${toolBlocks.length}`,
+        `tools=${toolBlocks.map((b) => b.name).join(',')}`,
+      ], { runDir: OUT_DIR });
 
       // Add assistant message with all content blocks
       messages.push({ role: 'assistant', content: response.content });
@@ -801,6 +822,13 @@ async function runResearch(context, productSlug, researchOpts = {}) {
             const result = await executeTool(block.name, block.input);
             const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
             console.log(`  ✓ ${block.name} → ${resultStr.length} chars`);
+            appendResearchToolExchange({
+              iteration,
+              toolName: block.name,
+              query: block.input.question || block.input.query || '',
+              response: resultStr,
+              maxChars: 8000,
+            }, { runDir: OUT_DIR });
             const cap =
               block.name === 'glean_chat'
                 ? 1800
@@ -814,6 +842,12 @@ async function runResearch(context, productSlug, researchOpts = {}) {
             };
           } catch (err) {
             console.warn(`  ✗ ${block.name} error: ${err.message}`);
+            appendResearchToolExchange({
+              iteration,
+              toolName: block.name,
+              query: block.input.question || block.input.query || '',
+              error: err.message,
+            }, { runDir: OUT_DIR });
             return {
               type: 'tool_result',
               tool_use_id: block.id,
@@ -833,6 +867,10 @@ async function runResearch(context, productSlug, researchOpts = {}) {
 
     if (response.stop_reason === 'max_tokens') {
       console.warn('Research response hit max_tokens; attempting constrained synthesis recovery.');
+      appendPipelineLogSection('[RESEARCH] Max token recovery', [
+        `iteration=${iteration}`,
+        `recoveries=${maxTokenRecoveries + 1}/${MAX_TOKEN_RECOVERIES}`,
+      ], { runDir: OUT_DIR });
       if (maxTokenRecoveries >= MAX_TOKEN_RECOVERIES) {
         console.warn('Max-token recovery exhausted; stopping loop with fallback.');
         const textBlock = response.content.find((b) => b.type === 'text');
@@ -890,6 +928,10 @@ async function main() {
   } else {
     console.log(`  Product: ${context.content.product}\n`);
   }
+  appendPipelineLogSection('[RESEARCH] Context loaded', [
+    `contextType=${context.type}`,
+    `promptPreview=${context.type === 'prompt' ? context.content.substring(0, 180).replace(/\n/g, ' ') : '(config)'}`,
+  ], { runDir: OUT_DIR });
 
   const productFamilyEarly = inferProductFamilyFromText(promptContent);
   let solutionsMasterContext = null;
@@ -1059,6 +1101,16 @@ async function main() {
   console.log(`  Value props: ${(research.synthesizedInsights.valuePropositions || []).length}`);
   console.log(`  Internal docs: ${(research.internalKnowledge || []).length}`);
   console.log(`  Link events: ${(research.apiSpec.linkEvents || []).length}\n`);
+  appendPipelineLogJson('[RESEARCH] Final output summary', {
+    outputFile: OUTPUT_FILE,
+    product: research.product || null,
+    researchMode: research.researchMode || mode,
+    featureCount: (research.synthesizedInsights.keyFeatures || []).length,
+    valuePropCount: (research.synthesizedInsights.valuePropositions || []).length,
+    internalDocCount: (research.internalKnowledge || []).length,
+    linkEventCount: (research.apiSpec.linkEvents || []).length,
+    gapQuestions: Array.isArray(research.gapQuestions) ? research.gapQuestions : [],
+  }, { runDir: OUT_DIR });
 
   const runId = process.env.PIPELINE_RUN_ID || path.basename(process.env.PIPELINE_RUN_DIR || '') || null;
   if (!research.skipResearchAgent) {

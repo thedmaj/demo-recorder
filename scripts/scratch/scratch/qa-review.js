@@ -31,6 +31,10 @@ const { spawnSync }     = require('child_process');
 
 const { buildQAReviewPrompt }  = require('../utils/prompt-templates');
 const { screenSteps }          = require('../utils/embed-qa-screener');
+const {
+  appendPipelineLogSection,
+  appendPipelineLogJson,
+} = require('../utils/pipeline-logger');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -332,6 +336,13 @@ async function main(opts = {}) {
 
   console.log(`[QA] Starting QA review (iteration ${iteration})${buildOnly ? ' [build-only — no recording]' : ''}`);
   console.log(`[QA] Product: ${demoMeta.product || '(unknown)'} | ${timing.steps.length} steps | threshold: ${QA_PASS_THRESHOLD}/100`);
+  appendPipelineLogSection('[QA] Review started', [
+    `iteration=${iteration}`,
+    `qaSource=${buildOnly ? 'build-walkthrough' : 'recording'}`,
+    `product=${demoMeta.product || 'unknown'}`,
+    `stepCount=${timing.steps.length}`,
+    `threshold=${QA_PASS_THRESHOLD}`,
+  ], { runDir: OUT_DIR });
 
   // ── Step 1: Extract frames ─────────────────────────────────────────────────
   if (!buildOnly) {
@@ -447,6 +458,14 @@ async function main(opts = {}) {
       allStepScores[stepId] = result.score;
       const label = isLivePlaidLaunchStep ? 'LIVE-PLAID-AUTO' : 'LIVE-PLAID-SIM-AUTO';
       console.log(`[QA] Step ${stepId}: 85/100 [${label}]`);
+      appendPipelineLogJson('[QA] Step result', {
+        stepId,
+        score: result.score,
+        passed: true,
+        reason: result._note || label,
+        issues: [],
+        categories: [],
+      }, { runDir: OUT_DIR });
       continue;
     }
 
@@ -467,6 +486,14 @@ async function main(opts = {}) {
       stepResults.push(result);
       allStepScores[stepId] = result.score;
       console.log(`[QA] Step ${stepId}: ${result.score}/100 [EMBED-SCREENED sim=${screenResult.similarity}]`);
+      appendPipelineLogJson('[QA] Step result', {
+        stepId,
+        score: result.score,
+        passed: true,
+        reason: result._note || 'Embedding pre-screen passed',
+        issues: [],
+        categories: result.categories || [],
+      }, { runDir: OUT_DIR });
       continue;
     }
 
@@ -494,6 +521,19 @@ async function main(opts = {}) {
         console.log(`       Issue: ${issue}`);
       }
     }
+    appendPipelineLogJson('[QA] Step result', {
+      stepId,
+      score: result.score,
+      passed: !result.critical && result.score >= 80,
+      critical: !!result.critical,
+      issues: result.issues || [],
+      suggestions: result.suggestions || [],
+      categories: result.categories || [],
+      explanation:
+        result.issues && result.issues.length
+          ? 'Step failed due to listed issues and/or critical diagnostics.'
+          : 'Step passed with no blocking QA issues.',
+    }, { runDir: OUT_DIR });
   }
 
   // ── Step 4: Aggregate results ─────────────────────────────────────────────
@@ -533,6 +573,21 @@ async function main(opts = {}) {
   const verdict = passed ? 'PASSED' : 'FAILED';
   console.log(`[QA] Overall: ${overallScore}/100 — ${verdict}`);
   console.log(`[QA] Written: out/qa-report-${iteration}.json`);
+  appendPipelineLogJson('[QA] Overall result', {
+    iteration,
+    overallScore,
+    threshold: QA_PASS_THRESHOLD,
+    passed,
+    qaSource: qaReport.qaSource,
+    stepsWithIssues: stepsWithIssues.map((s) => ({
+      stepId: s.stepId,
+      score: s.score,
+      critical: !!s.critical,
+      issueCount: Array.isArray(s.issues) ? s.issues.length : 0,
+      issues: s.issues || [],
+    })),
+    issueCategoryCounts: qaReport.issueCategoryCounts,
+  }, { runDir: OUT_DIR });
 
   if (!passed) {
     console.log(`[QA] ${stepsWithIssues.length} step(s) need improvement:`);

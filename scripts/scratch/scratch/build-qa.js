@@ -30,6 +30,10 @@ const { startServer } = require('../utils/app-server');
 const { gleanChat } = require('../utils/mcp-clients');
 const { loadTimingContract } = require('../../timing-contract');
 const { requireRunDir, getRunLayout } = require('../utils/run-io');
+const {
+  appendPipelineLogSection,
+  appendPipelineLogJson,
+} = require('../utils/pipeline-logger');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const OUT_DIR      = requireRunDir(PROJECT_ROOT, 'build-qa');
@@ -1483,6 +1487,13 @@ async function main(opts = {}) {
     },
   }, null, 2));
   fs.writeFileSync(LEGACY_DIAG_OUT, fs.readFileSync(DIAG_OUT, 'utf8'), 'utf8');
+  appendPipelineLogJson('[BUILD-QA] Diagnostics summary', {
+    diagnosticsFile: DIAG_OUT,
+    totalDiagnostics: normalizedDiagnostics.length,
+    categoryCounts,
+    phaseCounts,
+    criticalStepIds: [...criticalStepIds],
+  }, { runDir: OUT_DIR });
   delete require.cache[require.resolve('./qa-review')];
   const qaReview = require('./qa-review');
 
@@ -1503,6 +1514,10 @@ async function main(opts = {}) {
       const outPath = path.join(OUT_DIR, 'qa-report-build.json');
       fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
       console.warn('[build-qa] Forced fail: blank value-summary-slide guardrail triggered');
+      appendPipelineLogSection('[BUILD-QA] Guardrail override', [
+        'guardrail=blank-slide',
+        `overrideReason=${report.overrideReason}`,
+      ], { runDir: OUT_DIR });
     }
   } catch (_) {}
 
@@ -1514,14 +1529,38 @@ async function main(opts = {}) {
       const outPath = path.join(OUT_DIR, 'qa-report-build.json');
       fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
       console.warn('[build-qa] Forced fail: timing governor guardrail triggered');
+      appendPipelineLogSection('[BUILD-QA] Guardrail override', [
+        'guardrail=timing-governor',
+        `overrideReason=${report.overrideReason}`,
+      ], { runDir: OUT_DIR });
     }
   } catch (_) {}
 
   const strict = process.env.BUILD_QA_STRICT === 'true' || process.env.BUILD_QA_STRICT === '1';
   if (strict && report && !report.passed) {
     console.error('[build-qa] BUILD_QA_STRICT: QA did not pass threshold');
+    appendPipelineLogSection('[BUILD-QA] Strict mode failure', [
+      'strict=true',
+      'passed=false',
+      'exitCode=2',
+    ], { runDir: OUT_DIR });
     process.exit(2);
   }
+
+  appendPipelineLogJson('[BUILD-QA] Final result', {
+    passed: !!(report && report.passed),
+    overallScore: report ? report.overallScore : null,
+    passThreshold: report ? report.passThreshold : null,
+    overrideReason: report ? report.overrideReason || null : null,
+    stepsWithIssues: report && Array.isArray(report.stepsWithIssues)
+      ? report.stepsWithIssues.map((s) => ({
+          stepId: s.stepId,
+          score: s.score,
+          critical: !!s.critical,
+          issues: s.issues || [],
+        }))
+      : [],
+  }, { runDir: OUT_DIR });
 
   return report;
 }
