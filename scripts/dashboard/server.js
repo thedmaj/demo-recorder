@@ -15,6 +15,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const INPUTS_DIR = path.join(PROJECT_ROOT, 'inputs');
 const OUT_DIR = path.join(PROJECT_ROOT, 'out');
 const DEMOS_DIR = path.join(OUT_DIR, 'demos');
+const DEMO_APP_NAMES_FILE = path.join(DEMOS_DIR, '.dashboard-demo-names.json');
 const ENV_FILE = path.join(PROJECT_ROOT, '.env');
 
 const {
@@ -88,6 +89,25 @@ function safeReadJson(file) {
   } catch (_) {
     return null;
   }
+}
+
+function readDemoAppNames() {
+  const parsed = safeReadJson(DEMO_APP_NAMES_FILE);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  return parsed;
+}
+
+function writeDemoAppNames(map) {
+  fs.mkdirSync(DEMOS_DIR, { recursive: true });
+  const tmpPath = DEMO_APP_NAMES_FILE + '.tmp';
+  fs.writeFileSync(tmpPath, JSON.stringify(map || {}, null, 2), 'utf8');
+  fs.renameSync(tmpPath, DEMO_APP_NAMES_FILE);
+}
+
+function resolveDemoDisplayName(runId, namesMap) {
+  const raw = namesMap && typeof namesMap === 'object' ? namesMap[runId] : null;
+  const v = typeof raw === 'string' ? raw.trim() : '';
+  return v || runId;
 }
 
 function getRunDir(runId) {
@@ -380,6 +400,7 @@ const RUNS_CACHE_TTL = 2000; // ms — burst-safe; invalidated by FS watch event
 function invalidateRunsCache() { _runsCache = null; }
 
 function buildRunsList() {
+  const namesMap = readDemoAppNames();
   const dirs = safeReaddir(DEMOS_DIR)
     .filter(name => {
       try { return fs.statSync(path.join(DEMOS_DIR, name)).isDirectory(); } catch (_) { return false; }
@@ -392,7 +413,14 @@ function buildRunsList() {
     const qa = getLatestQaReport(runId);
     const completedStages = getCompletedStages(runId);
     const script = getRunScriptSummary(runId);
-    return { runId, artifacts, qaScore: qa ? qa.overallScore : null, completedStages, script };
+    return {
+      runId,
+      displayName: resolveDemoDisplayName(runId, namesMap),
+      artifacts,
+      qaScore: qa ? qa.overallScore : null,
+      completedStages,
+      script,
+    };
   });
 }
 
@@ -411,16 +439,17 @@ app.get('/api/runs', (req, res) => {
 
 app.get('/api/runs/:runId', (req, res) => {
   try {
-    const dir = getRunDir(req.params.runId);
+    const runId = req.params.runId;
+    const dir = getRunDir(runId);
     if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Run not found' });
 
-    const artifacts = getRunArtifacts(req.params.runId);
-    const qa = getLatestQaReport(req.params.runId);
-    const script = getRunScriptSummary(req.params.runId);
-    const completedStages = getCompletedStages(req.params.runId);
+    const artifacts = getRunArtifacts(runId);
+    const qa = getLatestQaReport(runId);
+    const script = getRunScriptSummary(runId);
+    const completedStages = getCompletedStages(runId);
     const lastCompletedStage = completedStages.length > 0
       ? completedStages[completedStages.length - 1]
-      : detectLastCompletedStage(req.params.runId);
+      : detectLastCompletedStage(runId);
     const resumeFromStage = nextStageAfter(lastCompletedStage);
 
     const allFiles = safeReaddir(dir);
@@ -431,8 +460,9 @@ app.get('/api/runs/:runId', (req, res) => {
       } catch (_) { return null; }
     }).filter(Boolean);
 
+    const displayName = resolveDemoDisplayName(runId, readDemoAppNames());
     res.json({
-      runId: req.params.runId, artifacts,
+      runId, displayName, artifacts,
       qaScore: qa ? qa.overallScore : null, manifest,
       lastCompletedStage, resumeFromStage, completedStages, script,
     });
@@ -2437,6 +2467,7 @@ function invalidateDemoAppsCache() { _demoAppsRunIds = null; }
 
 app.get('/api/demo-apps', (req, res) => {
   try {
+    const namesMap = readDemoAppNames();
     const now = Date.now();
     if (!_demoAppsRunIds || now - _demoAppsScannedAt > DEMO_APPS_CACHE_TTL) {
       _demoAppsRunIds = safeReaddir(DEMOS_DIR)
@@ -2452,12 +2483,40 @@ app.get('/api/demo-apps', (req, res) => {
     // Always reflect live running state (no FS needed)
     const apps = _demoAppsRunIds.map(runId => ({
       runId,
+      displayName: resolveDemoDisplayName(runId, namesMap),
       running: demoAppServers.has(runId),
       url: demoAppServers.get(runId)?.url || null,
       port: demoAppServers.get(runId)?.port || null,
     }));
     res.json({ apps });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/demo-apps/:runId/rename', (req, res) => {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'runId required' });
+    const runDir = getRunDir(runId);
+    const hasApp = fs.existsSync(path.join(runDir, 'scratch-app', 'index.html'));
+    if (!hasApp) return res.status(404).json({ error: 'Demo app not found for runId' });
+
+    const input = req.body && typeof req.body.displayName === 'string' ? req.body.displayName : '';
+    const next = input.trim().replace(/\s+/g, ' ');
+    if (next.length > 120) return res.status(400).json({ error: 'displayName must be 120 chars or fewer' });
+
+    const namesMap = readDemoAppNames();
+    if (!next || next === runId) {
+      delete namesMap[runId];
+    } else {
+      namesMap[runId] = next;
+    }
+    writeDemoAppNames(namesMap);
+    invalidateRunsCache();
+    invalidateDemoAppsCache();
+    res.json({ ok: true, runId, displayName: resolveDemoDisplayName(runId, namesMap) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/demo-apps/launch', async (req, res) => {

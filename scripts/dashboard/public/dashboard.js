@@ -321,8 +321,9 @@
       storyboardLivePreviewUrl = null;
       storyboardSelectedStepId = null;
       // Update button label
+      const currentRun = data.runs.find(r => r.runId === currentRunId) || {};
       const label = document.getElementById('build-selector-label');
-      if (label) label.textContent = currentRunId;
+      if (label) label.textContent = currentRun.displayName || currentRunId;
       // Render panel content
       renderBuildPanel(data.runs);
       // Set up 10s panel refresh timer
@@ -378,7 +379,7 @@
         storyboardSelectedStepId = null;
         localStorage.setItem('lastRunId', runId);
         const label = document.getElementById('build-selector-label');
-        if (label) label.textContent = runId;
+        if (label) label.textContent = btn.dataset.displayName || runId;
         loadCurrentRun();
         closeBuildPanel();
       });
@@ -395,7 +396,7 @@
         storyboardSelectedStepId = null;
         localStorage.setItem('lastRunId', runId);
         const label = document.getElementById('build-selector-label');
-        if (label) label.textContent = runId;
+        if (label) label.textContent = card.dataset.displayName || runId;
         loadCurrentRun();
         closeBuildPanel();
       });
@@ -409,6 +410,7 @@
 
   function buildCardHtml(r, isLiveSection) {
     const runId = r.runId;
+    const displayName = r.displayName || runId;
     const isActive = runId === currentRunId;
     const isLive = !!(r.isRunning || r.currentStage);
     const completedCount = (r.completedStages || []).length;
@@ -433,15 +435,16 @@
     const qaText = r.qaScore != null ? `QA: ${r.qaScore}` : '';
     const stageText = isLive && r.currentStage ? `Stage: ${r.currentStage}` : '';
     const loadBtn = !isActive
-      ? `<button class="build-card-load-btn" data-run-id="${esc(runId)}">Load</button>`
+      ? `<button class="build-card-load-btn" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">Load</button>`
       : `<span style="font-size:11px;color:#00A67E">Current</span>`;
 
     return `
-      <div class="build-card ${isActive ? 'active' : ''} ${isLive ? 'live' : ''}" data-run-id="${esc(runId)}">
+      <div class="build-card ${isActive ? 'active' : ''} ${isLive ? 'live' : ''}" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">
         <div class="build-card-header">
-          <span class="build-card-id">${esc(runId)}</span>
+          <span class="build-card-id">${esc(displayName)}</span>
           <span class="build-card-badge ${badgeClass}">${badgeText}</span>
         </div>
+        ${displayName !== runId ? `<div class="build-card-meta" style="margin-top:-2px;margin-bottom:4px">Run ID: ${esc(runId)}</div>` : ''}
         ${metaText ? `<div class="build-card-meta">${esc(metaText)}</div>` : ''}
         <div class="build-progress-bar">${pipsHtml}</div>
         <div class="build-card-footer">
@@ -4364,6 +4367,7 @@
     apps.forEach(app => {
       const card = document.createElement('div');
       card.dataset.runId = app.runId;
+      card.dataset.displayName = app.displayName || app.runId;
       card.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;display:flex;align-items:center;gap:12px';
 
       const statusDot = app.running
@@ -4377,7 +4381,19 @@
       card.innerHTML = `
         ${statusDot}
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(app.runId)}</div>
+          <div class="demo-app-name-row" style="display:flex;align-items:center;gap:8px;min-width:0">
+            <div class="demo-app-display-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(app.displayName || app.runId)}</div>
+            <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Rename</button>
+          </div>
+          <div class="demo-app-rename-row" style="display:none;align-items:center;gap:6px;margin-top:6px">
+            <input class="demo-app-rename-input" type="text" maxlength="120" value="${esc(app.displayName || app.runId)}" style="flex:1;min-width:0;padding:5px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.16);border-radius:5px;color:#fff;font-size:12px">
+            <button class="demo-app-rename-save-btn" data-run="${esc(app.runId)}" type="button" style="padding:4px 8px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">Save</button>
+            <button class="demo-app-rename-cancel-btn" type="button" style="padding:4px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer">Cancel</button>
+          </div>
+          ${app.displayName && app.displayName !== app.runId
+            ? `<div style="font-size:11px;color:rgba(255,255,255,0.3)">Run ID: ${esc(app.runId)}</div>`
+            : ''
+          }
           ${app.running && app.url
             ? `<a href="${esc(app.url)}" target="_blank" style="font-size:11px;color:#00A67E;text-decoration:none">${esc(app.url)}</a>`
             : `<span style="font-size:11px;color:rgba(255,255,255,0.3)">Not running</span>`
@@ -4430,6 +4446,77 @@
     // Open buttons
     list.querySelectorAll('.demo-app-open-btn').forEach(btn => {
       btn.addEventListener('click', () => window.open(btn.dataset.url, '_blank'));
+    });
+
+    // Inline rename controls
+    list.querySelectorAll('.demo-app-rename-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('[data-run-id]');
+        if (!card) return;
+        const row = card.querySelector('.demo-app-rename-row');
+        const input = card.querySelector('.demo-app-rename-input');
+        if (!row || !input) return;
+        row.style.display = 'flex';
+        btn.style.display = 'none';
+        input.focus();
+        input.select();
+      });
+    });
+    list.querySelectorAll('.demo-app-rename-cancel-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const card = btn.closest('[data-run-id]');
+        if (!card) return;
+        const row = card.querySelector('.demo-app-rename-row');
+        const editBtn = card.querySelector('.demo-app-rename-edit-btn');
+        const input = card.querySelector('.demo-app-rename-input');
+        const label = card.querySelector('.demo-app-display-name');
+        if (input && label) input.value = label.textContent || card.dataset.runId || '';
+        if (row) row.style.display = 'none';
+        if (editBtn) editBtn.style.display = '';
+      });
+    });
+    list.querySelectorAll('.demo-app-rename-save-btn').forEach(btn => {
+      const runId = btn.dataset.run;
+      const save = async () => {
+        const card = btn.closest('[data-run-id]');
+        if (!card) return;
+        const row = card.querySelector('.demo-app-rename-row');
+        const editBtn = card.querySelector('.demo-app-rename-edit-btn');
+        const input = card.querySelector('.demo-app-rename-input');
+        if (!input || !runId) return;
+        const nextName = input.value.trim();
+        setBtnLoading(btn, true, 'Saving…');
+        try {
+          const result = await apiPost(`/api/demo-apps/${encodeURIComponent(runId)}/rename`, { displayName: nextName });
+          const displayName = result.displayName || runId;
+          const labelEl = card.querySelector('.demo-app-display-name');
+          if (labelEl) labelEl.textContent = displayName;
+          if (row) row.style.display = 'none';
+          if (editBtn) editBtn.style.display = '';
+          if (currentRunId === runId) {
+            const runLabel = document.getElementById('build-selector-label');
+            if (runLabel) runLabel.textContent = displayName;
+          }
+          showToast('Demo app renamed', 'success');
+          refreshBuildPanel();
+          setTimeout(() => loadDemoApps(true), 150);
+        } catch (err) {
+          showToast(`Rename failed: ${err.message}`, 'error');
+          setBtnLoading(btn, false, 'Save');
+        }
+      };
+      btn.addEventListener('click', save);
+      const card = btn.closest('[data-run-id]');
+      const input = card ? card.querySelector('.demo-app-rename-input') : null;
+      if (input) {
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); save(); }
+          if (e.key === 'Escape') {
+            const cancelBtn = card.querySelector('.demo-app-rename-cancel-btn');
+            if (cancelBtn) cancelBtn.click();
+          }
+        });
+      }
     });
   }
 
