@@ -44,9 +44,17 @@ When generating a slide step, use:
   - `#api-response-content` inside `.side-panel-body`
 - Do not create duplicate raw JSON containers inside slide layouts (no inline `*-json-panel`, no right-column raw payload blocks in `.slide-root`).
 - For API-relevant steps with `apiResponse` in `demo-script.json`, wire panel updates through the shared step contract (`goToStep` + `window._stepApiResponses`), not ad hoc per-step display logic.
-- Default behavior: `#api-response-panel` is hidden on initial page load (`display:none`).
-- On API-relevant insight/slide steps, show `#api-response-panel` and render JSON immediately visible (no JSON-body collapse state).
-- Do **not** add JSON show/hide controls (no `api-panel-toggle`, no `window.toggleApiPanel`, no `api-json-collapsed` contract).
+- Default behavior: `#api-response-panel` is hidden/collapsed on initial page load (`display:none`).
+- Add a JSON side-panel toggle control (`data-testid="api-panel-toggle"` + `window.toggleApiPanel()`).
+- On API-relevant insight/slide steps, hydrate payload data but keep panel collapsed until toggled open.
+- When opened, render JSON expanded by default via renderjson (deep expansion level, not collapsed tree by default).
+- Use a global runtime config constant for all builds (for example `window.__API_PANEL_CONFIG`) to centralize:
+  - collapsed-by-default behavior
+  - JSON expansion level
+  - dynamic side-panel auto-resize
+- Ensure expanded JSON does not bleed off page:
+  - `.side-panel-body` supports both vertical and horizontal scrolling
+  - panel width can resize dynamically within viewport bounds
 - `.side-panel-body` must be vertically scrollable for long payloads (`overflow-y:auto`) so large responses remain readable.
 - Use `renderjson` for API payload rendering:
   - `<script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>`

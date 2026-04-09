@@ -154,3 +154,52 @@
   line-height:1.5;
 }
 
+/* Global API side panel (collapsed by default, expanded JSON) */
+.side-panel{
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 420px;
+  min-width: 360px;
+  max-width: calc(100vw - 32px);
+  height: 100vh;
+  background: rgba(13,17,23,0.95);
+  backdrop-filter: blur(8px);
+  border-left: 1px solid rgba(255,255,255,0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 2000;
+}
+.side-panel-header{
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+#api-panel-toggle{
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+}
+.side-panel-body{
+  padding: 14px 16px;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+#api-response-content{
+  min-width: 0;
+}
+#api-response-content *{
+  max-width: 100%;
+}
+

@@ -1065,8 +1065,10 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `- Full-viewport Plaid *insight* steps (*-insight, API reveal) are NOT slides unless the step explicitly uses \`.slide-root\`. Use insight layout + global api-response-panel per DOM contract — not slide template chrome.\n` +
         `- Slides exist only to explain behind-the-scenes API/data; they are Plaid-styled; the rest of the app is customer-branded.\n` +
         `- For any API storytelling context, keep one raw JSON mechanism only: global \`#api-response-panel\`. Never render duplicate inline raw JSON containers in \`.slide-root\`.\n` +
-        `- If a step has \`apiResponse\`, the panel stays hidden on initial page load, then appears with JSON immediately visible when that step is active.\n` +
-        `- Do not add JSON show/hide controls (no \`api-panel-toggle\`, no \`window.toggleApiPanel\`, no \`api-json-collapsed\`).\n` +
+        `- If a step has \`apiResponse\`, keep the side panel collapsed/hidden by default on initial page load.\n` +
+        `- Include a JSON panel toggle control (\`data-testid="api-panel-toggle"\` + \`window.toggleApiPanel()\`) so viewers can show/hide the panel.\n` +
+        `- When panel is shown, render JSON expanded by default via renderjson (deep expand level; no hidden nested payload by default).\n` +
+        `- Add a global API panel config constant for runtime behavior (collapsed-by-default, expanded JSON level, auto-resize guardrails).\n` +
         `- Use renderjson for payload rendering and keep JSON colors consistent with Plaid slide styling.\n` +
         `- Slide content must summarize only high-signal attributes (3-6 bullets) that support the story decision; raw payload remains in global panel.\n` +
         `- API request/response shown in panel must match the slide's claim and endpoint context (no mismatched endpoint narrative).\n` +
@@ -1137,11 +1139,13 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - Use an <img> tag for Plaid logo usage. Do not hotlink Plaid logo from remote URLs.\n` +
     `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses.\n` +
     `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
-    `    - Default UX: keep #api-response-panel hidden on initial page load (display:none).\n` +
-    `    - On API insight/slide steps, show the panel and render JSON body immediately visible.\n` +
+    `    - Default UX: keep #api-response-panel hidden/collapsed on initial page load (display:none).\n` +
+    `    - Add a JSON panel toggle button (data-testid="api-panel-toggle") and window.toggleApiPanel() handler.\n` +
+    `    - On API insight/slide steps, hydrate JSON payloads but keep panel collapsed until toggled open.\n` +
+    `    - When opened, render JSON expanded by default via renderjson (deep level, not collapsed tree).\n` +
     `    - Ensure .side-panel-body is vertically scrollable for long JSON payloads.\n` +
-    `      Do NOT implement JSON collapse/expand controls.\n` +
-    `      No data-testid="api-panel-toggle", no window.toggleApiPanel(), no api-json-collapsed class contract.\n` +
+    `      Also allow horizontal scrolling and dynamic panel width resizing so JSON does not bleed off-page.\n` +
+    `    - Define a global constant/config object controlling panel behavior for all builds (collapsed default + expanded JSON + auto resize).\n` +
     `    - Use renderjson for JSON rendering:\n` +
     `      <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n` +
     `      and style keys/strings/numbers to match Plaid slide theme colors.\n` +

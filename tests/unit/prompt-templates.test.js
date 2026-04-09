@@ -102,10 +102,14 @@ describe('prompt-templates', () => {
       'Prompt should require highlighting key API attributes tied to story outcomes');
     assert.ok(fullText.includes('Signal risk drivers + recommendation'),
       'Prompt should include concrete product-contextual attribute examples');
-    assert.ok(fullText.includes('No data-testid="api-panel-toggle"'),
-      'Prompt should forbid JSON panel show/hide controls');
-    assert.ok(fullText.includes('render JSON body immediately visible'),
-      'Prompt should require JSON visibility when API panel is visible');
+    assert.ok(fullText.includes('data-testid="api-panel-toggle"'),
+      'Prompt should require JSON panel toggle control');
+    assert.ok(fullText.includes('window.toggleApiPanel()'),
+      'Prompt should require runtime toggle handler');
+    assert.ok(fullText.includes('keep panel collapsed until toggled open'),
+      'Prompt should enforce collapsed-by-default API panel behavior');
+    assert.ok(fullText.includes('render JSON expanded by default via renderjson'),
+      'Prompt should require expanded JSON when panel opens');
     assert.ok(fullText.includes('renderjson@1.4.0/renderjson.min.js'),
       'Prompt should require renderjson viewer script for API payload display');
     assert.ok(fullText.includes('side-panel-body is vertically scrollable'),

@@ -51,6 +51,28 @@ should embed a matching structure and reuse the CSS variables from slide.css.
         </aside>
       </main>
     </div>
+
+    <!-- Global API JSON panel contract -->
+    <aside id="api-response-panel" class="side-panel" style="display:none" aria-label="API JSON panel">
+      <header class="side-panel-header">
+        <span>API Response</span>
+        <button id="api-panel-toggle" data-testid="api-panel-toggle" type="button">Show JSON</button>
+      </header>
+      <div class="side-panel-body">
+        <div id="api-response-content"></div>
+      </div>
+    </aside>
+
+    <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>
+    <script>
+      window.__API_PANEL_CONFIG = Object.assign({
+        collapsedByDefault: true,
+        jsonExpandLevel: 99,
+        autoResize: true,
+        minWidthPx: 360,
+        maxWidthViewportRatio: 0.52
+      }, window.__API_PANEL_CONFIG || {});
+    </script>
   </body>
 </html>
 

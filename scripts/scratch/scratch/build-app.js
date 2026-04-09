@@ -1675,8 +1675,11 @@ async function main(opts = {}) {
     }
     if (!html.includes('id="api-json-viewer-styles"') && html.includes('</head>')) {
       const viewerStyles = `<style id="api-json-viewer-styles">
-#api-response-panel .side-panel-body { overflow-y: auto !important; overflow-x: hidden; max-height: calc(100vh - 140px); overscroll-behavior: contain; scrollbar-width: thin; }
+#api-response-panel { width: 420px; min-width: 360px; max-width: calc(100vw - 32px); }
+#api-response-panel .side-panel-header { justify-content: flex-start; gap: 8px; }
+#api-response-panel .side-panel-body { overflow-y: auto !important; overflow-x: auto !important; max-height: calc(100vh - 140px); overscroll-behavior: contain; scrollbar-width: thin; }
 #api-response-content { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,0.9); }
+#api-response-content * { max-width: 100%; }
 #api-response-content .disclosure { color: #00A67E !important; }
 #api-response-content .syntax { color: rgba(255,255,255,0.55) !important; }
 #api-response-content .key { color: #7dd3fc !important; }
@@ -1697,15 +1700,59 @@ async function main(opts = {}) {
   var _resp = ${JSON.stringify(stepApiResponses).replace(/</g, '\\u003c')};
   var _eps  = ${JSON.stringify(stepApiEndpoints).replace(/</g, '\\u003c')};
   window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _resp);
+  window.__API_PANEL_CONFIG = Object.assign({
+    collapsedByDefault: true,
+    jsonExpandLevel: 99,
+    autoResize: true,
+    minWidthPx: 360,
+    maxWidthViewportRatio: 0.52
+  }, window.__API_PANEL_CONFIG || {});
+  if (typeof window.__apiPanelUserOpen !== 'boolean') {
+    window.__apiPanelUserOpen = !window.__API_PANEL_CONFIG.collapsedByDefault;
+  }
+
+  function ensurePanelToggle(panel) {
+    if (!panel) return null;
+    var header = panel.querySelector('.side-panel-header');
+    if (!header) return null;
+    var btn = panel.querySelector('#api-panel-toggle, [data-testid="api-panel-toggle"]');
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'api-panel-toggle';
+      btn.setAttribute('data-testid', 'api-panel-toggle');
+      btn.type = 'button';
+      btn.style.cssText = 'margin-left:auto;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:4px 8px;font-size:11px;cursor:pointer;';
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.toggleApiPanel();
+      });
+      header.appendChild(btn);
+    }
+    btn.textContent = window.__apiPanelUserOpen ? 'Hide JSON' : 'Show JSON';
+    return btn;
+  }
+
+  function applyPanelSize(panel, content) {
+    if (!panel || !content || !window.__API_PANEL_CONFIG.autoResize || !window.__apiPanelUserOpen) return;
+    var cfg = window.__API_PANEL_CONFIG;
+    var maxPx = Math.floor(window.innerWidth * Number(cfg.maxWidthViewportRatio || 0.52));
+    var minPx = Number(cfg.minWidthPx || 360);
+    var target = Math.min(maxPx, Math.max(minPx, Math.ceil((content.scrollWidth || minPx) + 64)));
+    panel.style.width = target + 'px';
+    panel.style.maxWidth = 'calc(100vw - 32px)';
+  }
+
   function renderApiJson(target, data) {
     if (!target) return;
     target.innerHTML = '';
     try {
       if (window.renderjson && typeof window.renderjson === 'function') {
-        if (typeof window.renderjson.set_show_to_level === 'function') window.renderjson.set_show_to_level(3);
+        if (typeof window.renderjson.set_show_to_level === 'function') window.renderjson.set_show_to_level(window.__API_PANEL_CONFIG.jsonExpandLevel);
         if (typeof window.renderjson.set_icons === 'function') window.renderjson.set_icons('+', '-');
         if (typeof window.renderjson.set_sort_objects === 'function') window.renderjson.set_sort_objects(false);
         target.appendChild(window.renderjson(data));
+        applyPanelSize(document.getElementById('api-response-panel'), target);
         return;
       }
     } catch (_) {}
@@ -1716,20 +1763,44 @@ async function main(opts = {}) {
     } catch (_) {
       target.textContent = pretty;
     }
+    applyPanelSize(document.getElementById('api-response-panel'), target);
   }
+
+  function setPanelVisibility(panel, open) {
+    if (!panel) return;
+    if (open) {
+      panel.style.removeProperty('display');
+      panel.style.display = 'flex';
+    } else {
+      panel.style.setProperty('display', 'none', 'important');
+    }
+    ensurePanelToggle(panel);
+  }
+
   function rerenderCurrentApiJson() {
     var panel = document.getElementById('api-response-panel');
     var content = document.getElementById('api-response-content');
     var data = window.__lastApiJsonData;
     if (!panel || !content || !data) return;
     renderApiJson(content, data);
+    setPanelVisibility(panel, window.__apiPanelUserOpen);
   }
+
+  window.toggleApiPanel = function(forceOpen) {
+    var panel = document.getElementById('api-response-panel');
+    if (!panel) return false;
+    if (typeof forceOpen === 'boolean') window.__apiPanelUserOpen = forceOpen;
+    else window.__apiPanelUserOpen = !window.__apiPanelUserOpen;
+    setPanelVisibility(panel, window.__apiPanelUserOpen);
+    if (window.__apiPanelUserOpen) rerenderCurrentApiJson();
+    return window.__apiPanelUserOpen;
+  };
+
   if (!window.renderjson) {
     var existing = document.querySelector('script[data-renderjson-lib]');
-    if (existing) {
-      existing.addEventListener('load', rerenderCurrentApiJson, { once: true });
-    }
+    if (existing) existing.addEventListener('load', rerenderCurrentApiJson, { once: true });
   }
+
   var _origGoToStep = window.goToStep;
   if (typeof _origGoToStep !== 'function') return;
   window.goToStep = function(id) {
@@ -1739,56 +1810,42 @@ async function main(opts = {}) {
     var content = document.getElementById('api-response-content');
     var endpoint = document.getElementById('api-panel-endpoint');
     var data = window._stepApiResponses && window._stepApiResponses[id];
-    var body = panel.querySelector('.side-panel-body');
     if (data) {
       if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
-      panel.style.removeProperty('display');
-      panel.style.display = 'flex';
-      panel.classList.add('visible');
-      panel.classList.remove('api-json-collapsed');
-      if (body) {
-        body.style.display = '';
-        body.style.overflowY = 'auto';
-        body.style.maxHeight = 'calc(100vh - 140px)';
-      }
       window.__lastApiJsonData = data;
-      if (content) {
-        renderApiJson(content, data);
-      }
+      if (content) renderApiJson(content, data);
+      setPanelVisibility(panel, window.__apiPanelUserOpen);
     } else {
-      panel.style.setProperty('display', 'none', 'important');
-      panel.classList.remove('visible', 'expanded', 'open', 'active', 'api-json-collapsed');
-      if (body) {
-        body.style.display = '';
-        body.style.overflowY = 'auto';
-      }
+      setPanelVisibility(panel, false);
     }
   };
-  var jsonToggles = document.querySelectorAll('[data-testid="api-panel-toggle"], #api-panel-toggle');
-  jsonToggles.forEach(function(el) {
-    el.style.display = 'none';
-    el.setAttribute('aria-hidden', 'true');
+
+  window.addEventListener('resize', function() {
+    if (!window.__apiPanelUserOpen) return;
+    var panel = document.getElementById('api-response-panel');
+    var content = document.getElementById('api-response-content');
+    applyPanelSize(panel, content);
   });
-  try { delete window.toggleApiPanel; } catch (_) { window.toggleApiPanel = undefined; }
 })();
 </script>`;
     html = html.replace('</body>', `${apiPatch}\n</body>`);
     console.log(`[Build] Injected _stepApiResponses patch for ${Object.keys(stepApiResponses).length} step(s)`);
-  } else if (html.includes('api-response-panel') && html.includes('</body>') && !html.includes('window.__apiPanelNoJsonToggleApplied')) {
+  } else if (html.includes('api-response-panel') && html.includes('</body>') && !html.includes('window.__apiPanelGlobalConfigApplied')) {
     const collapsePatch = `<script>
 (function() {
-  if (window.__apiPanelNoJsonToggleApplied) return;
-  window.__apiPanelNoJsonToggleApplied = true;
-  var jsonToggles = document.querySelectorAll('[data-testid="api-panel-toggle"], #api-panel-toggle');
-  jsonToggles.forEach(function(el) {
-    el.style.display = 'none';
-    el.setAttribute('aria-hidden', 'true');
-  });
-  try { delete window.toggleApiPanel; } catch (_) { window.toggleApiPanel = undefined; }
+  if (window.__apiPanelGlobalConfigApplied) return;
+  window.__apiPanelGlobalConfigApplied = true;
+  window.__API_PANEL_CONFIG = Object.assign({
+    collapsedByDefault: true,
+    jsonExpandLevel: 99,
+    autoResize: true,
+    minWidthPx: 360,
+    maxWidthViewportRatio: 0.52
+  }, window.__API_PANEL_CONFIG || {});
 })();
 </script>`;
     html = html.replace('</body>', `${collapsePatch}\n</body>`);
-    console.log('[Build] Disabled legacy API JSON toggle controls');
+    console.log('[Build] Applied global API panel config defaults');
   }
 
   // ── Runtime mobile view toggle (desktop/mobile-auto/mobile-simulated) ─────
