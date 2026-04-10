@@ -1,5 +1,10 @@
 # Slide Template Rules (Plaid-only)
 
+## Canonical HTML shell (required reference)
+- Use **`pipeline-slide-shell.html`** as the structural source of truth for slide steps (`.slide-root` regions) **and** the global `#api-response-panel` chrome (Show JSON, Hide JSON, `api-panel-toggle`).
+- Merge / adaptation rules live in **`PIPELINE_SLIDE_SHELL_RULES.md`**.
+- `base.html` and `components.html` remain optional shortcuts; they do not replace the full shell for new builds.
+
 ## Purpose
 Slides are a supplement to PowerPoint in presentations. They must be visually consistent across pipeline runs and should be directly readable in both remote calls and in-person rooms.
 
@@ -28,26 +33,29 @@ Slides are a supplement to PowerPoint in presentations. They must be visually co
 4. **Consistency over novelty**: match one of the existing panel patterns (hero + panels + optional callout).
 
 ## Required structure (HTML contract)
-When generating a slide step, use:
+When generating a slide step, match **`pipeline-slide-shell.html`** (not only prose here). In summary:
 - `.slide-root` as the full surface container
 - `.slide-header` with:
+  - optional `.slide-header-logo` (Plaid wordmark; same asset path pattern as the shell — omit the `<img>` if the asset is not copied)
   - `.slide-header-pill` containing `PLAID`
   - `.slide-header-endpoint` containing the endpoint being described (e.g. `POST /auth/get`)
 - `.slide-body` containing:
   - `.slide-hero` with `.slide-title` and optional `.slide-subtitle`
   - optional `.slide-panels` with one or more `.slide-panel`
   - optional `.slide-callout`
+- `.slide-footer` (recommended for deck-style closure): small Plaid mark + `.slide-footer-meta` (e.g. `plaid.com`), as in the shell
 
-## API JSON panel contract (required for API storytelling)
+## API JSON panel contract (required for endpoint storytelling only)
 - Raw Plaid API payloads must use the global JSON rail only:
   - `#api-response-panel`
   - `#api-response-content` inside `.side-panel-body`
 - Do not create duplicate raw JSON containers inside slide layouts (no inline `*-json-panel`, no right-column raw payload blocks in `.slide-root`).
-- For API-relevant steps with `apiResponse` in `demo-script.json`, wire panel updates through the shared step contract (`goToStep` + `window._stepApiResponses`), not ad hoc per-step display logic.
+- JSON panel eligibility is endpoint-driven: only steps with explicit `apiResponse.endpoint` in `demo-script.json` may use/show JSON panel content.
+- For endpoint steps with `apiResponse`, wire panel updates through the shared step contract (`goToStep` + `window._stepApiResponses`), not ad hoc per-step display logic.
 - Default behavior: `#api-response-panel` is hidden/collapsed on initial page load (`display:none`).
-- Add a JSON side-panel toggle control (`data-testid="api-panel-toggle"` + `window.toggleApiPanel()`).
-- On API-relevant insight/slide steps, hydrate payload data but keep panel collapsed until toggled open.
-- When opened, render JSON expanded by default via renderjson (deep expansion level, not collapsed tree by default).
+- Persist **three** panel controls in the header: `data-testid="api-json-panel-show"`, `data-testid="api-json-panel-hide"`, and `data-testid="api-panel-toggle"` (toggle must call `window.toggleApiPanel()` for Playwright parity).
+- On API-relevant insight/slide steps, hydrate payload data but keep panel collapsed until toggled open (unless the prompt says otherwise).
+- When opened, render JSON **fully expanded** by default via renderjson (`set_show_to_level('all')` or equivalent deep level — no collapsed nested payload by default).
 - Use a global runtime config constant for all builds (for example `window.__API_PANEL_CONFIG`) to centralize:
   - collapsed-by-default behavior
   - JSON expansion level
@@ -58,8 +66,14 @@ When generating a slide step, use:
 - `.side-panel-body` must be vertically scrollable for long payloads (`overflow-y:auto`) so large responses remain readable.
 - Use `renderjson` for API payload rendering:
   - `<script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>`
-  - apply Plaid-aligned colors in the JSON viewer (teal accents, high-contrast keys/values on dark panel background).
+  - apply Plaid-aligned colors via `slide.css` (`#api-response-content .renderjson …`) embedded with the slide styles (no ad-hoc one-off JSON panel styling patches).
 - `#link-events-panel` is a developer artifact and must remain hidden during demo-facing flows.
+
+## Value summary slide rule (required)
+- `value-summary-slide` is narrative-only and must stay responsive like other template slides.
+- Do **not** include `apiResponse` on `value-summary-slide`.
+- Do **not** include JSON code/pre blocks or JSON side-panel content on `value-summary-slide`.
+- Keep `value-summary-slide` focused on heading, value bullets, and CTA only.
 
 ## Story-first data highlighting (required)
 - Slide body explains business meaning; JSON panel is canonical raw evidence.

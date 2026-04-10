@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Pipeline Visuals - Graphify</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-prev="./04-reliability.html">
+    <main class="page">
+      <div class="topbar">
+        <span class="pill">Page 5 of 5</span>
+        <span class="pill">Graphify + Closing Slide</span>
+      </div>
+
+      <h1>Graphify for architecture storytelling</h1>
+      <p class="lead">
+        You now have the Graphify repo locally at <code>tools/graphify</code>, ready to generate
+        an interactive graph of this pipeline for fast architecture Q&amp;A.
+      </p>
+
+      <div class="grid cols-2">
+        <section class="card">
+          <h3>What Graphify adds to your pitch</h3>
+          <ul class="list">
+            <li>Interactive map of code + docs + relationships</li>
+            <li>Quickly answer "why this stage exists" questions</li>
+            <li>Shows architecture confidence with visible structure</li>
+          </ul>
+        </section>
+        <section class="card">
+          <h3>Runbook</h3>
+          <ul class="list">
+            <li><code>cd tools/graphify</code></li>
+            <li><code>pip install graphifyy && graphify install</code></li>
+            <li><code>cd ../.. && graphify ./scripts --wiki --svg</code></li>
+            <li>Open <code>graphify-out/graph.html</code> for interactive view</li>
+          </ul>
+        </section>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>1-slide final narrative</h3>
+        <p>
+          "This app turns a complex Plaid demo workflow into a reliable AI production line:
+          research intelligence, structured generation, automated QA, high-quality voice, and a final
+          architecture graph to explain the system clearly."
+        </p>
+      </div>
+
+      <div class="nav">
+        <a class="btn" href="./04-reliability.html">← Back</a>
+        <a class="btn primary" href="./index.html">Restart deck</a>
+      </div>
+    </main>
+    <script src="./script.js"></script>
+  </body>
+</html>

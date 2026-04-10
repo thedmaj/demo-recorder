@@ -169,6 +169,30 @@ a storyboard mismatch where audio precedes the visual it describes.
 - Plaid Passport may be present via enabled templates for stronger identity verification; treat Passport as optional per account configuration, but never omit the core CRA Link/consent experience.
 - Any CRA "setup" or "data returned / report returned" explanatory scene should use a Plaid-branded slide step (`.slide-root`) instead of customer-branded host chrome.
 
+### Layer Mobile Eligibility Helper Rule (Global)
+
+- Applies to all Layer demos that use mobile-simulated host + Layer flows.
+- Always render subtle helper text directly below the mobile app frame showing routing numbers:
+  - `415-555-1111` = eligible path (continues through Layer to onboarding complete)
+  - `415-555-0011` = ineligible path (fallback PII collection, then standard Plaid Link)
+- Default the host phone input to the eligible value first: `415-555-1111`.
+- Do not send eligible users to fallback PII collection.
+
+### Layer Mobile Mock Hard Contract (Global)
+
+When the build injects the Layer mobile mock template (`LAYER_MOCK_TEMPLATE.md` + mobile-visual mode), treat it as **mandatory**:
+
+- **Canonical skeleton:** [`templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`](templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html) — the build prompt embeds this file; match its DOM patterns, mobile-shell sizing/fill rules, global helper, host visual placeholder, and bottom-sheet Layer phases unless `demo-script.json` explicitly requires extra steps (without dropping routing or testid contracts).
+- **Plaid logo in Layer modals:** `./plaid-logo-horizontal-black-white-background.png` only; **no** duplicate “PLAID” label next to the image.
+- Full rule text: [`templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md`](templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md) (see **HARD CONTRACT**).
+
+### Mobile Demo Slide View Rule (Global)
+
+- For mobile demos, slide-like steps must present in desktop mode automatically.
+- Slide-like means any step with `sceneType: "slide"`, a `.slide-root` subtree, or step IDs containing `slide`.
+- Do not render slide-like steps inside the mobile simulator pane/shell.
+- No manual view toggle is required or shown in mobile demos; runtime should switch presentation mode by active step.
+
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
 - Plaid Signal ACH transaction risk scores: 0–99 (higher = HIGHER return risk — higher score means more likely to result in ACH return/failure). Realistic demo values for ACCEPT scenarios: 5–20 (low risk). Do NOT use scores 82–97 — those represent high-risk transactions that should receive REVIEW or REROUTE, not ACCEPT. Do NOT use the term "Trust Index" — it is not a Plaid product name.
@@ -372,7 +396,9 @@ Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `emb
 Slides are generated from a reusable Plaid-only template so the styling stays consistent across pipeline runs and presentations. **Slides are only for behind-the-scenes API/data explanation** (optional `.slide-root` steps). The **host bank UI** uses Brandfetch-driven `brand/<slug>.json`, not slide chrome. Full-viewport **Plaid insight** steps use the insight + `#api-response-panel` contract unless they explicitly use `.slide-root`.
 
 - Template folder: `templates/slide-template/`
-  - `base.html` — slide surface structure contract
+  - `pipeline-slide-shell.html` — **canonical** slide + API JSON panel HTML reference (layer-v2 / TD-final lineage)
+  - `PIPELINE_SLIDE_SHELL_RULES.md` — merge rules for the shell (Show/Hide/toggle + renderjson)
+  - `base.html` — minimal slide surface sketch (superseded for full structure by `pipeline-slide-shell.html`)
   - `slide.css` — Plaid-only tokens + typography + panel patterns
   - `SLIDE_RULES.md` — non-negotiable generation rules for the agent
 
@@ -380,6 +406,7 @@ Slides are generated from a reusable Plaid-only template so the styling stays co
 During the `build` stage, the app-generation prompt includes:
 - `SLIDE_RULES.md`
 - `slide.css`
+- `pipeline-slide-shell.html` (stripped of standalone preview-only script)
 
 This is wired via:
 - `scripts/scratch/scratch/build-app.js` (loads template files from disk)

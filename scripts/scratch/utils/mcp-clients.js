@@ -227,6 +227,45 @@ function buildAskBillMcpCommand() {
 }
 
 /**
+ * Wraps a research-stage AskBill question with an explicit output contract.
+ * @param {string} question
+ * @param {'prose'|'bullet_list'|'json_sample'|'field_list'} [answerFormat='prose']
+ */
+function buildAskBillStructuredPrompt(question, answerFormat = 'prose') {
+  const q = String(question || '').trim();
+  if (!q) return q;
+  const fmt = String(answerFormat || 'prose').toLowerCase();
+  if (fmt === 'prose' || fmt === 'default') return q;
+  if (fmt === 'bullet_list') {
+    return (
+      `${q}\n\n` +
+      'OUTPUT CONTRACT (follow exactly):\n' +
+      '- Return at most 8 bullet lines; each bullet <= 32 words.\n' +
+      '- Lead with the most authoritative facts first (field names, enums, event names).\n' +
+      '- No markdown headings, no long prose paragraphs, no preamble or recap.'
+    );
+  }
+  if (fmt === 'json_sample') {
+    return (
+      `${q}\n\n` +
+      'OUTPUT CONTRACT (follow exactly):\n' +
+      '- Return a single JSON object or array only (valid JSON text).\n' +
+      '- No markdown fences, no commentary before or after.\n' +
+      '- Use realistic sandbox-style example values; omit unknown keys.'
+    );
+  }
+  if (fmt === 'field_list') {
+    return (
+      `${q}\n\n` +
+      'OUTPUT CONTRACT (follow exactly):\n' +
+      '- Return a compact bullet list of field/path names with one-line type or enum hints only.\n' +
+      '- At most 12 bullets; no sample payloads, no narrative.'
+    );
+  }
+  return q;
+}
+
+/**
  * Ask AskBill a question about Plaid's products, APIs, or documentation.
  *
  * Preferred env vars:
@@ -238,21 +277,25 @@ function buildAskBillMcpCommand() {
  *   ASKBILL_API_URL     — HTTP endpoint
  *
  * @param {string} question  Natural-language question about Plaid
+ * @param {object} [opts]
+ * @param {'prose'|'bullet_list'|'json_sample'|'field_list'} [opts.answerFormat='prose']
  * @returns {Promise<string>} Answer string, or '[AskBill unavailable]' on error
  */
-async function askPlaidDocs(question) {
+async function askPlaidDocs(question, opts = {}) {
+  const answerFormat = opts && opts.answerFormat ? opts.answerFormat : 'prose';
+  const finalQuestion = buildAskBillStructuredPrompt(question, answerFormat);
   const mcpCommand = buildAskBillMcpCommand();
   const url = firstNonEmpty(process.env.ASKBILL_API_URL);
 
   // Preferred path: AskBill MCP server (matches Cursor MCP usage model).
   if (mcpCommand) {
     const candidates = [
-      { name: 'plaid_docs', arguments: { question } },
-      { name: 'ask_bill', arguments: { question } },
-      { name: 'ask_plaid_docs', arguments: { question } },
-      { name: 'ask_docs', arguments: { question } },
-      { name: 'chat', arguments: { message: question } },
-      { name: 'query', arguments: { query: question } },
+      { name: 'plaid_docs', arguments: { question: finalQuestion } },
+      { name: 'ask_bill', arguments: { question: finalQuestion } },
+      { name: 'ask_plaid_docs', arguments: { question: finalQuestion } },
+      { name: 'ask_docs', arguments: { question: finalQuestion } },
+      { name: 'chat', arguments: { message: finalQuestion } },
+      { name: 'query', arguments: { query: finalQuestion } },
     ];
     for (const c of candidates) {
       try {
@@ -278,7 +321,7 @@ async function askPlaidDocs(question) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question: finalQuestion }),
     });
 
     if (!res.ok) {
@@ -302,21 +345,37 @@ async function askPlaidDocs(question) {
 
 // ── Glean chat via @gleanwork/local-mcp-server ────────────────────────────────
 
-function buildGleanTopRelevantPrompt(query) {
+function buildGleanTopRelevantPrompt(query, maxBullets = 5) {
   const q = String(query || '').trim();
+  const n = Math.min(8, Math.max(1, Number(maxBullets) || 5));
   return (
     `${q}\n\n` +
-    'Return only the final synthesized answer with the top 5 most relevant findings for this request.\n' +
-    '- Use concise bullets only (max 5 bullets, <= 28 words each).\n' +
+    `Return only the final synthesized answer with the top ${n} most relevant findings for this request.\n` +
+    `- Use concise bullets only (max ${n} bullets, <= 28 words each).\n` +
     '- Prioritize directly actionable details for demo-building.\n' +
     '- Include source context in-line only when highly relevant.\n' +
     '- Do not include search process updates, reasoning steps, or tool chatter.'
   );
 }
 
-function normalizeGleanText(raw) {
+function buildGleanJsonPrompt(query) {
+  const q = String(query || '').trim();
+  return (
+    `${q}\n\n` +
+    'CRITICAL OUTPUT CONTRACT:\n' +
+    '- Return exactly one valid JSON object.\n' +
+    '- No markdown fences.\n' +
+    '- No commentary before or after JSON.\n' +
+    '- If information is unknown, use empty arrays/strings and still return valid JSON.'
+  );
+}
+
+function normalizeGleanText(raw, normOpts = {}) {
   let text = normalizeAskBillText(raw);
   if (!text) return '';
+
+  const maxBullets = Math.min(8, Math.max(1, Number(normOpts.maxBullets) || 5));
+  const maxChars = Math.min(12000, Math.max(400, Number(normOpts.maxChars) || 1800));
 
   // Keep response compact for downstream token budget.
   const lines = text
@@ -327,11 +386,11 @@ function normalizeGleanText(raw) {
 
   const bullets = lines.filter((l) => /^[-*]\s+/.test(l));
   if (bullets.length > 0) {
-    return bullets.slice(0, 5).join('\n').slice(0, 1800);
+    return bullets.slice(0, maxBullets).join('\n').slice(0, maxChars);
   }
 
   // Fallback to a bounded plain-text excerpt.
-  return lines.slice(0, 8).join('\n').slice(0, 1800);
+  return lines.slice(0, Math.max(maxBullets, 8)).join('\n').slice(0, maxChars);
 }
 
 /**
@@ -345,9 +404,16 @@ function normalizeGleanText(raw) {
  *   GLEAN_API_TOKEN  — Glean API token
  *
  * @param {string} query   Natural-language question or search query
+ * @param {object} [opts]
+ * @param {'bullets'|'json'|'raw'} [opts.responseMode='bullets']
+ * @param {number} [opts.maxBullets=5]  Cap bullets in the wrapper + post-normalize (1–8)
+ * @param {number} [opts.maxOutputChars=1800]  Hard cap on returned bullet/text length
  * @returns {Promise<string>}  Glean AI response text, or '[Glean unavailable]' on error
  */
-async function gleanChat(query) {
+async function gleanChat(query, opts = {}) {
+  const responseMode = String(opts?.responseMode || 'bullets').toLowerCase();
+  const maxBullets = Math.min(8, Math.max(1, Number(opts.maxBullets) || 5));
+  const maxOutputChars = Math.min(12000, Math.max(400, Number(opts.maxOutputChars) || 1800));
   const instance = process.env.GLEAN_INSTANCE;
   const token    = process.env.GLEAN_API_TOKEN;
 
@@ -357,14 +423,23 @@ async function gleanChat(query) {
   }
 
   try {
+    const message =
+      responseMode === 'json'
+        ? buildGleanJsonPrompt(query)
+        : buildGleanTopRelevantPrompt(query, maxBullets);
     const result = await callMcpToolViaStdio(
       'npx -y @gleanwork/local-mcp-server',
       'chat',
-      { message: buildGleanTopRelevantPrompt(query) },
+      { message },
       { GLEAN_INSTANCE: instance, GLEAN_API_TOKEN: token },
       90000
     );
-    const text = normalizeGleanText(extractMcpText(result));
+    const rawText = extractMcpText(result);
+    if (responseMode === 'raw' || responseMode === 'json') {
+      const text = normalizeAskBillText(rawText);
+      return text || '[Glean returned empty response]';
+    }
+    const text = normalizeGleanText(rawText, { maxBullets, maxChars: maxOutputChars });
     return text || '[Glean returned empty response]';
   } catch (err) {
     console.warn(`[mcp-clients] Glean MCP error: ${err.message}`);

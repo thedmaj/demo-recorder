@@ -26,7 +26,9 @@ const {
   buildAppArchitectureBriefPrompt,
   buildAppFrameworkPlanPrompt,
   buildAppGenerationPrompt,
+  shouldInjectLayerMobileMockTemplate,
 } = require('../utils/prompt-templates');
+const { buildLayerMockBrandTokensStyle } = require('../utils/layer-mock-brand-tokens');
 const { inferProductFamily } = require('../utils/product-profiles');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
 const { readPipelineRunContext } = require('../utils/run-context');
@@ -91,6 +93,46 @@ const LEGACY_BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json'
 const API_PANEL_QA_FILE = path.join(RUN_LAYOUT.buildDir, 'api-panel-qa.json');
 const BUILD_LAYER_REPORT_FILE = path.join(RUN_LAYOUT.buildDir, 'build-layer-report.json');
 const BUILD_METADATA_FILE = path.join(RUN_LAYOUT.buildDir, 'build-metadata.json');
+const RENDERJSON_EXPAND_LEVEL_DEFAULT = 999;
+// Heroicons outline "link" (24 viewBox); explicit px size + layout CSS so flex parents cannot blow it up.
+const STOCK_LINK_BUTTON_ICON_SVG =
+  '<svg class="icon-sm stock-link-icon" width="20" height="20" fill="none" viewBox="0 0 24 24" ' +
+  'stroke-width="2" stroke="currentColor" aria-hidden="true" ' +
+  'style="width:20px;height:20px;min-width:20px;min-height:20px;flex-shrink:0;display:block;box-sizing:content-box">' +
+  '<path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.242a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>' +
+  '</svg>';
+
+const PIPELINE_PLAID_LAUNCH_CTA_STYLE_ATTR = 'data-pipeline-plaid-launch-cta-layout';
+
+/**
+ * Ensures host Plaid launch CTA keeps a modest inline icon (pipeline stock SVG) even when the
+ * model wraps the button in aggressive flex layouts.
+ */
+function injectPlaidLaunchCtaLayoutStyles(html) {
+  if (!html || !html.includes('data-testid="link-external-account-btn"')) {
+    return html;
+  }
+  if (html.includes(PIPELINE_PLAID_LAUNCH_CTA_STYLE_ATTR)) {
+    return html;
+  }
+  const snippet =
+    `<style ${PIPELINE_PLAID_LAUNCH_CTA_STYLE_ATTR}="1">\n` +
+    `[data-testid="link-external-account-btn"]{display:inline-flex;align-items:center;gap:0.5rem;justify-content:center;}\n` +
+    `[data-testid="link-external-account-btn"] svg.stock-link-icon,\n` +
+    `[data-testid="link-external-account-btn"] .stock-link-icon{\n` +
+    `  width:20px !important;height:20px !important;min-width:20px !important;min-height:20px !important;\n` +
+    `  max-width:20px !important;max-height:20px !important;flex-shrink:0 !important;\n` +
+    `  display:block !important;box-sizing:content-box !important;\n` +
+    `}\n` +
+    `</style>\n`;
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `${snippet}</head>`);
+  }
+  if (/<body\b/i.test(html)) {
+    return html.replace(/<body\b/i, `${snippet}<body`);
+  }
+  return snippet + html;
+}
 
 /**
  * @param {Array<{ category?: string, severity?: string, stepId?: string }>} diagnostics
@@ -113,17 +155,21 @@ function isSlideLikeStep(step) {
   return /\bslide\b/.test(haystack) && !/\binsight\b/.test(haystack);
 }
 
+function isValueSummaryStep(step) {
+  const id = String(step?.id || '').toLowerCase();
+  const label = String(step?.label || '').toLowerCase();
+  return id === 'value-summary-slide' || /\bvalue summary\b/.test(label);
+}
+
+function hasApiEndpoint(step) {
+  const endpoint = String(step?.apiResponse?.endpoint || '').trim();
+  return /^[A-Z]+\s+\/|^\//.test(endpoint);
+}
+
 function isApiRelevantSlide(step) {
   if (!isSlideLikeStep(step)) return false;
-  if (step?.apiResponse?.endpoint || step?.apiResponse?.response) return true;
-  const haystack = [
-    step?.id,
-    step?.label,
-    step?.visualState,
-    step?.narration,
-    step?.description,
-  ].filter(Boolean).join(' ').toLowerCase();
-  return /\b(api|endpoint|json|report|insight|income|cra|base report)\b/.test(haystack);
+  if (isValueSummaryStep(step)) return false;
+  return hasApiEndpoint(step);
 }
 
 function parseJsonFromText(raw) {
@@ -400,6 +446,19 @@ function parseArgs() {
   };
 }
 
+function promptIndicatesMobileVisual(promptText, demoScript) {
+  const prompt = String(promptText || '').toLowerCase();
+  const product = String(demoScript?.product || '').toLowerCase();
+  const stepText = Array.isArray(demoScript?.steps)
+    ? demoScript.steps
+      .map((s) => [s?.id, s?.label, s?.narration, s?.visualState].filter(Boolean).join(' '))
+      .join(' ')
+      .toLowerCase()
+    : '';
+  const haystack = `${prompt}\n${product}\n${stepText}`;
+  return /\bmobile\b|\bphone-first\b|\bphone first\b|\bmobile[-\s]?simulated\b|\b390\s*[x×]\s*844\b|\bmobile demo\b/.test(haystack);
+}
+
 /**
  * Models sometimes emit click/fill rows for steps that have apiResponse insight data.
  * build-qa and recordings expect goToStep so the active step matches demo-script.json.
@@ -471,6 +530,48 @@ function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
     return `${pre}${tagOpen} data-testid="link-external-account-btn">`;
   });
   return { html: patched, injected: patched !== html };
+}
+
+function escapeHtmlText(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function deriveLaunchButtonLabel(innerHtml) {
+  const text = String(innerHtml || '')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#\d+;|&#x[\da-f]+;|&[a-z]+;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .trim();
+  if (!text) return 'Link Bank Account';
+  if (text.length > 64) return 'Link Bank Account';
+  return text;
+}
+
+function enforceCanonicalLaunchButtonIcon(html) {
+  if (!html.includes('data-testid="link-external-account-btn"')) {
+    return { html, patched: false };
+  }
+  let patched = false;
+  const buttonRe = /(<button\b[^>]*data-testid=["']link-external-account-btn["'][^>]*>)([\s\S]*?)(<\/button>)/gi;
+  const next = html.replace(buttonRe, (_m, openTag, inner, closeTag) => {
+    const label = escapeHtmlText(deriveLaunchButtonLabel(inner));
+    const canonicalInner = `\n        ${STOCK_LINK_BUTTON_ICON_SVG}\n        <span>${label}</span>\n      `;
+    const normalizedExisting = String(inner || '').replace(/\s+/g, ' ').trim();
+    const normalizedCanonical = canonicalInner.replace(/\s+/g, ' ').trim();
+    if (normalizedExisting === normalizedCanonical) return `${openTag}${inner}${closeTag}`;
+    patched = true;
+    return `${openTag}${canonicalInner}${closeTag}`;
+  });
+  return { html: next, patched };
 }
 
 function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter) {
@@ -935,6 +1036,28 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
   if (!html.includes('id="api-response-panel"')) layer1Issues.push('Missing api-response-panel shell');
   if (!html.includes('id="link-events-panel"')) layer1Issues.push('Missing link-events-panel shell');
 
+  const stepsNeedingJsonRail = (demoScript.steps || []).filter((s) => {
+    if (isValueSummaryStep(s)) return false;
+    const r = s?.apiResponse?.response;
+    return r != null && typeof r === 'object' && !Array.isArray(r) && Object.keys(r).length > 0;
+  });
+  if (stepsNeedingJsonRail.length > 0) {
+    const needTriplet = (name) =>
+      html.includes(`data-testid="${name}"`) || html.includes(`data-testid='${name}'`);
+    if (!needTriplet('api-json-panel-show')) {
+      layer1Issues.push('API JSON rail contract: missing data-testid="api-json-panel-show" (see templates/slide-template/pipeline-slide-shell.html)');
+    }
+    if (!needTriplet('api-json-panel-hide')) {
+      layer1Issues.push('API JSON rail contract: missing data-testid="api-json-panel-hide"');
+    }
+    if (!needTriplet('api-panel-toggle')) {
+      layer1Issues.push('API JSON rail contract: missing data-testid="api-panel-toggle"');
+    }
+    if (!html.includes('id="api-response-content"') && !html.includes("id='api-response-content'")) {
+      layer1Issues.push('API JSON rail contract: missing #api-response-content inside api-response-panel');
+    }
+  }
+
   for (const row of pwRows) {
     if (!row || !row.id || !stepIds.includes(row.id)) {
       layer2Issues.push(`Playwright row has unknown id: ${row && row.id ? row.id : '<missing>'}`);
@@ -971,17 +1094,63 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   const designPlugin = loadDesignPlugin();
   const slideRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/SLIDE_RULES.md');
   const slideCssPath = path.join(PROJECT_ROOT, 'templates/slide-template/slide.css');
+  const slideShellPath = path.join(PROJECT_ROOT, 'templates/slide-template/pipeline-slide-shell.html');
+  const slideShellRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md');
   const layerMockTemplatePath = path.join(PROJECT_ROOT, 'templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md');
+  const layerMobileSkeletonPath = path.join(
+    PROJECT_ROOT,
+    'templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html'
+  );
   let slideTemplateRules = '';
   let slideTemplateCss = '';
+  let slideTemplateShellHtml = '';
   let layerMockTemplate = '';
+  let layerMobileSkeletonHtml = '';
   try {
     if (fs.existsSync(slideRulesPath)) slideTemplateRules = fs.readFileSync(slideRulesPath, 'utf8');
+    if (fs.existsSync(slideShellRulesPath)) {
+      slideTemplateRules +=
+        `\n\n---\n\n## Pipeline slide shell (HTML merge)\n\n` + fs.readFileSync(slideShellRulesPath, 'utf8');
+    }
     if (fs.existsSync(slideCssPath)) slideTemplateCss = fs.readFileSync(slideCssPath, 'utf8');
+    if (fs.existsSync(slideShellPath)) {
+      slideTemplateShellHtml = fs.readFileSync(slideShellPath, 'utf8');
+      slideTemplateShellHtml = slideTemplateShellHtml.replace(
+        /\r?\n  \/\* ── Standalone file preview only[\s\S]*?\}\)\(\);\r?\n/,
+        '\n'
+      );
+    }
     if (fs.existsSync(layerMockTemplatePath)) layerMockTemplate = fs.readFileSync(layerMockTemplatePath, 'utf8');
+    if (fs.existsSync(layerMobileSkeletonPath)) {
+      layerMobileSkeletonHtml = fs.readFileSync(layerMobileSkeletonPath, 'utf8');
+      console.log('[Build] Loaded Layer mobile skeleton hard contract for build prompt');
+    } else {
+      console.warn('[Build] Layer mobile skeleton not found — hard contract block omitted:', layerMobileSkeletonPath);
+    }
   } catch (e) {
     console.warn('[Build] Warning: could not load slide template assets:', e.message);
   }
+  if (
+    shouldInjectLayerMobileMockTemplate(demoScript, !!refinementOpts.mobileVisualEnabled) &&
+    !String(layerMobileSkeletonHtml || '').trim()
+  ) {
+    console.error(
+      '[Build] Layer mobile mock builds require the canonical skeleton at templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html (missing or empty).'
+    );
+    process.exit(1);
+  }
+
+  const siteRefPath = path.join(RUN_LAYOUT.brandDir, 'site-reference.png');
+  let brandSiteReferenceBase64 = '';
+  if (fs.existsSync(siteRefPath)) {
+    try {
+      brandSiteReferenceBase64 = fs.readFileSync(siteRefPath).toString('base64');
+      console.log(`[Build] Brand site reference screenshot loaded (${path.relative(PROJECT_ROOT, siteRefPath)})`);
+    } catch (e) {
+      console.warn(`[Build] Could not read brand site reference: ${e.message}`);
+    }
+  }
+
   const { system: buildSystem, userMessages: buildMessages } = buildAppGenerationPrompt(
     demoScript, architectureBrief, qaReport,
     {
@@ -992,7 +1161,9 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       brand,
       slideTemplateRules,
       slideTemplateCss,
+      slideTemplateShellHtml,
       layerMockTemplate,
+      layerMobileSkeletonHtml,
       qaFrames:           refinementOpts.qaFrames   || [],
       prevTestids:        refinementOpts.prevTestids || [],
       humanFeedback:      refinementOpts.humanFeedback || '',
@@ -1008,6 +1179,8 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       layeredBuildPlan: refinementOpts.layeredBuildPlan || null,
       mobileVisualEnabled: !!refinementOpts.mobileVisualEnabled,
       buildViewMode: refinementOpts.buildViewMode || 'desktop',
+      promptText: refinementOpts.promptText || '',
+      brandSiteReferenceBase64: brandSiteReferenceBase64 || undefined,
     }
   );
 
@@ -1052,9 +1225,11 @@ async function main(opts = {}) {
   const layeredBuildEnabled = opts.layeredBuildEnabled != null
     ? !!opts.layeredBuildEnabled
     : (parsedArgs.layeredBuildEnabled || LAYERED_BUILD_ENABLED);
-  const mobileVisualEnabled = opts.mobileVisualEnabled != null
-    ? !!opts.mobileVisualEnabled
-    : (parsedArgs.mobileVisualEnabled || MOBILE_VISUAL_ENABLED);
+  const explicitMobileVisualEnabled = !!(
+    opts.mobileVisualEnabled === true ||
+    parsedArgs.mobileVisualEnabled ||
+    MOBILE_VISUAL_ENABLED
+  );
   const buildViewMode = (opts.buildViewMode || parsedArgs.buildViewMode || BUILD_VIEW_MODE || 'desktop').toLowerCase();
 
   // Validate inputs
@@ -1068,12 +1243,29 @@ async function main(opts = {}) {
   }
 
   const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
+  let scriptSanitized = false;
+  for (const step of (demoScript.steps || [])) {
+    if (isValueSummaryStep(step) && step.apiResponse) {
+      delete step.apiResponse;
+      scriptSanitized = true;
+      console.log(`[Build] Removed apiResponse from "${step.id}" (value-summary slides must not carry JSON rails)`);
+    }
+  }
+  if (scriptSanitized) {
+    fs.writeFileSync(SCRIPT_FILE, JSON.stringify(demoScript, null, 2));
+    console.log('[Build] Persisted sanitized demo-script.json (value-summary apiResponse removed)');
+  }
   const runManifest = readRunManifest(OUT_DIR);
   const activeRunId = runManifest?.runId || RUN_LAYOUT.runId;
+  const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
+  const inferredMobileVisualEnabled = promptIndicatesMobileVisual(promptText, demoScript);
+  const mobileVisualEnabled = explicitMobileVisualEnabled || inferredMobileVisualEnabled;
   console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
   console.log(`[Build] Layered build: ${layeredBuildEnabled ? 'ENABLED' : 'disabled'}`);
-  console.log(`[Build] Mobile visual mode: ${mobileVisualEnabled ? 'ENABLED' : 'disabled'} (viewMode=${buildViewMode})`);
-  const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
+  console.log(
+    `[Build] Mobile visual mode: ${mobileVisualEnabled ? 'ENABLED' : 'disabled'} (viewMode=${buildViewMode})` +
+    (inferredMobileVisualEnabled && !explicitMobileVisualEnabled ? ' [auto-detected from prompt]' : '')
+  );
   const plaidLinkMode = resolveMode({ demoScript, promptText });
   const linkModeAdapter = getLinkModeAdapter(plaidLinkMode);
   demoScript.plaidLinkMode = plaidLinkMode;
@@ -1081,6 +1273,7 @@ async function main(opts = {}) {
   const productFamily = inferProductFamily({ promptText, demoScript });
   const apiPanelQa = await hydrateApiSamplesForRelevantSlides(demoScript, productFamily);
   try {
+    fs.mkdirSync(path.dirname(API_PANEL_QA_FILE), { recursive: true });
     fs.writeFileSync(API_PANEL_QA_FILE, JSON.stringify(apiPanelQa, null, 2));
     if (apiPanelQa.autoFilledCount > 0) {
       console.log(`[Build] API panel QA: auto-filled ${apiPanelQa.autoFilledCount} relevant slide API sample(s) from AskBill`);
@@ -1300,7 +1493,8 @@ async function main(opts = {}) {
 
   // ── Call 1: Architecture brief ────────────────────────────────────────────
   const architectureBrief = await getArchitectureBrief(client, demoScript, {
-    plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
+      // Token budget: raise via smaller skill zip or future BUILD_SKILL_BRIEF_MAX_CHARS if prompts hit limits.
+      plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
     plaidLinkMode,
     embeddedLinkSkillBrief: embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text.slice(0, 6000) : '',
   });
@@ -1311,6 +1505,7 @@ async function main(opts = {}) {
     layeredBuildPlan = await getFrameworkPlan(client, demoScript, architectureBrief, {
       mobileVisualEnabled,
       buildViewMode,
+      promptText,
     });
   }
 
@@ -1486,7 +1681,9 @@ async function main(opts = {}) {
 
   // 2b. API panel contract: if any step has apiResponse data, the global panel chrome
   // must exist so build-qa, manual preview, and recording can all surface the same JSON rail.
-  const stepsWithApiData = (demoScript.steps || []).filter(s => s.apiResponse?.response);
+  const stepsWithApiData = (demoScript.steps || []).filter((s) =>
+    !isValueSummaryStep(s) && hasApiEndpoint(s) && s.apiResponse?.response
+  );
   if (stepsWithApiData.length > 0) {
     const hasPanel =
       html.includes('id="api-response-panel"') || html.includes("id='api-response-panel'");
@@ -1605,6 +1802,53 @@ async function main(opts = {}) {
     );
   }
 
+  // 4b. Slide surfaces must remain responsive. Auto-strip fixed pixel sizing from
+  // inline .slide-root style attributes and enforce a responsive override.
+  const slideRootTagRe = /(<[^>]*class="[^"]*\bslide-root\b[^"]*"[^>]*style=")([^"]*)(")/gi;
+  let slideRootInlineFixes = 0;
+  html = html.replace(slideRootTagRe, (full, pre, styleText, post) => {
+    const cleaned = String(styleText)
+      .replace(/\b(?:width|height|min-width|min-height|max-width|max-height)\s*:\s*\d+px\s*;?/gi, '')
+      .replace(/;;+/g, ';')
+      .replace(/^\s*;\s*|\s*;\s*$/g, '')
+      .trim();
+    if (cleaned !== String(styleText).trim()) slideRootInlineFixes += 1;
+    return `${pre}${cleaned}${post}`;
+  });
+  if (slideRootInlineFixes > 0) {
+    console.log(`[Build] Removed fixed pixel sizing from ${slideRootInlineFixes} .slide-root inline style block(s)`);
+  }
+  if (html.includes('</head>') && !html.includes('id="slide-root-responsive-override"')) {
+    const responsiveOverride = `<style id="slide-root-responsive-override">
+.slide-root{
+  width:100% !important;
+  max-width:min(1440px, 100vw) !important;
+  height:auto !important;
+  max-height:min(900px, 100vh, 100dvh) !important;
+  aspect-ratio:16 / 10 !important;
+  margin-inline:auto;
+  box-sizing:border-box;
+}
+</style>`;
+    html = html.replace('</head>', `${responsiveOverride}\n</head>`);
+  }
+  const valueSummaryBlock = html.match(
+    /<div[^>]*data-testid=["']step-value-summary-slide["'][^>]*>[\s\S]*?(?=<!--[\s\S]*SIDE PANELS[\s\S]*-->|<div[^>]*id=["']link-events-panel["'][^>]*>|<div[^>]*data-testid=["']step-[^"']+["'][^>]*>|<\/body>)/i
+  );
+  if (valueSummaryBlock && valueSummaryBlock[0]) {
+    const vs = valueSummaryBlock[0];
+    if (/<pre\b|<code\b|summary metrics json|api[-\s]?json|raw json/i.test(vs)) {
+      domErrors.push(
+        'value-summary-slide contains JSON/code content. Value summary must be narrative-only (no JSON panel/code blocks).'
+      );
+    }
+    if (/id=["']api-response-panel["']/i.test(vs) || /data-testid=["']api-panel-toggle["']/i.test(vs)) {
+      domErrors.push(
+        'value-summary-slide contains API side-panel controls. Value summary must not show API panel/toggle.'
+      );
+    }
+  }
+
   // 5. Every interaction.target in demo-script.json must have a matching data-testid in HTML.
   //    When PLAID_LINK_LIVE=true, skip interaction targets from Plaid simulation steps.
   const stepsForTargets = PLAID_LINK_LIVE
@@ -1651,6 +1895,11 @@ async function main(opts = {}) {
     if (ctaPatch.injected) {
       console.log('[Build] Injected canonical launch CTA data-testid="link-external-account-btn"');
     }
+    const launchIconPatch = enforceCanonicalLaunchButtonIcon(html);
+    html = launchIconPatch.html;
+    if (launchIconPatch.patched) {
+      console.log('[Build] Normalized launch CTA to stock link icon + clean label');
+    }
     if (!html.includes('data-testid="link-external-account-btn"')) {
       domErrors.push('Missing canonical launch CTA target: data-testid="link-external-account-btn".');
     }
@@ -1691,39 +1940,18 @@ async function main(opts = {}) {
     console.log('[Build] Patched syntaxHighlight for null-safe JSON stringify');
   }
 
-  // ── Strip brittle showApiPanel calls and normalize to one global panel ─────
-  // The LLM frequently emits partial / duplicated panel logic. We strip direct
-  // showApiPanel() calls and later inject a stable global `_stepApiResponses` +
-  // goToStep wrapper so build-qa, manual preview, and recording all see the same panel behavior.
-  if (html.includes('showApiPanel(')) {
+  // ── Normalize showApiPanel → _showApiPanelStub (do NOT strip calls) ─────────
+  // Previously we stripped `showApiPanel(...)` with a paren walker. Removing a
+  // zero-arg `showApiPanel()` also ate the trailing `;` and left `else }` / `else };`
+  // in `toggleApiPanel`, plus bare `showApiPanel` handler refs — first script parse error,
+  // Plaid Link QA sees "Unexpected token '}'" and no link token fetch runs.
+  // Renaming all references preserves arguments (including nested parens in literals).
+  if (/\bshowApiPanel\b/.test(html)) {
     const before = html;
-    // Step 1: Rename the function DEFINITION so stripping doesn't corrupt it.
     html = html.replace(/\bfunction\s+showApiPanel\b/g, 'function _showApiPanelStub');
-    // Step 2: Strip showApiPanel() CALLS using a paren-depth counter, not a regex.
-    // The naive [^)]* regex breaks on phone numbers like "+1(111)222-3333" inside
-    // the JSON argument — the first ) terminates the match early, leaving raw JSON
-    // as invalid JavaScript (causes "window.goToStep is not a function" errors).
-    let stripped = '';
-    let i = 0;
-    while (i < html.length) {
-      const idx = html.indexOf('showApiPanel(', i);
-      if (idx === -1) { stripped += html.slice(i); break; }
-      stripped += html.slice(i, idx);
-      // Walk forward counting parens to find the matching close paren
-      let depth = 0;
-      let j = idx + 'showApiPanel'.length;
-      while (j < html.length) {
-        if (html[j] === '(') depth++;
-        else if (html[j] === ')') { depth--; if (depth === 0) { j++; break; } }
-        j++;
-      }
-      // Skip optional trailing semicolon + whitespace
-      while (j < html.length && (html[j] === ';' || html[j] === ' ' || html[j] === '\n' || html[j] === '\r')) j++;
-      i = j;
-    }
-    html = stripped;
+    html = html.replace(/\bshowApiPanel\b/g, '_showApiPanelStub');
     if (html !== before) {
-      console.log('[Build] Stripped showApiPanel() calls — api-response-panel overlay stays hidden');
+      console.log('[Build] Normalized showApiPanel → _showApiPanelStub (definition + all references)');
     }
   }
   // ── Restore insight-step API panel calls stripped above ────────────────────
@@ -1756,7 +1984,7 @@ async function main(opts = {}) {
   const stepApiResponses = {};
   const stepApiEndpoints = {};
   for (const step of (demoScript.steps || [])) {
-    if (step.apiResponse?.response) {
+    if (!isValueSummaryStep(step) && hasApiEndpoint(step) && step.apiResponse?.response) {
       stepApiResponses[step.id] = step.apiResponse.response;
       if (step.apiResponse.endpoint) stepApiEndpoints[step.id] = step.apiResponse.endpoint;
     }
@@ -1768,24 +1996,8 @@ async function main(opts = {}) {
       else if (html.includes('</body>')) html = html.replace('</body>', `${renderJsonScriptTag}\n</body>`);
       console.log('[Build] Injected renderjson viewer script tag');
     }
-    if (!html.includes('id="api-json-viewer-styles"') && html.includes('</head>')) {
-      const viewerStyles = `<style id="api-json-viewer-styles">
-#api-response-panel { width: 420px; min-width: 360px; max-width: calc(100vw - 32px); }
-#api-response-panel .side-panel-header { justify-content: flex-start; gap: 8px; }
-#api-response-panel .side-panel-body { overflow-y: auto !important; overflow-x: auto !important; max-height: calc(100vh - 140px); overscroll-behavior: contain; scrollbar-width: thin; }
-#api-response-content { font-family: "SF Mono", "Fira Code", Consolas, monospace; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,0.9); }
-#api-response-content * { max-width: 100%; }
-#api-response-content .disclosure { color: #00A67E !important; }
-#api-response-content .syntax { color: rgba(255,255,255,0.55) !important; }
-#api-response-content .key { color: #7dd3fc !important; }
-#api-response-content .string { color: #86efac !important; }
-#api-response-content .number { color: #fbbf24 !important; }
-#api-response-content .boolean { color: #fca5a5 !important; }
-#api-response-content .keyword { color: #c4b5fd !important; }
-</style>`;
-      html = html.replace('</head>', `${viewerStyles}\n</head>`);
-      console.log('[Build] Injected API JSON viewer styles (scroll + theme colors)');
-    }
+    // Keep JSON panel styling owned by slide template/rules and generated CSS.
+    // Do not infer or inject ad-hoc visual styles here.
   }
   if (Object.keys(stepApiResponses).length > 0 && html.includes('</body>')) {
     const apiPatch = `<script>
@@ -1797,7 +2009,7 @@ async function main(opts = {}) {
   window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _resp);
   window.__API_PANEL_CONFIG = Object.assign({
     collapsedByDefault: true,
-    jsonExpandLevel: 99,
+    jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
     autoResize: true,
     minWidthPx: 360,
     maxWidthViewportRatio: 0.52
@@ -1932,7 +2144,7 @@ async function main(opts = {}) {
   window.__apiPanelGlobalConfigApplied = true;
   window.__API_PANEL_CONFIG = Object.assign({
     collapsedByDefault: true,
-    jsonExpandLevel: 99,
+    jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
     autoResize: true,
     minWidthPx: 360,
     maxWidthViewportRatio: 0.52
@@ -1942,44 +2154,110 @@ async function main(opts = {}) {
     html = html.replace('</body>', `${collapsePatch}\n</body>`);
     console.log('[Build] Applied global API panel config defaults');
   }
+  if (html.includes('</body>') && !html.includes('window.__renderJsonDefaultsApplied')) {
+    const renderJsonDefaultsPatch = `<script>
+(function() {
+  if (window.__renderJsonDefaultsApplied) return;
+  window.__renderJsonDefaultsApplied = true;
+  function applyRenderJsonDefaults() {
+    if (!(window.renderjson && typeof window.renderjson === 'function')) return false;
+    var cfg = window.__API_PANEL_CONFIG || {};
+    var showLevel = Number(cfg.jsonExpandLevel || ${RENDERJSON_EXPAND_LEVEL_DEFAULT});
+    if (!Number.isFinite(showLevel) || showLevel < 1) showLevel = ${RENDERJSON_EXPAND_LEVEL_DEFAULT};
+    try {
+      if (typeof window.renderjson.set_show_to_level === 'function') window.renderjson.set_show_to_level(showLevel);
+      if (typeof window.renderjson.set_icons === 'function') window.renderjson.set_icons('+', '-');
+      if (typeof window.renderjson.set_sort_objects === 'function') window.renderjson.set_sort_objects(false);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  if (applyRenderJsonDefaults()) return;
+  var renderJsonScript = document.querySelector('script[data-renderjson-lib], script[src*="renderjson"]');
+  if (renderJsonScript && typeof renderJsonScript.addEventListener === 'function') {
+    renderJsonScript.addEventListener('load', applyRenderJsonDefaults, { once: true });
+  } else {
+    window.addEventListener('load', applyRenderJsonDefaults, { once: true });
+  }
+})();
+</script>`;
+    html = html.replace('</body>', `${renderJsonDefaultsPatch}\n</body>`);
+  }
 
-  // ── Runtime mobile view toggle (desktop/mobile-auto/mobile-simulated) ─────
-  // Applies simulated device shell ONLY to non-slide steps. Slide template steps
-  // with .slide-root remain full-frame.
+  // ── Runtime mobile shell (mobile-optimized default) ───────────────────────
+  // Applies simulated device shell ONLY to non-slide steps.
+  // Slide-style steps are desktop-forced automatically with no manual toggle.
   if (mobileVisualEnabled && html.includes('</body>') && !html.includes('window.__mobileViewRuntimeApplied')) {
     if (html.includes('</head>') && !html.includes('id="mobile-view-runtime-styles"')) {
       const mobileViewStyles = `<style id="mobile-view-runtime-styles">
-#mobile-view-toggle{
-  position:fixed; top:68px; left:16px; z-index:12000;
-  background:rgba(17,17,17,0.86); color:#fff; border:1px solid rgba(255,255,255,0.2);
-  border-radius:10px; padding:8px 12px; font-size:12px; font-weight:700;
-  letter-spacing:.02em; cursor:pointer; backdrop-filter:blur(8px);
-}
-#mobile-view-toggle:hover{background:rgba(30,30,30,0.92);}
 body.mobile-shell-enabled .app-main{
   background:radial-gradient(circle at 50% 10%, rgba(255,255,255,0.06), rgba(0,0,0,0));
 }
+/* Fit phone chrome in real browser chrome at 100% zoom: dvh + reserve ~140px for Layer helper / UI bars */
 body.mobile-shell-enabled .step.mobile-shell-target{
   position:absolute !important;
   left:50% !important; top:50% !important;
-  width:min(390px, calc(100vw - 32px)) !important;
-  height:min(844px, calc(100vh - 32px)) !important;
+  width:min(390px, calc(100vw - 32px), calc(100dvw - 32px)) !important;
+  height:min(844px, calc(100dvh - 140px), calc(100vh - 140px)) !important;
   transform:translate(-50%, -50%) !important;
   border-radius:34px !important;
   border:1px solid rgba(255,255,255,0.18) !important;
   box-shadow:0 24px 60px rgba(0,0,0,0.42), 0 0 0 10px rgba(255,255,255,0.04) !important;
   overflow:hidden !important;
 }
+body.mobile-shell-enabled .step.mobile-shell-target .layer-mobile-stage,
+body.mobile-shell-enabled .step.mobile-shell-target .mobile-stage{
+  width:100% !important;
+  height:100% !important;
+  min-height:0 !important;
+  box-sizing:border-box !important;
+}
+body.mobile-shell-enabled .step.mobile-shell-target .layer-mobile-shell{
+  width:100% !important;
+  height:100% !important;
+  min-height:0 !important;
+  max-height:100% !important;
+  box-sizing:border-box !important;
+}
+body.mobile-shell-enabled .step.mobile-shell-target .mobile-device,
+body.mobile-shell-enabled .step.mobile-shell-target .mobile-frame,
+body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulator-shell"]{
+  width:100% !important;
+  height:100% !important;
+  max-width:100% !important;
+  max-height:100% !important;
+  min-height:0 !important;
+  box-sizing:border-box !important;
+}
 </style>`;
       html = html.replace('</head>', `${mobileViewStyles}\n</head>`);
-      console.log('[Build] Injected runtime mobile-view toggle styles');
+      console.log('[Build] Injected runtime mobile-shell styles');
     }
+    const desktopPreferredStepIds = Array.isArray(demoScript?.steps)
+      ? demoScript.steps
+          .filter((step) => {
+            const sceneType = String(step?.sceneType || '').toLowerCase();
+            const id = String(step?.id || '').toLowerCase();
+            const label = String(step?.label || '').toLowerCase();
+            const visual = String(step?.visualState || '').toLowerCase();
+            return (
+              sceneType === 'slide' ||
+              id.includes('slide') ||
+              label.includes('slide') ||
+              visual.includes('slide')
+            );
+          })
+          .map((step) => String(step.id))
+      : [];
+    const desktopPreferredStepIdsJson = JSON.stringify(desktopPreferredStepIds);
     const mobileViewPatch = `<script>
 (function() {
   if (window.__mobileViewRuntimeApplied) return;
   window.__mobileViewRuntimeApplied = true;
-  var mode = '${buildViewMode}';
+  var mode = 'mobile-simulated';
   var mq = window.matchMedia ? window.matchMedia('(max-width: 480px)') : null;
+  var desktopPreferredStepIds = new Set(${desktopPreferredStepIdsJson});
 
   function activeStep() { return document.querySelector('.step.active'); }
   function activeStepId() {
@@ -1989,31 +2267,35 @@ body.mobile-shell-enabled .step.mobile-shell-target{
   function isSlideStep(id) {
     if (!id) return false;
     var node = document.querySelector('[data-testid="step-' + id + '"]');
+    if (desktopPreferredStepIds.has(id)) return true;
+    if (/slide/i.test(id)) return true;
     return !!(node && node.querySelector('.slide-root'));
+  }
+  function computeEffectiveMode() {
+    var id = activeStepId();
+    if (id && isSlideStep(id)) return 'desktop';
+    if (mode === 'mobile-auto') return (mq && mq.matches) ? 'mobile-simulated' : 'desktop';
+    return mode;
   }
   function shouldShellForCurrentStep() {
     var id = activeStepId();
     if (!id || isSlideStep(id)) return false;
-    if (mode === 'mobile-simulated') return true;
-    if (mode === 'mobile-auto') return !!(mq && mq.matches);
-    return false;
+    return computeEffectiveMode() === 'mobile-simulated';
   }
   function applyMode() {
     var a = activeStep();
+    var effectiveMode = computeEffectiveMode();
     document.querySelectorAll('.step.mobile-shell-target').forEach(function(s){ s.classList.remove('mobile-shell-target'); });
     if (!a) {
       document.body.classList.remove('mobile-shell-enabled');
       return;
     }
+    document.body.setAttribute('data-view-mode-effective', effectiveMode);
     if (shouldShellForCurrentStep()) {
       a.classList.add('mobile-shell-target');
       document.body.classList.add('mobile-shell-enabled');
     } else {
       document.body.classList.remove('mobile-shell-enabled');
-    }
-    if (window.__mobileViewToggleBtn) {
-      window.__mobileViewToggleBtn.textContent = 'View: ' + mode;
-      window.__mobileViewToggleBtn.setAttribute('data-view-mode', mode);
     }
   }
   function setMode(next) {
@@ -2023,11 +2305,6 @@ body.mobile-shell-enabled .step.mobile-shell-target{
     document.body.setAttribute('data-view-mode', mode);
     applyMode();
     return mode;
-  }
-  function toggleMode() {
-    if (mode === 'desktop') return setMode('mobile-auto');
-    if (mode === 'mobile-auto') return setMode('mobile-simulated');
-    return setMode('desktop');
   }
 
   var prevGoToStep = window.goToStep;
@@ -2039,29 +2316,37 @@ body.mobile-shell-enabled .step.mobile-shell-target{
   }
   window.setDemoViewMode = setMode;
   window.getDemoViewMode = function(){ return mode; };
-  window.toggleDemoViewMode = toggleMode;
-
-  var btn = document.getElementById('mobile-view-toggle');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'mobile-view-toggle';
-    btn.setAttribute('data-testid', 'mobile-view-toggle');
-    btn.type = 'button';
-    btn.textContent = 'View: ' + mode;
-    btn.addEventListener('click', function(){ toggleMode(); });
-    document.body.appendChild(btn);
-  }
-  window.__mobileViewToggleBtn = btn;
   if (mq && typeof mq.addEventListener === 'function') {
     mq.addEventListener('change', function(){ if (mode === 'mobile-auto') applyMode(); });
   } else if (mq && typeof mq.addListener === 'function') {
     mq.addListener(function(){ if (mode === 'mobile-auto') applyMode(); });
   }
-  setMode(mode);
+  // Mobile-first default for mobile visual builds.
+  setMode('mobile-simulated');
 })();
 </script>`;
     html = html.replace('</body>', `${mobileViewPatch}\n</body>`);
-    console.log('[Build] Injected runtime mobile-view toggle (desktop/mobile-auto/mobile-simulated)');
+    console.log('[Build] Injected runtime mobile-shell (mobile-simulated default)');
+  }
+
+  // Layer mock: :root colors from brand only (runs even if mobile-runtime script was already in HTML from a prior refinement).
+  if (
+    mobileVisualEnabled &&
+    shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled) &&
+    html.includes('</head>') &&
+    !html.includes('id="layer-mock-brand-tokens"')
+  ) {
+    let layerBrandStyle;
+    try {
+      layerBrandStyle = buildLayerMockBrandTokensStyle(brand);
+    } catch (e) {
+      console.error(e.message || String(e));
+      process.exit(1);
+    }
+    html = html.replace('</head>', `${layerBrandStyle}\n</head>`);
+    console.log(
+      `[Build] Injected Layer mock :root brand tokens (${brand.slug || brand.name || 'brand'})`
+    );
   }
 
   // ── Harden generated click bindings (avoid null.addEventListener crash) ────
@@ -2189,6 +2474,9 @@ body.mobile-shell-enabled .step.mobile-shell-target{
       console.log('[Build] Hardened Plaid token bootstrap (HTTP/error-aware + link_token guard)');
     }
   }
+
+  // Host Plaid launch CTA: enforce modest inline icon sizing whenever the canonical button exists.
+  html = injectPlaidLaunchCtaLayoutStyles(html);
 
   // ── Write outputs ──────────────────────────────────────────────────────────
   fs.writeFileSync(HTML_OUT, html, 'utf8');

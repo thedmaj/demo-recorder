@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  getEffectiveProductFamily,
+  inferProductFamilyFromKeywordsOnly,
+} = require('./prompt-scope');
+
 const PRODUCT_FAMILIES = {
   generic: {
     key: 'generic',
@@ -69,25 +74,28 @@ const PRODUCT_FAMILIES = {
   },
 };
 
+/**
+ * Full author prompt: explicit Primary product family + negation-safe keywords.
+ * Short fragments (e.g. demoScript.product): keyword-only heuristic.
+ */
 function inferProductFamilyFromText(text = '') {
-  const lower = String(text || '').toLowerCase();
-  // Prioritize the more specific CRA income signals before generic/base-report cues.
-  // Income Insights prompts often mention "consumer report" and "base report" as prerequisites.
-  if (/\b(cra income insights|income insights|cra_income_insights)\b/.test(lower)) {
-    return 'income_insights';
+  const raw = String(text || '');
+  if (
+    /\*\*Primary product family\*\*/i.test(raw) ||
+    /\*\*Compliance \/ user data/i.test(raw) ||
+    raw.length > 400
+  ) {
+    return getEffectiveProductFamily(raw);
   }
-  if (/\b(base report|consumer report|check base report|cra base report)\b/.test(lower)) {
-    return 'cra_base_report';
-  }
-  if (/\b(signal|auth|identity match|account funding|instant account verification|iav|eav|ach risk)\b/.test(lower)) {
-    return 'funding';
-  }
-  return 'generic';
+  return inferProductFamilyFromKeywordsOnly(raw);
 }
 
 function inferProductFamily({ promptText = '', demoScript = null, productResearch = null } = {}) {
+  if (promptText) {
+    const fromPrompt = getEffectiveProductFamily(promptText);
+    if (fromPrompt !== 'generic') return fromPrompt;
+  }
   const sources = [];
-  if (promptText) sources.push(promptText);
   if (productResearch?.product) sources.push(productResearch.product);
   if (productResearch?.synthesizedInsights) sources.push(productResearch.synthesizedInsights);
   if (demoScript?.product) sources.push(demoScript.product);
@@ -99,7 +107,7 @@ function inferProductFamily({ promptText = '', demoScript = null, productResearc
     }
   }
   for (const source of sources) {
-    const family = inferProductFamilyFromText(source);
+    const family = inferProductFamilyFromKeywordsOnly(source);
     if (family !== 'generic') return family;
   }
   return 'generic';

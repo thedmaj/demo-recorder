@@ -1075,6 +1075,17 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   word-break: break-all;
 }
 
+.log-timestamp {
+  color: rgba(255, 255, 255, 0.38);
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+
+.log-message {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .log-stage {
   color: #00A67E;
 }
@@ -1089,6 +1100,19 @@ input[type="checkbox"]:checked + .toggle-switch::after {
 
 .log-default {
   color: rgba(255, 255, 255, 0.8);
+}
+
+.log-stderr {
+  color: #fca5a5;
+}
+
+.log-dashboard {
+  color: rgba(255, 255, 255, 0.42);
+  font-style: italic;
+}
+
+.log-line-empty {
+  min-height: 1em;
 }
 
 /* =============================================================================
@@ -3208,6 +3232,44 @@ pre.json-preview {
 }
 .build-panel-close:hover {
   color: rgba(255,255,255,0.85);
+}
+.build-panel-new-wrap {
+  padding: 12px 16px 14px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.build-panel-new-btn {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 166, 126, 0.2);
+  border: 1px solid rgba(0, 166, 126, 0.45);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.build-panel-new-btn:hover {
+  background: rgba(0, 166, 126, 0.32);
+  border-color: rgba(0, 166, 126, 0.65);
+}
+.build-panel-new-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.4);
+}
+.build-panel-new-hint code {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+}
+.build-panel-empty-msg {
+  padding: 14px 16px 20px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  line-height: 1.45;
 }
 .build-panel-section-title {
   font-size: 10px;

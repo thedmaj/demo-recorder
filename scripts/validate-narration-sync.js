@@ -19,6 +19,18 @@ function loadJsonIfExists(filePath) {
   }
 }
 
+function classifyIssueCategory(code) {
+  const c = String(code || '');
+  if (/^missing-/.test(c)) return 'artifact-integrity';
+  if (c === 'duplicate-step-window') return 'window-integrity';
+  if (c === 'narration-overrun') return 'duration-overrun';
+  if (c === 'cross-screen-owner') return 'cross-screen';
+  if (c === 'narration-screen-mismatch' || c === 'clip-missing-step-window') return 'placement';
+  if (c === 'narration-too-early') return 'lead-lag';
+  if (c === 'timing-older-than-manifest') return 'staleness';
+  return 'other';
+}
+
 function validateNarrationSync(runDir, opts = {}) {
   const minVisualLeadMs = Number.isFinite(Number(opts.minVisualLeadMs))
     ? Number(opts.minVisualLeadMs)
@@ -34,15 +46,25 @@ function validateNarrationSync(runDir, opts = {}) {
 
   const violations = [];
   const warnings = [];
+  const timelineRows = [];
+
+  const pushViolation = (payload) => {
+    const issue = { ...payload, category: payload?.category || classifyIssueCategory(payload?.code) };
+    violations.push(issue);
+  };
+  const pushWarning = (payload) => {
+    const issue = { ...payload, category: payload?.category || classifyIssueCategory(payload?.code) };
+    warnings.push(issue);
+  };
 
   if (!timing || !Array.isArray(timing.steps)) {
-    violations.push({
+    pushViolation({
       code: 'missing-timing-contract',
       message: 'timing-contract.json missing or invalid.',
     });
   }
   if (!manifest || !Array.isArray(manifest.clips)) {
-    violations.push({
+    pushViolation({
       code: 'missing-voiceover-manifest',
       message: 'voiceover-manifest.json missing or invalid.',
     });
@@ -63,7 +85,7 @@ function validateNarrationSync(runDir, opts = {}) {
 
   for (const [stepId, rows] of byStepId.entries()) {
     if (rows.length > 1) {
-      violations.push({
+      pushViolation({
         code: 'duplicate-step-window',
         stepId,
         count: rows.length,
@@ -74,7 +96,7 @@ function validateNarrationSync(runDir, opts = {}) {
 
   for (const s of steps) {
     if (s?.status === 'overrun') {
-      violations.push({
+      pushViolation({
         code: 'narration-overrun',
         stepId: s.stepId || '',
         deltaMs: Number(s.deltaMs || 0),
@@ -86,6 +108,10 @@ function validateNarrationSync(runDir, opts = {}) {
   for (const clip of clips) {
     const stepId = String(clip?.id || '').trim();
     if (!stepId) continue;
+    const clipStartSource =
+      toFinite(clip.compStartMs) != null
+        ? 'compStartMs'
+        : (toFinite(clip.startMs) != null ? 'startMs' : null);
     const clipStartMs =
       toFinite(clip.compStartMs) ??
       toFinite(clip.startMs) ??
@@ -94,10 +120,11 @@ function validateNarrationSync(runDir, opts = {}) {
 
     const ownRows = byStepId.get(stepId) || [];
     if (ownRows.length === 0) {
-      violations.push({
+      pushViolation({
         code: 'clip-missing-step-window',
         stepId,
         clipStartMs,
+        clipStartSource,
         message: `Narration clip "${stepId}" has no timing-contract window.`,
       });
       continue;
@@ -110,18 +137,37 @@ function validateNarrationSync(runDir, opts = {}) {
       return clipStartMs >= (start - boundaryToleranceMs) && clipStartMs <= (end + boundaryToleranceMs);
     });
     if (!inOwnWindow) {
-      violations.push({
+      pushViolation({
         code: 'narration-screen-mismatch',
         stepId,
         clipStartMs,
+        clipStartSource,
         ownWindows: ownRows.map((w) => [Number(w.compStartMs || 0), Number(w.compEndMs || 0)]),
         message: `Narration for "${stepId}" starts outside its own screen window.`,
       });
-      continue;
     }
 
     const canonical = ownRows[0];
     const windowStartMs = toFinite(canonical.compStartMs);
+    const windowEndMs = toFinite(canonical.compEndMs);
+    const leadMs = windowStartMs != null ? Math.round(clipStartMs - windowStartMs) : null;
+    timelineRows.push({
+      stepId,
+      clipStartMs,
+      clipStartSource,
+      windowStartMs,
+      windowEndMs,
+      leadMs,
+      inOwnWindow,
+      overrunStatus: canonical?.status || 'unknown',
+      boundaryToleranceMs,
+      minVisualLeadMs,
+    });
+
+    if (!inOwnWindow) {
+      continue;
+    }
+
     if (windowStartMs != null && clipStartMs < (windowStartMs + minVisualLeadMs)) {
       const earlyIssue = {
         code: 'narration-too-early',
@@ -131,8 +177,8 @@ function validateNarrationSync(runDir, opts = {}) {
         minVisualLeadMs,
         message: `Narration for "${stepId}" starts too early (${clipStartMs - windowStartMs}ms lead; requires >= ${minVisualLeadMs}ms).`,
       };
-      if (hardFailEarlyLead) violations.push(earlyIssue);
-      else warnings.push(earlyIssue);
+      if (hardFailEarlyLead) pushViolation(earlyIssue);
+      else pushWarning(earlyIssue);
     }
 
     const owner = steps.find((s) => {
@@ -143,7 +189,7 @@ function validateNarrationSync(runDir, opts = {}) {
       return clipStartMs >= start && clipStartMs < end;
     });
     if (owner && owner.stepId && owner.stepId !== stepId) {
-      violations.push({
+      pushViolation({
         code: 'cross-screen-owner',
         stepId,
         ownerStepId: owner.stepId,
@@ -156,10 +202,27 @@ function validateNarrationSync(runDir, opts = {}) {
   const timingGeneratedAtMs = timing?.generatedAt ? Date.parse(timing.generatedAt) : null;
   const resyncedAtMs = manifest?.resyncedAt ? Date.parse(manifest.resyncedAt) : null;
   if (timingGeneratedAtMs != null && resyncedAtMs != null && resyncedAtMs > timingGeneratedAtMs) {
-    warnings.push({
+    pushWarning({
       code: 'timing-older-than-manifest',
       message: 'voiceover-manifest is newer than timing-contract; validate after sync-map/audio edits.',
     });
+  }
+
+  const violationCodeCounts = {};
+  const warningCodeCounts = {};
+  const violationCategoryCounts = {};
+  const warningCategoryCounts = {};
+  for (const v of violations) {
+    const code = v.code || 'unknown';
+    const cat = v.category || 'other';
+    violationCodeCounts[code] = (violationCodeCounts[code] || 0) + 1;
+    violationCategoryCounts[cat] = (violationCategoryCounts[cat] || 0) + 1;
+  }
+  for (const w of warnings) {
+    const code = w.code || 'unknown';
+    const cat = w.category || 'other';
+    warningCodeCounts[code] = (warningCodeCounts[code] || 0) + 1;
+    warningCategoryCounts[cat] = (warningCategoryCounts[cat] || 0) + 1;
   }
 
   return {
@@ -169,6 +232,14 @@ function validateNarrationSync(runDir, opts = {}) {
     boundaryToleranceMs,
     violations,
     warnings,
+    timelineRows,
+    summary: {
+      violationCodeCounts,
+      warningCodeCounts,
+      violationCategoryCounts,
+      warningCategoryCounts,
+      clipRows: timelineRows.length,
+    },
   };
 }
 

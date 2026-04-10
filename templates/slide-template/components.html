@@ -2,10 +2,10 @@
 Shared markup fragments for slide generation.
 These fragments are optional helpers; the build agent may inline
 equivalent HTML as long as it matches the required class contract
-from SLIDE_RULES.md.
+from SLIDE_RULES.md and the structure in pipeline-slide-shell.html.
 -->
 
-<!-- Slide header -->
+<!-- Slide header (optional: insert .slide-header-logo img before pill — see shell) -->
 <header class="slide-header">
   <div class="slide-header-left">
     <div class="slide-header-pill" data-testid="slide-product">PLAID</div>
@@ -37,4 +37,10 @@ from SLIDE_RULES.md.
   <div class="slide-callout-value">98%</div>
   <div class="slide-callout-label">Coverage for instant verification</div>
 </aside>
+
+<!-- Slide footer (Plaid deck closure — same pattern as pipeline-slide-shell.html) -->
+<footer class="slide-footer" data-testid="slide-footer">
+  <img src="./plaid-logo-no-text-white-background.png" alt="" width="20" height="20" style="object-fit:contain;border-radius:4px" />
+  <span class="slide-footer-meta">plaid.com</span>
+</footer>
 

@@ -108,8 +108,10 @@ describe('prompt-templates', () => {
       'Prompt should require runtime toggle handler');
     assert.ok(fullText.includes('keep panel collapsed until toggled open'),
       'Prompt should enforce collapsed-by-default API panel behavior');
-    assert.ok(fullText.includes('render JSON expanded by default via renderjson'),
-      'Prompt should require expanded JSON when panel opens');
+    assert.ok(
+      fullText.includes('set_show_to_level') || fullText.includes('fully expanded via renderjson'),
+      'Prompt should require fully expanded JSON when panel opens'
+    );
     assert.ok(fullText.includes('renderjson@1.4.0/renderjson.min.js'),
       'Prompt should require renderjson viewer script for API payload display');
     assert.ok(fullText.includes('side-panel-body is vertically scrollable'),
@@ -132,6 +134,60 @@ describe('prompt-templates', () => {
       'Prompt should enforce linkMode/link_mode as internal-only fields');
     assert.ok(fullText.includes('MUST NEVER be included in the payload sent to Plaid /link/token/create'),
       'Prompt should forbid sending internal mode fields to Plaid');
+  });
+
+  test('buildAppGenerationPrompt() suppresses LIVE PLAID LINK block for Layer mobile mock-only prompts', () => {
+    const layerScript = {
+      product: 'Plaid Layer',
+      steps: [
+        { id: 'eligibility-capture', label: 'Eligibility', narration: 'User enters phone number on mobile.', durationMs: 5000 },
+        { id: 'layer-consent', label: 'Layer Consent', narration: 'Layer consent and authentication flow appears.', durationMs: 5000 },
+      ],
+    };
+    const result = templates.buildAppGenerationPrompt(
+      layerScript,
+      'Layer mobile prototype app',
+      null,
+      {
+        plaidLinkLive: true,
+        mobileVisualEnabled: true,
+        promptText: 'Build a Layer mobile mock prototype. Do not use live Plaid Link.',
+        layerMockTemplate: '# Layer Mobile Mock Template Library',
+        designPluginHtml: '<div>mock</div>',
+      }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(!fullText.includes('## LIVE PLAID LINK MODE'),
+      'LIVE PLAID LINK block should be omitted for Layer mock-only prompts');
+    assert.ok(!fullText.includes('## DESIGN PLUGIN: Plaid Link Asset Library'),
+      'Plaid Link design plugin block should be omitted for Layer mock-only prompts');
+    assert.ok(fullText.includes('## LAYER MOCK PRIORITY MODE'),
+      'Prompt should explain Layer mock priority mode');
+  });
+
+  test('buildAppGenerationPrompt() keeps LIVE PLAID LINK block when prompt explicitly asks for both flows', () => {
+    const layerScript = {
+      product: 'Plaid Layer',
+      steps: [
+        { id: 'eligibility-capture', label: 'Eligibility', narration: 'User enters phone number on mobile.', durationMs: 5000 },
+        { id: 'link-launch-fallback', label: 'Plaid Link Fallback', narration: 'Fallback path launches Plaid Link for ineligible users.', durationMs: 5000 },
+      ],
+    };
+    const result = templates.buildAppGenerationPrompt(
+      layerScript,
+      'Layer + Link dual path app',
+      null,
+      {
+        plaidLinkLive: true,
+        mobileVisualEnabled: true,
+        promptText: 'Use both Layer and Plaid Link. If user is not eligible, fallback to Plaid Link.',
+        layerMockTemplate: '# Layer Mobile Mock Template Library',
+        designPluginHtml: '<div>mock</div>',
+      }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('## LIVE PLAID LINK MODE'),
+      'LIVE PLAID LINK block should remain when both flows are explicitly requested');
   });
 
   test('buildAppGenerationPrompt() includes global refinement feedback contracts', () => {

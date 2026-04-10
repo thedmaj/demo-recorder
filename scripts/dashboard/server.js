@@ -63,14 +63,45 @@ function deepMergePatch(stepEntry, patch, action) {
 
 // ── Pipeline state ────────────────────────────────────────────────────────────
 let activeProcess = null;
+/** Run ID for the dashboard-spawned orchestrator (for Builds list live badge / current stage). */
+let activePipelineRunId = null;
+
+function isPipelineChildRunning() {
+  if (activeProcess === null) return false;
+  if (activeProcess.exitCode !== null) return false;
+  return true;
+}
+
+/** Merge isRunning + currentStage onto the active run when a pipeline child is alive. */
+function annotateRunsWithLivePipeline(runs) {
+  if (!Array.isArray(runs) || !isPipelineChildRunning() || !activePipelineRunId) return runs;
+  return runs.map((r) => {
+    if (r.runId !== activePipelineRunId) return r;
+    const completed = getCompletedStages(r.runId);
+    const { resumeFromStage } = computePipelineResume(completed);
+    const currentStage = resumeFromStage || PIPELINE_STAGES[0];
+    return { ...r, isRunning: true, currentStage };
+  });
+}
+/** @type {{ text: string, stream: string }[]} */
 let logBuffer = [];
 const logClients = new Set();
+const LOG_BUFFER_MAX = parseInt(process.env.DASHBOARD_LOG_BUFFER_MAX || '5000', 10);
+const PIPELINE_CONSOLE_LOG = 'pipeline-console.log';
 
+/** Incomplete line tails from spawned orchestrator (pipe chunk boundaries). */
+let pipelineOutRem = '';
+let pipelineErrRem = '';
+/** Append session log under the active run dir (same text as terminal would show). */
+let pipelineDiskLogStream = null;
+
+// Keep in lockstep with scripts/scratch/orchestrator.js STAGES (order matters for resume / --to).
 const PIPELINE_STAGES = [
   'research', 'ingest', 'script', 'brand-extract', 'script-critique',
   'embed-script-validate',
-  /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
-  'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'render', 'ppt', 'touchup',
+  /* 'plaid-link-capture', */ 'build', 'plaid-link-qa', 'build-qa', 'record', 'qa', 'figma-review', 'post-process',
+  'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa',
+  'ai-suggest-overlays', 'render', 'ppt', 'touchup',
 ];
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -116,6 +147,25 @@ function getRunDir(runId) {
     throw new Error('Invalid runId: path escapes DEMOS_DIR');
   }
   return resolved;
+}
+
+/** Read UTF-8 text from end of file (avoids loading huge pipeline-console.log into memory). */
+function readTextTailFromFile(absPath, maxBytes) {
+  const stat = fs.statSync(absPath);
+  if (stat.size === 0) return '';
+  if (stat.size <= maxBytes) return fs.readFileSync(absPath, 'utf8');
+  const fd = fs.openSync(absPath, 'r');
+  try {
+    const readLen = Math.min(maxBytes, stat.size);
+    const buf = Buffer.allocUnsafe(readLen);
+    fs.readSync(fd, buf, 0, readLen, stat.size - readLen);
+    let s = buf.toString('utf8');
+    const firstNl = s.indexOf('\n');
+    if (firstNl !== -1) s = s.slice(firstNl + 1);
+    return s;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function readEnvWhitelisted() {
@@ -246,7 +296,7 @@ function getRunScriptSummary(runId) {
   };
 }
 
-// Stage → indicator artifact (ordered by pipeline sequence)
+// Stage → indicator artifact (ordered by pipeline sequence; paths are under the run dir)
 const STAGE_ARTIFACTS = [
   ['research',        'research-notes.md'],
   ['ingest',          'product-context.json'],
@@ -256,6 +306,8 @@ const STAGE_ARTIFACTS = [
   ['embed-script-validate', 'script-validate-report.json'],
   // ['plaid-link-capture',  'plaid-link-screens/manifest.json'],  // DISABLED
   ['build',               'scratch-app/index.html'],
+  ['plaid-link-qa',       'plaid-link-qa.json'],
+  ['build-qa',            'build-qa-diagnostics.json'],
   ['record',          'recording.webm'],
   ['qa',              'qa-report-1.json'],
   ['figma-review',    'figma-review.json'],
@@ -263,7 +315,7 @@ const STAGE_ARTIFACTS = [
   ['voiceover',       'voiceover-manifest.json'],
   ['coverage-check',  'coverage-report.json'],
   ['auto-gap',        'auto-gap-report.json'],
-  ['resync-audio',    'voiceover-manifest.json'],  // resync updates manifest in-place (adds resyncedAt)
+  ['resync-audio',    'voiceover-manifest.json'],  // manifest resyncedAt + timing-contract.json comp windows refreshed for governor
   ['embed-sync',      'embed-sync-report.json'],
   ['audio-qa',              'audio-qa-report.json'],
   ['ai-suggest-overlays',   'overlay-suggestions.json'],
@@ -271,42 +323,6 @@ const STAGE_ARTIFACTS = [
   ['ppt',             'demo-summary.pptx'],
   ['touchup',         'touchup-complete.json'],
 ];
-
-function detectLastCompletedStage(runId) {
-  const dir = path.join(DEMOS_DIR, runId);
-  let lastStage = null;
-  // Walk forward — last one present wins (handles non-unique sentinels like demo-script.json)
-  for (const [stage, relPath] of STAGE_ARTIFACTS) {
-    if (fs.existsSync(path.join(dir, relPath))) lastStage = stage;
-  }
-
-  // Slide template dependency (prevents skipping build when template changes)
-  // If the slide template assets are newer than the run's built app, force the pipeline
-  // to restart from the build stage.
-  try {
-    const slideTemplateDir = path.join(PROJECT_ROOT, 'templates/slide-template');
-    const candidateFiles = ['base.html', 'slide.css', 'SLIDE_RULES.md', 'components.html'];
-    let maxTemplateMtimeMs = 0;
-    for (const f of candidateFiles) {
-      const fp = path.join(slideTemplateDir, f);
-      if (!fs.existsSync(fp)) continue;
-      const m = fs.statSync(fp).mtimeMs;
-      if (m > maxTemplateMtimeMs) maxTemplateMtimeMs = m;
-    }
-    const builtApp = path.join(dir, 'scratch-app', 'index.html');
-    if (fs.existsSync(builtApp) && maxTemplateMtimeMs > 0) {
-      const builtMtimeMs = fs.statSync(builtApp).mtimeMs;
-      if (maxTemplateMtimeMs > builtMtimeMs) {
-        const buildIdx = PIPELINE_STAGES.indexOf('build');
-        if (buildIdx > 0) lastStage = PIPELINE_STAGES[buildIdx - 1];
-      }
-    }
-  } catch (_) {
-    // Best-effort only — do not block pipeline UI
-  }
-
-  return lastStage;
-}
 
 function readPipelineProgress(runId) {
   const progressFile = path.join(DEMOS_DIR, runId, 'pipeline-progress.json');
@@ -334,10 +350,22 @@ function getCompletedStages(runId) {
   return completed;
 }
 
-function nextStageAfter(stageName) {
-  const idx = PIPELINE_STAGES.indexOf(stageName);
-  if (idx === -1 || idx === PIPELINE_STAGES.length - 1) return null;
-  return PIPELINE_STAGES[idx + 1];
+/**
+ * Next stage to run, using canonical PIPELINE_STAGES order (not completion order in pipeline-progress.json).
+ * Ignores ad-hoc stage names not in PIPELINE_STAGES (e.g. claim-check).
+ */
+function computePipelineResume(completedStages) {
+  const plan = PIPELINE_STAGES;
+  const set = new Set(completedStages || []);
+  let lastIdx = -1;
+  for (let i = 0; i < plan.length; i++) {
+    if (set.has(plan[i])) lastIdx = i;
+  }
+  const lastCompletedStage = lastIdx >= 0 ? plan[lastIdx] : null;
+  let resumeFromStage = null;
+  if (lastIdx === -1) resumeFromStage = plan[0] || null;
+  else if (lastIdx < plan.length - 1) resumeFromStage = plan[lastIdx + 1];
+  return { lastCompletedStage, resumeFromStage };
 }
 
 function getLatestQaReport(runId) {
@@ -353,12 +381,96 @@ function getLatestQaReport(runId) {
   return safeReadJson(path.join(dir, latest));
 }
 
-function broadcastLog(line) {
-  logBuffer.push(line);
-  if (logBuffer.length > 500) logBuffer.shift();
-  const payload = `data: ${line}\n\n`;
+function closePipelineDiskLog() {
+  if (pipelineDiskLogStream) {
+    try {
+      pipelineDiskLogStream.end();
+    } catch (_) {
+      /* ignore */
+    }
+    pipelineDiskLogStream = null;
+  }
+}
+
+/**
+ * @param {string} runDir
+ * @param {string[]} orchestratorArgs argv after 'node'
+ */
+function openPipelineDiskLog(runDir, orchestratorArgs) {
+  closePipelineDiskLog();
+  try {
+    const p = path.join(runDir, PIPELINE_CONSOLE_LOG);
+    pipelineDiskLogStream = fs.createWriteStream(p, { flags: 'a' });
+    const cmd = ['node', ...(orchestratorArgs || [])].join(' ');
+    const banner =
+      `\n${'='.repeat(72)}\n` +
+      `[${new Date().toISOString()}] Dashboard pipeline session\n` +
+      `CMD: ${cmd}\n` +
+      `RUN_DIR: ${runDir}\n` +
+      `${'='.repeat(72)}\n`;
+    pipelineDiskLogStream.write(banner);
+  } catch (_) {
+    pipelineDiskLogStream = null;
+  }
+}
+
+/**
+ * Push one log line to buffer, SSE clients, optional parent terminal mirror, and disk log.
+ * @param {string} line
+ * @param {{ stream?: string, fromChild?: boolean }} [opts]
+ *   stream: 'stdout' | 'stderr' | 'dashboard'
+ *   fromChild: when true, mirror to the dashboard server's stdout/stderr (CLI parity).
+ */
+function broadcastLog(line, opts = {}) {
+  const stream = opts.stream || 'dashboard';
+  const fromChild = !!opts.fromChild;
+  const at = new Date().toISOString();
+  const entry = { text: line, stream, at };
+  logBuffer.push(entry);
+  while (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+  const ssePayload = `data: ${JSON.stringify(entry)}\n\n`;
   for (const res of logClients) {
-    try { res.write(payload); } catch (_) { logClients.delete(res); }
+    try {
+      res.write(ssePayload);
+    } catch (_) {
+      logClients.delete(res);
+    }
+  }
+  if (fromChild && process.env.DASHBOARD_MIRROR_PIPELINE_LOG !== '0') {
+    const out = line + '\n';
+    if (stream === 'stderr') process.stderr.write(out);
+    else process.stdout.write(out);
+  }
+  if (pipelineDiskLogStream) {
+    try {
+      const pre = stream === 'dashboard' ? '[dashboard] ' : '';
+      pipelineDiskLogStream.write(`[${at}] ${pre}${line}\n`);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+/** Parse one line from pipeline-console.log when written with [ISO] prefix (see broadcastLog). */
+function parsePipelineConsoleLogLine(text) {
+  const m = text.match(/^\[(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\]\s(.*)$/);
+  if (m) return { text: m[2], stream: 'stdout', at: m[1] };
+  return { text, stream: 'stdout' };
+}
+
+/**
+ * Reassemble orchestrator stdout/stderr into full lines (matches TTY line breaks).
+ */
+function flushPipelineStreamChunk(chunk, isStderr) {
+  let rem = isStderr ? pipelineErrRem : pipelineOutRem;
+  const str = rem + chunk.toString('utf8');
+  const lines = str.split(/\r?\n/);
+  const nextRem = lines.pop();
+  if (isStderr) pipelineErrRem = nextRem;
+  else pipelineOutRem = nextRem;
+  const stream = isStderr ? 'stderr' : 'stdout';
+  for (const line of lines) {
+    broadcastLog(line, { fromChild: true, stream });
   }
 }
 
@@ -446,9 +558,43 @@ app.get('/api/runs', (req, res) => {
       _runsCache = buildRunsList();
       _runsCacheAt = now;
     }
-    res.json({ runs: _runsCache });
+    res.json({ runs: annotateRunsWithLivePipeline(_runsCache) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Allocate an empty run directory (no pipeline). Must be registered before /api/runs/:runId.
+app.post('/api/runs/allocate', (req, res) => {
+  try {
+    const allocated = allocateDashboardRunDir();
+    invalidateRunsCache();
+    broadcastLog(`[Dashboard] Allocated new empty run: ${allocated.runDir}`);
+    res.json({ runId: allocated.runId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Persisted orchestrator session log (dashboard). Must be before /api/runs/:runId.
+app.get('/api/runs/:runId/pipeline-console-log', (req, res) => {
+  try {
+    const runId = req.params.runId;
+    const dir = getRunDir(runId);
+    if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Run not found' });
+    const maxLines = Math.min(8000, Math.max(1, parseInt(req.query.maxLines || '4000', 10)));
+    const logPath = path.join(dir, PIPELINE_CONSOLE_LOG);
+    if (!fs.existsSync(logPath)) return res.json({ lines: [] });
+    const maxBytes = Math.min(4 * 1024 * 1024, Math.max(256 * 1024, maxLines * 320));
+    const raw = readTextTailFromFile(logPath, maxBytes);
+    const all = raw.split(/\r?\n/);
+    const slice = all.length > maxLines ? all.slice(-maxLines) : all;
+    const lines = slice.map((text) => parsePipelineConsoleLogLine(text));
+    res.json({ lines });
+  } catch (err) {
+    const msg = err && err.message;
+    if (msg && /invalid runid/i.test(msg)) return res.status(400).json({ error: msg });
+    res.status(500).json({ error: msg || 'Unknown error' });
   }
 });
 
@@ -462,10 +608,31 @@ app.get('/api/runs/:runId', (req, res) => {
     const qa = getLatestQaReport(runId);
     const script = getRunScriptSummary(runId);
     const completedStages = getCompletedStages(runId);
-    const lastCompletedStage = completedStages.length > 0
-      ? completedStages[completedStages.length - 1]
-      : detectLastCompletedStage(runId);
-    const resumeFromStage = nextStageAfter(lastCompletedStage);
+    let { lastCompletedStage, resumeFromStage } = computePipelineResume(completedStages);
+
+    // Slide template newer than built app → suggest re-running from build (matches orchestrator guidance)
+    try {
+      const slideTemplateDir = path.join(PROJECT_ROOT, 'templates/slide-template');
+      const candidateFiles = ['base.html', 'slide.css', 'SLIDE_RULES.md', 'components.html'];
+      let maxTemplateMtimeMs = 0;
+      for (const f of candidateFiles) {
+        const fp = path.join(slideTemplateDir, f);
+        if (!fs.existsSync(fp)) continue;
+        const m = fs.statSync(fp).mtimeMs;
+        if (m > maxTemplateMtimeMs) maxTemplateMtimeMs = m;
+      }
+      const builtApp = path.join(dir, 'scratch-app', 'index.html');
+      if (fs.existsSync(builtApp) && maxTemplateMtimeMs > 0) {
+        const builtMtimeMs = fs.statSync(builtApp).mtimeMs;
+        if (maxTemplateMtimeMs > builtMtimeMs) {
+          const buildIdx = PIPELINE_STAGES.indexOf('build');
+          if (buildIdx > 0) {
+            lastCompletedStage = PIPELINE_STAGES[buildIdx - 1];
+            resumeFromStage = 'build';
+          }
+        }
+      }
+    } catch (_) {}
 
     const allFiles = safeReaddir(dir);
     const manifest = allFiles.map(name => {
@@ -639,6 +806,10 @@ async function captureRunScreenshots(runId) {
   fs.mkdirSync(outDir, { recursive: true });
 
   const staticApp = express();
+  staticApp.use((req, res, next) => {
+    if (tryServePlaidLogoFallback(req, res, scratchDir)) return;
+    next();
+  });
   staticApp.use(express.static(scratchDir));
   const staticServer = await new Promise((resolve, reject) => {
     const s = staticApp.listen(0, '127.0.0.1', () => resolve(s));
@@ -1200,6 +1371,7 @@ app.post('/api/pipeline/run', (req, res) => {
     // If activeProcess is set but has already exited, clear the stale reference
     if (activeProcess !== null && activeProcess.exitCode !== null) {
       activeProcess = null;
+      activePipelineRunId = null;
     }
 
     const { force } = req.body || {};
@@ -1210,11 +1382,15 @@ app.post('/api/pipeline/run', (req, res) => {
     if (activeProcess !== null && force) {
       try { activeProcess.kill('SIGTERM'); } catch (_) {}
       activeProcess = null;
+      activePipelineRunId = null;
     }
 
-    const { fromStage, noTouchup, resumeRunId, createNewRun, researchMode } = req.body || {};
+    const { fromStage, toStage, noTouchup, resumeRunId, createNewRun, researchMode } = req.body || {};
     const args = ['scripts/scratch/orchestrator.js'];
     if (fromStage) args.push(`--from=${fromStage}`);
+    if (toStage && typeof toStage === 'string' && toStage.trim()) {
+      args.push(`--to=${toStage.trim().toLowerCase()}`);
+    }
     if (noTouchup) args.push('--no-touchup');
 
     // Build spawn env — all pipeline launches must be bound to an explicit run directory.
@@ -1249,6 +1425,12 @@ app.post('/api/pipeline/run', (req, res) => {
     }
 
     logBuffer = [];
+    pipelineOutRem = '';
+    pipelineErrRem = '';
+    closePipelineDiskLog();
+    if (spawnEnv.PIPELINE_RUN_DIR) {
+      openPipelineDiskLog(spawnEnv.PIPELINE_RUN_DIR, args);
+    }
 
     activeProcess = spawn('node', args, {
       cwd: PROJECT_ROOT,
@@ -1256,20 +1438,33 @@ app.post('/api/pipeline/run', (req, res) => {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
     });
+    activePipelineRunId = targetRunId;
 
-    activeProcess.stdout.on('data', data => {
-      data.toString().split('\n').filter(Boolean).forEach(broadcastLog);
+    activeProcess.stdout.on('data', (data) => {
+      flushPipelineStreamChunk(data, false);
     });
-    activeProcess.stderr.on('data', data => {
-      data.toString().split('\n').filter(Boolean).forEach(broadcastLog);
+    activeProcess.stderr.on('data', (data) => {
+      flushPipelineStreamChunk(data, true);
     });
-    activeProcess.on('close', code => {
-      broadcastLog(`[Pipeline exited with code ${code}]`);
+    activeProcess.on('close', (code) => {
+      if (pipelineOutRem !== '') {
+        broadcastLog(pipelineOutRem, { fromChild: true, stream: 'stdout' });
+        pipelineOutRem = '';
+      }
+      if (pipelineErrRem !== '') {
+        broadcastLog(pipelineErrRem, { fromChild: true, stream: 'stderr' });
+        pipelineErrRem = '';
+      }
+      broadcastLog(`[Pipeline exited with code ${code}]`, { stream: 'dashboard' });
       activeProcess = null;
+      activePipelineRunId = null;
+      closePipelineDiskLog();
     });
-    activeProcess.on('error', err => {
-      broadcastLog(`[Pipeline error: ${err.message}]`);
+    activeProcess.on('error', (err) => {
+      broadcastLog(`[Pipeline error: ${err.message}]`, { stream: 'dashboard' });
       activeProcess = null;
+      activePipelineRunId = null;
+      closePipelineDiskLog();
     });
 
     res.json({ pid: activeProcess.pid, runId: targetRunId });
@@ -1298,8 +1493,14 @@ app.get('/api/pipeline/status', (req, res) => {
   // Clear stale reference if the process has already exited
   if (activeProcess !== null && activeProcess.exitCode !== null) {
     activeProcess = null;
+    activePipelineRunId = null;
   }
-  res.json({ running: activeProcess !== null, pid: activeProcess ? activeProcess.pid : null });
+  const running = isPipelineChildRunning();
+  res.json({
+    running,
+    pid: running && activeProcess ? activeProcess.pid : null,
+    runId: running ? activePipelineRunId : null,
+  });
 });
 
 app.post('/api/pipeline/stdin', (req, res) => {
@@ -1323,9 +1524,11 @@ app.get('/api/pipeline/logs', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Replay buffered lines
-  for (const line of logBuffer) {
-    res.write(`data: ${line}\n\n`);
+  const replay = req.query.replay !== '0';
+  if (replay) {
+    for (const entry of logBuffer) {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    }
   }
 
   logClients.add(res);
@@ -2359,13 +2562,64 @@ const DEMO_MIME_TYPES = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg',
 };
 
+const PLAID_LOGO_FALLBACK_MAP = {
+  'plaid-logo-horizontal-black-white-background.png': 'Plaid-Logo horizontal black with white background.png',
+  'plaid-logo-horizontal-white-text-transparent-background.png': 'plaid logo horizontal white text transparent background.png',
+  'plaid-logo-vertical-white-text-transparent-background.png': 'Plaid vertical logo white text transparent background.png',
+  'plaid-logo-text-white-background.png': 'plaid logo text white background.png',
+  'plaid-logo-no-text-white-background.png': 'plaid logo no text white background.png',
+  'plaid-logo-no-text-black-background.png': 'plaid logo no text black background.png',
+};
+
+function resolvePlaidLogoPathForRequest(urlPath, scratchAppDir) {
+  const base = path.basename(String(urlPath || ''));
+  if (!base || !/^plaid-logo-.*\.(png|jpg|jpeg|svg)$/i.test(base)) return null;
+  const assetsDir = path.join(PROJECT_ROOT, 'assets');
+  const candidates = [
+    path.join(scratchAppDir, base),
+    path.join(assetsDir, base),
+    path.join(assetsDir, PLAID_LOGO_FALLBACK_MAP[base] || ''),
+  ].filter(Boolean);
+  for (const fp of candidates) {
+    try {
+      if (fs.existsSync(fp) && fs.statSync(fp).isFile()) return fp;
+    } catch (_) {
+      // best-effort candidate scan
+    }
+  }
+  return null;
+}
+
+function tryServePlaidLogoFallback(req, res, scratchAppDir) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const rawPath = decodeURIComponent(String(req.path || req.url || '').split('?')[0]);
+  const resolved = resolvePlaidLogoPathForRequest(rawPath, scratchAppDir);
+  if (!resolved) return false;
+  res.type(DEMO_MIME_TYPES[path.extname(resolved).toLowerCase()] || 'application/octet-stream');
+  res.sendFile(resolved);
+  return true;
+}
+
 async function launchDemoAppServer(runId) {
   if (demoAppServers.has(runId)) return demoAppServers.get(runId);
 
+  const runDir = path.join(DEMOS_DIR, runId);
   const scratchAppDir = path.join(DEMOS_DIR, runId, 'scratch-app');
   if (!fs.existsSync(path.join(scratchAppDir, 'index.html'))) {
     throw new Error(`No built app found for run: ${runId}`);
   }
+  let runClientName = null;
+  try {
+    const scriptPath = path.join(runDir, 'demo-script.json');
+    if (fs.existsSync(scriptPath)) {
+      const parsed = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+      const personaCompany = parsed && parsed.persona && typeof parsed.persona.company === 'string'
+        ? parsed.persona.company.trim()
+        : '';
+      if (personaCompany) runClientName = personaCompany;
+    }
+  } catch (_) {}
+  if (!runClientName) runClientName = resolveDemoDisplayName(runId, readDemoAppNames());
 
   const demoApp = express();
   demoApp.use(express.json({ limit: '10mb' }));
@@ -2400,13 +2654,14 @@ async function launchDemoAppServer(runId) {
         const baseOpts = {
           ...body,
           products:              body.products,
-          clientName:            body.clientName || body.client_name,
+          clientName:            body.clientName || body.client_name || runClientName,
           userId:                body.userId || body.user_id,
           phoneNumber:           body.phoneNumber || body.phone_number || null,
           checkUserIdentity:     body.checkUserIdentity || body.check_user_identity || body.consumer_report_user_identity || null,
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
           productFamily:         body.productFamily || body.product_family || null,
           credentialScope:       body.credentialScope || body.credential_scope || null,
+          runDir:                runDir,
         };
         if (body.plaid_user_id || body.plaidUserId) {
           baseOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
@@ -2458,6 +2713,10 @@ async function launchDemoAppServer(runId) {
   });
 
   // Static files
+  demoApp.use((req, res, next) => {
+    if (tryServePlaidLogoFallback(req, res, scratchAppDir)) return;
+    next();
+  });
   demoApp.use(express.static(scratchAppDir));
 
   // Find an available port
@@ -2844,7 +3103,8 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
         `Request: ${message}`,
         `\nCurrent HTML:\n${currentHtml}`,
       ].filter(Boolean).join('\n\n');
-      maxTokens = 16000;
+      // Large single-file demos need headroom; prefer step-scoped AI edit when possible.
+      maxTokens = parseInt(process.env.DASHBOARD_AI_EDIT_FULL_MAX_TOKENS || '20000', 10);
       responseHandler = (text) => {
         const newHtml = text.trim();
         const valid = newHtml.includes('<html') || newHtml.includes('<!DOCTYPE') || newHtml.includes('<body');

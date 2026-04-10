@@ -65,10 +65,18 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: transform 0.15s, box-shadow 0.15s;
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
       font-family: system-ui, -apple-system, sans-serif;
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.92);
     }
-    #__ai-fab:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(0,166,126,0.6); }
+    #__ai-fab.__visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1);
+    }
+    #__ai-fab.__visible:hover { transform: scale(1.08); box-shadow: 0 6px 20px rgba(0,166,126,0.6); }
     #__ai-panel {
       position: fixed;
       bottom: 84px;
@@ -301,6 +309,28 @@
   fab.title = 'AI Edit (opens chat)';
   fab.innerHTML = '✦';
   document.body.appendChild(fab);
+  const FAB_HOVER_ZONE = { width: 220, height: 180 };
+  let _fabHoverVisible = false;
+
+  function setFabVisible(visible) {
+    const shouldShow = !!(visible || isOpen);
+    fab.classList.toggle('__visible', shouldShow);
+  }
+
+  document.addEventListener('mousemove', (e) => {
+    const inZone =
+      e.clientX >= (window.innerWidth - FAB_HOVER_ZONE.width) &&
+      e.clientY >= (window.innerHeight - FAB_HOVER_ZONE.height);
+    if (inZone !== _fabHoverVisible) {
+      _fabHoverVisible = inZone;
+      setFabVisible(_fabHoverVisible);
+    }
+  }, { passive: true });
+
+  document.addEventListener('mouseleave', () => {
+    _fabHoverVisible = false;
+    setFabVisible(false);
+  });
 
   // ── Panel ─────────────────────────────────────────────────────────────────────
   const panel = document.createElement('div');
@@ -396,11 +426,13 @@
   fab.addEventListener('click', () => {
     isOpen = !isOpen;
     panel.classList.toggle('hidden', !isOpen);
+    setFabVisible(_fabHoverVisible);
     if (isOpen) inputEl.focus();
   });
   closeBtn.addEventListener('click', () => {
     isOpen = false;
     panel.classList.add('hidden');
+    setFabVisible(_fabHoverVisible);
     exitPickMode();
   });
 

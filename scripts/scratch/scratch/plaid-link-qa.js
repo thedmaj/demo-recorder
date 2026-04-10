@@ -25,9 +25,15 @@ const { requireRunDir, getRunLayout } = require('../utils/run-io');
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const OUT_DIR = requireRunDir(PROJECT_ROOT, 'plaid-link-qa');
 const RUN_LAYOUT = getRunLayout(OUT_DIR);
-const SCRATCH_DIR = fs.existsSync(path.join(RUN_LAYOUT.buildDir, 'scratch-app'))
-  ? path.join(RUN_LAYOUT.buildDir, 'scratch-app')
-  : path.join(OUT_DIR, 'scratch-app');
+// Prefer run-root scratch-app (live build output). artifacts/build/scratch-app is a snapshot
+// and can lag behind — QA would serve stale HTML and fail (e.g. parse errors fixed in root only).
+const _scratchRoot = path.join(OUT_DIR, 'scratch-app');
+const _scratchArtifact = path.join(RUN_LAYOUT.buildDir, 'scratch-app');
+const SCRATCH_DIR = fs.existsSync(path.join(_scratchRoot, 'index.html'))
+  ? _scratchRoot
+  : fs.existsSync(path.join(_scratchArtifact, 'index.html'))
+    ? _scratchArtifact
+    : _scratchRoot;
 const PW_SCRIPT = path.join(SCRATCH_DIR, 'playwright-script.json');
 const DEMO_SCRIPT = path.join(OUT_DIR, 'demo-script.json');
 const REPORT_FILE = path.join(RUN_LAYOUT.qaDir, 'plaid-link-qa.json');

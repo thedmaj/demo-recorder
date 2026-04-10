@@ -2,6 +2,11 @@
 /**
  * research.js
  * Stage 0: Agentic product research using AskBill (Plaid docs) + Glean (internal knowledge).
+ *
+ * Optional env (tool caps / compaction / logs):
+ *   RESEARCH_TOOL_CAP_GLEAN, RESEARCH_TOOL_CAP_ASK_PLAID_DOCS, RESEARCH_TOOL_CAP_DEFAULT,
+ *   RESEARCH_LOG_TOOL_EXCHANGE_MAX_CHARS, RESEARCH_COMPACT_KEEP_TAIL, RESEARCH_COMPACT_KEEP_TAIL_RECOVERY
+ *
  * Claude runs a tool-use loop to autonomously gather and synthesize product information
  * before any demo script is generated.
  *
@@ -23,6 +28,7 @@ const {
 } = require('./utils/mcp-clients');
 const { buildResearchPrompt } = require('./utils/prompt-templates');
 const { inferProductFamilyFromText } = require('./utils/product-profiles');
+const { detectProductSlugFromPrompt } = require('./utils/prompt-scope');
 const {
   getPlaidSkillBundleForFamily,
   writePlaidSkillManifest,
@@ -41,6 +47,18 @@ const INPUTS_DIR   = path.join(PROJECT_ROOT, 'inputs');
 const OUTPUT_FILE  = path.join(OUT_DIR, 'product-research.json');
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
+
+/** Env-tunable caps for research tool results and log size (see plan: throughput + Glean/AskBill shaping). */
+function getResearchToolCaps() {
+  return {
+    glean: Math.max(400, parseInt(process.env.RESEARCH_TOOL_CAP_GLEAN || '1800', 10)),
+    ask_plaid_docs: Math.max(400, parseInt(process.env.RESEARCH_TOOL_CAP_ASK_PLAID_DOCS || '2600', 10)),
+    default: Math.max(400, parseInt(process.env.RESEARCH_TOOL_CAP_DEFAULT || '3000', 10)),
+    logMaxChars: Math.max(500, parseInt(process.env.RESEARCH_LOG_TOOL_EXCHANGE_MAX_CHARS || '4000', 10)),
+    compactKeepTail: Math.max(4, parseInt(process.env.RESEARCH_COMPACT_KEEP_TAIL || '14', 10)),
+    compactKeepTailRecovery: Math.max(4, parseInt(process.env.RESEARCH_COMPACT_KEEP_TAIL_RECOVERY || '10', 10)),
+  };
+}
 
 // ── Tool definitions for Claude ────────────────────────────────────────────────
 
@@ -140,9 +158,10 @@ function synthesizeToolDescription(mode) {
     );
   }
   return (
-    'When you have gathered sufficient information (12–18 tool calls minimum), call this tool ' +
-    'to synthesize all research into structured output. This is your FINAL action — call it once. ' +
-    'Do NOT output JSON as free text; always use this tool for the final synthesis.'
+    'When you have gathered sufficient information (typically 12–18 tool calls in full mode, fewer if ' +
+    'evidence is already decisive), call this tool to synthesize all research into structured output. ' +
+    'This is your FINAL action — call it once. Do NOT output JSON as free text; always use this tool ' +
+    'for the final synthesis.'
   );
 }
 
@@ -164,6 +183,13 @@ function buildResearchTools(mode) {
             type: 'string',
             description: 'The question to ask about the Plaid product',
           },
+          answerFormat: {
+            type: 'string',
+            enum: ['bullet_list', 'prose', 'json_sample', 'field_list'],
+            description:
+              'How AskBill should answer. Prefer bullet_list for facts; json_sample for example payloads; ' +
+              'field_list for schema-only; prose only when narrative is required.',
+          },
         },
         required: ['question'],
       },
@@ -173,13 +199,22 @@ function buildResearchTools(mode) {
       description:
         'Chat with Glean AI to query Plaid\'s internal knowledge base. Use this for sales materials, ' +
         'demo scripts, customer stories, pitch decks, competitive intel, one-pagers, Gong call ' +
-        'transcripts, and other internal docs. Ask natural-language questions for best results.',
+        'transcripts, and other internal docs. Pass intent + a focused query; prefer few high-value calls.',
       input_schema: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
-            description: 'Natural-language question or message for Glean AI (e.g. "What are Gong calls about Plaid Signal?")',
+            description: 'Natural-language question for Glean AI (focused, one topic per call).',
+          },
+          intent: {
+            type: 'string',
+            enum: ['gong', 'collateral', 'objections', 'customer_story', 'competitive', 'general'],
+            description: 'Optional: what you are looking for so Glean prioritizes the right sources.',
+          },
+          maxBullets: {
+            type: 'integer',
+            description: 'Optional: max synthesized bullets to return (1–8). Default 5.',
           },
         },
         required: ['query'],
@@ -196,11 +231,20 @@ function buildResearchTools(mode) {
 // ── Tool execution ─────────────────────────────────────────────────────────────
 
 async function executeTool(name, input) {
+  const caps = getResearchToolCaps();
   if (name === 'ask_plaid_docs') {
-    return await askPlaidDocs(input.question);
+    const fmt = input.answerFormat && String(input.answerFormat).trim()
+      ? String(input.answerFormat).trim()
+      : 'bullet_list';
+    return await askPlaidDocs(input.question, { answerFormat: fmt });
   }
   if (name === 'glean_chat') {
-    return await gleanChat(input.query);
+    let q = String(input.query || '').trim();
+    if (input.intent && String(input.intent).trim()) {
+      q = `[Research intent: ${String(input.intent).trim()}]\n${q}`;
+    }
+    const mb = Math.min(8, Math.max(1, parseInt(input.maxBullets, 10) || 5));
+    return await gleanChat(q, { maxBullets: mb, maxOutputChars: caps.glean });
   }
   // synthesize_research is intercepted before executeTool is called
   throw new Error(`Unknown tool: ${name}`);
@@ -213,21 +257,7 @@ async function executeTool(name, input) {
  * Returns the slug string (e.g. 'auth', 'signal') or null if unknown.
  */
 function detectProductSlug(promptContent) {
-  const slugMap = {
-    'cra-base-report': /\b(base report|consumer report|check base report|cra base report)\b/i,
-    'income-insights': /\b(cra income insights|income insights|cra_income_insights)\b/i,
-    'auth':     /\bauth\b|\baccount.verif|\bIAV\b|\bEAV\b/i,
-    'signal':   /\bsignal\b|\bach.risk\b/i,
-    'layer':    /\blayer\b/i,
-    'idv':      /\bIDV\b|\bidentity.verif/i,
-    'monitor':  /\bmonitor\b/i,
-    'assets':   /\bassets\b/i,
-    'transfer': /\btransfer\b|\bpay.by.bank\b/i,
-  };
-  for (const [slug, pattern] of Object.entries(slugMap)) {
-    if (pattern.test(promptContent)) return slug;
-  }
-  return null;
+  return detectProductSlugFromPrompt(promptContent);
 }
 
 // ── Load research context from inputs ─────────────────────────────────────────
@@ -526,12 +556,11 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
     if (mode === 'full') {
       systemPrompt +=
         `Be thorough — accuracy matters more than speed.\n\n` +
-        `IMPORTANT: You MUST query Glean for Gong call transcripts to find real customer conversations ` +
-        `discussing this product. Ask natural-language questions like "Gong calls about Plaid Signal" ` +
-        `or "customer objections to Plaid Auth". Extract actual customer pain points, objections, ` +
-        `questions, and success stories. Also search for sales collateral (pitch decks, one-pagers, ` +
-        `battle cards) to understand how the sales team positions this product. ` +
-        `These real-world insights are critical for creating an authentic demo.\n`;
+        `Use Glean for Gong transcripts and sales collateral when they add **high-value** demo voice — ` +
+        `customer pain points, objections, success stories, and positioning. Prefer **fewer, sharper** ` +
+        `glean_chat calls with explicit intent (gong | collateral | objections | customer_story | competitive) ` +
+        `over many broad searches. Stop adding Glean calls once you have enough ranked evidence to support ` +
+        `the brief; put remaining uncertainty in gapQuestions.\n`;
     } else if (mode === 'gapfill') {
       systemPrompt +=
         `RESEARCH MODE: technical gap-fill. The Plaid integration skill (below) already covers most ` +
@@ -570,14 +599,14 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
         `4. Customer use cases and examples that reinforce the value props\n` +
         `5. Any existing demo scripts, one-pagers, or video scripts\n` +
         `6. Competitive differentiators vs. alternatives\n` +
-        `7. **Gong call transcripts**: Use glean_chat with queries like "Gong call transcripts about ` +
-        `<product>", "customer concerns about <feature>", "success stories <product>". ` +
-        `Extract: customer pain points, objections, how reps use the approved talk tracks, ` +
-        `and quantified results. Try multiple different queries.\n` +
-        `8. **Sales collateral**: Use glean_chat to find pitch decks, battle cards, one-pagers. ` +
-        `Ask: "Plaid <product> one-pager", "<product> pitch deck", "<product> competitive". ` +
-        `Extract key positioning and competitive comparisons.\n\n` +
-        `Aim for 12-18 tool calls total. At least 4-5 glean_chat calls for Gong, 2-3 for sales collateral.\n\n`;
+        `7. **Gong / customer voice** (only if additive): glean_chat with intent=gong or objections — ` +
+        `e.g. top objections, rep talk-track usage, quantified outcomes. Prefer **2–4 total** Glean calls ` +
+        `that each return **ranked, demo-ready** bullets, not transcript dumps.\n` +
+        `8. **Sales collateral** (only if additive): glean_chat with intent=collateral or competitive — ` +
+        `one-pagers, battle cards, pitch angles. Merge duplicate topics into a single query.\n\n` +
+        `Aim for **12–18 tool calls total**, but **quality over count**: stop early if synthesis is already ` +
+        `well supported. For Glean specifically, treat **~3–5 calls** as sufficient unless gapQuestions ` +
+        `require more. Use ask_plaid_docs.answerFormat (bullet_list | json_sample | field_list) for tight API facts.\n\n`;
     } else if (mode === 'gapfill') {
       userText +=
         `Use a **targeted** research pass:\n` +
@@ -716,6 +745,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
   }, { runDir: OUT_DIR });
 
   const messages = [...initialMessages];
+  const toolCaps = getResearchToolCaps();
   let iteration = 0;
   let finalText = null;
   let maxTokenRecoveries = 0;
@@ -827,14 +857,14 @@ async function runResearch(context, productSlug, researchOpts = {}) {
               toolName: block.name,
               query: block.input.question || block.input.query || '',
               response: resultStr,
-              maxChars: 8000,
+              maxChars: toolCaps.logMaxChars,
             }, { runDir: OUT_DIR });
             const cap =
               block.name === 'glean_chat'
-                ? 1800
+                ? toolCaps.glean
                 : block.name === 'ask_plaid_docs'
-                  ? 2600
-                  : 3000;
+                  ? toolCaps.ask_plaid_docs
+                  : toolCaps.default;
             return {
               type: 'tool_result',
               tool_use_id: block.id,
@@ -859,7 +889,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       );
 
       messages.push({ role: 'user', content: toolResults });
-      const compacted = compactResearchMessages(messages, 14);
+      const compacted = compactResearchMessages(messages, toolCaps.compactKeepTail);
       messages.length = 0;
       messages.push(...compacted);
       continue;
@@ -890,7 +920,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
           },
         ],
       });
-      const compacted = compactResearchMessages(messages, 10);
+      const compacted = compactResearchMessages(messages, toolCaps.compactKeepTailRecovery);
       messages.length = 0;
       messages.push(...compacted);
       continue;

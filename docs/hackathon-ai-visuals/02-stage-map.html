@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Pipeline Visuals - Stage Map</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-prev="./01-ai-landscape.html" data-next="./03-why-this-ai.html">
+    <main class="page">
+      <div class="topbar">
+        <span class="pill">Page 2 of 5</span>
+        <span class="pill">Pipeline Stage Map</span>
+      </div>
+
+      <h1>Where AI runs in the build process</h1>
+      <p class="lead">This page maps your orchestrator flow to the primary AI used per step.</p>
+
+      <section class="stage-flow">
+        <div class="stage">
+          <div class="id">research</div>
+          <div class="name">Research + source of truth</div>
+          <div class="ai">Claude + AskBill + Glean + Solutions Master</div>
+        </div>
+        <div class="stage">
+          <div class="id">script</div>
+          <div class="name">Storyboard script generation</div>
+          <div class="ai">Claude Opus structured output</div>
+        </div>
+        <div class="stage">
+          <div class="id">brand-extract</div>
+          <div class="name">Brand profile normalization</div>
+          <div class="ai">Brandfetch + Claude Haiku</div>
+        </div>
+        <div class="stage">
+          <div class="id">build</div>
+          <div class="name">App generation</div>
+          <div class="ai">Claude Opus app/code generation</div>
+        </div>
+        <div class="stage">
+          <div class="id">plaid-link-qa / build-qa / qa</div>
+          <div class="name">Visual correctness checks</div>
+          <div class="ai">Claude Vision QA pass</div>
+        </div>
+        <div class="stage">
+          <div class="id">voiceover</div>
+          <div class="name">Narration clips and stitching</div>
+          <div class="ai">ElevenLabs TTS</div>
+        </div>
+        <div class="stage">
+          <div class="id">embed-sync / ai-suggest-overlays</div>
+          <div class="name">Timing + overlay intelligence</div>
+          <div class="ai">Gemini embeddings + Gemini flash suggestions</div>
+        </div>
+        <div class="stage">
+          <div class="id">render / ppt / touchup</div>
+          <div class="name">Final polish + output assets</div>
+          <div class="ai">Claude touchup + Remotion output</div>
+        </div>
+      </section>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Presenter line</h3>
+        <p>
+          "AI is not one giant black box here. It is staged, typed, and validated: each model
+          has a bounded job and hands off artifacts to the next stage."
+        </p>
+      </div>
+
+      <div class="nav">
+        <a class="btn" href="./01-ai-landscape.html">← Back</a>
+        <a class="btn primary" href="./03-why-this-ai.html">Next →</a>
+      </div>
+    </main>
+    <script src="./script.js"></script>
+  </body>
+</html>

@@ -62,6 +62,14 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
 **Solution:** Layer share screen includes name, address, phone, DOB, and SSN (or SSN last4) when required by template
 **Outcome:** Better identity completeness for KYC workflows
 
+### [DRAFT] Branching Rule: Layer Eligibility vs Fallback
+**Persona:** Product team designing mobile onboarding funnels
+**Problem:** Teams accidentally collect extra PII for users who are already Layer-eligible, creating unnecessary friction
+**Solution:** Enforce branch semantics:
+- **Layer-eligible users:** complete Layer flow and proceed directly to an onboarding complete state (no additional PII collection)
+- **Layer-ineligible users:** continue to PII collection fallback and then bank linking via standard Plaid Link experience
+**Outcome:** Preserve low-friction conversion for eligible users while maintaining a compliant fallback for ineligible users
+
 ### [DRAFT] CRA / Consumer Report Flow
 **Persona:** Credit product team using CRA data
 **Problem:** Credit/report workflows require strict identity collection and consent context
@@ -86,6 +94,11 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
 - [DRAFT] Field visibility is template-driven (required vs optional), not globally fixed for all Layer stories
 - [DRAFT] Account-verification stories should omit DOB/SSN unless explicitly required
 - [DRAFT] Identity verification and CRA-oriented stories typically require DOB + SSN fields on share confirmation
+- [DRAFT] Layout/copy fidelity for Layer prototype demos: preserve the canonical Layer template structure, CSS hierarchy, logo placement, and fixed screen copy; only variable fields (for example name/address/bank account values) should change.
+- [DRAFT] Do not route Layer-eligible users into fallback PII collection; fallback PII + Plaid Link is for ineligible users only.
+- [DRAFT] For mobile Layer demos, show subtle helper text directly below the mobile frame with both routing numbers: `415-555-1111` (eligible) and `415-555-0011` (ineligible fallback).
+- [DRAFT] Default prefilled phone value in Layer host capture should be the eligible number first (`415-555-1111`).
+- [DRAFT] In mobile demos, slide-like steps should auto-present in desktop mode (never inside the mobile simulator pane).
 
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
@@ -114,6 +127,13 @@ Empty scaffold for Layer product. To be populated by pipeline research runs.
 - AskBill guidance: CRA-oriented flows are typically strict identity contexts and should include required identity fields (name/address/DOB/SSN), with fallback paths for ineligible users.
 - AskBill guidance: in CRA contexts, phone and email are commonly required identity fields, while bank account rows are included only when available and required by template/story.
 
+### 2026-04-09 — Layer prototype fidelity + branch contract [ai]
+- Canonical prototype contract for mobile Layer demos: maintain template structure and copy fidelity (layout, CSS hierarchy, logo treatment, and fixed instructional text) while only substituting variable values such as persona identity fields and bank account details.
+- Branching contract: eligible users complete Layer and go to onboarding complete state without extra PII collection; only ineligible users proceed to fallback PII collection and then standard Plaid Link bank linking.
+- Mobile helper-copy contract: include subtle helper text below the mobile frame with explicit eligible/ineligible phone numbers and keep the eligible number prefilled by default.
+- Mobile slide-view contract: auto-switch to desktop mode for slide-like screens; no manual view toggle required.
+
 ## Change Log
 
 - 2026-03-12: Scaffold created [human]
+- 2026-04-09: Added prototype-fidelity and eligibility/fallback branching guidance [ai]

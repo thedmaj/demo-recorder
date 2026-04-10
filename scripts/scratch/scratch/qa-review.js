@@ -48,7 +48,8 @@ const FRAMES_DIR     = path.join(OUT_DIR, 'qa-frames');
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const QA_MODEL          = 'claude-opus-4-6';
-const QA_MAX_TOKENS     = 2048;
+const QA_MAX_TOKENS     = parseInt(process.env.QA_MAX_TOKENS || '4096', 10);
+const QA_REVIEW_CONCURRENCY = Math.max(1, parseInt(process.env.QA_REVIEW_CONCURRENCY || '3', 10));
 const QA_PASS_THRESHOLD = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
 const PLAID_LINK_LIVE   = process.env.PLAID_LINK_LIVE === 'true' || process.env.PLAID_LINK_LIVE === '1';
 
@@ -270,6 +271,40 @@ async function reviewStep(client, step, stepId, frames, demoContext = {}) {
   };
 }
 
+/**
+ * Run async tasks with a fixed concurrency (pool). Preserves result order.
+ * @template T,R
+ * @param {number} concurrency
+ * @param {T[]} items
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @returns {Promise<R[]>}
+ */
+async function mapPool(concurrency, items, fn) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return results;
+}
+
+function hasNarrationCriticalMarkers(step) {
+  const text = String(step?.narration || '');
+  if (!text) return false;
+  // Concrete narration anchors that frequently drift from visuals if not reviewed.
+  if (/\b\d+(?:\.\d+)?\s*(?:%|ms|sec|seconds?|minutes?|hours?)\b/i.test(text)) return true;
+  if (/\$\s?\d[\d,]*(?:\.\d+)?/.test(text)) return true;
+  if (/\b(?:accept|approved|approve|review|decline|denied|pass|failed?|low risk|high risk|score)\b/i.test(text)) return true;
+  if (/\b(?:routing|account mask|ownership|identity match|return risk|conversion uplift)\b/i.test(text)) return true;
+  return false;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(opts = {}) {
@@ -397,6 +432,9 @@ async function main(opts = {}) {
   const timingByStepId = {};
   for (const ts of timing.steps) timingByStepId[ts.id] = ts;
 
+  /** @type {Array<{ kind: 'resolved', stepId: string, result: object } | { kind: 'vision', stepId: string, step: object, frames: string[], stepReviewContext: object }>} */
+  const pipelineEntries = [];
+
   for (const { stepId, frames } of stepFrames) {
     const step = stepMap[stepId];
     if (!step) {
@@ -414,28 +452,22 @@ async function main(opts = {}) {
       prevStep: prevStepObj ? { id: prevStepObj.id, label: prevStepObj.label } : null,
       nextStep: nextStepObj ? { id: nextStepObj.id, label: nextStepObj.label } : null,
     };
+    const narrationCritical = hasNarrationCriticalMarkers(step);
+    const stepReviewContext = {
+      ...demoContext,
+      narrationStrict: narrationCritical,
+    };
 
     // ── LIVE Plaid auto-score ─────────────────────────────────────────────────
-    // When running with real Plaid SDK (PLAID_LINK_LIVE=true), the link-launch
-    // step spans the entire Plaid auth flow (20–120s). Its mid-frame will always
-    // show account selection or confirmation — not a static expected state.
-    // Score it 85/100 to reflect successful flow completion rather than penalizing
-    // for expected static UI that cannot exist during a live auth flow.
     const stepTiming = timingByStepId[stepId];
-    // Match legacy "link-launch" / "wf-link-launch" IDs and any step whose NEXT step is
-    // a Plaid Link sim step — that step contains the actual Plaid SDK auth flow.
     const nextStepIsPlaidSim = nextStepObj && PLAID_SIM_STEP_PATTERN.test(nextStepObj.id);
     const stepObj = demoScript.steps.find(s => s.id === stepId);
-    // plaidPhase:'launch' is authoritative regardless of duration (build-only mode synthesizes
-    // 5s timings, so the duration threshold would never be met in build-qa).
     const isLivePlaidLaunchStep = PLAID_LINK_LIVE
       && (stepObj?.plaidPhase === 'launch'
         || (stepTiming
             && stepTiming.durationMs >= LIVE_PLAID_LAUNCH_DURATION_THRESHOLD_MS
             && (/link.?launch/i.test(stepId) || nextStepIsPlaidSim)));
 
-    // When CDP screenshots exist for a Plaid Link sub-step, use them for full vision review
-    // instead of auto-scoring. CDP screenshots capture the real Plaid iframe accurately.
     const plaidFramesDir     = path.join(OUT_DIR, 'plaid-frames');
     const hasCdpScreenshot   = PLAID_SIM_STEP_PATTERN.test(stepId)
       && fs.existsSync(path.join(plaidFramesDir, `${stepId}-mid.png`));
@@ -453,25 +485,14 @@ async function main(opts = {}) {
         categories: [],
         critical: false,
         _note: autoNote,
+        _qaConsoleLabel: isLivePlaidLaunchStep ? 'LIVE-PLAID-AUTO' : 'LIVE-PLAID-SIM-AUTO',
       };
-      stepResults.push(result);
-      allStepScores[stepId] = result.score;
-      const label = isLivePlaidLaunchStep ? 'LIVE-PLAID-AUTO' : 'LIVE-PLAID-SIM-AUTO';
-      console.log(`[QA] Step ${stepId}: 85/100 [${label}]`);
-      appendPipelineLogJson('[QA] Step result', {
-        stepId,
-        score: result.score,
-        passed: true,
-        reason: result._note || label,
-        issues: [],
-        categories: [],
-      }, { runDir: OUT_DIR });
+      pipelineEntries.push({ kind: 'resolved', stepId, result });
       continue;
     }
 
-    // ── Embedding pre-screen check ───────────────────────────────────────────
     const screenResult = screenResults.get(stepId);
-    if (screenResult?.screened) {
+    if (screenResult?.screened && !narrationCritical) {
       const result = {
         stepId,
         score:          screenResult.score,
@@ -482,23 +503,37 @@ async function main(opts = {}) {
         _embedScreened: true,
         _embeddingSimilarity: screenResult.similarity,
         _note:          `Pre-screened: embedding similarity ${screenResult.similarity} ≥ threshold — skipped Sonnet review`,
+        _qaConsoleLabel: `EMBED-SCREENED sim=${screenResult.similarity}`,
       };
-      stepResults.push(result);
-      allStepScores[stepId] = result.score;
-      console.log(`[QA] Step ${stepId}: ${result.score}/100 [EMBED-SCREENED sim=${screenResult.similarity}]`);
-      appendPipelineLogJson('[QA] Step result', {
-        stepId,
-        score: result.score,
-        passed: true,
-        reason: result._note || 'Embedding pre-screen passed',
-        issues: [],
-        categories: result.categories || [],
-      }, { runDir: OUT_DIR });
+      pipelineEntries.push({ kind: 'resolved', stepId, result });
       continue;
     }
+    if (screenResult?.screened && narrationCritical) {
+      console.log(`[QA] Step ${stepId}: bypassing embed pre-screen due to narration-critical markers`);
+      appendPipelineLogJson('[QA] Step pre-screen bypass', {
+        stepId,
+        reason: 'narration-critical-markers',
+        embeddingSimilarity: screenResult.similarity,
+      }, { runDir: OUT_DIR });
+    }
 
-    const result = await reviewStep(client, step, stepId, frames, demoContext);
-    const stepDiagnostics = diagByStep.get(stepId) || [];
+    pipelineEntries.push({
+      kind: 'vision',
+      stepId,
+      step,
+      frames,
+      stepReviewContext,
+    });
+  }
+
+  const visionJobs = pipelineEntries.filter((e) => e.kind === 'vision');
+  if (visionJobs.length > 0) {
+    console.log(`[QA] Vision review: ${visionJobs.length} step(s), concurrency=${QA_REVIEW_CONCURRENCY}`);
+  }
+
+  const visionResults = await mapPool(QA_REVIEW_CONCURRENCY, visionJobs, async (job) => {
+    const result = await reviewStep(client, job.step, job.stepId, job.frames, job.stepReviewContext);
+    const stepDiagnostics = diagByStep.get(job.stepId) || [];
     if (stepDiagnostics.length > 0) {
       const diagIssues = stepDiagnostics.map(d => d.issue);
       const diagSuggestions = stepDiagnostics.map(d => d.suggestion).filter(Boolean);
@@ -511,29 +546,50 @@ async function main(opts = {}) {
         result.score = Math.min(result.score, 45);
       }
     }
-    stepResults.push(result);
-    allStepScores[stepId] = result.score;
+    return result;
+  });
 
-    const criticalFlag = result.critical ? ' [CRITICAL]' : '';
-    console.log(`[QA] Step ${stepId}: ${result.score}/100${criticalFlag}`);
-    if (result.issues.length > 0) {
-      for (const issue of result.issues) {
-        console.log(`       Issue: ${issue}`);
+  let visionIdx = 0;
+  for (const entry of pipelineEntries) {
+    let result;
+    if (entry.kind === 'resolved') {
+      result = entry.result;
+      allStepScores[entry.stepId] = result.score;
+      const label = result._qaConsoleLabel || '';
+      console.log(`[QA] Step ${entry.stepId}: ${result.score}/100 [${label}]`);
+      appendPipelineLogJson('[QA] Step result', {
+        stepId: entry.stepId,
+        score: result.score,
+        passed: true,
+        reason: result._note || label,
+        issues: [],
+        categories: result.categories || [],
+      }, { runDir: OUT_DIR });
+    } else {
+      result = visionResults[visionIdx++];
+      allStepScores[entry.stepId] = result.score;
+      const criticalFlag = result.critical ? ' [CRITICAL]' : '';
+      console.log(`[QA] Step ${entry.stepId}: ${result.score}/100${criticalFlag}`);
+      if (result.issues.length > 0) {
+        for (const issue of result.issues) {
+          console.log(`       Issue: ${issue}`);
+        }
       }
+      appendPipelineLogJson('[QA] Step result', {
+        stepId: entry.stepId,
+        score: result.score,
+        passed: !result.critical && result.score >= 80,
+        critical: !!result.critical,
+        issues: result.issues || [],
+        suggestions: result.suggestions || [],
+        categories: result.categories || [],
+        explanation:
+          result.issues && result.issues.length
+            ? 'Step failed due to listed issues and/or critical diagnostics.'
+            : 'Step passed with no blocking QA issues.',
+      }, { runDir: OUT_DIR });
     }
-    appendPipelineLogJson('[QA] Step result', {
-      stepId,
-      score: result.score,
-      passed: !result.critical && result.score >= 80,
-      critical: !!result.critical,
-      issues: result.issues || [],
-      suggestions: result.suggestions || [],
-      categories: result.categories || [],
-      explanation:
-        result.issues && result.issues.length
-          ? 'Step failed due to listed issues and/or critical diagnostics.'
-          : 'Step passed with no blocking QA issues.',
-    }, { runDir: OUT_DIR });
+    stepResults.push(result);
   }
 
   // ── Step 4: Aggregate results ─────────────────────────────────────────────

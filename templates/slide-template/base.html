@@ -1,12 +1,7 @@
 <!--
-Slide Template (Plaid-only)
-Intended use:
-- As a design reference for pipeline-generated "slide" steps.
-- Slides are full-viewport step surfaces in the demo app during recording,
-  and can also be extracted for PowerPoint supplementation.
-
-This file is a template/skeleton for HTML structure. The build pipeline
-should embed a matching structure and reuse the CSS variables from slide.css.
+  Minimal slide skeleton (Plaid-only).
+  For full structure — header logo lockup, footer strip, three JSON panel controls, renderjson wiring —
+  use pipeline-slide-shell.html + PIPELINE_SLIDE_SHELL_RULES.md (injected into the build prompt).
 -->
 
 <!doctype html>
@@ -14,14 +9,12 @@ should embed a matching structure and reuse the CSS variables from slide.css.
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Plaid Slide</title>
+    <title>Plaid Slide (minimal)</title>
     <link rel="stylesheet" href="./slide.css" />
   </head>
 
   <body>
-    <!-- Root: keep it full viewport so it can map 1:1 to a step div -->
     <div class="slide-root">
-      <!-- Header pattern: endpoint + concise step title -->
       <header class="slide-header">
         <div class="slide-header-left">
           <div class="slide-header-pill" data-testid="slide-product">PLAID</div>
@@ -29,14 +22,12 @@ should embed a matching structure and reuse the CSS variables from slide.css.
         </div>
       </header>
 
-      <!-- Body: title + text + (optional) panels -->
       <main class="slide-body">
         <section class="slide-hero">
           <h1 class="slide-title" data-testid="slide-title">Title goes here</h1>
           <p class="slide-subtitle" data-testid="slide-subtitle">Optional supporting one-liner.</p>
         </section>
 
-        <!-- Panels are optional; use glassmorphism for consistency -->
         <section class="slide-panels" data-testid="slide-panels">
           <div class="slide-panel" data-testid="slide-panel-1">
             <h3 class="slide-panel-title">Panel title</h3>
@@ -44,30 +35,42 @@ should embed a matching structure and reuse the CSS variables from slide.css.
           </div>
         </section>
 
-        <!-- Optional: stat/callout -->
         <aside class="slide-callout" data-testid="slide-callout">
           <div class="slide-callout-value">98%</div>
           <div class="slide-callout-label">Coverage for instant verification</div>
         </aside>
       </main>
+
+      <footer class="slide-footer" data-testid="slide-footer">
+        <img src="./plaid-logo-no-text-white-background.png" alt="" width="20" height="20" style="object-fit:contain;border-radius:4px" />
+        <span class="slide-footer-meta">plaid.com</span>
+      </footer>
     </div>
 
-    <!-- Global API JSON panel contract -->
-    <aside id="api-response-panel" class="side-panel" style="display:none" aria-label="API JSON panel">
+    <div id="link-events-panel" data-testid="link-events-panel" class="side-panel" style="display:none" aria-hidden="true">
+      <div class="side-panel-header">Link Events</div>
+      <div class="side-panel-body" id="link-events-body"></div>
+    </div>
+
+    <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none" aria-label="API JSON panel">
       <header class="side-panel-header">
         <span>API Response</span>
-        <button id="api-panel-toggle" data-testid="api-panel-toggle" type="button">Show JSON</button>
+        <div class="api-panel-header-actions">
+          <button type="button" id="api-json-panel-show" data-testid="api-json-panel-show">Show JSON</button>
+          <button type="button" id="api-json-panel-hide" data-testid="api-json-panel-hide">Hide JSON</button>
+          <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle">Show JSON</button>
+        </div>
       </header>
       <div class="side-panel-body">
         <div id="api-response-content"></div>
       </div>
-    </aside>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>
     <script>
       window.__API_PANEL_CONFIG = Object.assign({
         collapsedByDefault: true,
-        jsonExpandLevel: 99,
+        jsonExpandLevel: 'all',
         autoResize: true,
         minWidthPx: 360,
         maxWidthViewportRatio: 0.52
@@ -75,4 +78,3 @@ should embed a matching structure and reuse the CSS variables from slide.css.
     </script>
   </body>
 </html>
-

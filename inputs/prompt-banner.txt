@@ -1,0 +1,170 @@
+================================================================================
+Banner Health Post-Procedure Payment Follow-Up - Lower Card Costs with Verified ACH
+================================================================================
+
+**Host:** **Banner Health** - healthcare provider / payment operations
+**Canonical URL:** https://www.bannerhealth.com/
+**Brand URL:** https://www.bannerhealth.com/
+
+**Opportunity context (Gong discovery notes):**
+- Banner Health is rolling out cashless payments across 700+ locations and still relies primarily on cards and checks.
+- Current payment mix is approximately 85% credit / 15% debit, with ACH not yet broadly enabled.
+- Banner runs high-volume payment plans: ~182,000 plans created in 12 months, ~56,391 currently active, average plan length ~10.7 months.
+- Installment collections on cards compound processing cost because each monthly installment incurs card percentage fees.
+- Banner requires consistency across phone, in-person, and post-service channels, with next-day funding as a hard requirement.
+- Revenue Cycle is the economic decision-maker; Treasury and Payment Operations are assembling ROI to support approval.
+
+**Business objectives (derived from call transcript):**
+- Add a trusted post-procedure ACH payment path to reduce card fee burden on installment collections.
+- Preserve patient conversion with familiar, low-friction account linking and payment setup.
+- Reduce ACH return risk using account verification + identity matching + risk decisioning before payment initiation.
+- Produce concrete ROI talking points that support Revenue Cycle approval in Q2 planning.
+
+**User journey (one sentence):**
+After receiving a post-procedure bill, a Banner patient opens the follow-up portal, links a bank account with Plaid, and completes an ACH payment-plan enrollment backed by identity, account, and risk checks.
+
+**Story arc (short prose):**
+Begin in Banner's post-procedure payment follow-up flow where card-only plans create recurring fee drag. Banner introduces Plaid to securely connect bank accounts, verify account ownership, validate account details, and evaluate ACH return risk before enrollment. The result is a confident ACH setup that protects conversion and lowers total processing cost across long-tail installment plans.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Identity Match, Plaid Auth, Plaid Signal
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):
+Inbound Bank Payments, Account Verification, Healthcare Bill Payment Modernization
+
+**Primary product family** (pick one - aligns with pipeline profiles):
+`funding`
+
+**Primary messaging file for this demo** (pick one to own stats):
+`inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** - real SDK (`plaidPhase: "launch"` single step per `CLAUDE.md`)
+  [ ] **Plaid Layer** / OAuth / IDV - not required for this flow
+  [x] **Sandbox / persona** - defaults per `inputs/plaid-link-sandbox.md`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Banner Health post-procedure bill notification and outstanding balance | Frame the patient follow-up moment and need for an easy payment-plan setup | `Review payment options` |
+| 2 | host | Payment-plan chooser (12-month option highlighted) | Tie to real Banner context: long-plan volume drives repeated card costs | `Continue with ACH` |
+| 3 | host | Pre-Link explain screen with security and consent copy | Explain secure bank connection; end narration on trigger action | CTA ends narration: `Link bank account` |
+| 4 | link | Real Plaid Link modal flow (OTP, institution, account select, success) | Narrate only what is visible inside the Link modal | `Account linked` |
+| 5 | slide | `POST /link/token/create` and Link callback events | Show reliable launch/handoff mechanics and clean transition to payment setup | `Link flow completed` |
+| 6 | slide | `POST /identity/match` response | Show patient identity confidence from bank-linked data to reduce mismatch risk | `Identity match passed` |
+| 7 | slide | `POST /auth/get` response | Show validated routing/account details for ACH readiness | `Account and routing verified` |
+| 8 | slide | `POST /signal/evaluate` response with low-risk decision | Show low ACH return risk and explain decision path to safe acceptance | `Signal decision: ACCEPT` |
+| 9 | host | ACH plan enrollment confirmation (monthly amount, schedule, account mask) | Emphasize lower-cost collection path with same-day patient completion | `Enroll in ACH plan` |
+| 10 | slide | Outcome summary with operational ROI bullets | Connect reduced card fee exposure and scalable post-service collections | `Scale post-procedure ACH` |
+
+**Product-specific reminders** (delete if N/A):
+- Link: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"` step.
+- Link narration boundary: pre-Link step ends on button trigger; Link step narration starts with modal content only.
+- Identity Match: keep explanation patient-centric and risk-relevant.
+- Auth: show realistic routing/account verification fields used for ACH setup.
+- Signal: low score indicates low ACH return risk; happy path must show `ACCEPT` with a realistic low-risk score.
+
+**Compliance / user data (one line):**
+Use consented payment-context data only, avoid unnecessary clinical details, and represent outcomes as policy decisions (`ACCEPT`/`REVIEW`) rather than guaranteed payment success.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Elena Ramirez, patient
+**Company / context:** Banner Health post-procedure follow-up balance enrollment into ACH installment plan
+**Sample fields that must appear on screen:** balance due, monthly payment amount, plan term, bank account mask, identity match status, auth verification status, signal risk score + decision
+
+Recommended structured data:
+- `client_user_id`: `banner-postservice-elena-001`
+- `patient_name`: `Elena Ramirez`
+- `facility_name`: `Banner Desert Medical Center`
+- `balance_due`: `2480.00`
+- `plan_term_months`: `12`
+- `monthly_payment_amount`: `206.67`
+- `linked_account_name`: `First Platypus Bank Checking`
+- `linked_account_mask`: `0211`
+- `identity_match_outcome`: `PASS`
+- `auth_verification_outcome`: `VERIFIED`
+- `signal_risk_score`: `12`
+- `signal_decision`: `ACCEPT`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use Banner-inspired healthcare billing UI: clean light-neutral patient portal surfaces, clear balance and plan modules, and strong next-action CTAs for follow-up collections.
+Keep host screens customer-branded and reserve Plaid-branded styling for API insight and final value summary slides.
+
+**Viewport:** 1440x900.
+
+-------------------------------------------------------------------------------
+INFERRED API STACK (IMPLEMENTATION INTENT)
+-------------------------------------------------------------------------------
+
+Use these endpoints and sequencing for this use case:
+1. `POST /link/token/create`
+2. Plaid Link `onSuccess` token exchange path
+3. `POST /identity/match`
+4. `POST /auth/get`
+5. `POST /signal/evaluate`
+
+API panel expectations:
+- Show request/response samples that support each storyboard claim.
+- `identity/match` must explain who is being matched and why it reduces payment enrollment risk.
+- `auth/get` must include routing/account verification fields used to establish ACH rails.
+- `signal/evaluate` must include realistic low-risk values consistent with an `ACCEPT` outcome.
+
+-------------------------------------------------------------------------------
+ROI TALKING POINTS (FOR SCRIPT + SLIDES)
+-------------------------------------------------------------------------------
+
+- Banner currently processes large installment volume where card percentage fees recur every month; ACH enrollment can reduce cumulative fee exposure across long-duration plans.
+- With ~182,000 plans created annually and ~10.7-month average duration, shifting even a modest share of plans from cards to ACH can materially lower processing spend.
+- Patient experience remains simple (familiar Plaid Link flow) while risk controls improve through identity match, account verification, and signal-based return-risk decisioning.
+- Consistent post-service ACH flow supports Banner's broader payment modernization initiative and strengthens the Q1 ROI package for Revenue Cycle approval.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Create 5 Plaid-branded slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+1) Link launch integrity and callback slide (`/link/token/create` + events)
+2) Identity Match slide (`/identity/match`) for patient/account-holder confidence
+3) Auth slide (`/auth/get`) showing ACH rails validation
+4) Signal slide (`/signal/evaluate`) with low-risk `ACCEPT` decision
+5) Post-procedure collections ROI summary slide grounded in call benchmarks
+
+JSON panel contract:
+- Global `#api-response-panel` only
+- hidden by default on page load
+- once visible, JSON body is immediately visible (no JSON toggle/collapse controls)
+- panel body scrolls for long payloads
+- request/response fields must align with slide narrative claims
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (value-props **or** product KB - not duplicated)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

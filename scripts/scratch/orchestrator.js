@@ -36,6 +36,24 @@ const {
   appendPipelineLogSection,
   appendPipelineLogJson,
 } = require('./utils/pipeline-logger');
+const { shouldIncludeCraRunNameToken } = require('./utils/prompt-scope');
+
+// ── CLI timestamps (orchestrator + stage boundaries; child scripts keep plain console) ──
+function cliIsoTime() {
+  return new Date().toISOString();
+}
+
+function cliLog(message) {
+  console.log(`[${cliIsoTime()}] ${message}`);
+}
+
+function cliWarn(message) {
+  console.warn(`[${cliIsoTime()}] ${message}`);
+}
+
+function cliError(message) {
+  console.error(`[${cliIsoTime()}] ${message}`);
+}
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -136,7 +154,7 @@ function savePromptRegistry(registry) {
     fs.mkdirSync(OUT_DIR, { recursive: true });
     fs.writeFileSync(PROMPT_REGISTRY_FILE, JSON.stringify(registry, null, 2), 'utf8');
   } catch (err) {
-    console.warn(`[Orchestrator] Could not persist prompt fingerprint registry: ${err.message}`);
+    cliWarn(`[Orchestrator] Could not persist prompt fingerprint registry: ${err.message}`);
   }
 }
 
@@ -167,6 +185,8 @@ function applyFreshCleanup(runDir) {
   const targets = [
     path.join(runDir, 'scratch-app'),
     path.join(runDir, 'qa-frames'),
+    path.join(runDir, 'build-frames'),
+    path.join(runDir, 'artifacts', 'build'),
     path.join(runDir, 'build-qa-diagnostics.json'),
     path.join(runDir, 'api-panel-qa.json'),
     path.join(runDir, 'build-layer-report.json'),
@@ -179,7 +199,7 @@ function applyFreshCleanup(runDir) {
       if (st.isDirectory()) fs.rmSync(t, { recursive: true, force: true });
       else fs.unlinkSync(t);
     } catch (err) {
-      console.warn(`[Orchestrator] Fresh cleanup skipped for ${path.basename(t)}: ${err.message}`);
+      cliWarn(`[Orchestrator] Fresh cleanup skipped for ${path.basename(t)}: ${err.message}`);
     }
   }
 }
@@ -196,11 +216,11 @@ function applyFreshCleanup(runDir) {
  */
 async function classifyMode(promptText) {
   if (!promptText) {
-    console.log('[Orchestrator] No prompt.txt found — defaulting to scratch mode.');
+    cliLog('[Orchestrator] No prompt.txt found — defaulting to scratch mode.');
     return 'scratch';
   }
 
-  console.log('[Orchestrator] Classifying pipeline mode with Claude Haiku...');
+  cliLog('[Orchestrator] Classifying pipeline mode with Claude Haiku...');
 
   const client = new Anthropic();
 
@@ -230,7 +250,7 @@ async function classifyMode(promptText) {
     const text = response.content.find(b => b.type === 'text')?.text?.trim().toLowerCase() || '';
 
     if (text === 'scratch' || text === 'enhance' || text === 'hybrid') {
-      console.log(`[Orchestrator] Detected mode: ${text}`);
+      cliLog(`[Orchestrator] Detected mode: ${text}`);
       return text;
     }
 
@@ -238,10 +258,10 @@ async function classifyMode(promptText) {
     if (text.includes('enhance')) return 'enhance';
     if (text.includes('hybrid'))  return 'hybrid';
 
-    console.warn(`[Orchestrator] Unexpected mode response "${text}" — defaulting to scratch.`);
+    cliWarn(`[Orchestrator] Unexpected mode response "${text}" — defaulting to scratch.`);
     return 'scratch';
   } catch (err) {
-    console.warn(`[Orchestrator] Mode classification failed (${err.message}) — defaulting to scratch.`);
+    cliWarn(`[Orchestrator] Mode classification failed (${err.message}) — defaulting to scratch.`);
     return 'scratch';
   }
 }
@@ -337,8 +357,8 @@ function extractApiTokens(promptText) {
   const labels = [];
   const add = (x) => { if (!labels.includes(x)) labels.push(x); };
 
-  // CRA products collapse to a single CRA label for run naming.
-  if (/\b(cra_base_report|cra_income_insights|consumer report|cra\b|check report|base report|income insights)\b/.test(lower)) {
+  // CRA / Check income insights — only when explicitly in scope or positively mentioned (not disclaimers).
+  if (shouldIncludeCraRunNameToken(String(promptText || ''))) {
     add('CRA');
   }
   if (/\bauth\b|\binstant auth\b/.test(lower)) add('Auth');
@@ -353,6 +373,11 @@ function extractApiTokens(promptText) {
   if (/\bprotect\b/.test(lower)) add('Protect');
 
   return labels;
+}
+
+function promptIndicatesMobileVisual(promptText) {
+  const text = String(promptText || '').toLowerCase();
+  return /\bmobile\b|\bphone-first\b|\bphone first\b|\bmobile[-\s]?simulated\b|\b390\s*[x×]\s*844\b|\bmobile demo\b/.test(text);
 }
 
 function buildRunNameStem(promptText) {
@@ -409,7 +434,7 @@ function setLatestLink(targetDir) {
   try {
     fs.symlinkSync(targetDir, LATEST_LINK);
   } catch (err) {
-    console.warn(`[Orchestrator] Could not create symlink out/latest: ${err.message}`);
+    cliWarn(`[Orchestrator] Could not create symlink out/latest: ${err.message}`);
   }
 }
 
@@ -419,24 +444,42 @@ function makeTimer() {
   const pipelineStart = Date.now();
   const stageStart    = {};
 
+  function stageOrderLabel(stage) {
+    const idx = STAGES.indexOf(stage);
+    if (idx < 0) return 'auxiliary (not in STAGES list)';
+    return `step ${idx + 1} of ${STAGES.length}`;
+  }
+
   return {
     startStage(stage) {
       stageStart[stage] = Date.now();
-      console.log(`\n${'─'.repeat(60)}`);
-      console.log(`[Stage: ${stage}] Starting...`);
+      const ts = cliIsoTime();
+      const pipelineSec = ((Date.now() - pipelineStart) / 1000).toFixed(1);
+      const order = stageOrderLabel(stage);
+      console.log('');
+      console.log(`${'─'.repeat(60)}`);
+      console.log(`[${ts}] MILESTONE: stage "${stage}" START`);
+      console.log(`[${ts}]   ${order} | pipeline elapsed ${pipelineSec}s`);
       console.log(`${'─'.repeat(60)}`);
       appendPipelineLogSection(`[MILESTONE] Stage ${stage} started`, [
+        `at=${ts}`,
         `stage=${stage}`,
         'status=started',
+        `pipelineElapsedSeconds=${pipelineSec}`,
+        `order=${order}`,
       ]);
     },
     endStage(stage) {
       const elapsed = ((Date.now() - (stageStart[stage] || Date.now())) / 1000).toFixed(1);
-      console.log(`[Stage: ${stage}] Done in ${elapsed}s`);
+      const ts = cliIsoTime();
+      const pipelineSec = ((Date.now() - pipelineStart) / 1000).toFixed(1);
+      cliLog(`MILESTONE: stage "${stage}" DONE | stage ${elapsed}s | pipeline total ${pipelineSec}s`);
       appendPipelineLogSection(`[MILESTONE] Stage ${stage} completed`, [
+        `at=${ts}`,
         `stage=${stage}`,
         `status=completed`,
         `elapsedSeconds=${elapsed}`,
+        `pipelineTotalSeconds=${pipelineSec}`,
       ]);
     },
     totalElapsed() {
@@ -467,7 +510,7 @@ async function promptContinue(message) {
   // Remove stale signal file from a prior run
   try { fs.unlinkSync(signalFile); } catch (_) {}
 
-  console.log(`\n[Orchestrator] Waiting for continue signal — click "▶ Continue" in the dashboard or POST /api/pipeline/stdin`);
+  cliLog('[Orchestrator] Waiting for continue signal — click "Continue" in the dashboard or POST /api/pipeline/stdin');
 
   return new Promise(resolve => {
     // Option A: data arrives on piped stdin (dashboard sends '\n')
@@ -673,8 +716,10 @@ async function runStage(stageName, fn, timer) {
     timer.endStage(stageName);
   } catch (err) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    console.error(`\n[Stage: ${stageName}] ERROR after ${elapsed}s: ${err.message}`);
+    const ts = cliIsoTime();
+    cliError(`[Stage: ${stageName}] ERROR after ${elapsed}s: ${err.message}`);
     appendPipelineLogSection(`[MILESTONE] Stage ${stageName} failed`, [
+      `at=${ts}`,
       `stage=${stageName}`,
       'status=failed',
       `elapsedSeconds=${elapsed}`,
@@ -686,12 +731,12 @@ async function runStage(stageName, fn, timer) {
     const isCritical = /^CRITICAL:|PLAID_LINK_TIMEOUT|DOM contract|Missing.*PLAYWRIGHT|Missing.*demo-script/i.test(err.message);
 
     if (isCritical) {
-      console.error(`[Stage: ${stageName}] CRITICAL failure — halting pipeline.`);
+      cliError(`[Stage: ${stageName}] CRITICAL failure — halting pipeline.`);
       process.exit(1);
     }
 
     if (process.env.SCRATCH_AUTO_APPROVE === 'true') {
-      console.warn(`[Stage: ${stageName}] SCRATCH_AUTO_APPROVE=true — continuing despite error.`);
+      cliWarn(`[Stage: ${stageName}] SCRATCH_AUTO_APPROVE=true — continuing despite error.`);
     } else {
       await promptContinue(`[Stage: ${stageName}] Failed.`);
     }
@@ -704,10 +749,10 @@ function resolveStartIndex(fromStage) {
   if (!fromStage) return 0;
   const idx = STAGES.indexOf(fromStage);
   if (idx === -1) {
-    console.warn(`[Orchestrator] Unknown --from stage "${fromStage}" — starting from beginning.`);
+    cliWarn(`[Orchestrator] Unknown --from stage "${fromStage}" — starting from beginning.`);
     return 0;
   }
-  console.log(`[Orchestrator] Restarting from stage: ${fromStage} (index ${idx})`);
+  cliLog(`[Orchestrator] Restarting from stage: ${fromStage} (index ${idx})`);
   return idx;
 }
 
@@ -1077,10 +1122,22 @@ function assertNarrationSyncOrThrow(runDir, contextLabel = 'pre-render') {
   const report = validateNarrationSync(runDir);
   const reportPath = writeNarrationSyncReport(runDir, report);
   if (!report.ok) {
+    const categoryCounts = {};
+    const codeCounts = {};
+    for (const v of report.violations || []) {
+      const cat = String(v?.category || 'other');
+      const code = String(v?.code || 'unknown');
+      categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      codeCounts[code] = (codeCounts[code] || 0) + 1;
+    }
+    const failCategories = Object.entries(categoryCounts).map(([k, n]) => `${k}:${n}`).join(', ') || 'none';
+    const failCodes = Object.entries(codeCounts).map(([k, n]) => `${k}:${n}`).join(', ') || 'none';
     const sample = report.violations.slice(0, 8).map((v) => `${v.code}: ${v.message}`).join('\n  - ');
     throw new Error(
       `CRITICAL: Narration/screen sync governor failed (${contextLabel}). ` +
       `${report.violations.length} violation(s).\n` +
+      `Fail categories: ${failCategories}\n` +
+      `Fail codes: ${failCodes}\n` +
       `Report: ${reportPath}\n  - ${sample}`
     );
   }
@@ -1172,7 +1229,7 @@ function stageArtifactsForRemotion(runDir) {
 
 // ── Mode A: Scratch pipeline ──────────────────────────────────────────────────
 
-async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, timer, recordMode }) {
+async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, promptText, timer, recordMode }) {
   const shouldRun = (stageName) => {
     const idx = STAGES.indexOf(stageName);
     if (idx < 0) return false;
@@ -1184,11 +1241,11 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   const stageRunner = async (name, fn) => {
     const idx = STAGES.indexOf(name);
     if (idx < startIdx) {
-      console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
+      cliLog(`[Orchestrator] Skipping stage: ${name} (--from)`);
       return;
     }
     if (endIdx != null && idx > endIdx) {
-      console.log(`[Orchestrator] Skipping stage: ${name} (--to ${STAGES[endIdx]})`);
+      cliLog(`[Orchestrator] Skipping stage: ${name} (--to ${STAGES[endIdx]})`);
       return;
     }
     await runStage(name, fn, timer);
@@ -1379,14 +1436,19 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
 
   // Stage: build
   const layeredBuildEnabled = process.env.LAYERED_BUILD_ENABLED === 'true' || process.env.LAYERED_BUILD_ENABLED === '1';
-  const mobileVisualEnabled = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
+  const mobileVisualEnabledFromEnv = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
+  const mobileVisualEnabledFromPrompt = promptIndicatesMobileVisual(promptText);
+  const mobileVisualEnabled = mobileVisualEnabledFromEnv || mobileVisualEnabledFromPrompt;
   const mobileRuntimeEnabled = process.env.MOBILE_RUNTIME_ENABLED === 'true' || process.env.MOBILE_RUNTIME_ENABLED === '1';
   const buildViewMode = String(process.env.BUILD_VIEW_MODE || 'desktop').toLowerCase();
   if (layeredBuildEnabled || mobileVisualEnabled || mobileRuntimeEnabled) {
-    console.log(
+    cliLog(
       `[Orchestrator] Build lanes — layered=${layeredBuildEnabled}, mobile-visual=${mobileVisualEnabled}, ` +
       `mobile-runtime=${mobileRuntimeEnabled}, viewMode=${buildViewMode}`
     );
+    if (!mobileVisualEnabledFromEnv && mobileVisualEnabledFromPrompt) {
+      cliLog('[Orchestrator] mobile-visual enabled from prompt language (mobile intent detected).');
+    }
   }
   await stageRunner('build', async () => {
     await require('./scratch/build-app').main({
@@ -1420,12 +1482,12 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
     if (fs.existsSync(path.join(scratchAppDir, 'index.html'))) {
       const previewServer = await startServer(3739, scratchAppDir).catch(() => null);
       if (previewServer) {
-        console.log(`\n[Build Preview] App served at: ${previewServer.url}`);
-        console.log('[Build Preview] Use ArrowRight/ArrowDown to advance, ArrowLeft/ArrowUp to go back.');
-        console.log('[Build Preview] Click any non-button area to advance. Click buttons normally.');
+        cliLog(`[Build Preview] App served at: ${previewServer.url}`);
+        cliLog('[Build Preview] Use ArrowRight/ArrowDown to advance, ArrowLeft/ArrowUp to go back.');
+        cliLog('[Build Preview] Click any non-button area to advance. Click buttons normally.');
         try { execSync(`open "${previewServer.url}"`, { stdio: 'ignore' }); } catch (_) {}
         if (process.env.SCRATCH_AUTO_APPROVE === 'true') {
-          console.log('[Build Preview] SCRATCH_AUTO_APPROVE=true — skipping manual review, proceeding to record.');
+          cliLog('[Build Preview] SCRATCH_AUTO_APPROVE=true — skipping manual review, proceeding to record.');
         } else {
           await promptContinue('[Build Preview] Review the app in your browser, then press ENTER to start recording.');
         }
@@ -1447,15 +1509,14 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
 
     // ── Studio mode: human-driven recording, single QA pass (informational only) ──
     if (studioMode) {
-      console.log('\n[Orchestrator] STUDIO mode: human-driven recording via our-recorder.');
-      console.log('[Orchestrator] QA will run once for quality feedback — no refinement loop.');
-      console.log('[Stage: record+qa] Starting...');
+      cliLog('[Orchestrator] STUDIO mode: human-driven recording via our-recorder.');
+      cliLog('[Orchestrator] QA will run once for quality feedback — no refinement loop.');
 
       try {
         delete require.cache[require.resolve('./manual-record')];
         await require('./manual-record').main({ iteration: 1 });
       } catch (err) {
-        console.error(`[record] Studio recording failed: ${err.message}`);
+        cliError(`[record] Studio recording failed: ${err.message}`);
         if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
           await promptContinue('[record] Studio recording failed. Fix and press ENTER to continue, or Ctrl-C to abort.');
         } else {
@@ -1464,12 +1525,12 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
       }
 
       // Informational QA — score shown, never blocks, never loops
-      console.log('\n[Orchestrator] Running QA (informational — studio mode, no re-record)...');
+      cliLog('[Orchestrator] Running QA (informational — studio mode, no re-record)...');
       try {
         delete require.cache[require.resolve('./scratch/qa-review')];
         const qaResult = await require('./scratch/qa-review').main({ iteration: 1 });
         const score    = qaResult?.overallScore ?? 0;
-        console.log(`\n[Studio QA] Score: ${score}/100${score >= qaThreshold ? ' ✓ Passed' : ` (below ${qaThreshold} threshold — continuing in studio mode)`}`);
+        cliLog(`[Studio QA] Score: ${score}/100${score >= qaThreshold ? ' — passed' : ` (below ${qaThreshold} threshold — continuing in studio mode)`}`);
         if (score < qaThreshold) {
           fs.writeFileSync(
             path.join(versionedDir, 'recording-qa-warning.json'),
@@ -1481,7 +1542,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
           );
         }
       } catch (err) {
-        console.warn(`[qa] Studio QA check failed: ${err.message} — continuing`);
+        cliWarn(`[qa] Studio QA check failed: ${err.message} — continuing`);
       }
 
       writePipelineProgress('record');
@@ -1492,12 +1553,12 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
     // ── Auto / manual Playwright recording (existing refinement loop) ──────────
 
     if (manualRecord) {
-      console.log('\n[Orchestrator] MANUAL_RECORD mode: one human-driven recording pass, no QA refinement loop.');
+      cliLog('[Orchestrator] MANUAL_RECORD mode: one human-driven recording pass, no QA refinement loop.');
     }
 
     for (let iter = 1; iter <= maxIterations; iter++) {
       if (!manualRecord) {
-        console.log(`\n[Orchestrator] Record+QA iteration ${iter}/${maxIterations}`);
+        cliLog(`[Orchestrator] Record+QA iteration ${iter}/${maxIterations}`);
       }
 
       try {
@@ -1505,7 +1566,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
         delete require.cache[require.resolve('./scratch/record-local')];
         await require('./scratch/record-local').main({ iteration: iter });
       } catch (err) {
-        console.error(`[record] iteration ${iter} failed: ${err.message}`);
+        cliError(`[record] iteration ${iter} failed: ${err.message}`);
         if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
           await promptContinue('[record] Recording failed.');
         }
@@ -1513,7 +1574,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
 
       // In manual mode, skip QA — the human's recording is the final recording.
       if (manualRecord) {
-        console.log('[Orchestrator] MANUAL_RECORD: skipping QA. Advancing to voiceover.');
+        cliLog('[Orchestrator] MANUAL_RECORD: skipping QA. Advancing to voiceover.');
         break;
       }
 
@@ -1521,15 +1582,15 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
       try {
         qaResult = await require('./scratch/qa-review').main({ iteration: iter });
       } catch (err) {
-        console.error(`[qa] iteration ${iter} failed: ${err.message}`);
+        cliError(`[qa] iteration ${iter} failed: ${err.message}`);
         qaResult = { overallScore: 0, passed: false };
       }
 
       const score = qaResult?.overallScore ?? 0;
-      console.log(`[Orchestrator] QA score: ${score}/${qaThreshold} (threshold)`);
+      cliLog(`[Orchestrator] QA score: ${score}/${qaThreshold} (threshold)`);
 
       if (score >= qaThreshold) {
-        console.log(`[Orchestrator] QA passed (${score}). Advancing to voiceover.`);
+        cliLog(`[Orchestrator] QA passed (${score}). Advancing to voiceover.`);
         bestScore = score;
         break;
       }
@@ -1554,12 +1615,12 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
             fs.copyFileSync(plaidTimingSource, plaidTimingBackup);
           }
         } catch (copyErr) {
-          console.warn(`[Orchestrator] Could not copy best recording: ${copyErr.message}`);
+          cliWarn(`[Orchestrator] Could not copy best recording: ${copyErr.message}`);
         }
       }
 
       if (iter < maxIterations) {
-        console.log(`[Orchestrator] Score ${score} below threshold. Patching app for iteration ${iter + 1}...`);
+        cliLog(`[Orchestrator] Score ${score} below threshold. Patching app for iteration ${iter + 1}...`);
         try {
           // Bust require cache so edits to build-app.js take effect without restarting
           delete require.cache[require.resolve('./scratch/build-app')];
@@ -1568,13 +1629,13 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
             qaReportFile: path.join(versionedDir, `qa-report-${iter}.json`),
           });
         } catch (err) {
-          console.error(`[build] refinement iteration ${iter} failed: ${err.message}`);
+          cliError(`[build] refinement iteration ${iter} failed: ${err.message}`);
           if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
             await promptContinue('[build] Refinement failed.');
           }
         }
       } else {
-        console.log(`[Orchestrator] Max iterations reached. Best score: ${bestScore}.`);
+        cliLog(`[Orchestrator] Max iterations reached. Best score: ${bestScore}.`);
       }
     }
 
@@ -1587,26 +1648,27 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
         const timingBackup = path.join(versionedDir, `step-timing-iter${iterMatch[1]}.json`);
         if (fs.existsSync(timingBackup)) {
           fs.copyFileSync(timingBackup, path.join(versionedDir, 'step-timing.json'));
-          console.log(`[Orchestrator] Restored matching step-timing (iteration ${iterMatch[1]})`);
+          cliLog(`[Orchestrator] Restored matching step-timing (iteration ${iterMatch[1]})`);
         }
         // Also restore the matching plaid-link-timing.json so post-process cuts align with the recording
         const plaidTimingBackup = path.join(versionedDir, `plaid-link-timing-iter${iterMatch[1]}.json`);
         if (fs.existsSync(plaidTimingBackup)) {
           fs.copyFileSync(plaidTimingBackup, path.join(versionedDir, 'plaid-link-timing.json'));
-          console.log(`[Orchestrator] Restored matching plaid-link-timing (iteration ${iterMatch[1]})`);
+          cliLog(`[Orchestrator] Restored matching plaid-link-timing (iteration ${iterMatch[1]})`);
         }
       }
-      console.log(`[Orchestrator] Restored best recording (score: ${bestScore})`);
+      cliLog(`[Orchestrator] Restored best recording (score: ${bestScore})`);
     }
 
     // ── Below-threshold warning ────────────────────────────────────────────
     // Surface prominently — silent advance is the most common cause of unusable output.
     if (bestScore < qaThreshold) {
       const warningMsg = `ADVANCING WITH BELOW-THRESHOLD RECORDING (best QA score: ${bestScore}/${qaThreshold})`;
-      console.warn(`\n${'!'.repeat(60)}`);
-      console.warn(`[QA] WARNING: ${warningMsg}`);
-      console.warn(`[QA] The final video may have visual quality issues.`);
-      console.warn(`${'!'.repeat(60)}\n`);
+      cliWarn('');
+      cliWarn('!'.repeat(60));
+      cliWarn(`[QA] WARNING: ${warningMsg}`);
+      cliWarn('[QA] The final video may have visual quality issues.');
+      cliWarn('!'.repeat(60));
 
       // Write a qa-warning file so post-run summaries can surface it
       fs.writeFileSync(
@@ -1650,24 +1712,24 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
           const runState = JSON.parse(fs.readFileSync(runStateFile, 'utf8'));
           if (runState.figmaFileKey) {
             process.env.FIGMA_REVIEW_FILE_KEY = runState.figmaFileKey;
-            console.log(`[Orchestrator] Figma file key loaded from run-state: ${runState.figmaFileKey}`);
+            cliLog(`[Orchestrator] Figma file key loaded from run-state: ${runState.figmaFileKey}`);
           }
         } catch (err) {
-          console.warn(`[Orchestrator] Could not read run-state.json: ${err.message}`);
+          cliWarn(`[Orchestrator] Could not read run-state.json: ${err.message}`);
         }
       }
 
       // If Figma feedback was captured, run one final build refinement pass
       if (figmaFeedback && figmaFeedback.comments && figmaFeedback.comments.length > 0) {
-        console.log(`[Orchestrator] Figma feedback received (${figmaFeedback.comments.length} comment(s)) — running final build refinement`);
+        cliLog(`[Orchestrator] Figma feedback received (${figmaFeedback.comments.length} comment(s)) — running final build refinement`);
         await require('./scratch/build-app').main({
           qaReportFile: path.join(versionedDir, 'figma-feedback.json'),
         });
         // Re-record with the refined app
         if (recordMode === 'studio') {
-          console.log('[figma-review] Studio mode — skipping automated re-record. Re-run with --record-mode=studio --from=record to capture manually.');
+          cliLog('[figma-review] Studio mode — skipping automated re-record. Re-run with --record-mode=studio --from=record to capture manually.');
         } else {
-          console.log('[Orchestrator] Re-recording with Figma-refined app...');
+          cliLog('[Orchestrator] Re-recording with Figma-refined app...');
           await require('./scratch/record-local').main({ iteration: 'figma' });
         }
       }
@@ -1805,7 +1867,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
   // Coverage check — narration coverage: % of script steps/words that made it into voiceover manifest.
   if (shouldRun('coverage-check')) {
     await runStage('coverage-check', async () => {
-      const { main } = require('./scratch/scratch/coverage-check.js');
+      const { main } = require('./scratch/coverage-check.js');
       await main();
     }, timer);
   }
@@ -2078,7 +2140,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
       await require('./touchup').main({ composition: 'DemoScratch' });
     }, timer);
   } else if (noTouchup) {
-    console.log('[Orchestrator] Skipping touchup (--no-touchup).');
+    cliLog('[Orchestrator] Skipping touchup (--no-touchup).');
   }
 }
 
@@ -2087,7 +2149,7 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, t
 async function runEnhancePipeline({ startIdx, noTouchup, versionedDir, timer }) {
   const stageRunner = async (name, idx, fn) => {
     if (idx < startIdx) {
-      console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
+      cliLog(`[Orchestrator] Skipping stage: ${name} (--from)`);
       return;
     }
     await runStage(name, fn, timer);
@@ -2169,7 +2231,7 @@ async function runEnhancePipeline({ startIdx, noTouchup, versionedDir, timer }) 
       await require('./touchup').main({ composition: 'DemoEnhance' });
     }, timer);
   } else if (noTouchup) {
-    console.log('[Orchestrator] Skipping touchup (--no-touchup).');
+    cliLog('[Orchestrator] Skipping touchup (--no-touchup).');
   }
 }
 
@@ -2178,7 +2240,7 @@ async function runEnhancePipeline({ startIdx, noTouchup, versionedDir, timer }) 
 async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText, timer }) {
   const stageRunner = async (name, idx, fn) => {
     if (idx < startIdx) {
-      console.log(`[Orchestrator] Skipping stage: ${name} (--from)`);
+      cliLog(`[Orchestrator] Skipping stage: ${name} (--from)`);
       return;
     }
     await runStage(name, fn, timer);
@@ -2193,14 +2255,14 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
   let plan = { segments: [] };
   if (STAGES.indexOf('ingest') >= startIdx) {
     await runStage('ingest (plan)', async () => {
-      console.log('[Orchestrator] Building hybrid pipeline plan...');
+      cliLog('[Orchestrator] Building hybrid pipeline plan...');
       plan = await buildPipelinePlan(promptText);
       const planFile = path.join(OUT_DIR, 'pipeline-plan.json');
       fs.writeFileSync(planFile, JSON.stringify(plan, null, 2));
-      console.log(`[Orchestrator] Pipeline plan written: ${planFile}`);
-      console.log(`[Orchestrator] Segments: ${plan.segments.length}`);
+      cliLog(`[Orchestrator] Pipeline plan written: ${planFile}`);
+      cliLog(`[Orchestrator] Segments: ${plan.segments.length}`);
       plan.segments.forEach(s =>
-        console.log(`  [${s.type}] ${s.id}: ${s.description}`)
+        cliLog(`  [${s.type}] ${s.id}: ${s.description}`)
       );
     }, timer);
   } else {
@@ -2208,7 +2270,7 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
     const planFile = path.join(OUT_DIR, 'pipeline-plan.json');
     if (fs.existsSync(planFile)) {
       plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
-      console.log(`[Orchestrator] Loaded existing pipeline plan (${plan.segments.length} segments)`);
+      cliLog(`[Orchestrator] Loaded existing pipeline plan (${plan.segments.length} segments)`);
     }
   }
 
@@ -2221,7 +2283,7 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
     await runStage('build (hybrid)', async () => {
       // Process each recorded segment through the enhance sub-pipeline
       for (const seg of recordedSegments) {
-        console.log(`[Orchestrator] Enhancing recorded segment: ${seg.id}`);
+        cliLog(`[Orchestrator] Enhancing recorded segment: ${seg.id}`);
         await require('./enhance/analyze-video').main({ segmentId: seg.id, file: seg.file });
         await require('./enhance/segment').main({ segmentId: seg.id });
         await require('./enhance/enhance-script').main({ segmentId: seg.id });
@@ -2230,14 +2292,14 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
 
       // Process each built segment through the scratch sub-pipeline
       for (const seg of builtSegments) {
-        console.log(`[Orchestrator] Building scratch segment: ${seg.id}`);
+        cliLog(`[Orchestrator] Building scratch segment: ${seg.id}`);
         await require('./scratch/generate-script').main({ segmentId: seg.id });
         await runScriptCritique();
         await require('./scratch/build-app').main({ segmentId: seg.id });
         await require('./scratch/record-local').main({ segmentId: seg.id, iteration: 1 });
         const qaResult = await require('./scratch/qa-review').main({ segmentId: seg.id, iteration: 1 });
         if (!qaResult?.passed) {
-          console.warn(`[Orchestrator] Segment ${seg.id} QA did not pass (score: ${qaResult?.overallScore}). Continuing.`);
+          cliWarn(`[Orchestrator] Segment ${seg.id} QA did not pass (score: ${qaResult?.overallScore}). Continuing.`);
         }
       }
     }, timer);
@@ -2307,7 +2369,7 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
       await require('./touchup').main({ composition: 'DemoEnhance' });
     }, timer);
   } else if (noTouchup) {
-    console.log('[Orchestrator] Skipping touchup (--no-touchup).');
+    cliLog('[Orchestrator] Skipping touchup (--no-touchup).');
   }
 }
 
@@ -2321,16 +2383,17 @@ async function main() {
   if (toStage) {
     endIdx = STAGES.indexOf(toStage);
     if (endIdx < 0) {
-      console.error(`[Orchestrator] Unknown --to="${toStage}". Valid stages: ${STAGES.join(', ')}`);
+      cliError(`[Orchestrator] Unknown --to="${toStage}". Valid stages: ${STAGES.join(', ')}`);
       process.exit(1);
     }
-    console.log(`[Orchestrator] --to=${toStage} — pipeline stops after this stage`);
+    cliLog(`[Orchestrator] --to=${toStage} — pipeline stops after this stage`);
   }
 
+  const bannerTs = cliIsoTime();
   console.log('');
-  console.log('='.repeat(60));
-  console.log(' Plaid Demo Pipeline — Orchestrator');
-  console.log('='.repeat(60));
+  console.log(`[${bannerTs}] ${'='.repeat(54)}`);
+  console.log(`[${bannerTs}] Plaid Demo Pipeline — Orchestrator`);
+  console.log(`[${bannerTs}] ${'='.repeat(54)}`);
   console.log('');
 
   const timer = makeTimer();
@@ -2338,22 +2401,30 @@ async function main() {
   // Load prompt
   const promptText = loadPrompt();
   if (promptText) {
-    console.log(`[Orchestrator] Prompt: "${promptText.substring(0, 120).replace(/\n/g, ' ')}..."`);
+    cliLog(`[Orchestrator] Prompt: "${promptText.substring(0, 120).replace(/\n/g, ' ')}..."`);
   } else {
-    console.log('[Orchestrator] No prompt.txt found — using defaults.');
+    cliLog('[Orchestrator] No prompt.txt found — using defaults.');
   }
   const { fingerprint: promptFingerprint, firstUse: promptFirstUse, registry: promptRegistry } = detectFirstUsePrompt(promptText);
-  const autoFresh = !!promptFirstUse;
-  if (autoFresh) {
-    console.log('[Orchestrator] First use of this prompt.txt detected — enabling automatic fresh run behavior.');
+  const forceFreshCleanup =
+    process.env.PIPELINE_FRESH_CLEANUP === 'true' || process.env.PIPELINE_FRESH_CLEANUP === '1';
+  const autoFresh = !!promptFirstUse || forceFreshCleanup;
+  if (promptFirstUse) {
+    cliLog('[Orchestrator] First use of this prompt.txt detected — enabling automatic fresh run behavior.');
     if (effectiveFromStage) {
-      console.log(`[Orchestrator] Ignoring --from=${effectiveFromStage} for first-use prompt; running from beginning to avoid stale artifacts.`);
+      cliLog(`[Orchestrator] Ignoring --from=${effectiveFromStage} for first-use prompt; running from beginning to avoid stale artifacts.`);
+      effectiveFromStage = null;
+    }
+  } else if (forceFreshCleanup) {
+    cliLog('[Orchestrator] PIPELINE_FRESH_CLEANUP enabled — scrubbing prior build artifacts in run dir and running full pipeline from start.');
+    if (effectiveFromStage) {
+      cliLog(`[Orchestrator] Ignoring --from=${effectiveFromStage} because PIPELINE_FRESH_CLEANUP is set.`);
       effectiveFromStage = null;
     }
   }
 
   if (effectiveFromStage && !explicitRunId && !process.env.PIPELINE_RUN_DIR) {
-    console.error(
+    cliError(
       '[Orchestrator] --from requires explicit run identity. ' +
       'Pass --run-id=<runId> or set PIPELINE_RUN_DIR.'
     );
@@ -2364,37 +2435,37 @@ async function main() {
   let mode;
   if (cliMode) {
     if (!['scratch', 'enhance', 'hybrid'].includes(cliMode)) {
-      console.error(`[Orchestrator] Invalid --mode="${cliMode}". Must be scratch, enhance, or hybrid.`);
+      cliError(`[Orchestrator] Invalid --mode="${cliMode}". Must be scratch, enhance, or hybrid.`);
       process.exit(1);
     }
     mode = cliMode;
-    console.log(`[Orchestrator] Mode: ${mode} (from CLI)`);
+    cliLog(`[Orchestrator] Mode: ${mode} (from CLI)`);
   } else {
     mode = await classifyMode(promptText);
   }
 
   // Determine versioned output directory — this becomes the isolated run dir
   const runNameStem = buildRunNameStem(promptText);
-  console.log(`[Orchestrator] Run naming stem: ${runNameStem}`);
+  cliLog(`[Orchestrator] Run naming stem: ${runNameStem}`);
   let versionedDir;
 
   if (process.env.PIPELINE_RUN_DIR && fs.existsSync(process.env.PIPELINE_RUN_DIR)) {
     // Dashboard (or other caller) already specified the exact run directory — use it directly.
     versionedDir = path.resolve(process.env.PIPELINE_RUN_DIR);
-    console.log(`[Orchestrator] Using caller-specified run dir: ${versionedDir}`);
+    cliLog(`[Orchestrator] Using caller-specified run dir: ${versionedDir}`);
     setLatestLink(versionedDir);
   } else if (explicitRunId) {
     // Explicit run target for restarts/resumes (no heuristic directory selection).
     const candidate = path.join(DEMOS_DIR, explicitRunId);
     if (!fs.existsSync(candidate)) {
-      console.error(`[Orchestrator] --run-id not found: ${explicitRunId}`);
+      cliError(`[Orchestrator] --run-id not found: ${explicitRunId}`);
       process.exit(1);
     }
     versionedDir = candidate;
-    console.log(`[Orchestrator] Using explicit run id: ${explicitRunId}`);
+    cliLog(`[Orchestrator] Using explicit run id: ${explicitRunId}`);
     setLatestLink(versionedDir);
   } else if (effectiveFromStage) {
-    console.error('[Orchestrator] --from restart requires explicit run identity (--run-id or PIPELINE_RUN_DIR).');
+    cliError('[Orchestrator] --from restart requires explicit run identity (--run-id or PIPELINE_RUN_DIR).');
     process.exit(1);
   } else {
     versionedDir = resolveVersionedDir(runNameStem);
@@ -2438,12 +2509,14 @@ async function main() {
   }, { runDir: versionedDir });
   if (autoFresh) {
     applyFreshCleanup(versionedDir);
-    console.log('[Orchestrator] Applied fresh cleanup for first-use prompt run.');
+    cliLog(
+      `[Orchestrator] Applied fresh cleanup (${promptFirstUse ? 'first-use prompt' : 'PIPELINE_FRESH_CLEANUP'}).`
+    );
     appendPipelineLogSection('[RUN] Fresh cleanup', ['autoFresh=true', 'status=applied'], { runDir: versionedDir });
   }
   recordPromptUse({ registry: promptRegistry, fingerprint: promptFingerprint, runDir: versionedDir });
-  console.log(`[Orchestrator] Run directory (isolated): ${versionedDir}`);
-  console.log(`[Orchestrator] Symlink: ${LATEST_LINK}`);
+  cliLog(`[Orchestrator] Run directory (isolated): ${versionedDir}`);
+  cliLog(`[Orchestrator] Symlink: ${LATEST_LINK}`);
 
   // Determine start index (for --from)
   const startIdx = resolveStartIndex(effectiveFromStage);
@@ -2451,15 +2524,15 @@ async function main() {
   // Log Plaid Link mode
   const plaidLinkLive = process.env.PLAID_LINK_LIVE === 'true';
   if (plaidLinkLive) {
-    console.log(`[Orchestrator] Plaid Link mode: LIVE (sandbox) — real SDK + iframe automation`);
+    cliLog('[Orchestrator] Plaid Link mode: LIVE (sandbox) — real SDK + iframe automation');
   } else {
-    console.log(`[Orchestrator] Plaid Link mode: MOCK (self-contained HTML mockups)`);
+    cliLog('[Orchestrator] Plaid Link mode: MOCK (self-contained HTML mockups)');
   }
 
   const stagePlan = endIdx == null
     ? STAGES.slice(startIdx)
     : STAGES.slice(startIdx, endIdx + 1);
-  console.log(`[Orchestrator] Mode: ${mode.toUpperCase()} | Stages: ${stagePlan.join(' → ')}`);
+  cliLog(`[Orchestrator] Mode: ${mode.toUpperCase()} | Stages: ${stagePlan.join(' → ')}`);
   appendPipelineLogSection('[RUN] Stage plan', [
     `mode=${mode}`,
     `fromIndex=${startIdx}`,
@@ -2475,7 +2548,7 @@ async function main() {
   const pipelineArgs = { startIdx, endIdx, noTouchup, versionedDir, promptText, timer, recordMode };
 
   if (recordMode === 'studio') {
-    console.log(`[Orchestrator] Record mode: STUDIO (human-driven via our-recorder)`);
+    cliLog('[Orchestrator] Record mode: STUDIO (human-driven via our-recorder)');
   }
 
   if (mode === 'scratch') {
@@ -2487,20 +2560,22 @@ async function main() {
   }
 
   const total = timer.totalElapsed();
+  const doneTs = cliIsoTime();
   console.log('');
-  console.log('='.repeat(60));
-  console.log(` Pipeline complete in ${total}s`);
-  console.log(` Output: ${versionedDir}`);
-  console.log('='.repeat(60));
+  console.log(`[${doneTs}] ${'='.repeat(54)}`);
+  console.log(`[${doneTs}] MILESTONE: pipeline complete | ${total}s total`);
+  console.log(`[${doneTs}] output: ${versionedDir}`);
+  console.log(`[${doneTs}] ${'='.repeat(54)}`);
   console.log('');
   appendPipelineLogSection('[RUN] Pipeline complete', [
+    `at=${doneTs}`,
     `totalSeconds=${total}`,
     `outputDir=${versionedDir}`,
   ], { runDir: versionedDir });
 }
 
 main().catch(err => {
-  console.error('\n[Orchestrator] Fatal error:', err.message);
+  cliError(`[Orchestrator] Fatal error: ${err.message}`);
   if (err.stack) console.error(err.stack);
   process.exit(1);
 });

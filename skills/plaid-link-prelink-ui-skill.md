@@ -162,6 +162,15 @@ Well-designed screens build curiosity, trust, and motivation to complete the flo
 - Make the primary CTA visually prominent and easy to find
 - "Instant" is an effective word for the primary CTA in generic flows
 
+### 6. Plaid Link launch CTA (host app — `data-testid="link-external-account-btn"`)
+
+**Non-negotiable UX:** The button that opens Plaid Link is a **primary CTA**, not an icon poster.
+
+- **Icon scale:** Any leading link/chain icon should read as an **inline affordance** next to the label (target **~18–24px**, similar to line-height), not a large hero graphic that dominates the button.
+- **Pipeline contract:** The demo pipeline injects a **fixed-size stock Heroicons outline “link”** SVG for this button and adds layout CSS so flex parents cannot stretch it to fill the control. Do **not** replace it with custom merged paths, emoji, or oversized decorative SVGs.
+- **Layout:** Do **not** wrap the icon in `flex: 1`, `flex-grow`, percentage-based heights, or full-height icon wells that force the glyph to scale with the button. Keep **label-forward** hierarchy: text is primary; icon supports it.
+- If the build agent or human feedback changes this button, preserve **modest icon proportion** and the canonical `data-testid`.
+
 ---
 
 ## I-2b. Layer Share-Screen Field Rules (Use-Case Based)

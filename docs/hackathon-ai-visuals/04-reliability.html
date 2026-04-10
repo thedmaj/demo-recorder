@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Pipeline Visuals - Reliability</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-prev="./03-why-this-ai.html" data-next="./05-graphify.html">
+    <main class="page">
+      <div class="topbar">
+        <span class="pill">Page 4 of 5</span>
+        <span class="pill">Reliability + Guardrails</span>
+      </div>
+
+      <h1>How we keep AI outputs production-safe</h1>
+      <p class="lead">This is the trust slide for judges: deterministic checks around generative steps.</p>
+
+      <div class="grid cols-2">
+        <section class="card">
+          <h3>Prompt-time guardrails</h3>
+          <ul class="list">
+            <li>Hard contracts for Link launch behavior and selector validity</li>
+            <li>Data-sharing rules by use case (Layer/CRA/IDV/Auth)</li>
+            <li>Mandatory API panel and JSON rendering behaviors</li>
+          </ul>
+          <div class="badges">
+            <span class="badge teal">Deterministic</span>
+            <span class="badge amber">Regression-resistant</span>
+          </div>
+        </section>
+
+        <section class="card">
+          <h3>Validation loops</h3>
+          <ul class="list">
+            <li>Build QA and recording QA against script expectations</li>
+            <li>Narration/visual sync checks + coverage checks</li>
+            <li>Audio QA and clip regeneration on stutter/freeze</li>
+          </ul>
+          <div class="badges">
+            <span class="badge teal">Auto-detect</span>
+            <span class="badge red">Auto-repair where possible</span>
+          </div>
+        </section>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Failure containment pattern</h3>
+        <p>
+          AI generates candidate artifacts, then deterministic checks block bad outputs from moving forward.
+          This prevents one model mistake from cascading through the pipeline.
+        </p>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <h3>Presenter line</h3>
+        <p>
+          "Our AI loop is optimistic at generation time and strict at validation time, which lets us move quickly
+          while still being demo-safe."
+        </p>
+      </div>
+
+      <div class="nav">
+        <a class="btn" href="./03-why-this-ai.html">← Back</a>
+        <a class="btn primary" href="./05-graphify.html">Next →</a>
+      </div>
+    </main>
+    <script src="./script.js"></script>
+  </body>
+</html>

@@ -9,6 +9,7 @@ const {
   computeCaptureDelays,
   normalizeGoToStepExpression,
   isSlideLikeStep,
+  buildPlaidLaunchCtaIconDiagnostics,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/build-qa'));
 
 describe('build-qa helpers', () => {
@@ -35,5 +36,49 @@ describe('build-qa helpers', () => {
     assert.equal(isSlideLikeStep({ id: 'auth-slide' }), true);
     assert.equal(isSlideLikeStep({ visualState: 'Technical slide showing API summary' }), true);
     assert.equal(isSlideLikeStep({ id: 'amount-entry', visualState: 'Bank amount entry form' }), false);
+  });
+
+  test('buildPlaidLaunchCtaIconDiagnostics skips non-launch steps', () => {
+    const d = buildPlaidLaunchCtaIconDiagnostics(
+      { id: 'intro', plaidPhase: undefined },
+      { activeStepHasPlaidLinkLaunchBtn: true, plaidLaunchCtaMetrics: { buttonHeight: 48, iconMaxDim: 200, svgCount: 1 } }
+    );
+    assert.equal(d.length, 0);
+  });
+
+  test('buildPlaidLaunchCtaIconDiagnostics flags oversized icon', () => {
+    const d = buildPlaidLaunchCtaIconDiagnostics(
+      { id: 'link-launch', plaidPhase: 'launch' },
+      {
+        activeStepHasPlaidLinkLaunchBtn: true,
+        plaidLaunchCtaMetrics: { buttonHeight: 48, buttonWidth: 400, iconMaxDim: 120, svgCount: 1 },
+      }
+    );
+    assert.equal(d.length, 1);
+    assert.equal(d[0].category, 'plaid-launch-cta-icon');
+    assert.match(d[0].issue, /disproportionately large/i);
+  });
+
+  test('buildPlaidLaunchCtaIconDiagnostics passes modest icon', () => {
+    const d = buildPlaidLaunchCtaIconDiagnostics(
+      { id: 'link-launch', plaidPhase: 'launch' },
+      {
+        activeStepHasPlaidLinkLaunchBtn: true,
+        plaidLaunchCtaMetrics: { buttonHeight: 56, buttonWidth: 280, iconMaxDim: 20, svgCount: 1 },
+      }
+    );
+    assert.equal(d.length, 0);
+  });
+
+  test('buildPlaidLaunchCtaIconDiagnostics warns when svg missing', () => {
+    const d = buildPlaidLaunchCtaIconDiagnostics(
+      { id: 'link-launch', plaidPhase: 'launch' },
+      {
+        activeStepHasPlaidLinkLaunchBtn: true,
+        plaidLaunchCtaMetrics: { buttonHeight: 48, iconMaxDim: 0, svgCount: 0 },
+      }
+    );
+    assert.equal(d.length, 1);
+    assert.match(d[0].issue, /no SVG icon/i);
   });
 });

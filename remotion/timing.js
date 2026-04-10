@@ -3,53 +3,60 @@
 
 const STEP_TIMING = [
   {
-    "id": "att-billing-page",
-    "label": "AT&T Billing — Amount Due",
+    "id": "chase-sapphire-status",
+    "label": "Application Status — Review Pending",
     "startFrame": 0,
-    "endFrame": 490,
-    "audioEndFrame": 341
+    "endFrame": 442,
+    "audioEndFrame": 291
   },
   {
-    "id": "payment-method-select",
-    "label": "Payment Method — Pay by Bank",
-    "startFrame": 490,
-    "endFrame": 815,
-    "audioEndFrame": 779
+    "id": "plaid-link-cra",
+    "label": "Plaid Check Link — Consumer Report Flow",
+    "startFrame": 442,
+    "endFrame": 1915,
+    "audioEndFrame": 761
   },
   {
-    "id": "plaid-link-flow",
-    "label": "Plaid Link — Bank Connection",
-    "startFrame": 815,
-    "endFrame": 1291,
-    "audioEndFrame": 1113
+    "id": "slide-cra-setup-lifecycle",
+    "label": "CRA Setup & Token Lifecycle",
+    "startFrame": 1915,
+    "endFrame": 2471,
+    "audioEndFrame": 2241
   },
   {
-    "id": "auth-verification-slide",
-    "label": "Plaid Auth — Verified Account Details",
-    "startFrame": 1291,
-    "endFrame": 1681,
-    "audioEndFrame": 1624
+    "id": "chase-report-generating",
+    "label": "Report Generating — Async Status",
+    "startFrame": 2471,
+    "endFrame": 2923,
+    "audioEndFrame": 2749
   },
   {
-    "id": "payment-review",
-    "label": "Payment Confirmation Review",
-    "startFrame": 1681,
-    "endFrame": 2175,
-    "audioEndFrame": 2037
+    "id": "slide-base-report-insight",
+    "label": "Base Report — Cash-Flow & Account Stability",
+    "startFrame": 2923,
+    "endFrame": 3503,
+    "audioEndFrame": 3273
   },
   {
-    "id": "payment-success",
-    "label": "Payment Success",
-    "startFrame": 2175,
-    "endFrame": 2579,
-    "audioEndFrame": 2544
+    "id": "slide-income-insights",
+    "label": "Income Insights — Ability to Pay",
+    "startFrame": 3503,
+    "endFrame": 4084,
+    "audioEndFrame": 3839
+  },
+  {
+    "id": "chase-final-approval",
+    "label": "Final Decision — Sapphire Preferred Approved",
+    "startFrame": 4084,
+    "endFrame": 4577,
+    "audioEndFrame": 4386
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 2579,
-    "endFrame": 2933,
-    "audioEndFrame": 2905
+    "startFrame": 4577,
+    "endFrame": 5132,
+    "audioEndFrame": 4922
   }
 ];
 

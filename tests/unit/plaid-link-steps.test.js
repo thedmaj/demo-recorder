@@ -9,6 +9,7 @@ const path = require('path');
 const {
   validateDemoScript,
   mergePreLinkIntoLaunchStep,
+  mergeAllPreLinkExplainersBeforeLaunch,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/generate-script'));
 
 describe('plaid-link-launch-validation', () => {
@@ -29,6 +30,18 @@ describe('plaid-link-launch-validation', () => {
   test('missing launch step in live mode → error', () => {
     const result = validateDemoScript({ steps: [{ id: 'intro' }] }, { plaidLinkLive: true });
     assert.ok(result.errors.some(e => /plaidPhase:"launch"/.test(e)));
+  });
+
+  test('Layer use case without launch step in live mode → allowed', () => {
+    const result = validateDemoScript({
+      title: 'Polymarket Layer onboarding',
+      product: 'Plaid Layer',
+      steps: [
+        { id: 'layer-consent', sceneType: 'link', narration: 'Maya consents to share verified onboarding details in the Layer flow.' },
+      ],
+    }, { plaidLinkLive: true });
+    assert.equal(result.errors.length, 0);
+    assert.ok(result.warnings.some((w) => /Layer-native flow/.test(w)));
   });
 
   test('multiple launch steps → error', () => {
@@ -100,5 +113,41 @@ describe('plaid-link-launch-validation', () => {
     assert.equal(script.steps[0].interaction.target, '[data-testid="link-your-bank"]');
     assert.ok(/Pre-link trust screen/.test(script.steps[0].visualState));
     assert.deepEqual(merged, { removedStepId: 'pre-link-explainer', launchStepId: 'plaid-link-flow' });
+  });
+
+  test('mergeAllPreLinkExplainersBeforeLaunch removes non-adjacent explainer; validation passes', () => {
+    const script = {
+      steps: [
+        { id: 'intro', narration: 'Taylor starts onboarding at KeyBank digital.' },
+        {
+          id: 'host-account-ready',
+          label: 'Account ready',
+          narration: 'The account shell is ready; next she will link your bank for funding verification.',
+          visualState: 'Host screen with Link your bank as the primary CTA.',
+        },
+        { id: 'spacer-beat', narration: 'Brief transition confirming disclosures were accepted.' },
+        {
+          id: 'link-launch',
+          plaidPhase: 'launch',
+          narration: 'Inside Plaid she picks her institution and checking account and completes in seconds.',
+          durationHintMs: 20000,
+        },
+      ],
+    };
+    assert.ok(
+      validateDemoScript(structuredClone(script), { plaidLinkLive: true }).errors.some((e) =>
+        /Merge pre-Link explainer/.test(e)
+      ),
+      'validate flags standalone explainer before merge'
+    );
+    const merged = mergeAllPreLinkExplainersBeforeLaunch(script);
+    assert.ok(merged && merged.removedStepIds.includes('host-account-ready'));
+    assert.equal(script.steps.find((s) => s.id === 'host-account-ready'), undefined);
+    assert.equal(script.steps.some((s) => s.plaidPhase === 'launch'), true);
+    const after = validateDemoScript(script, { plaidLinkLive: true });
+    assert.deepEqual(
+      after.errors.filter((e) => /Merge pre-Link explainer/.test(e)),
+      []
+    );
   });
 });

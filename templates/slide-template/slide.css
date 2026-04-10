@@ -62,7 +62,14 @@
   border-bottom: 2px solid var(--slide-accent-border);
 }
 
-.slide-header-left{ display:flex; align-items:center; gap:16px; }
+.slide-header-left{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; min-width:0; }
+.slide-header-logo{
+  height:28px;
+  width:auto;
+  max-width:min(200px, 40vw);
+  object-fit:contain;
+  display:block;
+}
 .slide-header-pill{
   background: var(--slide-accent-tint);
   border: 1px solid var(--slide-accent-border);
@@ -154,6 +161,22 @@
   line-height:1.5;
 }
 
+/* Footer strip (TD / layered-demo lineage) */
+.slide-footer{
+  margin-top: auto;
+  padding: 18px var(--slide-safe-pad) 22px;
+  border-top: 1px solid var(--slide-accent-border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.slide-footer-meta{
+  font-size: 12px;
+  color: var(--slide-text-tertiary);
+  letter-spacing: 0.02em;
+}
+
 /* Global API side panel (collapsed by default, expanded JSON) */
 .side-panel{
   position: fixed;
@@ -180,15 +203,30 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-#api-panel-toggle{
+.api-panel-header-actions{
   margin-left: auto;
-  padding: 4px 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+#api-panel-toggle,
+#api-json-panel-show,
+#api-json-panel-hide{
+  padding: 4px 10px;
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.22);
   background: rgba(255,255,255,0.08);
   color: #fff;
   cursor: pointer;
   font-size: 11px;
+  font-family: inherit;
+}
+#api-panel-toggle:hover,
+#api-json-panel-show:hover,
+#api-json-panel-hide:hover{
+  background: rgba(255,255,255,0.14);
 }
 .side-panel-body{
   padding: 14px 16px;
@@ -203,3 +241,14 @@
   max-width: 100%;
 }
 
+/* renderjson — Plaid dark panel contrast (align with pipeline scratch-app) */
+#api-response-content .renderjson a{
+  color: rgba(255,255,255,0.45);
+  text-decoration: none;
+}
+#api-response-content .renderjson .string{ color: #5eead4; }
+#api-response-content .renderjson .number{ color: #38bdf8; }
+#api-response-content .renderjson .boolean{ color: #f472b6; }
+#api-response-content .renderjson .key{ color: #fca5a5; }
+#api-response-content .renderjson .null,
+#api-response-content .renderjson .undefined{ color: rgba(255,255,255,0.35); }

@@ -1,0 +1,165 @@
+================================================================================
+US Bank SMB Account Opening and Funding - Improve Conversion with Auth + Identity Match
+================================================================================
+
+**Host:** **U.S. Bank** - banking / small business
+**Canonical URL:** https://www.usbank.com/
+**Brand URL** (from Salesforce): https://usbank.com
+
+**Opportunity context (Salesforce):**
+- Opportunity: `US Bank - SMB` (`006UV00000OELbRYAX`)
+- Stage: `Evaluation`
+- Amount: `$1,260,002.75`
+- Type: `New Customer`
+- Use case: `Account opening & funding`
+- Technical use case: `auth and identity`
+- Primary product signal: `Auth`
+- Plaid next step note: `3/23: msa pen with USBank`
+- Account context: `U.S. Bank` (`Top 50 Banks`, `Banking & Mortgages`)
+- Account technical note: login flow changed and created integration instability; stop-gap integration in progress
+
+**Business objectives (derived from Salesforce context):**
+- Increase successful SMB account opening starts that reach funded status.
+- Reduce drop-off caused by manual verification friction during onboarding.
+- Improve confidence in identity checks by separating business-entity name matching from owner-individual name matching.
+- Keep funding initiation fast while preserving risk controls.
+
+**User journey (one sentence):**
+A small business applicant opens a new U.S. Bank account, links an external funding account through Plaid Link, and is approved with clear identity-match signals for both business and owner names.
+
+**Story arc (short prose):**
+Start in U.S. Bank's SMB onboarding flow where applicants often stall at verification and initial funding. Introduce Plaid as the fast verification and funding rail: the owner consents in Link, U.S. Bank verifies account/auth data, evaluates identity match quality, and moves the account to funded with clear, explainable checks.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Identity Match
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):
+Account Opening, Inbound Bank Payments: Account Funding
+
+**Primary product family** (pick one - aligns with pipeline profiles):
+`funding`
+
+**Primary messaging file for this demo** (pick one to own stats):
+`inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** - real SDK (`plaidPhase: "launch"` single step per `CLAUDE.md`)
+  [ ] **Plaid Layer** / OAuth / IDV - not required for this core flow
+  [x] **Sandbox / persona** - defaults per `inputs/plaid-link-sandbox.md`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | U.S. Bank SMB onboarding entry screen | Position the goal: open and fund quickly without manual back-and-forth | `Start application` |
+| 2 | host | Business profile + owner details form | Show business and owner data collected in one guided flow | `Continue` |
+| 3 | host | Single pre-Link explainer step | Explain secure account connection and verification purpose; end narration on action trigger | CTA ends narration: `Link external account` |
+| 4 | link | Real Plaid Link flow (consent, verification, institution, account select) | Narrate only what is visible inside Link | `Account linked` |
+| 5 | slide | `POST /link/token/create` + Link callbacks | Show deterministic launch and success handoff | `Link session completed` |
+| 6 | slide | `POST /identity/match` response with dual name scoring | Explain **business name score vs owner personal name score** and how each score influences risk policy | `Name match confidence passed` |
+| 7 | slide | `POST /auth/get` response | Show verified routing/account details for funding setup | `Funding rails verified` |
+| 8 | host | Funding confirmation + initial deposit setup | Show account opening completion and funding readiness | `Submit opening & fund account` |
+| 9 | host | Success state | Reinforce faster activation with stronger verification confidence | `Finish` |
+| 10 | slide | Final value summary slide | Consolidate conversion, speed, and risk-control outcomes | `Scale SMB onboarding` |
+
+**Identity Match slide requirement (mandatory):**
+- Include two explicit name-match dimensions in the narrative and JSON:
+  - `business_name_match_score`: compares applicant-entered legal business name vs institution-derived account holder business/legal name.
+  - `owner_name_match_score`: compares owner personal name vs institution-derived personal owner name.
+- If business score is strong but owner score is weak (or vice versa), show policy as `REVIEW` instead of blind `PASS`.
+- Do not collapse these into one generic "name score"; demonstrate why entity vs person matching matters for SMB onboarding.
+
+**Product-specific reminders** (delete if N/A):
+- Link: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"` step.
+- Link narration boundary: pre-Link step ends on button trigger; Link step narration starts with modal content only.
+- Auth: show realistic routing/account verification fields.
+- Identity Match: keep scoring explainable and tied to user benefit (faster approvals with clearer exception handling).
+
+**Compliance / user data (one line):**
+Use only consented business-owner data and avoid implying guaranteed approval; show policy outcomes as pass/review based on verification evidence.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Priya Desai, owner of Blue Harbor Catering LLC
+**Company / context:** Opening a new U.S. Bank SMB checking account with first funding transfer
+**Sample fields that must appear on screen:** legal business name, DBA (if present), owner full name, EIN/last-4 style placeholder, funding amount, linked account mask, auth verification status, identity match scores by entity type
+
+Recommended structured data:
+- `client_user_id`: `usb-smb-priya-001`
+- `business_legal_name`: `Blue Harbor Catering LLC`
+- `business_dba_name`: `Blue Harbor Catering`
+- `owner_full_name`: `Priya Desai`
+- `requested_account_type`: `Business Checking`
+- `initial_funding_amount`: `5000.00`
+- `funding_source_account`: `First Platypus Bank •••• 0211`
+- `business_name_match_score`: `0.96`
+- `owner_name_match_score`: `0.91`
+- `identity_policy_outcome`: `PASS`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use U.S. Bank-inspired business banking UI patterns: clean white/light surfaces, structured form cards, and clear step progress for onboarding.
+Keep host screens customer-branded and reserve Plaid-branded design for API insight and final value summary slides.
+
+**Viewport:** 1440x900.
+
+-------------------------------------------------------------------------------
+INFERRED API STACK (IMPLEMENTATION INTENT)
+-------------------------------------------------------------------------------
+
+Use these endpoints and sequencing for this use case:
+1. `POST /link/token/create`
+2. Plaid Link `onSuccess` token exchange path
+3. `POST /identity/match`
+4. `POST /auth/get`
+
+API panel expectations:
+- Show request/response samples that support the storyboard claim for each API slide.
+- For `identity/match`, include separate fields or derived metrics for business-entity vs owner-person name matching.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Create 4 Plaid-branded slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+1) Link token + launch integrity slide (`/link/token/create`, callback events)
+2) Identity Match slide (`/identity/match`) with side-by-side business-name and owner-name match scoring
+3) Auth slide (`/auth/get`) focused on funding account validation
+4) Final value summary slide with 3-5 SMB onboarding outcomes (speed, conversion, risk control)
+
+JSON panel contract:
+- Global `#api-response-panel` only
+- hidden by default on page load
+- once visible, JSON body is immediately visible (no JSON toggle/collapse controls)
+- panel body scrolls for long payloads
+- request/response fields must align with slide narrative claims
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (value-props **or** product KB - not duplicated)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

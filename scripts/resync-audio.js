@@ -24,6 +24,7 @@ const fs   = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { processedToCompMs, loadSyncMap } = require('./sync-map-utils');
+const { refreshTimingContractAfterResync } = require('./refresh-timing-contract-after-resync');
 
 const OUT_DIR          = process.env.PIPELINE_RUN_DIR || path.resolve(__dirname, '../out');
 const MANIFEST_FILE    = path.join(OUT_DIR, 'voiceover-manifest.json');
@@ -176,6 +177,17 @@ function main() {
   };
   fs.writeFileSync(MANIFEST_FILE, JSON.stringify(updatedManifest, null, 2));
   console.log('[resync-audio] ✓ Updated voiceover-manifest.json\n');
+
+  const tcRefresh = refreshTimingContractAfterResync(OUT_DIR);
+  if (tcRefresh.ok && !tcRefresh.skipped) {
+    console.log(
+      `[resync-audio] Refreshed timing-contract.json comp windows for narration sync (${tcRefresh.updatedSteps || 0} step(s) adjusted).`
+    );
+  } else if (tcRefresh.skipped) {
+    console.log(`[resync-audio] timing-contract refresh skipped (${tcRefresh.reason || 'n/a'}).`);
+  } else {
+    console.warn(`[resync-audio] timing-contract refresh: ${tcRefresh.reason || 'failed'} (validate-narration-sync may still compare to stale windows).`);
+  }
 
   const lastClip = remappedClips[remappedClips.length - 1];
   const totalS   = ((lastClip.startMs + lastClip.audioDurationMs) / 1000).toFixed(1);

@@ -28,11 +28,11 @@
   let _filesLoadToken = 0;
   let _storyboardLoadToken = 0;
 
-  // Stage list for progress bar
+  // Stage list for progress bar — must match orchestrator + scripts/dashboard/server.js PIPELINE_STAGES
   const STAGES = [
     'research', 'ingest', 'script', 'brand-extract', 'script-critique',
     'embed-script-validate',
-    /* 'plaid-link-capture', */ 'build', 'record', 'qa', 'figma-review', 'post-process',
+    /* 'plaid-link-capture', */ 'build', 'plaid-link-qa', 'build-qa', 'record', 'qa', 'figma-review', 'post-process',
     'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa', 'ai-suggest-overlays', 'render', 'ppt', 'touchup'
   ];
 
@@ -44,6 +44,8 @@
     'script-critique':     { desc: 'Claude Haiku reviews narration word counts and value props', reads: ['demo-script.json'], writes: ['script-critique.json', 'claim-check-flags.json'] },
     'embed-script-validate': { desc: 'Multimodal embedding coherence check (optional, requires GCP)', reads: ['demo-script.json'], writes: ['script-validate-report.json'] },
     build:                 { desc: 'Claude Haiku generates demo web app (HTML/CSS/JS)', reads: ['demo-script.json', 'brand/<slug>.json'], writes: ['scratch-app/index.html'] },
+    'plaid-link-qa':       { desc: 'Pre-record smoke: Plaid Link selectors + launch CTA (Playwright)', reads: ['scratch-app/'], writes: ['plaid-link-qa.json'] },
+    'build-qa':            { desc: 'Playwright walk + vision QA vs demo-script (no recording)', reads: ['scratch-app/'], writes: ['build-qa-diagnostics.json', 'qa-report-build.json'] },
     record:                { desc: 'Playwright automates + records the demo app', reads: ['scratch-app/'], writes: ['recording.webm', 'step-timing.json'] },
     qa:                    { desc: 'Vision QA: screenshot eval per step (up to 3 iterations)', reads: ['recording.webm'], writes: ['qa-report-N.json', 'qa-frames/'] },
     'figma-review':        { desc: 'Optional Figma design feedback loop (FIGMA_REVIEW=true)', reads: ['scratch-app/'], writes: ['figma-review.json'] },
@@ -51,7 +53,7 @@
     voiceover:             { desc: 'ElevenLabs TTS: generate per-step narration MP3s', reads: ['processed-step-timing.json', 'demo-script.json'], writes: ['audio/vo_*.mp3', 'audio/voiceover.mp3'] },
     'coverage-check':      { desc: 'Verify all narration steps have audio clips', reads: ['voiceover-manifest.json'], writes: ['coverage-report.json'] },
     'auto-gap':            { desc: 'Compute speed/freeze sync-map segments from audio timings', reads: ['voiceover-manifest.json'], writes: ['sync-map.json'] },
-    'resync-audio':        { desc: 'Re-stitch audio with sync-map speed/freeze applied', reads: ['sync-map.json', 'voiceover-manifest.json'], writes: ['audio/voiceover.mp3'] },
+    'resync-audio':        { desc: 'Re-stitch audio with sync-map speed/freeze applied; refreshes timing-contract for sync governor', reads: ['sync-map.json', 'voiceover-manifest.json'], writes: ['audio/voiceover.mp3', 'timing-contract.json'] },
     'embed-sync':          { desc: 'Gemini audio-video sync detection (optional)', reads: ['recording-processed.webm', 'voiceover.mp3'], writes: ['embed-sync-report.json'] },
     'audio-qa':            { desc: 'Per-clip stutter/freeze detection; auto-regenerate bad clips', reads: ['audio/vo_*.mp3'], writes: ['audio-qa-report.json'] },
     'ai-suggest-overlays': { desc: 'Gemini suggests click ripple + zoom overlay enhancements', reads: ['recording-processed.webm'], writes: ['overlay-suggestions.json'] },
@@ -167,9 +169,30 @@
    * On 409: shows a confirm dialog offering force-restart (kills current process).
    * Returns the server response, or throws if user declines or another error occurs.
    */
-  async function runPipeline(opts) {
-    const rm = document.getElementById('research-mode-select')?.value;
+  /** If Pipeline tab prompt editor is mounted, persist to inputs/prompt.txt before orchestrator runs. */
+  async function ensurePipelinePromptSaved() {
+    const ta = document.getElementById('pipeline-prompt-editor');
+    if (!ta) return;
+    await apiPost('/api/config/prompt', { content: ta.value });
+    const configTa = document.getElementById('prompt-editor');
+    if (configTa) configTa.value = ta.value;
+  }
+
+  async function runPipeline(opts = {}) {
+    await ensurePipelinePromptSaved().catch(err => {
+      throw new Error(err.message || String(err));
+    });
+
+    const applyUiToStage = !!opts.applyUiToStage;
     const payload = { ...opts };
+    delete payload.applyUiToStage;
+
+    if (applyUiToStage) {
+      const toSel = document.getElementById('pipeline-to-stage-select');
+      if (toSel && toSel.value) payload.toStage = toSel.value;
+    }
+
+    const rm = document.getElementById('research-mode-select')?.value;
     if (rm) payload.researchMode = rm;
     const res = await fetch('/api/pipeline/run', {
       method: 'POST',
@@ -182,9 +205,9 @@
       );
       if (!confirmed) throw new Error('Cancelled — pipeline already running');
       // Retry with force flag
-      const rm = document.getElementById('research-mode-select')?.value;
-      const payload2 = { ...opts, force: true };
-      if (rm) payload2.researchMode = rm;
+      const payload2 = { ...payload, force: true };
+      const rm2 = document.getElementById('research-mode-select')?.value;
+      if (rm2) payload2.researchMode = rm2;
       const res2 = await fetch('/api/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -308,9 +331,13 @@
       // Server returns { runs: [...] } but handle plain array fallback
       const data = Array.isArray(raw) ? { runs: raw } : raw;
       if (!data.runs || data.runs.length === 0) {
-        const btn = document.getElementById('build-selector-btn');
         const label = document.getElementById('build-selector-label');
-        if (label) label.textContent = 'No runs found';
+        if (label) label.textContent = 'No builds yet';
+        currentRunId = null;
+        storyboardLivePreviewUrl = null;
+        storyboardSelectedStepId = null;
+        localStorage.removeItem('lastRunId');
+        renderBuildPanel([]);
         if (_urlInitialTab) {
           switchTab(_urlInitialTab);
           _urlInitialTab = null;
@@ -349,18 +376,63 @@
     try {
       const raw = await api('/api/runs');
       const data = Array.isArray(raw) ? { runs: raw } : raw;
-      if (data.runs && data.runs.length > 0) renderBuildPanel(data.runs);
+      renderBuildPanel(Array.isArray(data.runs) ? data.runs : []);
     } catch (_) {}
+  }
+
+  /** Stop pipeline if running (ignore errors). */
+  async function killPipelineSilently() {
+    try {
+      await apiPost('/api/pipeline/kill', {});
+    } catch (_) {
+      /* 404 = nothing running */
+    }
+  }
+
+  /**
+   * Allocate a new empty run, select it, refresh the list, and open Pipeline to edit prompt.
+   * Optionally stops an in-flight pipeline so the dashboard matches the new run.
+   */
+  async function createNewBuildAbandonCurrent() {
+    const msg =
+      'Create a new empty build and switch to it?\n\n' +
+      'If a pipeline is running, it will be stopped. Previous builds stay in Recent Builds.';
+    if (!window.confirm(msg)) return;
+    try {
+      await killPipelineSilently();
+      setPipelineRunning(false);
+      hideStageBanner();
+      const data = await apiPost('/api/runs/allocate', {});
+      const runId = data && data.runId;
+      if (!runId) throw new Error('No runId returned');
+      currentRunId = runId;
+      localStorage.setItem('lastRunId', runId);
+      storyboardLivePreviewUrl = null;
+      storyboardSelectedStepId = null;
+      const label = document.getElementById('build-selector-label');
+      if (label) label.textContent = runId;
+      await loadRuns();
+      closeBuildPanel();
+      switchTab('pipeline');
+      showToast('New build created — edit the prompt in Pipeline, then Run Pipeline.', 'success');
+    } catch (e) {
+      showToast('Could not create build: ' + (e.message || String(e)), 'error');
+    }
   }
 
   function renderBuildPanel(runs) {
     const content = document.getElementById('build-panel-content');
     if (!content) return;
+    const list = Array.isArray(runs) ? runs : [];
 
     // Find currently running run (has a currentStage or isRunning)
-    const liveRuns = runs.filter(r => r.isRunning || r.currentStage);
+    const liveRuns = list.filter(r => r.isRunning || r.currentStage);
 
-    let html = '';
+    let html =
+      '<div class="build-panel-new-wrap">' +
+      '<button type="button" id="build-panel-new-btn" class="build-panel-new-btn">+ Create new build</button>' +
+      '<p class="build-panel-new-hint">Stops a running pipeline if needed. Opens Pipeline to edit <code>inputs/prompt.txt</code>.</p>' +
+      '</div>';
 
     if (liveRuns.length > 0) {
       html += `<div class="build-panel-section-title">Current Build</div>`;
@@ -368,9 +440,19 @@
     }
 
     html += `<div class="build-panel-section-title">Recent Builds</div>`;
-    runs.forEach(r => { html += buildCardHtml(r, false); });
+    if (list.length === 0) {
+      html +=
+        '<div class="build-panel-empty-msg">No builds yet. Use the button above to create one.</div>';
+    } else {
+      list.forEach(r => { html += buildCardHtml(r, false); });
+    }
 
     content.innerHTML = html;
+
+    document.getElementById('build-panel-new-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      createNewBuildAbandonCurrent();
+    });
 
     // Wire up Load buttons
     content.querySelectorAll('.build-card-load-btn').forEach(btn => {
@@ -422,7 +504,7 @@
     const badgeClass = isLive ? 'live' : isComplete ? 'complete' : 'partial';
     const badgeText = isLive ? 'Live' : isComplete ? 'Complete' : 'Partial';
 
-    // Progress bar (19 pips for STAGES)
+    // Progress bar (one pip per pipeline stage)
     const completedSet = new Set(r.completedStages || []);
     const pipsHtml = STAGES.map(s => {
       const isDone = completedSet.has(s);
@@ -505,7 +587,9 @@
     if (tabName === 'config') loadConfig();
     if (tabName === 'pipeline') loadPipeline();
     if (tabName === 'valueprop') loadValueProps();
-    if (tabName === 'demo-apps') loadDemoApps();
+    // Always refetch demo-apps when entering the tab; otherwise a prior #demo-apps-list
+    // causes loadDemoApps() to no-op and renamed display names appear to "revert".
+    if (tabName === 'demo-apps') loadDemoApps(true);
   }
 
   // ── Overview Tab ───────────────────────────────────────────────────────────
@@ -912,9 +996,10 @@
           resumeBtn.disabled = true;
           resumeBtn.textContent = 'Starting…';
           try {
-            await runPipeline( {
+            await runPipeline({
               fromStage: nextStage,
               resumeRunId: currentRunId,
+              applyUiToStage: true,
             });
             showToast(`Pipeline resumed from ${nextStage}`, 'success');
             switchTab('pipeline');
@@ -3085,6 +3170,7 @@
     el.innerHTML = wizardHtml + `
       <div class="card">
         <div class="card-title">Prompt</div>
+        <p class="config-desc" style="margin:0 0 8px">Written to <code>inputs/prompt.txt</code>. Starting a run from this tab saves the editor first.</p>
         <textarea id="pipeline-prompt-editor" style="width:100%;min-height:150px;box-sizing:border-box">${esc(promptText)}</textarea>
         <button type="button" id="pipeline-save-prompt-btn" class="btn btn-secondary btn-sm" style="margin-top:8px">Save Prompt</button>
       </div>
@@ -3096,6 +3182,10 @@
         </div>
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
           <label>From stage: <select id="stage-select">${stageOptions}</select></label>
+          <label title="Stop after this stage (orchestrator --to). Leave default to run through touchup.">To stage: <select id="pipeline-to-stage-select">
+            <option value="">Through end</option>
+            ${stageOptions}
+          </select></label>
           <label title="Passed as RESEARCH_MODE for the research stage (empty = use prompt line or default)">Research: <select id="research-mode-select">
             <option value="">Default (gapfill) / prompt</option>
             <option value="full">full</option>
@@ -3213,13 +3303,29 @@
       }
     });
 
-    // Run pipeline (full)
+    // Run pipeline (full): new directory if current run already has a script; otherwise resume
+    // into the selected run (e.g. empty run from Builds → Create new build).
     document.getElementById('run-btn').addEventListener('click', async () => {
       const btn = document.getElementById('run-btn');
       const noTouchup = document.getElementById('no-touchup-check').checked;
       setBtnLoading(btn, true, 'Starting…');
       try {
-        const started = await runPipeline({ noTouchup, createNewRun: true });
+        const payload = { noTouchup, applyUiToStage: true };
+        if (currentRunId) {
+          try {
+            const meta = await api('/api/runs/' + currentRunId);
+            if (meta.artifacts && meta.artifacts.script) {
+              payload.createNewRun = true;
+            } else {
+              payload.resumeRunId = currentRunId;
+            }
+          } catch (_) {
+            payload.createNewRun = true;
+          }
+        } else {
+          payload.createNewRun = true;
+        }
+        const started = await runPipeline(payload);
         if (started && started.runId) {
           currentRunId = started.runId;
           localStorage.setItem('lastRunId', currentRunId);
@@ -3229,6 +3335,7 @@
         setPipelineRunning(true);
       } catch (e) {
         showToast('Failed to start: ' + e.message, 'error');
+      } finally {
         setBtnLoading(btn, false);
       }
     });
@@ -3240,11 +3347,12 @@
       const noTouchup = document.getElementById('no-touchup-check').checked;
       setBtnLoading(btn, true, 'Starting…');
       try {
-        await runPipeline( { fromStage, noTouchup, resumeRunId: currentRunId });
+        await runPipeline({ fromStage, noTouchup, resumeRunId: currentRunId, applyUiToStage: true });
         showToast(`Pipeline started from ${fromStage}`, 'success');
         setPipelineRunning(true);
       } catch (e) {
         showToast('Failed to start: ' + e.message, 'error');
+      } finally {
         setBtnLoading(btn, false);
       }
     });
@@ -3253,7 +3361,7 @@
     document.getElementById('run-refinement-pipeline-btn')?.addEventListener('click', async () => {
       const noTouchup = document.getElementById('no-touchup-check').checked;
       try {
-        await runPipeline( { fromStage: 'build', noTouchup, resumeRunId: currentRunId });
+        await runPipeline({ fromStage: 'build', noTouchup, resumeRunId: currentRunId, applyUiToStage: true });
         showToast('Refinement started from build stage', 'success');
         setPipelineRunning(true);
       } catch (e) {
@@ -3339,8 +3447,35 @@
       if (viewer) viewer.innerHTML = '';
     });
 
+    // Restore persisted orchestrator log when pipeline is idle (parity with CLI + resume).
+    const viewerPre = document.getElementById('log-viewer');
+    let skipLogReplay = false;
+    if (viewerPre) {
+      viewerPre.innerHTML = '';
+      try {
+        const st = await api('/api/pipeline/status');
+        if (!st.running && currentRunId) {
+          const hist = await api(
+            '/api/runs/' + encodeURIComponent(currentRunId) + '/pipeline-console-log?maxLines=4000'
+          );
+          if (hist && Array.isArray(hist.lines) && hist.lines.length > 0) {
+            hist.lines.forEach((row) => {
+              const entry =
+                typeof row === 'object' && row !== null && typeof row.text === 'string'
+                  ? row
+                  : { text: String(row), stream: 'stdout' };
+              appendLogEntry(entry);
+            });
+            skipLogReplay = true;
+          }
+        }
+      } catch (_) {
+        /* no file yet */
+      }
+    }
+
     // Re-connect log SSE so new messages flow into the newly rendered #log-viewer
-    connectLogSSE();
+    connectLogSSE({ skipReplay: skipLogReplay });
   }
 
   // ── Stage Banner ────────────────────────────────────────────────────────────
@@ -3372,26 +3507,73 @@
 
   // ── Log SSE ────────────────────────────────────────────────────────────────
 
-  function connectLogSSE() {
+  /**
+   * @param {{ skipReplay?: boolean }} [opts] skipReplay: true when log body was loaded from pipeline-console.log (avoid duplicating in-memory replay).
+   */
+  function connectLogSSE(opts = {}) {
     if (logSSE) { logSSE.close(); logSSE = null; }
     _logSSEConnectedAt = Date.now();
-    logSSE = new EventSource('/api/pipeline/logs');
-    logSSE.onmessage = (e) => appendLog(e.data);
+    const q = opts.skipReplay ? '?replay=0' : '';
+    logSSE = new EventSource('/api/pipeline/logs' + q);
+    logSSE.onmessage = (e) => {
+      let entry;
+      try {
+        entry = JSON.parse(e.data);
+        if (!entry || typeof entry.text !== 'string') throw new Error('bad entry');
+      } catch (_) {
+        entry = { text: e.data, stream: 'dashboard' };
+      }
+      appendLogEntry(entry);
+    };
     logSSE.onerror = () => {
       // SSE may not be available; fail silently
     };
   }
 
-  function appendLog(line) {
+  /** Local time + ms for live log prefix (entry.at is ISO from server when present). */
+  function formatLogTimestamp(iso) {
+    if (!iso || typeof iso !== 'string') return '';
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      const t = d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const ms = String(d.getMilliseconds()).padStart(3, '0');
+      return `${t}.${ms}`;
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  /** One console line from orchestrator (stdout/stderr) or dashboard wrapper. */
+  function appendLogEntry(entry) {
+    const line = entry?.text != null ? String(entry.text) : '';
+    const stream = typeof entry?.stream === 'string' && entry.stream ? entry.stream : 'stdout';
+    const at = typeof entry?.at === 'string' && entry.at ? entry.at : '';
     const viewer = document.getElementById('log-viewer');
     if (!viewer) return;
     const div = document.createElement('div');
     const lower = line.toLowerCase();
-    if (lower.includes('[stage:') || lower.includes('stage:')) div.className = 'log-stage';
-    else if (lower.includes('error')) div.className = 'log-error';
-    else if (lower.includes('warn')) div.className = 'log-warn';
-    else div.className = 'log-default';
-    div.textContent = line;
+    let cls = 'log-default';
+    if (lower.includes('[stage:') || lower.includes('stage:')) cls = 'log-stage';
+    else if (lower.includes('error')) cls = 'log-error';
+    else if (lower.includes('warn')) cls = 'log-warn';
+    else if (stream === 'stderr') cls = 'log-stderr';
+    else if (stream === 'dashboard') cls = 'log-dashboard';
+    div.className = 'log-line' + (line === '' ? ' log-line-empty' : '');
+
+    const ts = formatLogTimestamp(at);
+    if (ts) {
+      const tsSpan = document.createElement('span');
+      tsSpan.className = 'log-timestamp';
+      tsSpan.textContent = '[' + ts + '] ';
+      div.appendChild(tsSpan);
+    }
+    const msg = document.createElement('span');
+    msg.className = 'log-message ' + cls;
+    if (line === '') msg.innerHTML = '&nbsp;';
+    else msg.textContent = line;
+    div.appendChild(msg);
+
     viewer.appendChild(div);
     viewer.scrollTop = viewer.scrollHeight;
     updateStageProgress(line);

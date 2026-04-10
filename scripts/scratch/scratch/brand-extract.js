@@ -183,6 +183,33 @@ function guessDomain(companyName) {
 // ── Playwright CSS fallback ───────────────────────────────────────────────────
 
 /**
+ * Captures a 1440×900 viewport screenshot of the brand marketing URL for build-time
+ * visual inspiration only (passed to the app generator as a reference image).
+ * @param {string} url
+ * @param {string} outPath absolute path to write PNG
+ * @returns {Promise<boolean>}
+ */
+async function captureBrandSiteReferenceScreenshot(url, outPath) {
+  if (!url || process.env.SKIP_BRAND_SITE_SCREENSHOT === '1') return false;
+  let browser;
+  try {
+    const { chromium } = require('playwright');
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+    await page.waitForTimeout(1500);
+    await page.screenshot({ path: outPath, fullPage: false, type: 'png' });
+    console.log(`[BrandExtract] Site reference screenshot: ${path.relative(PROJECT_ROOT, outPath)}`);
+    return true;
+  } catch (err) {
+    console.warn(`[BrandExtract] Site reference screenshot skipped: ${err.message}`);
+    return false;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
  * Crawls a URL with Playwright and extracts CSS design tokens.
  * Returns a raw token object or null on failure.
  */
@@ -474,6 +501,11 @@ async function main() {
 
   fs.mkdirSync(BRAND_DIR, { recursive: true });
 
+  const siteRefPath = path.join(BRAND_DIR, 'site-reference.png');
+  if (url) {
+    await captureBrandSiteReferenceScreenshot(url, siteRefPath);
+  }
+
   const profilePath = path.join(BRAND_DIR, `${slug}.json`);
 
   let rawData = null;
@@ -542,6 +574,7 @@ async function main() {
     source: rawData.source,
     profileFile: path.relative(OUT_DIR, profilePath),
     domain,
+    siteReferencePng: fs.existsSync(siteRefPath) ? path.relative(OUT_DIR, siteRefPath) : null,
   });
 
   return profile;

@@ -19,6 +19,8 @@
  *   BUILD_QA_MAX_WAIT_MS     — cap per playwright row waitMs (default 15000)
  *   BUILD_QA_PLAID_CLICK_MS  — cap wait after Plaid Link button click (default 10000)
  *   BUILD_QA_RECORD_PARITY   — headed browser + deviceScaleFactor 2 for closer parity with record-local
+ *   BUILD_QA_PLAID_LAUNCH_ICON_MAX_RATIO — icon max dim / button height; flag if exceeded (default 0.4)
+ *   BUILD_QA_PLAID_LAUNCH_ICON_STRICT — if true, oversized launch CTA icon is critical (not just warning)
  *   ANTHROPIC_API_KEY        — required for vision QA
  */
 
@@ -29,6 +31,7 @@ const path         = require('path');
 const { startServer } = require('../utils/app-server');
 const { gleanChat } = require('../utils/mcp-clients');
 const { loadTimingContract } = require('../../timing-contract');
+const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../../validate-narration-sync');
 const { requireRunDir, getRunLayout } = require('../utils/run-io');
 const {
   appendPipelineLogSection,
@@ -38,9 +41,14 @@ const {
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const OUT_DIR      = requireRunDir(PROJECT_ROOT, 'build-qa');
 const RUN_LAYOUT   = getRunLayout(OUT_DIR);
-const SCRATCH_DIR  = fs.existsSync(path.join(RUN_LAYOUT.buildDir, 'scratch-app'))
-  ? path.join(RUN_LAYOUT.buildDir, 'scratch-app')
-  : path.join(OUT_DIR, 'scratch-app');
+// Prefer run-root scratch-app (live build). artifacts/build/scratch-app can lag and breaks QA (e.g. goToStep missing).
+const _scratchRoot = path.join(OUT_DIR, 'scratch-app');
+const _scratchArtifact = path.join(RUN_LAYOUT.buildDir, 'scratch-app');
+const SCRATCH_DIR  = fs.existsSync(path.join(_scratchRoot, 'index.html'))
+  ? _scratchRoot
+  : fs.existsSync(path.join(_scratchArtifact, 'index.html'))
+    ? _scratchArtifact
+    : _scratchRoot;
 const PW_SCRIPT    = path.join(SCRATCH_DIR, 'playwright-script.json');
 const DEMO_SCRIPT  = path.join(OUT_DIR, 'demo-script.json');
 const FRAMES_DIR   = path.join(RUN_LAYOUT.qaDir, 'frames');
@@ -49,6 +57,10 @@ const DIAG_OUT     = path.join(RUN_LAYOUT.qaDir, 'build-qa-diagnostics.json');
 const LEGACY_DIAG_OUT = path.join(OUT_DIR, 'build-qa-diagnostics.json');
 const SLIDE_MESSAGING_OUT = path.join(RUN_LAYOUT.qaDir, 'slide-messaging-suggestions.json');
 const VOICEOVER_MANIFEST_FILE = path.join(OUT_DIR, 'voiceover-manifest.json');
+const SYNC_HEALTH_OUT = path.join(RUN_LAYOUT.qaDir, 'sync-health-report.json');
+const LEGACY_SYNC_HEALTH_OUT = path.join(OUT_DIR, 'sync-health-report.json');
+const SYNC_TIMELINE_DEBUG_OUT = path.join(RUN_LAYOUT.qaDir, 'narration-sync-debug.json');
+const LEGACY_SYNC_TIMELINE_DEBUG_OUT = path.join(OUT_DIR, 'narration-sync-debug.json');
 
 const MAX_WAIT     = parseInt(process.env.BUILD_QA_MAX_WAIT_MS || '15000', 10);
 const PLAID_CLICK_WAIT = parseInt(process.env.BUILD_QA_PLAID_CLICK_MS || '10000', 10);
@@ -57,6 +69,15 @@ const MOBILE_VISUAL_ENABLED = process.env.MOBILE_VISUAL_ENABLED === 'true' || pr
 const HEADLESS      = process.env.BUILD_QA_HEADLESS != null
   ? !(process.env.BUILD_QA_HEADLESS === 'false' || process.env.BUILD_QA_HEADLESS === '0')
   : !RECORD_PARITY;
+
+const PLAID_LAUNCH_ICON_MAX_RATIO = (() => {
+  const v = parseFloat(process.env.BUILD_QA_PLAID_LAUNCH_ICON_MAX_RATIO || '0.4');
+  if (!Number.isFinite(v) || v <= 0 || v > 1) return 0.4;
+  return v;
+})();
+const PLAID_LAUNCH_ICON_STRICT =
+  process.env.BUILD_QA_PLAID_LAUNCH_ICON_STRICT === '1' ||
+  process.env.BUILD_QA_PLAID_LAUNCH_ICON_STRICT === 'true';
 
 const PLAID_BTN_RE = /link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_](?:\w+[-_])?bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i;
 const RESPONSIVE_DESKTOP_VIEWPORTS = [
@@ -241,14 +262,52 @@ async function evaluateStepState(page, stepId) {
     const apiBodyContainer = apiPanel ? apiPanel.querySelector('.side-panel-body') : null;
     const endpoint = document.getElementById('api-panel-endpoint');
     const apiToggle = document.querySelector('[data-testid="api-panel-toggle"], #api-panel-toggle');
+    const apiJsonShow = document.querySelector('[data-testid="api-json-panel-show"], #api-json-panel-show');
+    const apiJsonHide = document.querySelector('[data-testid="api-json-panel-hide"], #api-json-panel-hide');
+    const slideRoot = active ? active.querySelector('.slide-root') : null;
+    const slideRootStyle = slideRoot ? window.getComputedStyle(slideRoot) : null;
+    const slideInlineStyle = slideRoot ? String(slideRoot.getAttribute('style') || '') : '';
     const bankLogo = document.querySelector('[data-testid="host-bank-logo-img"], [data-testid="host-bank-icon-img"]');
     const bankLogoShell = document.querySelector('[data-testid="host-bank-logo-shell"]');
+    const layerHelper =
+      active?.querySelector('[data-testid="layer-eligibility-helper-text"]') ||
+      document.querySelector('[data-testid="layer-eligibility-helper-text"]');
+    const layerHelperStyle = layerHelper ? window.getComputedStyle(layerHelper) : null;
+    const activePhoneInput = active
+      ? active.querySelector('input[type="tel"], input[data-testid*="phone"], input[name*="phone"]')
+      : null;
+    const layerShareConfirmBtn = active ? active.querySelector('[data-testid="layer-share-confirm-btn"]') : null;
+    const piiContinueBtn = active ? active.querySelector('[data-testid="pii-continue-btn"]') : null;
+    const activePiiInputs = active
+      ? active.querySelectorAll(
+        '[data-testid*="ssn"], [data-testid*="dob"], [name*="ssn"], [name*="dob"], input[autocomplete*="ssn"], input[autocomplete*="bday"]'
+      )
+      : [];
     const isVisible = (el, style) => {
       if (!el || !style) return false;
       const rect = el.getBoundingClientRect();
       return style.display !== 'none' && style.visibility !== 'hidden' &&
         Number(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0;
     };
+
+    let plaidLaunchCtaMetrics = null;
+    const launchBtn = active ? active.querySelector('[data-testid="link-external-account-btn"]') : null;
+    if (launchBtn) {
+      const br = launchBtn.getBoundingClientRect();
+      const svgs = launchBtn.querySelectorAll('svg');
+      let iconMaxDim = 0;
+      svgs.forEach((svg) => {
+        const r = svg.getBoundingClientRect();
+        iconMaxDim = Math.max(iconMaxDim, r.width, r.height);
+      });
+      plaidLaunchCtaMetrics = {
+        buttonHeight: br.height,
+        buttonWidth: br.width,
+        iconMaxDim,
+        svgCount: svgs.length,
+      };
+    }
+
     return {
       currentStep: typeof window.getCurrentStep === 'function' ? window.getCurrentStep() : null,
       activeStepTestid: active?.dataset?.testid || null,
@@ -259,6 +318,10 @@ async function evaluateStepState(page, stepId) {
       apiBodyVisible: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).display !== 'none' : false,
       apiBodyOverflowY: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).overflowY : '',
       apiJsonToggleExists: Boolean(apiToggle),
+      apiJsonShowExists: Boolean(apiJsonShow),
+      apiJsonHideExists: Boolean(apiJsonHide),
+      apiPanelChromeTriplet:
+        Boolean(apiJsonShow) && Boolean(apiJsonHide) && Boolean(apiToggle),
       hasToggleApiFunction: typeof window.toggleApiPanel === 'function',
       bankLogoPresent: Boolean(bankLogo),
       bankLogoVisible: bankLogo ? isVisible(bankLogo, window.getComputedStyle(bankLogo)) : false,
@@ -270,6 +333,22 @@ async function evaluateStepState(page, stepId) {
       apiEndpointText: (endpoint?.textContent || '').trim(),
       activeStepHasSlideRoot: Boolean(active?.querySelector('.slide-root')),
       activeStepText: (active?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 5000),
+      activeStepPreCodeCount: active ? active.querySelectorAll('pre, code').length : 0,
+      activeStepJsonHintNodeCount: active ? active.querySelectorAll('[class*="json"], [id*="json"], [data-testid*="json"]').length : 0,
+      slideRootInlineStyleHasFixedSize: /\b(?:width|height|min-width|min-height|max-width|max-height)\s*:\s*\d+px\b/i.test(slideInlineStyle),
+      slideRootComputedWidth: slideRootStyle ? parseFloat(slideRootStyle.width || '0') : 0,
+      viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      activeStepHasMobileShellTarget: Boolean(active?.classList?.contains('mobile-shell-target')),
+      activeStepHasMobileSimulatorShell: Boolean(active?.querySelector('[data-testid="mobile-simulator-shell"]')),
+      hasOnboardingCompleteStep: Boolean(document.querySelector('[data-testid="step-onboarding-complete"]')),
+      layerShareConfirmOnclick: layerShareConfirmBtn ? String(layerShareConfirmBtn.getAttribute('onclick') || '') : '',
+      piiContinueOnclick: piiContinueBtn ? String(piiContinueBtn.getAttribute('onclick') || '') : '',
+      activePiiInputCount: activePiiInputs.length,
+      activeStepHasPlaidLinkLaunchBtn: Boolean(active?.querySelector('[data-testid="link-external-account-btn"]')),
+      plaidLaunchCtaMetrics,
+      layerHelperText: (layerHelper?.textContent || '').replace(/\s+/g, ' ').trim(),
+      layerHelperVisible: isVisible(layerHelper, layerHelperStyle),
+      activePhoneInputValue: activePhoneInput ? String(activePhoneInput.value || '').trim() : '',
     };
   }, stepId);
 }
@@ -715,12 +794,116 @@ async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
   return diagnostics;
 }
 
+function toFinite(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildSyncHealthReport({
+  demoScript,
+  qaReport,
+  diagnostics,
+  timingContract,
+  narrationSyncReport,
+  voiceoverManifest,
+  syncTimelineRows,
+}) {
+  const qaByStep = new Map((qaReport?.steps || []).map((s) => [String(s.stepId || ''), s]));
+  const diagByStep = new Map();
+  for (const d of diagnostics || []) {
+    const sid = String(d?.stepId || '').trim();
+    if (!sid) continue;
+    const arr = diagByStep.get(sid) || [];
+    arr.push(d);
+    diagByStep.set(sid, arr);
+  }
+  const timingByStep = new Map();
+  for (const row of timingContract?.steps || []) {
+    const sid = String(row?.stepId || '').trim();
+    if (!sid) continue;
+    const arr = timingByStep.get(sid) || [];
+    arr.push(row);
+    timingByStep.set(sid, arr);
+  }
+  const timelineByStep = new Map();
+  for (const row of syncTimelineRows || []) {
+    const sid = String(row?.stepId || '').trim();
+    if (!sid) continue;
+    const arr = timelineByStep.get(sid) || [];
+    arr.push(row);
+    timelineByStep.set(sid, arr);
+  }
+  const syncViolationsByStep = new Map();
+  for (const v of narrationSyncReport?.violations || []) {
+    const sid = String(v?.stepId || '').trim();
+    if (!sid) continue;
+    const arr = syncViolationsByStep.get(sid) || [];
+    arr.push(v);
+    syncViolationsByStep.set(sid, arr);
+  }
+
+  const stepHealth = (demoScript?.steps || []).map((step, idx) => {
+    const sid = String(step?.id || '').trim();
+    const qa = qaByStep.get(sid) || null;
+    const stepDiags = diagByStep.get(sid) || [];
+    const timingRows = timingByStep.get(sid) || [];
+    const timelineRows = timelineByStep.get(sid) || [];
+    const syncViolations = syncViolationsByStep.get(sid) || [];
+    const hasCriticalDiag = stepDiags.some((d) => d.severity === 'critical');
+    const hasOverrun = timingRows.some((r) => String(r.status || '') === 'overrun');
+    const inWindow = timelineRows.length === 0 ? null : timelineRows.some((r) => r.inOwnWindow === true);
+    const clipLeadMs = timelineRows.length > 0 && Number.isFinite(Number(timelineRows[0].leadMs))
+      ? Number(timelineRows[0].leadMs)
+      : null;
+    return {
+      stepId: sid,
+      index: idx,
+      label: step?.label || '',
+      qaScore: qa ? Number(qa.score || 0) : null,
+      qaCritical: qa ? !!qa.critical : false,
+      qaIssues: qa?.issues || [],
+      timingStatus: hasOverrun ? 'overrun' : (timingRows.length > 0 ? 'ok' : 'unknown'),
+      clipInWindow: inWindow,
+      clipLeadMs,
+      clipRows: timelineRows,
+      syncViolationCodes: syncViolations.map((v) => v.code),
+      diagnosticsCategories: [...new Set(stepDiags.map((d) => d.category).filter(Boolean))],
+      pass: Boolean(qa && qa.score >= (qaReport?.passThreshold || 80) && !qa.critical && !hasCriticalDiag && !hasOverrun && syncViolations.length === 0),
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    sources: {
+      qaReport: 'qa-report-build.json',
+      diagnostics: 'build-qa-diagnostics.json',
+      timingContract: timingContract ? 'timing-contract.json' : null,
+      narrationSyncValidation: narrationSyncReport ? 'narration-sync-validation.json' : null,
+      voiceoverManifest: voiceoverManifest ? 'voiceover-manifest.json' : null,
+    },
+    summary: {
+      totalSteps: stepHealth.length,
+      passedSteps: stepHealth.filter((s) => s.pass).length,
+      failedSteps: stepHealth.filter((s) => !s.pass).length,
+      qaOverallScore: Number(qaReport?.overallScore || 0),
+      qaPassed: !!qaReport?.passed,
+      narrationSyncOk: !!narrationSyncReport?.ok,
+      narrationViolationCount: (narrationSyncReport?.violations || []).length,
+      narrationWarningCount: (narrationSyncReport?.warnings || []).length,
+      timingContractGeneratedAt: timingContract?.generatedAt || null,
+      voiceoverManifestResyncedAt: voiceoverManifest?.resyncedAt || null,
+    },
+    narrationSyncSummary: narrationSyncReport?.summary || null,
+    stepHealth,
+  };
+}
+
 function inferQaPhase(diag) {
   const c = String(diag?.category || '').toLowerCase();
-  if (/selector-missing|navigation-mismatch|responsive-layout|mobile-visual|duplicate-bank-mark|missing-logo/.test(c)) {
+  if (/selector-missing|navigation-mismatch|responsive-layout|mobile-visual|duplicate-bank-mark|missing-logo|timing-duplicate-step-window|timing-coverage-gap/.test(c)) {
     return 'framework';
   }
-  if (/api-story-alignment|panel-|missing-panel|plaid-link|action-failure|runtime-js-error/.test(c)) {
+  if (/api-story-alignment|panel-|missing-panel|plaid-link|action-failure|runtime-js-error|narration-screen-mismatch|narration-overrun|sync-governor|cross-screen-owner/.test(c)) {
     return 'data-interaction';
   }
   return 'visual-polish';
@@ -901,6 +1084,50 @@ async function evaluateSlideValueMessaging(page, demoScript) {
   return { artifact, diagnostics };
 }
 
+/**
+ * Host Plaid Link launch CTA: flag oversized SVG (flex/layout bugs) or missing icon.
+ * @param {object} step
+ * @param {object} state  evaluateStepState result
+ * @returns {Array<{stepId:string,category:string,severity:string,issue:string,suggestion:string}>}
+ */
+function buildPlaidLaunchCtaIconDiagnostics(step, state) {
+  const diagnostics = [];
+  if (!step || step.plaidPhase !== 'launch') return diagnostics;
+  if (!state || !state.activeStepHasPlaidLinkLaunchBtn) return diagnostics;
+
+  const m = state.plaidLaunchCtaMetrics;
+  if (!m || m.buttonHeight <= 0) return diagnostics;
+
+  if (m.svgCount === 0) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-launch-cta-icon',
+      severity: 'warning',
+      issue: 'Plaid Link launch CTA has no SVG icon inside the button.',
+      suggestion:
+        'Ensure build-app injects the stock link icon for data-testid="link-external-account-btn", or add the canonical Heroicons outline link SVG at ~20px.',
+    });
+    return diagnostics;
+  }
+
+  if (m.iconMaxDim > 0) {
+    const ratio = m.iconMaxDim / m.buttonHeight;
+    if (ratio > PLAID_LAUNCH_ICON_MAX_RATIO) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'plaid-launch-cta-icon',
+        severity: PLAID_LAUNCH_ICON_STRICT ? 'critical' : 'warning',
+        issue:
+          `Plaid Link launch CTA icon is disproportionately large (icon max ${Math.round(m.iconMaxDim)}px vs button height ${Math.round(m.buttonHeight)}px, ratio ${ratio.toFixed(2)}; max allowed ${PLAID_LAUNCH_ICON_MAX_RATIO}).`,
+        suggestion:
+          'Keep the leading icon near text line-height (~18–24px). Avoid flex-grow on icon wrappers; rely on pipeline injectPlaidLaunchCtaLayoutStyles + stock-link-icon sizing in build-app.',
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function ensureApiPanelContractForStep(page, stepId) {
   return page.evaluate((id) => {
     const panel = document.getElementById('api-response-panel');
@@ -916,17 +1143,77 @@ async function ensureApiPanelContractForStep(page, stepId) {
         else content.textContent = pretty;
       } catch (_) {}
     }
+    // Intentionally do NOT mutate panel visibility/collapse state here.
+    // Use prepareGlobalJsonRailForBuildQa() before screenshots when apiResponse is present.
+  }, stepId);
+}
+
+/** demo-script steps that ship apiResponse (excluding value-summary) must show the global JSON rail in build-QA frames. */
+function isDemoValueSummaryStep(step) {
+  const id = String(step?.id || '').toLowerCase();
+  const label = String(step?.label || '').toLowerCase();
+  return id === 'value-summary-slide' || /\bvalue summary\b/.test(label);
+}
+
+function stepRequiresGlobalJsonRail(step) {
+  if (!step || isDemoValueSummaryStep(step)) return false;
+  const r = step.apiResponse?.response;
+  if (r == null || typeof r !== 'object' || Array.isArray(r)) return false;
+  return Object.keys(r).length > 0;
+}
+
+const MIN_JSON_PANEL_CHARS = 12;
+
+/**
+ * Ensure the canonical #api-response-panel is visible with JSON body expanded so
+ * build-QA screenshots and vision QA match the pipeline slide-shell contract.
+ */
+async function prepareGlobalJsonRailForBuildQa(page, stepId) {
+  await ensureApiPanelContractForStep(page, stepId);
+  await page.evaluate((id) => {
+    const data = (window._stepApiResponses && window._stepApiResponses[id]) || null;
+    const panel = document.getElementById('api-response-panel');
+    if (!panel) return;
+    if (data && typeof window.updateApiResponse === 'function') {
+      try {
+        window.updateApiResponse(data);
+      } catch (_) { /* ignore */ }
+    }
+    const content = document.getElementById('api-response-content');
+    if (data && content && !(content.textContent || '').trim()) {
+      try {
+        const pretty = JSON.stringify(data, null, 2);
+        if (typeof window.syntaxHighlight === 'function') content.innerHTML = window.syntaxHighlight(pretty);
+        else content.textContent = pretty;
+      } catch (_) { /* ignore */ }
+    }
     panel.style.removeProperty('display');
-    panel.style.display = 'flex';
     panel.classList.add('visible');
     panel.classList.remove('api-json-collapsed');
-    body.style.display = '';
+    const body = panel.querySelector('.side-panel-body');
+    if (body) {
+      body.style.removeProperty('display');
+      body.style.display = 'block';
+    }
   }, stepId);
 }
 
 function buildStepAssertions(step, state) {
   const diagnostics = [];
   const expectedStepTestid = `step-${step.id}`;
+  const isValueSummarySlide = String(step?.id || '').toLowerCase() === 'value-summary-slide';
+  const expectsJsonPanel = stepRequiresGlobalJsonRail(step);
+  const stepHay = [step?.id, step?.label, step?.visualState, step?.narration].filter(Boolean).join(' ').toLowerCase();
+  const stepIdLower = String(step?.id || '').toLowerCase();
+  // Only true host phone screen — do not match "layer-eligible-flow" (contains "eligib" inside "eligible").
+  const isLayerEligibilityCapture = stepIdLower === 'eligibility-capture';
+  // Helper line is for mobile Layer host moments only — not slides whose narration mentions "Layer".
+  const needsLayerHelperAudit =
+    stepIdLower === 'eligibility-capture' ||
+    stepIdLower === 'layer-eligible-flow' ||
+    stepIdLower === 'onboarding-complete';
+  const hasEndpoint = Boolean(String(step?.apiResponse?.endpoint || '').trim());
+  const hasApiResponse = !!(step?.apiResponse?.response && typeof step.apiResponse.response === 'object');
   if (!state.stepExists || !state.stepVisible || state.activeStepTestid !== expectedStepTestid) {
     diagnostics.push({
       stepId: step.id,
@@ -945,10 +1232,16 @@ function buildStepAssertions(step, state) {
       suggestion: 'Keep link-events-panel hidden for all demo steps.',
     });
   }
-  const apiRelevantSlide = isSlideLikeStep(step) && (Boolean(step.apiResponse?.endpoint) || /\b(api|insight|report|json|cra|income)\b/i.test(
-    [step?.id, step?.label, step?.visualState, step?.narration].filter(Boolean).join(' ')
-  ));
-  if (step.apiResponse?.response) {
+  if (expectsJsonPanel) {
+    if (!hasEndpoint) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'api-rail-contract',
+        severity: 'warning',
+        issue: 'Step has apiResponse.response but apiResponse.endpoint is empty — endpoint label should match the JSON rail.',
+        suggestion: 'Set apiResponse.endpoint (e.g. POST /identity/match) per demo-script contract.',
+      });
+    }
     if (!state.apiPanelExists) {
       diagnostics.push({
         stepId: step.id,
@@ -957,48 +1250,62 @@ function buildStepAssertions(step, state) {
         issue: 'An API insight step is missing the global api-response-panel element.',
         suggestion: 'Include the global api-response-panel and show it from goToStep for insight steps.',
       });
-    } else if (!state.apiPanelVisible) {
-      diagnostics.push({
-        stepId: step.id,
-        category: 'panel-visibility',
-        severity: 'critical',
-        issue: 'The API response panel is hidden on an insight step that should show response JSON.',
-        suggestion: 'Show the global api-response-panel for steps with apiResponse data.',
-      });
-    } else if (!state.apiContentLength) {
-      diagnostics.push({
-        stepId: step.id,
-        category: 'missing-panel',
-        severity: 'critical',
-        issue: 'The API response panel is visible but empty.',
-        suggestion: 'Populate the panel from apiResponse.response or window._stepApiResponses for this step.',
-      });
     } else {
-      if (!state.apiBodyVisible) {
+      if (!state.apiPanelChromeTriplet) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'panel-chrome-contract',
+          severity: 'critical',
+          issue:
+            'API JSON rail is missing required header controls (data-testid="api-json-panel-show", ' +
+            '"api-json-panel-hide", and "api-panel-toggle").',
+          suggestion: 'Merge templates/slide-template/pipeline-slide-shell.html panel header — all three controls + toggleApiPanel().',
+        });
+      }
+      if (!state.apiPanelVisible) {
         diagnostics.push({
           stepId: step.id,
           category: 'panel-visibility',
           severity: 'critical',
-          issue: 'API panel is visible but JSON body is hidden.',
-          suggestion: 'When api-response-panel is visible, render JSON body immediately (no collapsed JSON state).',
+          issue: 'api-response-panel is not visible after build-QA JSON rail prep — panel must display for apiResponse steps.',
+          suggestion: 'Ensure goToStep or updateApiResponse shows #api-response-panel (display:flex + .visible) for insight steps.',
         });
       }
-      if (!/(auto|scroll)/i.test(String(state.apiBodyOverflowY || ''))) {
+      if (state.apiPanelChromeTriplet && !state.hasToggleApiFunction) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'panel-collapse-contract',
+          severity: 'warning',
+          issue: 'window.toggleApiPanel() is missing — header buttons should call a shared toggle implementation.',
+          suggestion: 'Define toggleApiPanel() per templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md.',
+        });
+      }
+      if (state.apiContentLength < MIN_JSON_PANEL_CHARS) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'missing-panel',
+          severity: 'critical',
+          issue: `API panel #api-response-content is empty or too short (${state.apiContentLength} chars; need sample JSON).`,
+          suggestion: 'Hydrate from demo-script apiResponse via window._stepApiResponses and updateApiResponse() / renderjson.',
+        });
+      }
+      // If panel body is visible, it must contain JSON and support scrolling.
+      if (state.apiBodyVisible && !state.apiContentLength) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'missing-panel',
+          severity: 'critical',
+          issue: 'API panel body is visible but empty.',
+          suggestion: 'Populate the panel from apiResponse.response or window._stepApiResponses for this step.',
+        });
+      }
+      if (state.apiBodyVisible && !/(auto|scroll)/i.test(String(state.apiBodyOverflowY || ''))) {
         diagnostics.push({
           stepId: step.id,
           category: 'panel-visibility',
           severity: 'warning',
           issue: 'API panel body is not configured for vertical scrolling.',
           suggestion: 'Set .side-panel-body overflow-y to auto/scroll so long JSON payloads remain readable.',
-        });
-      }
-      if (state.apiJsonToggleExists || state.hasToggleApiFunction) {
-        diagnostics.push({
-          stepId: step.id,
-          category: 'panel-collapse-contract',
-          severity: 'warning',
-          issue: 'Legacy JSON show/hide control detected on API panel.',
-          suggestion: 'Remove api-panel-toggle / toggleApiPanel behavior. Keep JSON visible whenever panel is shown.',
         });
       }
     }
@@ -1011,14 +1318,6 @@ function buildStepAssertions(step, state) {
         suggestion: 'Align endpoint + response fields with the slide narrative and highlighted attributes.',
       });
     }
-  } else if (apiRelevantSlide) {
-    diagnostics.push({
-      stepId: step.id,
-      category: 'missing-api-sample',
-      severity: 'critical',
-      issue: 'Slide step appears API-relevant but has no apiResponse JSON sample.',
-      suggestion: 'Add a realistic apiResponse.response sample JSON (AskBill-backed) for this step.',
-    });
   } else if (state.apiPanelVisible) {
     diagnostics.push({
       stepId: step.id,
@@ -1027,6 +1326,128 @@ function buildStepAssertions(step, state) {
       issue: 'The API response panel is visible on a non-insight / consumer step.',
       suggestion: 'Hide the api-response-panel on all non-insight steps.',
     });
+  }
+  if (isSlideLikeStep(step) && state.slideRootInlineStyleHasFixedSize) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'slide-template-misuse',
+      severity: 'critical',
+      issue: 'Slide root uses fixed pixel sizing (inline width/height).',
+      suggestion: 'Use responsive .slide-root sizing from SLIDE_RULES; avoid fixed px width/height.',
+    });
+  }
+  if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'mobile-slide-mode-contract',
+      severity: 'critical',
+      issue: 'Slide-like step is rendering inside mobile shell instead of desktop mode.',
+      suggestion: 'Auto-switch to desktop presentation for slide-like steps and keep mobile shell off for those steps.',
+    });
+  }
+  if (isValueSummarySlide) {
+    if (hasEndpoint || hasApiResponse) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'slide-template-misuse',
+        severity: 'critical',
+        issue: 'value-summary-slide contains apiResponse metadata.',
+        suggestion: 'Remove apiResponse from value-summary-slide. Final value summary must be narrative-only.',
+      });
+    }
+    if (state.apiPanelVisible) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'panel-visibility',
+        severity: 'critical',
+        issue: 'API panel is visible during value-summary-slide.',
+        suggestion: 'Keep api-response-panel hidden for value-summary-slide.',
+      });
+    }
+    if (state.activeStepPreCodeCount > 0 || state.activeStepJsonHintNodeCount > 0) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'slide-template-misuse',
+        severity: 'critical',
+        issue: 'value-summary-slide includes JSON/code-like content.',
+        suggestion: 'Remove JSON/code blocks from value-summary-slide. Keep only headline, value bullets, and CTA.',
+      });
+    }
+  }
+  if (String(step?.id || '').toLowerCase() === 'layer-eligible-flow') {
+    if (!state.hasOnboardingCompleteStep) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-branching-contract',
+        severity: 'critical',
+        issue: 'Layer-eligible flow is missing an onboarding-complete destination step.',
+        suggestion: 'Add a dedicated onboarding-complete step and route eligible users to it directly.',
+      });
+    }
+    if (/pii|plaid-link|link-fallback/i.test(String(state.layerShareConfirmOnclick || ''))) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-branching-contract',
+        severity: 'critical',
+        issue: 'Layer-eligible CTA routes to fallback PII/Link path.',
+        suggestion: 'Route layer-share-confirm-btn to onboarding-complete; fallback PII + Link is ineligible-only.',
+      });
+    }
+    if (state.activePiiInputCount > 0 || state.activeStepHasPlaidLinkLaunchBtn) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-branching-contract',
+        severity: 'critical',
+        issue: 'Layer-eligible step contains fallback PII inputs or Plaid Link launch controls.',
+        suggestion: 'Keep fallback PII fields and Link launch controls out of the eligible Layer step.',
+      });
+    }
+  }
+  if (String(step?.id || '').toLowerCase() === 'pii-fallback-form') {
+    if (!/plaid-link|link-fallback|link/i.test(String(state.piiContinueOnclick || ''))) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-branching-contract',
+        severity: 'warning',
+        issue: 'PII fallback continue action does not clearly route to Plaid Link fallback.',
+        suggestion: 'Route pii-continue-btn to the standard Plaid Link fallback step for ineligible users.',
+      });
+    }
+  }
+  if (needsLayerHelperAudit) {
+    const helperText = String(state.layerHelperText || '');
+    const hasEligibleNumber = helperText.includes('415-555-1111');
+    const hasIneligibleNumber = helperText.includes('415-555-0011');
+    if (!state.layerHelperVisible || !hasEligibleNumber || !hasIneligibleNumber) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-helper-text-contract',
+        severity: 'critical',
+        issue: 'Layer helper text below mobile frame is missing, hidden, or missing required eligible/ineligible phone numbers.',
+        suggestion: 'Render visible helper text below the mobile frame with 415-555-1111 (eligible) and 415-555-0011 (ineligible fallback).',
+      });
+    }
+  }
+  if (isLayerEligibilityCapture) {
+    const phoneVal = String(state.activePhoneInputValue || '');
+    if (phoneVal && !/415\D*555\D*1111/.test(phoneVal)) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-helper-text-contract',
+        severity: 'critical',
+        issue: `Layer eligibility capture phone input is not prefilled with eligible number (found "${phoneVal}").`,
+        suggestion: 'Prefill phone input with 415-555-1111 as default for Layer flows.',
+      });
+    }
+    if (!phoneVal) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'layer-helper-text-contract',
+        severity: 'warning',
+        issue: 'Layer eligibility capture step has no detectable phone prefill value.',
+        suggestion: 'Prefill the phone input with 415-555-1111 to make eligible path the default first experience.',
+      });
+    }
   }
   if (isSlideLikeStep(step) && !state.activeStepHasSlideRoot) {
     diagnostics.push({
@@ -1059,6 +1480,7 @@ function buildStepAssertions(step, state) {
       suggestion: 'Move internal metrics to Plaid insight/slide context or replace with user-meaningful outcome language.',
     });
   }
+  diagnostics.push(...buildPlaidLaunchCtaIconDiagnostics(step, state));
   return diagnostics;
 }
 
@@ -1327,10 +1749,33 @@ async function main(opts = {}) {
       } catch (_) {}
     }
 
+    if (step && stepRequiresGlobalJsonRail(step)) {
+      try {
+        await prepareGlobalJsonRailForBuildQa(page, stepId);
+        await page.waitForTimeout(160);
+      } catch (_) {}
+    }
+
     try {
       const frames = await captureStepFrames(page, stepId, i, result.dwellMs);
       if (frames.length > 0) {
-        stepFramesById[stepId] = frames;
+        const prevFrames = stepFramesById[stepId];
+        // Same demo step can appear on multiple playwright rows (e.g. goToStep then click).
+        // Vision QA only consumes the first 3 frames (start/mid/end) — merge into one triplet:
+        // before interaction, shortly after, settled after.
+        if (prevFrames && prevFrames.length > 0) {
+          const postFrames = frames;
+          stepFramesById[stepId] = [
+            { label: 'start', path: prevFrames[0].path },
+            {
+              label: 'mid',
+              path: (postFrames[1] && postFrames[1].path) || postFrames[0].path,
+            },
+            { label: 'end', path: postFrames[postFrames.length - 1].path },
+          ];
+        } else {
+          stepFramesById[stepId] = frames;
+        }
       }
     } catch (err) {
       diagnostics.push({
@@ -1443,6 +1888,9 @@ async function main(opts = {}) {
   const timingDupes = [];
   const timingCoverageGaps = [];
   const narrationWindowMismatches = [];
+  const syncTimelineRows = [];
+  let voiceoverManifest = null;
+  const timingBoundaryToleranceMs = Number(process.env.NARRATION_WINDOW_TOLERANCE_MS || 120);
   if (timingContract && Array.isArray(timingContract.steps)) {
     const byId = new Map();
     const sortedTiming = [...timingContract.steps]
@@ -1488,24 +1936,42 @@ async function main(opts = {}) {
     // This catches cross-screen narration bleed caused by stale/duplicate timing windows.
     try {
       if (fs.existsSync(VOICEOVER_MANIFEST_FILE)) {
-        const manifest = JSON.parse(fs.readFileSync(VOICEOVER_MANIFEST_FILE, 'utf8'));
-        const clips = Array.isArray(manifest?.clips) ? manifest.clips : [];
+        voiceoverManifest = JSON.parse(fs.readFileSync(VOICEOVER_MANIFEST_FILE, 'utf8'));
+        const clips = Array.isArray(voiceoverManifest?.clips) ? voiceoverManifest.clips : [];
         for (const clip of clips) {
           const cid = String(clip?.id || '').trim();
           if (!cid) continue;
-          const clipStart = Number(clip.startMs);
+          const clipStart = toFinite(clip.compStartMs) ?? toFinite(clip.startMs);
+          const clipStartSource = toFinite(clip.compStartMs) != null ? 'compStartMs' : 'startMs';
           if (!Number.isFinite(clipStart)) continue;
           const windows = sortedTiming.filter((r) => String(r.stepId || '') === cid);
           if (windows.length === 0) continue;
-          const inOwnWindow = windows.some((w) => clipStart >= Number(w.compStartMs || 0) - 120 && clipStart <= Number(w.compEndMs || 0) + 120);
+          const canonicalWindow = windows[0] || null;
+          const canonicalStart = canonicalWindow ? toFinite(canonicalWindow.compStartMs) : null;
+          const canonicalEnd = canonicalWindow ? toFinite(canonicalWindow.compEndMs) : null;
+          const inOwnWindow = windows.some((w) => (
+            clipStart >= Number(w.compStartMs || 0) - timingBoundaryToleranceMs &&
+            clipStart <= Number(w.compEndMs || 0) + timingBoundaryToleranceMs
+          ));
+          syncTimelineRows.push({
+            stepId: cid,
+            clipStartMs: clipStart,
+            clipStartSource,
+            windowStartMs: canonicalStart,
+            windowEndMs: canonicalEnd,
+            leadMs: canonicalStart != null ? Math.round(clipStart - canonicalStart) : null,
+            inOwnWindow,
+            overrunStatus: canonicalWindow?.status || 'unknown',
+            boundaryToleranceMs: timingBoundaryToleranceMs,
+          });
           if (!inOwnWindow) {
             narrationWindowMismatches.push({ stepId: cid, clipStartMs: clipStart });
             diagnostics.push({
               stepId: cid,
               category: 'narration-screen-mismatch',
               severity: 'critical',
-              issue: `Narration starts at ${clipStart}ms outside its own screen timing window(s).`,
-              suggestion: 'Rebuild timing windows and sync-map so each narration clip starts within its step window only.',
+              issue: `Narration starts at ${clipStart}ms (${clipStartSource}) outside its own screen timing window(s).`,
+              suggestion: 'Rebuild timing windows and sync-map so each narration clip starts within its step window only (prefer compStartMs coordinates).',
             });
           }
         }
@@ -1535,6 +2001,43 @@ async function main(opts = {}) {
         timingViolations.push(row);
       }
     }
+  }
+
+  let narrationSyncReport = null;
+  try {
+    narrationSyncReport = validateNarrationSync(OUT_DIR);
+    writeNarrationSyncReport(OUT_DIR, narrationSyncReport);
+    const mappedCriticalCodes = new Set(['cross-screen-owner', 'clip-missing-step-window']);
+    for (const v of narrationSyncReport.violations || []) {
+      if (v.code === 'narration-screen-mismatch' || v.code === 'narration-overrun' || v.code === 'duplicate-step-window') continue;
+      const severity = String(v.code || '').startsWith('missing-')
+        ? 'warning'
+        : (mappedCriticalCodes.has(v.code) ? 'critical' : 'warning');
+      diagnostics.push({
+        stepId: v.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
+        category: `sync-governor-${v.code || 'unknown'}`,
+        severity,
+        issue: `[sync-governor] ${v.message}`,
+        suggestion: 'Regenerate timing-contract/voiceover-manifest and ensure sync-map remap is applied before QA.',
+      });
+    }
+    for (const w of narrationSyncReport.warnings || []) {
+      diagnostics.push({
+        stepId: w.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
+        category: `sync-governor-${w.code || 'warning'}`,
+        severity: 'warning',
+        issue: `[sync-governor] ${w.message}`,
+        suggestion: 'Review narration timing warnings and tighten lead/lag if this recurs.',
+      });
+    }
+  } catch (err) {
+    diagnostics.push({
+      stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+      category: 'sync-governor-report',
+      severity: 'warning',
+      issue: `Could not generate narration sync report: ${err.message}`,
+      suggestion: 'Inspect validate-narration-sync inputs (timing-contract.json, voiceover-manifest.json).',
+    });
   }
 
   await context.close();
@@ -1626,10 +2129,12 @@ async function main(opts = {}) {
   } catch (_) {}
 
   // Hard guardrail: timing-contract overrun means narration outlasts visuals.
+  const narrationGovernorCriticalCount = (narrationSyncReport?.violations || [])
+    .filter((v) => !String(v?.code || '').startsWith('missing-')).length;
   try {
-    if (report && report.passed && (timingViolations.length > 0 || timingDupes.length > 0 || narrationWindowMismatches.length > 0)) {
+    if (report && report.passed && (timingViolations.length > 0 || timingDupes.length > 0 || narrationWindowMismatches.length > 0 || narrationGovernorCriticalCount > 0)) {
       report.passed = false;
-      report.overrideReason = `Timing governor violation: overruns=${timingViolations.length}, duplicateWindows=${timingDupes.length}, narrationWindowMismatches=${narrationWindowMismatches.length}.`;
+      report.overrideReason = `Timing governor violation: overruns=${timingViolations.length}, duplicateWindows=${timingDupes.length}, narrationWindowMismatches=${narrationWindowMismatches.length}, narrationGovernorViolations=${narrationGovernorCriticalCount}.`;
       const outPath = path.join(OUT_DIR, 'qa-report-build.json');
       fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
       console.warn('[build-qa] Forced fail: timing governor guardrail triggered');
@@ -1639,6 +2144,42 @@ async function main(opts = {}) {
       ], { runDir: OUT_DIR });
     }
   } catch (_) {}
+
+  try {
+    const debugPayload = {
+      generatedAt: new Date().toISOString(),
+      boundaryToleranceMs: timingBoundaryToleranceMs,
+      source: narrationSyncReport?.timelineRows ? 'validate-narration-sync' : 'build-qa',
+      rows: Array.isArray(narrationSyncReport?.timelineRows) && narrationSyncReport.timelineRows.length > 0
+        ? narrationSyncReport.timelineRows
+        : syncTimelineRows,
+    };
+    fs.writeFileSync(SYNC_TIMELINE_DEBUG_OUT, JSON.stringify(debugPayload, null, 2));
+    fs.writeFileSync(LEGACY_SYNC_TIMELINE_DEBUG_OUT, JSON.stringify(debugPayload, null, 2));
+  } catch (_) {}
+
+  try {
+    const syncHealth = buildSyncHealthReport({
+      demoScript,
+      qaReport: report,
+      diagnostics: normalizedDiagnostics,
+      timingContract,
+      narrationSyncReport,
+      voiceoverManifest,
+      syncTimelineRows: Array.isArray(narrationSyncReport?.timelineRows) && narrationSyncReport.timelineRows.length > 0
+        ? narrationSyncReport.timelineRows
+        : syncTimelineRows,
+    });
+    fs.writeFileSync(SYNC_HEALTH_OUT, JSON.stringify(syncHealth, null, 2));
+    fs.writeFileSync(LEGACY_SYNC_HEALTH_OUT, JSON.stringify(syncHealth, null, 2));
+    appendPipelineLogJson('[BUILD-QA] Sync health summary', {
+      syncHealthFile: SYNC_HEALTH_OUT,
+      summary: syncHealth.summary,
+      narrationSyncSummary: syncHealth.narrationSyncSummary || null,
+    }, { runDir: OUT_DIR });
+  } catch (err) {
+    console.warn(`[build-qa] Could not write sync-health-report: ${err.message}`);
+  }
 
   const strict = process.env.BUILD_QA_STRICT === 'true' || process.env.BUILD_QA_STRICT === '1';
   if (strict && report && !report.passed) {
@@ -1674,6 +2215,7 @@ module.exports = {
   computeCaptureDelays,
   normalizeGoToStepExpression,
   isSlideLikeStep,
+  buildPlaidLaunchCtaIconDiagnostics,
 };
 
 if (require.main === module) {

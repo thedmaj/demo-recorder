@@ -16,6 +16,12 @@ try {
   AdmZip = null;
 }
 const { detectModeFromText } = require('./link-mode');
+const {
+  getEffectiveProductFamily,
+  shouldAllowCraSkillFileTrigger,
+  textHasPositiveCraKeywordSignal,
+  textHasPositiveIncomeInsightsKeywordSignal,
+} = require('./prompt-scope');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const DEFAULT_SKILL_REL = path.join('skills', 'plaid-integration.skill');
@@ -131,8 +137,21 @@ function readZipMember(zip, relativePath) {
 function resolveMemberPaths(productFamily, signals = {}) {
   const family = FAMILY_BASE_FILES[productFamily] ? productFamily : 'generic';
   const paths = [...FAMILY_BASE_FILES[family]];
-  const text = `${signals.promptText || ''}\n${JSON.stringify(signals.demoScript || {})}`;
+  const promptText = String(signals.promptText || '');
+  const demoStr = JSON.stringify(signals.demoScript || {});
+  const text = `${promptText}\n${demoStr}`;
+  const effectiveFamily = getEffectiveProductFamily(promptText);
+  let allowCraTrigger = shouldAllowCraSkillFileTrigger(promptText, effectiveFamily);
+  if (!allowCraTrigger && effectiveFamily !== 'funding') {
+    if (
+      textHasPositiveCraKeywordSignal(demoStr) ||
+      textHasPositiveIncomeInsightsKeywordSignal(demoStr)
+    ) {
+      allowCraTrigger = true;
+    }
+  }
   for (const { re, file } of PRODUCT_FILE_TRIGGERS) {
+    if (file === 'references/products/cra.md' && !allowCraTrigger) continue;
     if (re.test(text) && !paths.includes(file)) paths.push(file);
   }
   if (/\boauth\b/i.test(text) && !paths.includes('references/oauth.md')) {

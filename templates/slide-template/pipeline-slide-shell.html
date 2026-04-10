@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<!--
+  CANONICAL PIPELINE SLIDE SHELL — HTML reference (Plaid-only API storytelling slides)
+
+  Layout / density lineage: production demos including 2026-03-23-layer-v2 (TD final) and
+  subsequent layered Auth / Identity / Signal builds — header logo lockup, multi-panel
+  grids, footer strip, glass side JSON rail.
+
+  Usage:
+  - Open locally next to slide.css for visual QA (file:// or static server).
+  - Build agents: merge patterns into scratch-app/index.html per PIPELINE_SLIDE_SHELL_RULES.md
+    + SLIDE_RULES.md (do not paste html/body slide.css rules globally).
+
+  JSON viewer:
+  - renderjson from CDN (required).
+  - Persist THREE controls: Show JSON, Hide JSON, and data-testid="api-panel-toggle" (Playwright).
+  - All nodes expanded when JSON is rendered (set_show_to_level 'all').
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pipeline slide shell — reference</title>
+  <link rel="stylesheet" href="./slide.css" />
+  <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>
+  <!-- Preview-only: real apps use global .step / .step.active from scratch-app contract -->
+  <style>
+    .step{display:none;box-sizing:border-box}
+    .step.active{display:flex;position:static;inset:auto;width:100%;min-height:100vh;align-items:center;justify-content:center;padding:24px;background:#0d1117}
+  </style>
+</head>
+<body style="margin:0">
+
+  <!-- In pipeline apps: one .step per scene; slide-like steps use .slide-root inside. -->
+  <div data-testid="step-slide-example" class="step active">
+    <div class="slide-root">
+      <header class="slide-header">
+        <div class="slide-header-left">
+          <!-- Optional wordmark (local asset in scratch-app); omit if not copied -->
+          <img class="slide-header-logo" src="./plaid-logo-horizontal-white-text-transparent-background.png" alt="Plaid" width="120" height="28" />
+          <div class="slide-header-pill" data-testid="slide-product">PLAID</div>
+          <div class="slide-header-endpoint" data-testid="slide-endpoint">POST /signal/evaluate</div>
+        </div>
+      </header>
+
+      <main class="slide-body">
+        <section class="slide-hero">
+          <h1 class="slide-title" data-testid="slide-title">Signal evaluated this transfer</h1>
+          <p class="slide-subtitle" data-testid="slide-subtitle">
+            Behind the scenes, Plaid scores ACH return risk and returns a recommendation — open the JSON panel for raw evidence.
+          </p>
+        </section>
+
+        <section class="slide-panels" data-testid="slide-panels">
+          <div class="slide-panel" data-testid="slide-panel-1">
+            <h3 class="slide-panel-title">Outcome</h3>
+            <p class="slide-panel-body">Recommendation aligns with low return risk for this funding path.</p>
+          </div>
+          <div class="slide-panel" data-testid="slide-panel-2">
+            <h3 class="slide-panel-title">What to highlight</h3>
+            <p class="slide-panel-body">Score, tier, and triggered rules that support the narrative (3–6 bullets in real builds).</p>
+          </div>
+        </section>
+
+        <aside class="slide-callout" data-testid="slide-callout">
+          <div class="slide-callout-value">ACCEPT</div>
+          <div class="slide-callout-label">Illustrative reveal — use realistic sandbox values in generated demos.</div>
+        </aside>
+      </main>
+
+      <footer class="slide-footer" data-testid="slide-footer">
+        <img src="./plaid-logo-no-text-white-background.png" alt="" width="20" height="20" style="object-fit:contain;border-radius:4px" />
+        <span class="slide-footer-meta">plaid.com</span>
+      </footer>
+    </div>
+  </div>
+
+  <div id="link-events-panel" data-testid="link-events-panel" class="side-panel" style="display:none" aria-hidden="true">
+    <div class="side-panel-header">Link Events</div>
+    <div class="side-panel-body" id="link-events-body"></div>
+  </div>
+
+  <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none" aria-label="API JSON panel">
+    <header class="side-panel-header">
+      <span>API Response</span>
+      <div class="api-panel-header-actions">
+        <button type="button" id="api-json-panel-show" data-testid="api-json-panel-show">Show JSON</button>
+        <button type="button" id="api-json-panel-hide" data-testid="api-json-panel-hide">Hide JSON</button>
+        <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle">Show JSON</button>
+      </div>
+    </header>
+    <div class="side-panel-body">
+      <div id="api-response-content"></div>
+    </div>
+  </div>
+
+  <script>
+(function () {
+  'use strict';
+
+  window.__API_PANEL_CONFIG = Object.assign(
+    {
+      collapsedByDefault: true,
+      jsonExpandLevel: 'all',
+      autoResize: true,
+      minWidthPx: 360,
+      maxWidthViewportRatio: 0.52
+    },
+    window.__API_PANEL_CONFIG || {}
+  );
+
+  function configureRenderjson() {
+    if (typeof renderjson === 'undefined') return;
+    var lvl = window.__API_PANEL_CONFIG.jsonExpandLevel;
+    if (lvl === 'all' || lvl === Infinity) renderjson.set_show_to_level('all');
+    else renderjson.set_show_to_level(Number(lvl) || 999);
+    renderjson.set_icons('+', '-');
+    if (typeof renderjson.set_sort_objects === 'function') renderjson.set_sort_objects(false);
+  }
+  configureRenderjson();
+
+  function isPanelVisible() {
+    var panel = document.getElementById('api-response-panel');
+    if (!panel) return false;
+    return panel.style.display === 'flex';
+  }
+
+  function syncPanelChrome() {
+    var vis = isPanelVisible();
+    var leg = document.getElementById('api-panel-toggle');
+    if (leg) leg.textContent = vis ? 'Hide JSON' : 'Show JSON';
+  }
+
+  function showApiPanel() {
+    var panel = document.getElementById('api-response-panel');
+    if (!panel) return;
+    panel.style.display = 'flex';
+    syncPanelChrome();
+  }
+
+  function hideApiPanel() {
+    var panel = document.getElementById('api-response-panel');
+    if (!panel) return;
+    panel.style.display = 'none';
+    syncPanelChrome();
+  }
+
+  /** Render payload with every JSON level expanded (renderjson). */
+  window.updateApiResponse = function (data) {
+    configureRenderjson();
+    var panel = document.getElementById('api-response-panel');
+    var content = document.getElementById('api-response-content');
+    if (!panel || !content) return;
+    content.innerHTML = '';
+    if (typeof renderjson !== 'undefined') {
+      content.appendChild(renderjson(data));
+    } else {
+      var pre = document.createElement('pre');
+      pre.style.cssText =
+        'color:rgba(255,255,255,.75);font-size:12px;font-family:SF Mono,Fira Code,Consolas,monospace;white-space:pre-wrap;word-break:break-word';
+      pre.textContent = JSON.stringify(data, null, 2);
+      content.appendChild(pre);
+    }
+    if (window.__API_PANEL_CONFIG.collapsedByDefault) {
+      hideApiPanel();
+    } else {
+      showApiPanel();
+    }
+    syncPanelChrome();
+  };
+
+  window.toggleApiPanel = function () {
+    if (isPanelVisible()) hideApiPanel();
+    else showApiPanel();
+  };
+
+  document.getElementById('api-json-panel-show')?.addEventListener('click', showApiPanel);
+  document.getElementById('api-json-panel-hide')?.addEventListener('click', hideApiPanel);
+  document.getElementById('api-panel-toggle')?.addEventListener('click', function () {
+    window.toggleApiPanel();
+  });
+
+  syncPanelChrome();
+
+  /* ── Standalone file preview only (omit when merging into scratch-app) ── */
+  (function previewExpandedJson() {
+    window.__API_PANEL_CONFIG = Object.assign({}, window.__API_PANEL_CONFIG, { collapsedByDefault: false });
+    window.updateApiResponse({
+      scores: { customer_initiated_return_risk: { score: 8, risk_tier: 'LOW' } },
+      ruleset: { outcome: 'ACCEPT', triggered_rules: [] },
+      nested: { items: [{ id: 'a' }, { id: 'b' }] },
+      request_id: 'pipeline-slide-shell-preview'
+    });
+    showApiPanel();
+  })();
+})();
+  </script>
+</body>
+</html>

@@ -65,6 +65,7 @@ Problem → returning user friction → layer_ready event → pre-filled flow �
 - Passive voice ("is verified", "is connected") — use active ("Plaid verifies", "connects")
 - Technical API jargon without customer-value context
 - Prohibited words: "simply", "just", "unfortunately", "robust", "seamless", "Trust Index"
+- Host **Plaid Link launch** CTAs with a normal inline icon scale (the icon supports the label; it must not read as a hero graphic filling the button)
 
 ## Plaid Brand Voice
 

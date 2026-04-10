@@ -46,6 +46,17 @@ const MIME_TYPES = {
   '.webm': 'video/webm',
 };
 
+const PROJECT_ROOT = path.resolve(__dirname, '../../..');
+const ASSETS_DIR = path.join(PROJECT_ROOT, 'assets');
+const PLAID_LOGO_FALLBACK_MAP = {
+  'plaid-logo-horizontal-black-white-background.png': 'Plaid-Logo horizontal black with white background.png',
+  'plaid-logo-horizontal-white-text-transparent-background.png': 'plaid logo horizontal white text transparent background.png',
+  'plaid-logo-vertical-white-text-transparent-background.png': 'Plaid vertical logo white text transparent background.png',
+  'plaid-logo-text-white-background.png': 'plaid logo text white background.png',
+  'plaid-logo-no-text-white-background.png': 'plaid logo no text white background.png',
+  'plaid-logo-no-text-black-background.png': 'plaid logo no text black background.png',
+};
+
 // Default scratch-app/ directory (relative to the project root,
 // which is three levels up from this utils/ file).
 // Can be overridden by passing rootDir to startServer().
@@ -99,7 +110,7 @@ function sendJson(res, statusCode, data) {
  * @param {string} urlPath  Decoded URL path
  * @returns {Promise<boolean>}
  */
-async function handleApiRoute(req, res, urlPath) {
+async function handleApiRoute(req, res, urlPath, context = {}) {
   // Only handle when live mode is enabled
   if (process.env.PLAID_LINK_LIVE !== 'true') return false;
 
@@ -153,6 +164,7 @@ async function handleApiRoute(req, res, urlPath) {
           credentialScope:      body.credentialScope || body.credential_scope || null,
           linkMode:             resolvedLinkMode,
           hosted_link:          body.hosted_link && typeof body.hosted_link === 'object' ? body.hosted_link : undefined,
+          runDir:               context.runDir || process.env.PIPELINE_RUN_DIR || null,
         };
         const modeScopedOpts = linkModeAdapter.prepareCreateLinkTokenBody(baseOpts);
         if (body.plaid_user_id || body.plaidUserId) {
@@ -233,6 +245,24 @@ function getMimeType(filePath) {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
+function resolveLogoFallbackPath(relativePath, scratchDir) {
+  const base = path.basename(String(relativePath || ''));
+  if (!base || !/^plaid-logo-.*\.(png|jpg|jpeg|svg)$/i.test(base)) return null;
+  const candidates = [
+    path.join(scratchDir, base),
+    path.join(ASSETS_DIR, base),
+    path.join(ASSETS_DIR, PLAID_LOGO_FALLBACK_MAP[base] || ''),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    } catch (_) {
+      // best-effort candidate scan
+    }
+  }
+  return null;
+}
+
 /**
  * Attempt to start an HTTP server on the given port.
  * Resolves with the net.Server instance on success.
@@ -262,6 +292,12 @@ function tryListen(server, port) {
  */
 async function startServer(port = 3737, rootDir) {
   const SCRATCH_APP_DIR = rootDir || DEFAULT_SCRATCH_APP_DIR;
+  const runDirFromScratch = path.basename(SCRATCH_APP_DIR) === 'scratch-app'
+    ? path.dirname(SCRATCH_APP_DIR)
+    : null;
+  const apiContext = {
+    runDir: runDirFromScratch || process.env.PIPELINE_RUN_DIR || null,
+  };
   const server = http.createServer(async (req, res) => {
     // Strip query string and URL-decode
     let urlPath;
@@ -273,7 +309,7 @@ async function startServer(port = 3737, rootDir) {
 
     // ── Plaid API routes (POST /api/*) — only when PLAID_LINK_LIVE=true ──
     try {
-      const handled = await handleApiRoute(req, res, urlPath);
+      const handled = await handleApiRoute(req, res, urlPath, apiContext);
       if (handled) return;
     } catch (err) {
       console.error(`[AppServer] Unhandled API error: ${err.message}`);
@@ -301,6 +337,22 @@ async function startServer(port = 3737, rootDir) {
 
     fs.readFile(filePath, (err, data) => {
       if (err) {
+        const fallbackLogoPath = resolveLogoFallbackPath(relativePath, SCRATCH_APP_DIR);
+        if (fallbackLogoPath) {
+          fs.readFile(fallbackLogoPath, (fallbackErr, fallbackData) => {
+            if (fallbackErr) {
+              res.writeHead(404, { 'Content-Type': 'text/plain' });
+              res.end(`Not found: ${urlPath}`);
+              return;
+            }
+            res.writeHead(200, {
+              'Content-Type': getMimeType(fallbackLogoPath),
+              'Access-Control-Allow-Origin': '*',
+            });
+            res.end(fallbackData);
+          });
+          return;
+        }
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end(`Not found: ${urlPath}`);
         return;

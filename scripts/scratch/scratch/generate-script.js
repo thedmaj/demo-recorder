@@ -208,6 +208,19 @@ function normalizeSceneType(step) {
   return 'host';
 }
 
+function isLayerUseCase(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return false;
+  const header = [demoScript.title, demoScript.product].filter(Boolean).join(' ').toLowerCase();
+  if (/\bplaid layer\b/.test(header)) return true;
+  const stepsText = demoScript.steps
+    .map((step) => [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' '))
+    .join(' ')
+    .toLowerCase();
+  // Keep broad "layer" matching for backwards compatibility with existing step IDs
+  // like "layer-launch" and "layer-confirm" in mobile Layer demos.
+  return /\blayer\b/.test(`${header} ${stepsText}`);
+}
+
 function enforceCanonicalLaunchInteraction(demoScript) {
   if (!demoScript || !Array.isArray(demoScript.steps)) return null;
   const launchStep = demoScript.steps.find((s) => s && s.plaidPhase === 'launch');
@@ -262,6 +275,71 @@ function mergePreLinkIntoLaunchStep(demoScript) {
 
   demoScript.steps.splice(launchIdx - 1, 1);
   return { removedStepId: preLinkStep.id, launchStepId: launchStep.id };
+}
+
+/** Same 4-step window as validateDemoScript pre-link check — merges all explainers into launch (not only launchIdx-1). */
+function mergeAllPreLinkExplainersBeforeLaunch(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return null;
+  const launchIdx = demoScript.steps.findIndex((s) => s && s.plaidPhase === 'launch');
+  if (launchIdx <= 0) return null;
+  const windowStart = Math.max(0, launchIdx - 4);
+  const entries = [];
+  for (let i = windowStart; i < launchIdx; i++) {
+    const step = demoScript.steps[i];
+    if (isPreLinkExplainerStep(step)) entries.push({ idx: i, step });
+  }
+  if (entries.length === 0) return null;
+
+  const launchStep = demoScript.steps[launchIdx];
+  const vsParts = [];
+  for (const { step } of entries) {
+    if (step.visualState) vsParts.push(step.visualState);
+  }
+  if (launchStep.visualState) vsParts.push(launchStep.visualState);
+  if (vsParts.length > 0) {
+    launchStep.visualState = vsParts.join(' Then ');
+  }
+  if (!launchStep.label) {
+    for (const { step } of entries) {
+      if (step.label) {
+        launchStep.label = step.label;
+        break;
+      }
+    }
+  }
+  if (!launchStep.interaction) {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const step = entries[i].step;
+      if (step.interaction) {
+        launchStep.interaction = step.interaction;
+        break;
+      }
+    }
+  }
+
+  let hintMs = Number(launchStep.durationHintMs || 0);
+  for (const { step } of entries) {
+    hintMs += Number(step.durationHintMs || 0);
+  }
+  if (hintMs > 0) launchStep.durationHintMs = hintMs;
+
+  let durSum = typeof launchStep.durationMs === 'number' ? launchStep.durationMs : 0;
+  let anyDurMs = typeof launchStep.durationMs === 'number';
+  for (const { step } of entries) {
+    if (typeof step.durationMs === 'number') {
+      anyDurMs = true;
+      durSum += step.durationMs;
+    }
+  }
+  if (anyDurMs) launchStep.durationMs = durSum;
+
+  const indices = entries.map((e) => e.idx).sort((a, b) => b - a);
+  const removedStepIds = [];
+  for (const idx of indices) {
+    removedStepIds.unshift(demoScript.steps[idx].id);
+    demoScript.steps.splice(idx, 1);
+  }
+  return { removedStepIds, launchStepId: launchStep.id };
 }
 
 function extractTopValuePropositions(productResearch, maxItems = 3) {
@@ -362,6 +440,7 @@ function validateDemoScript(demoScript, opts = {}) {
   const warnings = [];
   const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
   const plaidLinkLive = opts.plaidLinkLive === true;
+  const layerUseCase = isLayerUseCase(demoScript);
   const productFamily = opts.productFamily || 'generic';
   const requireFinalValueSummarySlide = opts.requireFinalValueSummarySlide === true;
 
@@ -370,7 +449,11 @@ function validateDemoScript(demoScript, opts = {}) {
     const sceneType = normalizeSceneType(step);
     if (step.sceneType !== sceneType) step.sceneType = sceneType;
     if (sceneType === 'link' && step.plaidPhase !== 'launch') {
-      errors.push(`Step "${step.id}" has sceneType "link" but is missing plaidPhase:"launch".`);
+      if (layerUseCase) {
+        warnings.push(`Step "${step.id}" uses sceneType "link" without plaidPhase:"launch" in a Layer flow; treating as Layer-native step.`);
+      } else {
+        errors.push(`Step "${step.id}" has sceneType "link" but is missing plaidPhase:"launch".`);
+      }
     }
     if (sceneType === 'slide' && step.apiResponse?.endpoint && /\binsight\b/i.test([step?.id, step?.label].join(' '))) {
       warnings.push(`Step "${step.id}" is marked sceneType "slide" but looks like an insight step. Use sceneType "insight" unless .slide-root is intentional.`);
@@ -393,6 +476,9 @@ function validateDemoScript(demoScript, opts = {}) {
       }
     } else if (step.apiResponse && (!step.apiResponse.endpoint || !step.apiResponse.response)) {
       errors.push(`Step "${step.id}" has an incomplete apiResponse block.`);
+    }
+    if (isValueSummaryStep(step) && step.apiResponse) {
+      errors.push('value-summary-slide must not include apiResponse. Keep final summary narrative-only.');
     }
   }
 
@@ -471,7 +557,11 @@ function validateDemoScript(demoScript, opts = {}) {
     }
   }
   if (plaidLinkLive && launchSteps.length === 0) {
-    errors.push('PLAID_LINK_LIVE=true requires exactly one step with plaidPhase:"launch".');
+    if (layerUseCase) {
+      warnings.push('PLAID_LINK_LIVE=true with no plaidPhase:"launch" is allowed for Layer-native flows.');
+    } else {
+      errors.push('PLAID_LINK_LIVE=true requires exactly one step with plaidPhase:"launch".');
+    }
   }
   if (launchSteps.length === 1) {
     const launchId = launchSteps[0].id;
@@ -652,9 +742,11 @@ async function main() {
   }
   demoScript.plaidLinkMode = embeddedLinkSkillBundle.mode;
 
-  const mergedLaunch = mergePreLinkIntoLaunchStep(demoScript);
+  const mergedLaunch = mergeAllPreLinkExplainersBeforeLaunch(demoScript);
   if (mergedLaunch) {
-    console.log(`[Script] Merged pre-Link explainer "${mergedLaunch.removedStepId}" into launch step "${mergedLaunch.launchStepId}".`);
+    console.log(
+      `[Script] Merged pre-Link explainer step(s) [${mergedLaunch.removedStepIds.join(', ')}] into launch "${mergedLaunch.launchStepId}".`
+    );
   }
   const canonicalLaunchId = enforceCanonicalLaunchInteraction(demoScript);
   if (canonicalLaunchId) {
@@ -700,11 +792,16 @@ async function main() {
   if (process.env.PLAID_LINK_LIVE === 'true') {
     const launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
     if (!launchStep) {
-      console.error('[Script] No step with plaidPhase:"launch" found in demo-script.json.');
-      console.error('[Script] Add plaidPhase:"launch" to the step that opens Plaid Link.');
-      process.exit(1);
+      if (isLayerUseCase(demoScript)) {
+        console.log('[Script] No plaidPhase:"launch" step found; allowing Layer-native flow without launch step.');
+      } else {
+        console.error('[Script] No step with plaidPhase:"launch" found in demo-script.json.');
+        console.error('[Script] Add plaidPhase:"launch" to the step that opens Plaid Link.');
+        process.exit(1);
+      }
+    } else {
+      console.log(`[Script] Plaid launch step: "${launchStep.id}" (plaidPhase: launch) ✓`);
     }
-    console.log(`[Script] Plaid launch step: "${launchStep.id}" (plaidPhase: launch) ✓`);
   }
 
   const scriptValidation = validateDemoScript(demoScript, {
@@ -777,6 +874,7 @@ module.exports = {
   enforceCanonicalLaunchInteraction,
   isPreLinkExplainerStep,
   mergePreLinkIntoLaunchStep,
+  mergeAllPreLinkExplainersBeforeLaunch,
   extractTopValuePropositions,
   buildValueSummaryNarration,
   isValueSummaryStep,

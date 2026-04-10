@@ -115,6 +115,28 @@ function toTitleCaseWords(value) {
     .join(' ');
 }
 
+const COMPANY_NAME_OVERRIDES = {
+  usbank: 'US Bank',
+  tmobile: 'T-Mobile',
+  att: 'AT&T',
+  ynab: 'YNAB',
+};
+
+function normalizeDomainCompanyName(rawLabel) {
+  const label = String(rawLabel || '').trim().toLowerCase();
+  if (!label) return null;
+  if (COMPANY_NAME_OVERRIDES[label]) return COMPANY_NAME_OVERRIDES[label];
+
+  // Heuristic for compact labels like "usbank" -> "US Bank"
+  const compactBankMatch = label.match(/^([a-z]{2,3})(bank)$/i);
+  if (compactBankMatch) {
+    const [, prefix, suffix] = compactBankMatch;
+    return `${prefix.toUpperCase()} ${toTitleCaseWords(suffix)}`;
+  }
+
+  return toTitleCaseWords(label);
+}
+
 function companyFromUrl(rawUrl) {
   try {
     const url = new URL(String(rawUrl).trim());
@@ -123,7 +145,7 @@ function companyFromUrl(rawUrl) {
     if (disallowed.test(host)) return null;
     const firstLabel = host.split('.')[0] || '';
     if (!firstLabel) return null;
-    return toTitleCaseWords(firstLabel);
+    return normalizeDomainCompanyName(firstLabel);
   } catch (_) {
     return null;
   }
@@ -145,9 +167,9 @@ function extractCompanyNameFromText(text) {
   return null;
 }
 
-function resolvePromptDerivedClientName() {
+function resolvePromptDerivedClientName(opts = {}) {
   const projectRoot = path.resolve(__dirname, '../../..');
-  const runDir = process.env.PIPELINE_RUN_DIR || null;
+  const runDir = firstNonEmpty(opts.runDir, process.env.PIPELINE_RUN_DIR) || null;
   const candidates = [
     runDir ? path.join(runDir, 'ingested-inputs.json') : null,
     runDir ? path.join(runDir, 'pipeline-run-context.json') : null,
@@ -274,6 +296,8 @@ const CREATE_LINK_TOKEN_WRAPPER_KEYS = new Set([
   'legacy_user_token',
   'checkUserIdentity',
   'check_user_identity',
+  'runDir',
+  'run_dir',
   'linkMode',
   'link_mode',
   'hosted_link',
@@ -285,7 +309,7 @@ function resolveLinkMode(opts = {}) {
 
 async function createLinkToken(opts = {}) {
   const products = opts.products ?? ['auth', 'identity'];
-  const promptClientName = resolvePromptDerivedClientName();
+  const promptClientName = resolvePromptDerivedClientName(opts);
   const clientName = promptClientName || opts.clientName || opts.client_name || 'Plaid Demo';
   const userId = opts.userId || opts.user_id || 'demo-user-001';
   const phoneNumber = opts.phoneNumber ?? opts.phone_number ?? null;
@@ -667,6 +691,7 @@ async function createConsumerReportLinkToken(flat = {}) {
     cra_options: flat.cra_options,
     plaidCheckUserId: plaidUserId || undefined,
     userToken: plaidUserId ? undefined : legacyToken || undefined,
+    runDir: flat.runDir || undefined,
   });
 }
 

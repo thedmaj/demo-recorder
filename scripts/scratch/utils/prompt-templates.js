@@ -366,6 +366,25 @@ function shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled) {
   });
 }
 
+function shouldIncludeLiveLinkInstructionBlock({ demoScript, promptText, useLayerMobileMockTemplate }) {
+  if (!useLayerMobileMockTemplate) return true;
+  const scriptText = [
+    demoScript?.title,
+    demoScript?.product,
+    ...(Array.isArray(demoScript?.steps)
+      ? demoScript.steps.map((step) => [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' '))
+      : []),
+  ].filter(Boolean).join(' ').toLowerCase();
+  const prompt = String(promptText || '').toLowerCase();
+  const haystack = `${prompt}\n${scriptText}`;
+
+  const wantsBoth =
+    /\b(use both|both layer and plaid link|layer and plaid link)\b/.test(haystack) ||
+    /\b(ineligible|not eligible|fallback)\b[\s\S]{0,120}\bplaid link\b/.test(haystack) ||
+    /\bplaid link\b[\s\S]{0,120}\b(ineligible|not eligible|fallback)\b/.test(haystack);
+  return wantsBoth;
+}
+
 function inferLayerDataSharingUseCase(demoScript) {
   if (!demoScript || !Array.isArray(demoScript.steps)) return 'account_verification';
   const chunks = [];
@@ -414,6 +433,9 @@ function buildLayerShareFieldGuardrailBlock(demoScript) {
     `Generation checks (must pass):\n` +
     `- Screen 1 phone capture copy must frame onboarding/signup/application start, not an eligibility check.\n` +
     `- Never show user-facing phrases like "eligibility check" or "checking eligibility" on screen 1.\n` +
+    `- Add subtle helper text below the mobile frame for Layer experiences with exact routing guidance:\n` +
+    `  "Use 415-555-1111 for instant Layer eligibility. Use 415-555-0011 to see ineligible fallback (PII + Plaid Link)."\n` +
+    `- Phone input should prefill the eligible number first: 415-555-1111.\n` +
     `- Field list on mock Layer share screen must match resolved use case above.\n` +
     `- If this contract conflicts with generic UI habits, this contract wins.\n` +
     `- Do not use one universal field list across all Layer stories.\n`
@@ -878,10 +900,15 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
     `Given the following demo script, describe the frontend architecture ` +
     `in approximately 200 words. Cover:\n\n` +
     `1. Number of screens and their logical groupings\n` +
-    `2. CSS transitions between steps (type, duration, easing)\n` +
+    `2. Step-to-step transitions: subtle, production-like motion only (e.g. 150–300ms opacity or light transform, ` +
+    `ease-out; respect prefers-reduced-motion). No flashy page transitions.\n` +
     `3. Mock data needed (names, numbers, scores, API responses)\n` +
-    `4. Key animations and reveal moments\n` +
-    `5. Any components shared across multiple steps\n\n` +
+    `4. Professional fintech UX motion (encouraged): progress bars or step indicators for multi-step flows; ` +
+    `loading states (spinner, skeleton placeholders, disabled primary button + status label); inline status ` +
+    `changes (e.g. "Verifying…" → success). Typical banking/payments patterns only.\n` +
+    `5. Motion to avoid unless the demo script explicitly asks for it: confetti, particle systems, fireworks, ` +
+    `excessive bounce/spring/elastic easing, marquees, celebration explosions, gamified badge showers.\n` +
+    `6. Any components shared across multiple steps\n\n` +
     `Keep the description concise and actionable — this brief will be handed to a code ` +
     `generator, not a human developer. No JSON required.\n\n`;
 
@@ -989,12 +1016,15 @@ function buildAppFrameworkPlanPrompt(demoScript, architectureBrief, opts = {}) {
  * @param {boolean} [opts.mobileVisualEnabled] Enable mobile-visual simulator constraints
  * @param {string} [opts.buildViewMode] desktop | mobile-auto | mobile-simulated
  * @param {string} [opts.layerMockTemplate] Optional reusable Layer mobile mock library markdown
+ * @param {string} [opts.layerMobileSkeletonHtml] Canonical Layer mobile skeleton HTML (hard contract)
+ * @param {string} [opts.brandSiteReferenceBase64] Optional PNG base64 of brand site viewport (1440×900) for visual inspiration only
  * @returns {{ system: string, userMessages: Array }}
  */
 function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null, opts = {}) {
   const brand = opts.brand || PLAID_DEFAULT_BRAND;
   const slideTemplateRules = typeof opts.slideTemplateRules === 'string' ? opts.slideTemplateRules : '';
   const slideTemplateCss = typeof opts.slideTemplateCss === 'string' ? opts.slideTemplateCss : '';
+  const slideTemplateShellHtml = typeof opts.slideTemplateShellHtml === 'string' ? opts.slideTemplateShellHtml : '';
   const productFamily = opts.productFamily || inferProductFamilyFromText(demoScript?.product || '');
   const productProfile = getProductProfile(productFamily);
   const curatedForPrompt = opts.curatedDigest && Array.isArray(opts.curatedDigest.knowledgeFiles)
@@ -1018,14 +1048,22 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
   const mobileVisualEnabled = !!opts.mobileVisualEnabled;
   const buildViewMode = String(opts.buildViewMode || 'desktop').toLowerCase();
   const layerMockTemplate = typeof opts.layerMockTemplate === 'string' ? opts.layerMockTemplate.trim() : '';
+  const layerMobileSkeletonHtml =
+    typeof opts.layerMobileSkeletonHtml === 'string' ? opts.layerMobileSkeletonHtml.trim() : '';
+  const promptText = typeof opts.promptText === 'string' ? opts.promptText : '';
   const useLayerMobileMockTemplate = shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled);
+  const includeLiveLinkInstructionBlock = shouldIncludeLiveLinkInstructionBlock({
+    demoScript,
+    promptText,
+    useLayerMobileMockTemplate,
+  });
   const buildQaDiagBlock = formatBuildQaDiagnosticSummary(opts.buildQaDiagnosticSummary);
 
   let cdnRule =
     `- Single index.html file: all CSS and JavaScript inlined.\n` +
     `  EXCEPTION: allow renderjson viewer script in <head>:\n` +
     `  <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n`;
-  if (opts.plaidLinkLive) {
+  if (opts.plaidLinkLive && includeLiveLinkInstructionBlock) {
     cdnRule =
       `- Single index.html file: all CSS and JavaScript inlined.\n` +
       `  EXCEPTIONS in <head>:\n` +
@@ -1064,15 +1102,24 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `- Do NOT restyle \`html\` or \`body\` using slide tokens. The HOST BANK UI (nav, cards, TD/chrome, consumer screens, Plaid Link host page) MUST follow the HOST APP DESIGN SYSTEM block only.\n` +
         `- Full-viewport Plaid *insight* steps (*-insight, API reveal) are NOT slides unless the step explicitly uses \`.slide-root\`. Use insight layout + global api-response-panel per DOM contract — not slide template chrome.\n` +
         `- Slides exist only to explain behind-the-scenes API/data; they are Plaid-styled; the rest of the app is customer-branded.\n` +
-        `- For any API storytelling context, keep one raw JSON mechanism only: global \`#api-response-panel\`. Never render duplicate inline raw JSON containers in \`.slide-root\`.\n` +
+        `- For API endpoint storytelling slides/insights, keep one raw JSON mechanism only: global \`#api-response-panel\`. Never render duplicate inline raw JSON containers in \`.slide-root\`.\n` +
+        `- JSON panel eligibility is endpoint-driven: only steps with explicit \`apiResponse.endpoint\` may use/show JSON panel behavior.\n` +
         `- If a step has \`apiResponse\`, keep the side panel collapsed/hidden by default on initial page load.\n` +
-        `- Include a JSON panel toggle control (\`data-testid="api-panel-toggle"\` + \`window.toggleApiPanel()\`) so viewers can show/hide the panel.\n` +
-        `- When panel is shown, render JSON expanded by default via renderjson (deep expand level; no hidden nested payload by default).\n` +
+        `- Include JSON panel controls: \`data-testid="api-json-panel-show"\`, \`data-testid="api-json-panel-hide"\`, and \`data-testid="api-panel-toggle"\` with \`window.toggleApiPanel()\`.\n` +
+        `- When panel is shown, render JSON fully expanded via renderjson (\`set_show_to_level('all')\` or equivalent).\n` +
         `- Add a global API panel config constant for runtime behavior (collapsed-by-default, expanded JSON level, auto-resize guardrails).\n` +
-        `- Use renderjson for payload rendering and keep JSON colors consistent with Plaid slide styling.\n` +
+        `- Use the presentation slide template/rules for JSON panel visual styling; do not invent ad-hoc JSON panel styles.\n` +
         `- Slide content must summarize only high-signal attributes (3-6 bullets) that support the story decision; raw payload remains in global panel.\n` +
         `- API request/response shown in panel must match the slide's claim and endpoint context (no mismatched endpoint narrative).\n` +
         `- **Slide surface:** keep \`.slide-root\` **responsive** per SLIDE_RULES (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n\n`
+      : '') +
+    (slideTemplateShellHtml
+      ? `CANONICAL SLIDE + API PANEL HTML SHELL (structure reference from pipeline-slide-shell.html — merge patterns into index.html; adapt copy per demo-script; omit preview-only script blocks if present):\n` +
+        `[[[PIPELINE_SLIDE_SHELL_HTML_BEGIN]]]\n${slideTemplateShellHtml}\n[[[PIPELINE_SLIDE_SHELL_HTML_END]]]\n\n` +
+        `SHELL MERGE RULES:\n` +
+        `- Match header/body/footer regions, side panels, and JSON control wiring (\`api-json-panel-show\`, \`api-json-panel-hide\`, \`api-panel-toggle\` + \`toggleApiPanel\`).\n` +
+        `- Use renderjson with \`set_show_to_level('all')\` (or deep numeric level) so JSON is fully expanded when the panel is shown.\n` +
+        `- Production demos: keep \`__API_PANEL_CONFIG.collapsedByDefault: true\` unless the prompt specifies otherwise.\n\n`
       : '') +
     `- Desktop responsive requirement (MANDATORY): support 1280×800, 1440×900, and 1728×1117 without horizontal clipping or overflow.\n` +
     `  Keep recording parity at 1440×900, but do NOT hard-lock html/body to fixed pixel width/height.\n` +
@@ -1092,6 +1139,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `  - Default viewMode: ${buildViewMode}.\n` +
         `  - In mobile-simulated mode, render host UI within a phone-like shell wrapper\n` +
         `    data-testid="mobile-simulator-shell" with constrained viewport (~390x844).\n` +
+        `  - Auto-mode contract: when the active step is slide-like (sceneType="slide", .slide-root, or step id containing "slide"),\n` +
+        `    force desktop presentation automatically for that step. Do NOT render slide steps inside the mobile shell.\n` +
+        `  - No user view toggle UI for mobile demos. View mode switching is runtime-automatic per active step.\n` +
         `  - This mode is PRESENTATION-ONLY. Do not claim it validates true Plaid mobile runtime behavior.\n`
       : '') +
     `- Each step: <div data-testid="step-{id}" class="step"> (only one .active at a time)\n` +
@@ -1099,6 +1149,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `    - The step id "value-summary-slide" must render as <div data-testid="step-value-summary-slide" class="step">.\n` +
     `    - Do NOT rename or suffix this testid (no -dup variants).\n` +
     `    - If sceneType is slide, include a visible .slide-root subtree with non-empty heading, value bullets, and CTA text.\n` +
+    `    - value-summary-slide is narrative-only: do NOT include apiResponse, JSON code blocks, or API side-panel content.\n` +
     `    - Never return a blank placeholder/filler container for this step.\n` +
     `- Global functions:\n` +
     `    window.goToStep(id)       — activate a step by id, fire its link events and API panel\n` +
@@ -1121,7 +1172,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `ICONS — ABSOLUTE RULE:\n` +
     `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
     `    Not ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ or any other emoji/symbol character.\n` +
-    `  - ALL icons must be Heroicons SVG (https://heroicons.com). Copy each icon verbatim: one icon = one <path> (or <g>) — NEVER concatenate two icons into a single path d="...".\n` +
+    `  - Never hand-draw, merge, or invent icon paths. Use inline Heroicons SVG from stock Heroicons (https://heroicons.com), copied verbatim.\n` +
+    `  - Plaid launch CTA icon is pipeline-controlled: for data-testid="link-external-account-btn", do not add symbol glyphs or custom icon text.\n` +
+    `  - Do not wrap the launch CTA contents in flex-grow / fill layouts that scale the icon (e.g. avoid flex:1 on the icon wrapper). The pipeline injects a fixed ~20px Heroicons link SVG + layout CSS.\n` +
     `  - EXCEPTION: exactly ONE Brandfetch bank <img> in the host nav per the design system (wordmark URL, or icon URL only if no wordmark). No second bank <img> beside it.\n` +
     `  - Outline style for UI chrome; solid style for active/filled states.\n` +
     `  - If Heroicons lacks the exact icon, use the closest semantic Heroicons match — never emoji.\n` +
@@ -1137,12 +1190,12 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `      ./plaid-logo-no-text-black-background.png\n` +
     `  - Choose the file by filename description (horizontal/vertical, white-background, black-background, no-text).\n` +
     `  - Use an <img> tag for Plaid logo usage. Do not hotlink Plaid logo from remote URLs.\n` +
-    `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses.\n` +
+    `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses on endpoint steps.\n` +
     `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
     `    - Default UX: keep #api-response-panel hidden/collapsed on initial page load (display:none).\n` +
-    `    - Add a JSON panel toggle button (data-testid="api-panel-toggle") and window.toggleApiPanel() handler.\n` +
+    `    - Add JSON panel buttons: data-testid="api-json-panel-show", data-testid="api-json-panel-hide", and data-testid="api-panel-toggle" plus window.toggleApiPanel().\n` +
     `    - On API insight/slide steps, hydrate JSON payloads but keep panel collapsed until toggled open.\n` +
-    `    - When opened, render JSON expanded by default via renderjson (deep level, not collapsed tree).\n` +
+    `    - When opened, render JSON fully expanded via renderjson (set_show_to_level('all') or equivalent).\n` +
     `    - Ensure .side-panel-body is vertically scrollable for long JSON payloads.\n` +
     `      Also allow horizontal scrolling and dynamic panel width resizing so JSON does not bleed off-page.\n` +
     `    - Define a global constant/config object controlling panel behavior for all builds (collapsed default + expanded JSON + auto resize).\n` +
@@ -1154,11 +1207,20 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `      No "insight-right", no "auth-json-panel", no "-json-panel" divs of any kind.\n` +
     `      Every step div shows ONLY the customer-facing demo screen — zero raw JSON in the layout.\n` +
     `      Raw API JSON lives exclusively in api-response-panel. One panel. No duplicates.\n` +
+    `    - value-summary-slide must keep api-response-panel hidden and must not include any JSON payload content.\n` +
     `    - On API storytelling steps, body content should call out top response attributes that drive the outcome.\n` +
     `      Examples: Signal risk drivers + recommendation; CRA income stream summary + next payment;\n` +
     `      Identity score + pass threshold/status for happy-path approval.\n` +
     `    - Ensure request/response content aligns with the slide claim: endpoint label, fields, and highlighted bullets\n` +
     `      must describe the same API context.\n` +
+    `HOST UI PROFESSIONALISM (enterprise fintech — non-negotiable for host/customer screens):\n` +
+    `  - The host app must read as a credible bank or fintech product UI, not a marketing landing page, Dribbble concept, or game.\n` +
+    `  - Visual hierarchy: clear typographic scale, restrained shadows, consistent spacing rhythm, one obvious primary CTA per screen where appropriate.\n` +
+    `  - HOST backgrounds: prefer light/neutral surfaces per the HOST APP DESIGN SYSTEM; reserve Plaid-dark treatments for slides (.slide-root) and Plaid insight contexts unless the brief demands otherwise.\n` +
+    `  - ANIMATION POLICY: Motion is allowed and appropriate when it matches real fintech products — progress indicators, step bars, loading spinners, skeleton placeholders, short success-state fades, and subtle step transitions (CSS-only or minimal JS). Prefer ease-out and durations under ~350ms for UI chrome.\n` +
+    `  - Do NOT use confetti, particle systems, fireworks, elastic/bouncy overshoot, marquees, or decorative celebration effects unless the user prompt explicitly requests them.\n` +
+    `  - Avoid heavy animation libraries for decorative effects; CSS transitions/keyframes for progress and loading are sufficient.\n` +
+    `  - Typography: use the brand JSON font stack (and allowed Google Fonts import); avoid novelty display fonts for body copy.\n` +
     `HOST UI METRICS GUARDRAIL:\n` +
     `  - Do NOT expose presentation-style internal stats in customer-facing host screens unless they provide clear end-user benefit.\n` +
     `  - Avoid showing Identity score / Signal score / LOW RISK / ACCEPT / coverage % as decorative stat cards in host steps.\n` +
@@ -1225,6 +1287,30 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
       `Product-family-specific accuracy rules for this build:\n${formatProductAccuracyRules(productProfile)}`,
   });
 
+  const brandSiteB64 =
+    typeof opts.brandSiteReferenceBase64 === 'string' ? opts.brandSiteReferenceBase64.trim() : '';
+  if (brandSiteB64) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## BRAND SITE VISUAL REFERENCE (inspiration only)\n\n` +
+        `The next image is a **viewport screenshot** (1440×900) of the customer's brand/marketing URL used during brand-extract.\n\n` +
+        `Use it **only** for visual inspiration: spacing rhythm, header density, card corner radii, shadow weight, ` +
+        `typography scale, button shape, and overall polish. Synthesize a **credible logged-in or authenticated app shell** ` +
+        `appropriate to the demo story — do **not** copy the homepage structure verbatim, reproduce marketing or legal copy, ` +
+        `or embed this screenshot in the generated HTML/CSS. The HOST APP DESIGN SYSTEM block and brand JSON remain ` +
+        `authoritative for colors, fonts, and logo URLs.\n`,
+    });
+    contentBlocks.push({
+      type: 'image',
+      source: {
+        type:       'base64',
+        media_type: 'image/png',
+        data:       brandSiteB64,
+      },
+    });
+  }
+
   const plaidSkillMd = typeof opts.plaidSkillMarkdown === 'string' ? opts.plaidSkillMarkdown.trim() : '';
   if (plaidSkillMd) {
     contentBlocks.push({
@@ -1273,6 +1359,15 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     });
   }
   if (useLayerMobileMockTemplate && layerMockTemplate) {
+    if (opts.plaidLinkLive && !includeLiveLinkInstructionBlock) {
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `## LAYER MOCK PRIORITY MODE\n\n` +
+          `This run indicates a Layer mobile mock prototype. Do NOT inject the full LIVE PLAID LINK MODE instruction block.\n` +
+          `Treat Layer mock flow as primary unless the prompt explicitly requires both Layer and live Plaid Link fallback paths.`,
+      });
+    }
     contentBlocks.push({
       type: 'text',
       text:
@@ -1282,10 +1377,32 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `Critical requirements:\n` +
         `- Keep screen 1 host-owned (eligibility capture) and screens 2-4 Layer-owned mock panels.\n` +
         `- Screen 1 should ask for phone to begin onboarding/signup/application; do not present it as an eligibility-check message.\n` +
-        `- Use brand accent token from HOST APP DESIGN SYSTEM (brand.colors.accentCta) in place of hardcoded green.\n` +
-        `- Replace company, contact, and account tokens to match other steps in this demo.\n` +
+        `- **Layer mock colors:** Use ONLY the CSS variables \`--layer-brand-accent\`, \`--layer-brand-accent-hover\`, \`--layer-brand-tint-bg\`, \`--layer-phone-input-border\`, \`--layer-host-page-bg-from\`, \`--layer-host-page-bg-to\` for host eligibility chrome AND Layer sheet CTAs, consent card tint, spinners, and bank chip fills. The pipeline injects these from the current run's \`brand.colors\` — do **not** hardcode hex/rgb for Layer or host mobile accents and do **not** introduce parallel primary-color variables (e.g. \`--pm-primary\`) for those surfaces.\n` +
+        `- Replace only variable tokens (company/contact/account/address values) to match this demo; preserve canonical Layer template layout/CSS/logo placement/static copy.\n` +
         `- Keep all layer mock screens within the existing mobile simulator shell pattern.\n` +
-        `- For mock mode, do not depend on live SDK iframe visibility for these 3 Layer screens.\n`,
+        `- For mock mode, do not depend on live SDK iframe visibility for these 3 Layer screens.\n` +
+        `- Routing contract is mandatory: if user is Layer-eligible, complete onboarding directly and do NOT collect fallback PII.\n` +
+        `- Only ineligible users may continue to fallback PII collection and then standard Plaid Link bank linking.\n` +
+        `- Include subtle helper text directly below the mobile frame with both routing numbers: 415-555-1111 (eligible) and 415-555-0011 (ineligible fallback).\n` +
+        `- Prefill the host phone input with eligible number 415-555-1111 by default.\n`,
+    });
+  }
+  if (useLayerMobileMockTemplate && layerMobileSkeletonHtml) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## LAYER MOBILE MOCK — CANONICAL SKELETON (HARD CONTRACT)\n\n` +
+        `When this section is present, the generated app MUST conform to the following HTML as the **structural source of truth** for Layer mobile mock layout, ` +
+        `CSS patterns (including mobile-shell fill rules), runtime hooks, Plaid logo usage, host visual placeholder, and eligibility helper. ` +
+        `Map \`data-testid="step-…"\` and narration copy to this run's demo-script.json and brand; do **not** invent an alternate Layer presentation (different sheet structure, missing helper, duplicate PLAID wordmark, or decorative credit-card hero).\n\n` +
+        `Non-negotiable reminders:\n` +
+        `- Wrap steps in \`.app-main\`; primary phone chrome carries \`data-testid="mobile-simulator-shell"\` (exact string must appear in HTML for mobile-visual QA).\n` +
+        `- Global fixed \`data-testid="layer-eligibility-helper-text"\` with both sandbox numbers and outcomes.\n` +
+        `- Layer modal header: \`<img src="./plaid-logo-horizontal-black-white-background.png" alt="Plaid">\` only — wordmark image includes the Plaid name; **remove** any adjacent "PLAID" text.\n` +
+        `- Host marketing slot: \`host-use-case-visual-slot\` / \`data-testid="host-use-case-visual-placeholder"\` (set image src per product).\n\n` +
+        '### Full canonical reference\n\n```html\n' +
+        layerMobileSkeletonHtml +
+        '\n```\n',
     });
   }
   if (useLayerMobileMockTemplate) {
@@ -1412,7 +1529,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
   });
 
   // Live Plaid Link mode instructions
-  if (opts.plaidLinkLive) {
+  if (opts.plaidLinkLive && includeLiveLinkInstructionBlock) {
     const hasCaptures = Array.isArray(opts.plaidLinkScreens) && opts.plaidLinkScreens.length > 0;
 
     if (false && hasCaptures) {
@@ -1633,7 +1750,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
   }
 
   // Design plugin: inject assetlib as pixel-perfect reference for Plaid Link UI
-  if (opts.designPluginHtml) {
+  if (opts.designPluginHtml && includeLiveLinkInstructionBlock) {
     let designBlock =
       `## DESIGN PLUGIN: Plaid Link Asset Library (pixel-perfect reference)\n\n` +
       `The following HTML/CSS is a production-accurate prototype of Plaid Link's Core Credentials ` +
@@ -1698,6 +1815,7 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
     totalSteps = null,
     prevStep   = null,
     nextStep   = null,
+    narrationStrict = false,
   } = demoContext;
 
   // Detect whether this step is intentionally Plaid-branded
@@ -1722,6 +1840,26 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
       `if the expected visual state explicitly describes them. If Plaid Link modal is open when it ` +
       `should be dismissed, that is a real bug.`;
 
+  const plaidLaunchCtaNote =
+    step.plaidPhase === 'launch'
+      ? `\n\nADDITIONAL CHECK — PLAID LINK LAUNCH CTA: This step shows the host control that opens Plaid Link. ` +
+        `If a leading link/chain icon is visible, it must be modest relative to the button label (roughly text line-height to ~24px — an inline affordance, not a hero graphic). ` +
+        `If the icon dominates the button (fills most of the height/width or dwarfs the label), treat that as a UX defect: deduct points, list it in issues, and suggest shrinking the icon or fixing flex/layout so the label remains primary. ` +
+        `Apply this check even when the expected visual state does not mention icon size.`
+      : '';
+
+  const hasApiResponsePayload =
+    step.apiResponse &&
+    step.apiResponse.response &&
+    typeof step.apiResponse.response === 'object' &&
+    !Array.isArray(step.apiResponse.response) &&
+    Object.keys(step.apiResponse.response).length > 0;
+  const isValueSummaryId = String(step.id || '').toLowerCase() === 'value-summary-slide';
+  const apiJsonRailNote =
+    hasApiResponsePayload && !isValueSummaryId
+      ? `\n\nAPI JSON RAIL CONTRACT: This step includes apiResponse in the demo script. The global right-hand API / JSON side panel (#api-response-panel) should be visible with plausible sample JSON — not only narrative UI in the main slide. If the JSON rail is missing, empty, or raw JSON is only inside the slide body, treat that as a significant defect (deduct materially and list in issues).`
+      : '';
+
   const system =
     `You are a QA engineer reviewing a Plaid product demo recording. ` +
     `${productLine} ${personaLine} ${stepPosition}\n\n` +
@@ -1729,7 +1867,14 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
     `field. Score strictly against that description — do not apply general assumptions about what ` +
     `Plaid demos "should" look like or invent criteria not present in the expected state. ` +
     `Be specific and actionable in your feedback.` +
-    plaidBrandingNote;
+    plaidBrandingNote +
+    plaidLaunchCtaNote +
+    apiJsonRailNote;
+  const narrationStrictNote = narrationStrict
+    ? `\n\nIMPORTANT — NARRATION-CHECK MODE: This step narration contains concrete anchors (metrics, decisions, or critical outcomes). ` +
+      `If narration claims a concrete value/outcome (e.g., ACCEPT/REVIEW, score, amount, percentage, timing), verify that evidence is visible in at least one frame. ` +
+      `If not visible, report it as an issue and deduct points.`
+    : '';
 
   // Build step position context string
   const navContext = [
@@ -1747,7 +1892,8 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
         `Step ID:    ${step.id}\n` +
         `Label:      ${step.label}\n` +
         `Narration:  ${step.narration}\n\n` +
-        `Expected visual state (score against THIS description only):\n${expectedState}\n\n` +
+        `Expected visual state (score against THIS description only):\n${expectedState}\n` +
+        narrationStrictNote + `\n\n` +
         `Below are three frames captured during recording: start of step, midpoint, and end of step.`,
     },
   ];
@@ -1768,6 +1914,7 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
       `Scoring rules:\n` +
       `- 100 = frames match the expected state exactly\n` +
       `- Deduct points only for deviations from the expected visual state\n` +
+      `- In narration-check mode, deduct points when concrete narration claims are not visibly evidenced in the frames\n` +
       `- Do NOT deduct points for design choices that are consistent with the expected state\n` +
       `- A "critical" issue is one where the step is completely wrong or broken (wrong screen, modal stuck open, blank frame)\n\n` +
       `Output ONLY a JSON object — no prose, no markdown fences:\n\n` +
@@ -1776,7 +1923,7 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
       `  "score": <0–100>,\n` +
       `  "issues": ["<specific deviation from expected state>", ...],\n` +
       `  "suggestions": ["<actionable fix>", ...],\n` +
-      `  "categories": ["<navigation-mismatch|missing-panel|panel-visibility|prompt-contract-drift|slide-template-misuse|action-failure|plaid-step-uncertainty>", ...],\n` +
+      `  "categories": ["<navigation-mismatch|missing-panel|panel-visibility|prompt-contract-drift|slide-template-misuse|action-failure|plaid-step-uncertainty|plaid-launch-cta-ux>", ...],\n` +
       `  "critical": <true if the step is completely wrong or broken>\n` +
       `}`,
   });
@@ -2022,4 +2169,5 @@ module.exports = {
   buildNarrationPolishPrompt,
   buildOverlayPlanPrompt,
   buildScriptCritiquePrompt,
+  shouldInjectLayerMobileMockTemplate,
 };
