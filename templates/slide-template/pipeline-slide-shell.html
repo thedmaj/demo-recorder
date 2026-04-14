@@ -14,7 +14,7 @@
 
   JSON viewer:
   - renderjson from CDN (required).
-  - Persist THREE controls: Show JSON, Hide JSON, and data-testid="api-panel-toggle" (Playwright).
+  - Persist ONE control: edge toggle icon with data-testid="api-panel-toggle" (Playwright).
   - All nodes expanded when JSON is rendered (set_show_to_level 'all').
 -->
 <head>
@@ -81,13 +81,11 @@
   </div>
 
   <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none" aria-label="API JSON panel">
+    <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle" aria-label="Expand API JSON panel" aria-expanded="false">
+      <span class="api-panel-toggle-icon" aria-hidden="true"></span>
+    </button>
     <header class="side-panel-header">
       <span>API Response</span>
-      <div class="api-panel-header-actions">
-        <button type="button" id="api-json-panel-show" data-testid="api-json-panel-show">Show JSON</button>
-        <button type="button" id="api-json-panel-hide" data-testid="api-json-panel-hide">Hide JSON</button>
-        <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle">Show JSON</button>
-      </div>
     </header>
     <div class="side-panel-body">
       <div id="api-response-content"></div>
@@ -103,8 +101,8 @@
       collapsedByDefault: true,
       jsonExpandLevel: 'all',
       autoResize: true,
-      minWidthPx: 360,
-      maxWidthViewportRatio: 0.52
+      minWidthPx: 414,
+      maxWidthViewportRatio: 0.6
     },
     window.__API_PANEL_CONFIG || {}
   );
@@ -122,26 +120,32 @@
   function isPanelVisible() {
     var panel = document.getElementById('api-response-panel');
     if (!panel) return false;
-    return panel.style.display === 'flex';
+    return panel.style.display === 'flex' && !panel.classList.contains('api-panel-collapsed');
   }
 
   function syncPanelChrome() {
     var vis = isPanelVisible();
     var leg = document.getElementById('api-panel-toggle');
-    if (leg) leg.textContent = vis ? 'Hide JSON' : 'Show JSON';
+    if (!leg) return;
+    leg.setAttribute('aria-expanded', vis ? 'true' : 'false');
+    leg.setAttribute('aria-label', vis ? 'Collapse API JSON panel' : 'Expand API JSON panel');
+    if (vis) leg.classList.add('is-open');
+    else leg.classList.remove('is-open');
   }
 
   function showApiPanel() {
     var panel = document.getElementById('api-response-panel');
     if (!panel) return;
     panel.style.display = 'flex';
+    panel.classList.remove('api-panel-collapsed');
     syncPanelChrome();
   }
 
   function hideApiPanel() {
     var panel = document.getElementById('api-response-panel');
     if (!panel) return;
-    panel.style.display = 'none';
+    panel.style.display = 'flex';
+    panel.classList.add('api-panel-collapsed');
     syncPanelChrome();
   }
 
@@ -174,8 +178,6 @@
     else showApiPanel();
   };
 
-  document.getElementById('api-json-panel-show')?.addEventListener('click', showApiPanel);
-  document.getElementById('api-json-panel-hide')?.addEventListener('click', hideApiPanel);
   document.getElementById('api-panel-toggle')?.addEventListener('click', function () {
     window.toggleApiPanel();
   });
@@ -184,14 +186,13 @@
 
   /* ── Standalone file preview only (omit when merging into scratch-app) ── */
   (function previewExpandedJson() {
-    window.__API_PANEL_CONFIG = Object.assign({}, window.__API_PANEL_CONFIG, { collapsedByDefault: false });
+    window.__API_PANEL_CONFIG = Object.assign({}, window.__API_PANEL_CONFIG, { collapsedByDefault: true });
     window.updateApiResponse({
       scores: { customer_initiated_return_risk: { score: 8, risk_tier: 'LOW' } },
       ruleset: { outcome: 'ACCEPT', triggered_rules: [] },
       nested: { items: [{ id: 'a' }, { id: 'b' }] },
       request_id: 'pipeline-slide-shell-preview'
     });
-    showApiPanel();
   })();
 })();
   </script>

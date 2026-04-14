@@ -70,7 +70,11 @@ const PLAID_SIM_STEP_PATTERN = /^link[-_](?:consent|otp|account[-_]select|succes
 function parseArgs() {
   const iterArg = process.argv.find(a => a.startsWith('--iteration='));
   const iteration = iterArg ? parseInt(iterArg.replace('--iteration=', ''), 10) : 1;
-  return { iteration };
+  const thresholdArg = process.argv.find(a => a.startsWith('--qa-threshold='));
+  const qaPassThreshold = thresholdArg
+    ? parseInt(thresholdArg.replace('--qa-threshold=', ''), 10)
+    : null;
+  return { iteration, qaPassThreshold };
 }
 
 // ── Frame extraction ──────────────────────────────────────────────────────────
@@ -123,16 +127,25 @@ function extractStepFrames(timingSteps) {
   for (const step of timingSteps) {
     const { id: stepId, startMs, endMs, durationMs } = step;
 
-    // Three frame timestamps (seconds):
-    //   start: 2s after step start (avoid transition carry-over from previous step)
-    //   mid:   halfway through the step
-    //   end:   1s before step end
-    // Clamped so startSec never exceeds the step boundary (fixes short steps < 3s)
-    const rawStartSec = Math.round(startMs / 1000) + 2;
-    const midSec      = Math.round((startMs + durationMs / 2) / 1000);
-    const rawEndSec   = Math.round(endMs / 1000) - 1;
-    const endSec      = Math.max(Math.round(startMs / 1000), rawEndSec);
-    const startSec    = Math.min(rawStartSec, Math.max(startMs / 1000, endSec - 0.5));
+    // Three frame timestamps (seconds), sampled strictly inside the step window.
+    // This avoids transition-boundary bleed where "start" can still show prior step chrome.
+    const stepStartSec = Math.max(0, startMs / 1000);
+    const stepEndSec = Math.max(stepStartSec + 0.08, endMs / 1000);
+    const durationSec = Math.max(0.08, stepEndSec - stepStartSec);
+    const startOffsetSec = Math.min(1.2, Math.max(0.25, durationSec * 0.18));
+    const endOffsetSec = Math.min(0.35, Math.max(0.08, durationSec * 0.16));
+
+    let startSec = Math.min(stepEndSec - 0.06, stepStartSec + startOffsetSec);
+    let endSec = Math.max(stepStartSec + 0.06, stepEndSec - endOffsetSec);
+    let midSec = stepStartSec + (durationSec * 0.55);
+    midSec = Math.min(endSec - 0.02, Math.max(startSec + 0.02, midSec));
+
+    if (!(startSec <= midSec && midSec <= endSec)) {
+      // Fallback for very short or malformed windows.
+      startSec = stepStartSec + 0.02;
+      endSec = Math.max(stepStartSec + 0.04, stepEndSec - 0.02);
+      midSec = stepStartSec + ((endSec - stepStartSec) / 2);
+    }
 
     const frameSpecs = [
       { label: 'start', time: startSec, filename: `${stepId}-start.png` },
@@ -310,6 +323,11 @@ function hasNarrationCriticalMarkers(step) {
 async function main(opts = {}) {
   const cliArgs  = parseArgs();
   const iteration = opts.iteration != null ? opts.iteration : cliArgs.iteration;
+  const qaPassThreshold = Number.isFinite(Number(opts.qaPassThreshold))
+    ? Number(opts.qaPassThreshold)
+    : Number.isFinite(Number(cliArgs.qaPassThreshold))
+      ? Number(cliArgs.qaPassThreshold)
+      : QA_PASS_THRESHOLD;
   const buildOnly = opts.buildOnly === true;
   const buildQaDiagnostics = Array.isArray(opts.buildQaDiagnostics) ? opts.buildQaDiagnostics : [];
 
@@ -370,13 +388,13 @@ async function main(opts = {}) {
   };
 
   console.log(`[QA] Starting QA review (iteration ${iteration})${buildOnly ? ' [build-only — no recording]' : ''}`);
-  console.log(`[QA] Product: ${demoMeta.product || '(unknown)'} | ${timing.steps.length} steps | threshold: ${QA_PASS_THRESHOLD}/100`);
+  console.log(`[QA] Product: ${demoMeta.product || '(unknown)'} | ${timing.steps.length} steps | threshold: ${qaPassThreshold}/100`);
   appendPipelineLogSection('[QA] Review started', [
     `iteration=${iteration}`,
     `qaSource=${buildOnly ? 'build-walkthrough' : 'recording'}`,
     `product=${demoMeta.product || 'unknown'}`,
     `stepCount=${timing.steps.length}`,
-    `threshold=${QA_PASS_THRESHOLD}`,
+    `threshold=${qaPassThreshold}`,
   ], { runDir: OUT_DIR });
 
   // ── Step 1: Extract frames ─────────────────────────────────────────────────
@@ -426,6 +444,34 @@ async function main(opts = {}) {
     const arr = diagByStep.get(diag.stepId) || [];
     arr.push(diag);
     diagByStep.set(diag.stepId, arr);
+  }
+  const deterministicCriticalDiagnostics = buildQaDiagnostics.filter((d) => {
+    if (!d) return false;
+    if (d.deterministicBlocker === true) return true;
+    if (d.deterministicBlocker === false) return false;
+    return d.severity === 'critical';
+  });
+  const deterministicCriticalStepIds = new Set(
+    deterministicCriticalDiagnostics.map((d) => d?.stepId).filter(Boolean)
+  );
+
+  function applyDiagnosticsToResult(result, stepDiagnostics) {
+    if (!result || !Array.isArray(stepDiagnostics) || stepDiagnostics.length === 0) return result;
+    const diagIssues = stepDiagnostics.map((d) => d.issue).filter(Boolean);
+    const diagSuggestions = stepDiagnostics.map((d) => d.suggestion).filter(Boolean);
+    const diagCategories = [...new Set(stepDiagnostics.map((d) => d.category).filter(Boolean))];
+    result.issues = [...diagIssues, ...(result.issues || [])];
+    result.suggestions = [...diagSuggestions, ...(result.suggestions || [])];
+    result.categories = [...new Set([...(result.categories || []), ...diagCategories])];
+    if (stepDiagnostics.some((d) => {
+      if (d.deterministicBlocker === true) return true;
+      if (d.deterministicBlocker === false) return false;
+      return d.severity === 'critical';
+    })) {
+      result.critical = true;
+      result.score = Math.min(Number(result.score || 0), 45);
+    }
+    return result;
   }
 
   // Build timing lookup by step ID
@@ -532,41 +578,38 @@ async function main(opts = {}) {
   }
 
   const visionResults = await mapPool(QA_REVIEW_CONCURRENCY, visionJobs, async (job) => {
-    const result = await reviewStep(client, job.step, job.stepId, job.frames, job.stepReviewContext);
-    const stepDiagnostics = diagByStep.get(job.stepId) || [];
-    if (stepDiagnostics.length > 0) {
-      const diagIssues = stepDiagnostics.map(d => d.issue);
-      const diagSuggestions = stepDiagnostics.map(d => d.suggestion).filter(Boolean);
-      const diagCategories = [...new Set(stepDiagnostics.map(d => d.category).filter(Boolean))];
-      result.issues = [...diagIssues, ...result.issues];
-      result.suggestions = [...diagSuggestions, ...result.suggestions];
-      result.categories = [...new Set([...(result.categories || []), ...diagCategories])];
-      if (stepDiagnostics.some(d => d.severity === 'critical')) {
-        result.critical = true;
-        result.score = Math.min(result.score, 45);
-      }
-    }
-    return result;
+    return reviewStep(client, job.step, job.stepId, job.frames, job.stepReviewContext);
   });
 
   let visionIdx = 0;
   for (const entry of pipelineEntries) {
     let result;
+    const stepDiagnostics = diagByStep.get(entry.stepId) || [];
     if (entry.kind === 'resolved') {
       result = entry.result;
+      applyDiagnosticsToResult(result, stepDiagnostics);
       allStepScores[entry.stepId] = result.score;
       const label = result._qaConsoleLabel || '';
-      console.log(`[QA] Step ${entry.stepId}: ${result.score}/100 [${label}]`);
+      const criticalFlag = result.critical ? ' [CRITICAL]' : '';
+      console.log(`[QA] Step ${entry.stepId}: ${result.score}/100${label ? ` [${label}]` : ''}${criticalFlag}`);
+      if (result.issues.length > 0) {
+        for (const issue of result.issues) {
+          console.log(`       Issue: ${issue}`);
+        }
+      }
       appendPipelineLogJson('[QA] Step result', {
         stepId: entry.stepId,
         score: result.score,
-        passed: true,
+        passed: !result.critical && result.score >= qaPassThreshold,
+        critical: !!result.critical,
         reason: result._note || label,
-        issues: [],
+        issues: result.issues || [],
+        suggestions: result.suggestions || [],
         categories: result.categories || [],
       }, { runDir: OUT_DIR });
     } else {
       result = visionResults[visionIdx++];
+      applyDiagnosticsToResult(result, stepDiagnostics);
       allStepScores[entry.stepId] = result.score;
       const criticalFlag = result.critical ? ' [CRITICAL]' : '';
       console.log(`[QA] Step ${entry.stepId}: ${result.score}/100${criticalFlag}`);
@@ -578,7 +621,7 @@ async function main(opts = {}) {
       appendPipelineLogJson('[QA] Step result', {
         stepId: entry.stepId,
         score: result.score,
-        passed: !result.critical && result.score >= 80,
+        passed: !result.critical && result.score >= qaPassThreshold,
         critical: !!result.critical,
         issues: result.issues || [],
         suggestions: result.suggestions || [],
@@ -599,15 +642,28 @@ async function main(opts = {}) {
     : 0;
 
   const stepsWithIssues = stepResults.filter(
-    r => r.score < 80 || r.critical
+    r => r.score < qaPassThreshold || r.critical
   );
 
-  const passed = overallScore >= QA_PASS_THRESHOLD;
+  const rawDeterministicGate = buildOnly
+    ? process.env.BUILD_QA_DETERMINISTIC_GATE
+    : process.env.QA_DETERMINISTIC_GATE;
+  const deterministicGateEnabled = rawDeterministicGate == null
+    ? true
+    : !(rawDeterministicGate === '0' || rawDeterministicGate === 'false');
+  const visionThresholdPassed = overallScore >= qaPassThreshold;
+  const deterministicPassed = deterministicCriticalDiagnostics.length === 0;
+  const passed = visionThresholdPassed && (!deterministicGateEnabled || deterministicPassed);
 
   const qaReport = {
     iteration,
     overallScore,
-    passThreshold: QA_PASS_THRESHOLD,
+    passThreshold: qaPassThreshold,
+    deterministicGateEnabled,
+    visionThresholdPassed,
+    deterministicPassed,
+    deterministicCriticalCount: deterministicCriticalDiagnostics.length,
+    deterministicCriticalStepIds: [...deterministicCriticalStepIds],
     passed,
     steps: stepResults,
     stepsWithIssues,
@@ -627,12 +683,20 @@ async function main(opts = {}) {
   fs.writeFileSync(reportPath, JSON.stringify(qaReport, null, 2));
 
   const verdict = passed ? 'PASSED' : 'FAILED';
-  console.log(`[QA] Overall: ${overallScore}/100 — ${verdict}`);
+  console.log(
+    `[QA] Overall: ${overallScore}/100 — ${verdict} ` +
+    `(visionThresholdPassed=${visionThresholdPassed}, deterministicPassed=${deterministicPassed}, deterministicGateEnabled=${deterministicGateEnabled})`
+  );
   console.log(`[QA] Written: out/qa-report-${iteration}.json`);
   appendPipelineLogJson('[QA] Overall result', {
     iteration,
     overallScore,
-    threshold: QA_PASS_THRESHOLD,
+    threshold: qaPassThreshold,
+    deterministicGateEnabled,
+    visionThresholdPassed,
+    deterministicPassed,
+    deterministicCriticalCount: deterministicCriticalDiagnostics.length,
+    deterministicCriticalStepIds: [...deterministicCriticalStepIds],
     passed,
     qaSource: qaReport.qaSource,
     stepsWithIssues: stepsWithIssues.map((s) => ({

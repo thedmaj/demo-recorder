@@ -13,6 +13,21 @@
 
   const RUN_ID = window.__DEMO_RUN_ID__;
   const DASHBOARD = window.__DASHBOARD_ORIGIN__;
+  const AI_CFG = window.__AI_EDIT_CONFIG__ && typeof window.__AI_EDIT_CONFIG__ === 'object'
+    ? window.__AI_EDIT_CONFIG__
+    : {};
+  const PICKED_HTML_MAX_CHARS = Number.isFinite(Number(AI_CFG.pickedHtmlMaxChars))
+    ? Math.max(200, Number(AI_CFG.pickedHtmlMaxChars))
+    : 2000;
+  const CONVERSATION_MAX_TURNS = Number.isFinite(Number(AI_CFG.conversationMaxTurns))
+    ? Math.max(1, Number(AI_CFG.conversationMaxTurns))
+    : 12;
+  const CONVERSATION_MAX_CHARS_PER_TURN = Number.isFinite(Number(AI_CFG.conversationMaxCharsPerTurn))
+    ? Math.max(100, Number(AI_CFG.conversationMaxCharsPerTurn))
+    : 2000;
+  const CONVERSATION_MAX_TOTAL_CHARS = Number.isFinite(Number(AI_CFG.conversationMaxTotalChars))
+    ? Math.max(500, Number(AI_CFG.conversationMaxTotalChars))
+    : 12000;
 
   // If globals aren't set, the overlay was loaded outside the dashboard preview — bail silently.
   if (!RUN_ID || !DASHBOARD) return;
@@ -43,6 +58,11 @@
   let pickedElement = null;
   let pickedHtml = null;
   let pickedSelector = null;
+  let pickedParentHtml = null;
+  let pickedContainerHtml = null;
+  let pickedAttributes = null;
+  let pickedTextPreview = null;
+  let pickedDomPath = null;
   let hoveredEl = null;
   let conversationHistory = [];
 
@@ -506,8 +526,20 @@
     }
 
     pickedElement = e.target;
-    pickedHtml = e.target.outerHTML.slice(0, 2000); // cap at 2KB
+    pickedHtml = clip(e.target.outerHTML, PICKED_HTML_MAX_CHARS);
     pickedSelector = buildSelector(e.target);
+    pickedParentHtml = pickedElement.parentElement ? clip(pickedElement.parentElement.outerHTML, PICKED_HTML_MAX_CHARS) : null;
+    const bestContainer = pickBestContainer(pickedElement);
+    pickedContainerHtml = bestContainer ? clip(bestContainer.outerHTML, PICKED_HTML_MAX_CHARS) : null;
+    pickedAttributes = {};
+    if (pickedElement.attributes) {
+      for (const attr of pickedElement.attributes) {
+        if (!attr || !attr.name) continue;
+        pickedAttributes[attr.name] = clip(attr.value || '', 240);
+      }
+    }
+    pickedTextPreview = clip((pickedElement.textContent || '').replace(/\s+/g, ' ').trim(), 600);
+    pickedDomPath = buildDomPath(pickedElement);
 
     pickedElement.classList.add('__ai-pick-selected');
 
@@ -530,6 +562,11 @@
     }
     pickedHtml = null;
     pickedSelector = null;
+    pickedParentHtml = null;
+    pickedContainerHtml = null;
+    pickedAttributes = null;
+    pickedTextPreview = null;
+    pickedDomPath = null;
     contextBar.classList.add('empty');
     contextLabel.textContent = '';
   });
@@ -542,6 +579,49 @@
       ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.')
       : '';
     return tag + cls;
+  }
+
+  function clip(value, maxChars) {
+    return String(value == null ? '' : value).slice(0, maxChars);
+  }
+
+  function buildDomPath(el) {
+    const parts = [];
+    let cur = el;
+    let depth = 0;
+    while (cur && depth < 8 && cur.nodeType === 1) {
+      const tag = cur.tagName.toLowerCase();
+      const id = cur.id ? `#${cur.id}` : '';
+      const testid = cur.dataset && cur.dataset.testid ? `[data-testid="${cur.dataset.testid}"]` : '';
+      const cls = cur.className && typeof cur.className === 'string'
+        ? '.' + cur.className.trim().split(/\s+/).slice(0, 2).join('.')
+        : '';
+      parts.unshift(`${tag}${id || testid || cls}`);
+      cur = cur.parentElement;
+      depth++;
+    }
+    return parts.join(' > ');
+  }
+
+  function pickBestContainer(el) {
+    if (!el || !el.closest) return null;
+    return el.closest('[data-testid], .step, .card, .panel, .modal, section, article, main, form, nav') || el.parentElement;
+  }
+
+  function boundedHistory(history) {
+    const out = [];
+    let total = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const turn = history[i];
+      if (!turn || (turn.role !== 'user' && turn.role !== 'assistant')) continue;
+      const content = clip(turn.content || '', CONVERSATION_MAX_CHARS_PER_TURN).trim();
+      if (!content) continue;
+      if (total + content.length > CONVERSATION_MAX_TOTAL_CHARS) continue;
+      out.unshift({ role: turn.role, content });
+      total += content.length;
+      if (out.length >= CONVERSATION_MAX_TURNS) break;
+    }
+    return out;
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────────
@@ -560,7 +640,12 @@
         message,
         selectedElementHtml: pickedHtml || null,
         selectedElementSelector: pickedSelector || null,
-        conversationHistory,
+        selectedElementParentHtml: pickedParentHtml || null,
+        selectedElementContainerHtml: pickedContainerHtml || null,
+        selectedElementAttributes: pickedAttributes || null,
+        selectedElementTextPreview: pickedTextPreview || null,
+        domPath: pickedDomPath || null,
+        conversationHistory: boundedHistory(conversationHistory),
         // Send the active step ID so the server can scope edits to just this step's div
         currentStepId: typeof window.getCurrentStep === 'function'
           ? (window.getCurrentStep() || '').replace(/^step-/, '')
@@ -582,10 +667,7 @@
 
       // Track conversation history (use summary as assistant reply)
       conversationHistory.push({ role: 'user', content: message });
-      if (data.assistantMessage) {
-        // Don't add the full HTML to history — summarise
-        conversationHistory.push({ role: 'assistant', content: data.reply || 'Changes applied.' });
-      }
+      conversationHistory.push({ role: 'assistant', content: data.reply || data.assistantMessage || 'Changes applied.' });
 
       addMessage('assistant', data.reply || 'Changes applied.');
 

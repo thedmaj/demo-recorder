@@ -93,6 +93,11 @@
   flex-direction:column;
   gap: 28px;
   min-width:0;
+  width: min(1220px, calc(100% - 64px));
+  margin: 22px auto;
+  border: 1px solid var(--slide-border);
+  border-radius: 18px;
+  background: rgba(255,255,255,0.03);
 }
 
 .slide-hero{ max-width: 920px; }
@@ -140,6 +145,19 @@
   max-width: 72ch;
 }
 
+.slide-root table{
+  width: min(100%, 1040px);
+  margin-inline: auto;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.slide-root th,
+.slide-root td{
+  padding: 10px 12px;
+  vertical-align: top;
+  word-break: break-word;
+}
+
 .slide-callout{
   align-self:flex-end;
   background: rgba(255,255,255,0.05);
@@ -182,8 +200,8 @@
   position: fixed;
   top: 0;
   right: 0;
-  width: 420px;
-  min-width: 360px;
+  width: 483px;
+  min-width: 414px;
   max-width: calc(100vw - 32px);
   height: 100vh;
   background: rgba(13,17,23,0.95);
@@ -203,30 +221,50 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.api-panel-header-actions{
-  margin-left: auto;
-  display: flex;
-  flex-wrap: wrap;
+.api-panel-edge-toggle{
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 64px;
+  border-radius: 10px 0 0 10px;
+  border: 1px solid rgba(0,166,126,0.55);
+  border-right: none;
+  background: rgba(0,166,126,0.22);
+  color: #9cf8df;
+  display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-#api-panel-toggle,
-#api-json-panel-show,
-#api-json-panel-hide{
-  padding: 4px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.22);
-  background: rgba(255,255,255,0.08);
-  color: #fff;
+  justify-content: center;
   cursor: pointer;
-  font-size: 11px;
-  font-family: inherit;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.28);
 }
-#api-panel-toggle:hover,
-#api-json-panel-show:hover,
-#api-json-panel-hide:hover{
-  background: rgba(255,255,255,0.14);
+.api-panel-edge-toggle:hover{
+  background: rgba(0,166,126,0.30);
+  color: #c6ffef;
+}
+.api-panel-toggle-icon{
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(-135deg);
+  display: block;
+}
+.api-panel-edge-toggle.is-open .api-panel-toggle-icon{
+  transform: rotate(45deg);
+}
+.side-panel{
+  overflow: visible;
+}
+.side-panel.api-panel-collapsed{
+  width: 22px !important;
+  min-width: 22px !important;
+  max-width: 22px !important;
+}
+.side-panel.api-panel-collapsed .side-panel-header,
+.side-panel.api-panel-collapsed .side-panel-body{
+  display: none !important;
 }
 .side-panel-body{
   padding: 14px 16px;

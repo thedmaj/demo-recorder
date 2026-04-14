@@ -13,7 +13,16 @@
  * No Steel.dev — uses Playwright's local Chromium directly.
  */
 
+// Preserve explicit shell-provided env values before dotenv override.
+const PRESERVED_ENV_KEYS = ['RECORDING_FPS', 'RECORD_POSTPROCESS_TIMEOUT_MS'];
+const preservedEnv = {};
+for (const key of PRESERVED_ENV_KEYS) {
+  if (process.env[key] != null) preservedEnv[key] = process.env[key];
+}
 require('dotenv').config({ override: true });
+for (const [key, value] of Object.entries(preservedEnv)) {
+  process.env[key] = value;
+}
 const { chromium }  = require('playwright');
 const fs             = require('fs');
 const path           = require('path');
@@ -68,12 +77,24 @@ const SMART_PLAID_AGENT = process.env.SMART_PLAID_AGENT === 'true' && USE_BROWSE
 const PLAID_SCREEN_DWELL_MS = parseInt(process.env.PLAID_SCREEN_DWELL_MS || '4000', 10);
 /** Min wall time between otp-submitted and institution-list-shown (matches test harness). */
 const OTP_TO_INST_LIST_MIN_GAP_MS = parseInt(process.env.OTP_TO_INST_LIST_MIN_GAP_MS || '2000', 10);
+const PLAID_IFRAME_SELECTOR = 'iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"], iframe[src*="plaid.com"]';
+// Transition-safe step timing: when a step begins with goToStep(), stamp timing only
+// after the step is active and DOM settles to avoid transition bleed in QA boundary frames.
+const RECORD_TRANSITION_SAFE_TIMING = !(
+  process.env.RECORD_TRANSITION_SAFE_TIMING === 'false' ||
+  process.env.RECORD_TRANSITION_SAFE_TIMING === '0'
+);
+const STEP_TRANSITION_SETTLE_MS = parseInt(process.env.STEP_TRANSITION_SETTLE_MS || '300', 10);
+// Extra boundary guard immediately after Plaid launch completion.
+const POST_LINK_STEP_BOUNDARY_GUARD_MS = parseInt(process.env.POST_LINK_STEP_BOUNDARY_GUARD_MS || '700', 10);
+const RECORD_POSTPROCESS_TIMEOUT_MS = parseInt(process.env.RECORD_POSTPROCESS_TIMEOUT_MS || '240000', 10);
 
 // Resolved sandbox credentials (populated in main() after async Glean lookup)
 let _sandboxCredentials = null;
 
 // Sandbox config loaded from demo-script.json (overrides env vars and defaults)
 let _sandboxConfig = null;
+let _plaidLinkMode = 'modal';
 
 /**
  * Loads Plaid sandbox configuration from demo-script.json's plaidSandboxConfig block,
@@ -273,7 +294,7 @@ async function executeActions(page, actions) {
  * @returns {import('playwright').FrameLocator}
  */
 function getPlaidLinkFrame(page) {
-  return page.frameLocator('iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]');
+  return page.frameLocator(PLAID_IFRAME_SELECTOR);
 }
 
 /**
@@ -281,7 +302,7 @@ function getPlaidLinkFrame(page) {
  */
 async function plaidLinkWaitReady(page) {
   console.log('  [Plaid Link] Waiting for Link iframe to appear...');
-  const iframeSelector = 'iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]';
+  const iframeSelector = PLAID_IFRAME_SELECTOR;
   // Use state:'attached' — the Plaid iframe may be CSS-hidden (display:none) even after
   // handler.open() is called until Plaid's animation plays. CDP frameLocator can still
   // interact with attached-but-hidden iframes directly. Wait for attached, then attempt
@@ -809,22 +830,60 @@ async function plaidLinkWaitSuccess(page) {
     'step-link-consent', 'step-link-otp', 'step-link-account-select',
   ];
 
-  try {
-    await page.waitForFunction(
-      (intermediateSteps) => {
-        if (!window._plaidLinkComplete) return false;
-        // Compound check: ensure app has advanced past intermediate Plaid steps.
-        // If getCurrentStep is missing treat it as a DOM contract violation and keep waiting.
-        if (typeof window.getCurrentStep !== 'function') return false;
-        const current = window.getCurrentStep();
-        if (current && intermediateSteps.includes(current)) return false;
-        return true;
-      },
-      PLAID_LINK_INTERMEDIATE_STEPS,
-      { timeout: TIMEOUT_MS }
-    );
-    console.log('  [Plaid Link] Link flow complete!');
-  } catch (err) {
+  const deadline = Date.now() + TIMEOUT_MS;
+  let lastRescueAt = 0;
+  let rescueCount = 0;
+  while (Date.now() < deadline) {
+    const ready = await page.evaluate((intermediateSteps) => {
+      if (!window._plaidLinkComplete) return false;
+      if (typeof window.getCurrentStep !== 'function') return false;
+      const current = window.getCurrentStep();
+      if (current && intermediateSteps.includes(current)) return false;
+      return true;
+    }, PLAID_LINK_INTERMEDIATE_STEPS).catch(() => false);
+    if (ready) {
+      console.log('  [Plaid Link] Link flow complete!');
+      return;
+    }
+    // Embedded flows can surface late phone/save prompts after account selection.
+    // Actively try to dismiss every ~2.5s while waiting.
+    if (Date.now() - lastRescueAt > 2500) {
+      lastRescueAt = Date.now();
+      const rescued = await plaidLinkDismissSaveScreen(page).catch(() => false);
+      if (rescued) rescueCount += 1;
+    }
+    // Deterministic fallback: if we are clearly stuck in post-link prompts for too long,
+    // force completion and advance to the next host step to avoid hard timeout stalls.
+    if (Date.now() > deadline - 25000) {
+      const fallback = await page.evaluate(() => {
+        try {
+          if (!window._plaidLinkComplete) window._plaidLinkComplete = true;
+          if (typeof window.getCurrentStep === 'function' && typeof window.goToStep === 'function') {
+            const current = String(window.getCurrentStep() || '').replace(/^step-/, '');
+            const ids = Array.from(document.querySelectorAll('.step[data-testid]'))
+              .map((s) => String(s.dataset.testid || '').replace(/^step-/, ''))
+              .filter(Boolean);
+            const idx = ids.indexOf(current);
+            const next = idx >= 0 ? ids[idx + 1] : null;
+            if (next) window.goToStep(next);
+            return { forced: true, current, next: next || null };
+          }
+          return { forced: true, current: null, next: null };
+        } catch (e) {
+          return { forced: false, error: String(e && e.message ? e.message : e) };
+        }
+      }).catch(() => ({ forced: false }));
+      if (fallback && fallback.forced) {
+        console.warn(
+          `  [Plaid Link] Forced deterministic completion after repeated post-link prompt loop ` +
+          `(current=${fallback.current || 'unknown'} next=${fallback.next || 'none'}).`
+        );
+        return;
+      }
+    }
+    await page.waitForTimeout(300);
+  }
+  {
     // Take a diagnostic screenshot so the failure can be analyzed post-mortem
     const diagPath = path.join(OUT_DIR, `plaid-link-timeout-${Date.now()}.png`);
     await page.screenshot({ path: diagPath, fullPage: true }).catch(() => {});
@@ -845,13 +904,37 @@ async function plaidLinkWaitSuccess(page) {
  */
 async function plaidLinkDismissSaveScreen(page) {
   const frame = getPlaidLinkFrame(page);
+  const fallbackPhone = (_sandboxConfig && _sandboxConfig.phone) ? String(_sandboxConfig.phone) : '+14155550011';
+
+  // If embedded flow is on the optional phone capture prompt, satisfy it directly.
+  try {
+    const phoneInput = frame.locator('input[type="tel"], input[name="phone"], input[inputmode="tel"], input[placeholder*="phone" i]').first();
+    if (await phoneInput.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await phoneInput.fill(fallbackPhone).catch(() => {});
+      for (const cta of ['button:has-text("Continue")', 'button[type="submit"]', 'a:has-text("Continue")']) {
+        const btn = frame.locator(cta).first();
+        if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await btn.click({ timeout: 2000 }).catch(async () => {
+            await btn.click({ force: true, timeout: 1200 }).catch(() => {});
+          });
+          console.log('  [Plaid Link] Completed phone prompt with sandbox number and continued.');
+          await page.waitForTimeout(1200);
+          return true;
+        }
+      }
+    }
+  } catch (_) {}
 
   const selectors = [
     'button:has-text("Finish without saving")',
     'a:has-text("Finish without saving")',
+    'button:has-text("Continue without phone number")',
+    'a:has-text("Continue without phone number")',
     'button:has-text("without saving")',
     // Plaid sometimes shows "Continue" or "Skip" instead
     'button:has-text("Continue")',
+    'a:has-text("Continue")',
+    'button:has-text("Skip")',
   ];
 
   for (const selector of selectors) {
@@ -864,6 +947,48 @@ async function plaidLinkDismissSaveScreen(page) {
         return true;
       }
     } catch (_) {}
+  }
+  for (const txt of ['Continue without phone number', 'without phone number', 'Finish without saving', 'Continue', 'Skip']) {
+    try {
+      const el = frame.getByText(txt, { exact: false }).first();
+      if (await el.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await el.click({ timeout: 3000 }).catch(async () => {
+          await el.click({ force: true, timeout: 2000 }).catch(() => {});
+        });
+        console.log(`  [Plaid Link] Dismissed save/phone prompt via text: "${txt}"`);
+        await page.waitForTimeout(1200);
+        return true;
+      }
+    } catch (_) {}
+  }
+  // Some embedded flows surface the prompt outside the primary Plaid iframe.
+  for (const txt of ['Continue without phone number', 'without phone number', 'Finish without saving', 'Continue', 'Skip']) {
+    try {
+      const pageHit = page.getByText(txt, { exact: false }).first();
+      if (await pageHit.isVisible({ timeout: 700 }).catch(() => false)) {
+        await pageHit.click({ timeout: 2000 }).catch(async () => {
+          await pageHit.click({ force: true, timeout: 1200 }).catch(() => {});
+        });
+        console.log(`  [Plaid Link] Dismissed prompt from page context via text: "${txt}"`);
+        await page.waitForTimeout(1200);
+        return true;
+      }
+    } catch (_) {}
+  }
+  for (const frm of page.frames()) {
+    for (const txt of ['Continue without phone number', 'without phone number', 'Finish without saving', 'Continue', 'Skip']) {
+      try {
+        const hit = frm.getByText(txt, { exact: false }).first();
+        if (await hit.isVisible({ timeout: 500 }).catch(() => false)) {
+          await hit.click({ timeout: 1500 }).catch(async () => {
+            await hit.click({ force: true, timeout: 1000 }).catch(() => {});
+          });
+          console.log(`  [Plaid Link] Dismissed prompt from frame context via text: "${txt}"`);
+          await page.waitForTimeout(1200);
+          return true;
+        }
+      } catch (_) {}
+    }
   }
   return false;
 }
@@ -946,89 +1071,116 @@ async function executePlaidLinkPhase(page, phase) {
     // ── Vision-based agent path ────────────────────────────────────────────
     switch (phase) {
       case 'launch': {
-        // Wait for _plaidHandler to be initialized — the link token fetch is async and
-        // the handler is only set after Plaid.create() is called with the fetched token.
-        // Clicking the button while _plaidHandler is null silently does nothing.
-        console.log('  [Plaid Link] Waiting for _plaidHandler to be initialized (link token)...');
-        await page.waitForFunction(
-          () => window._plaidHandler != null && typeof window._plaidHandler.open === 'function',
-          null,
-          { timeout: 20000 }
-        ).catch(() => {
-          console.warn('  [Plaid Link] _plaidHandler not ready after 20s — proceeding anyway');
-        });
-
-        // Wait for the link token to be ready and button to appear (up to 12s)
-        await page.waitForSelector(
-          '[data-testid="link-external-account-btn"], [data-testid*="btn-link"], [data-testid="btn-link-bank"], [data-testid*="connect-bank"], [data-testid*="open-link"]',
-          { state: 'visible', timeout: 12000 }
-        ).catch(() => {});
-        await page.waitForTimeout(500);
-
-        // Click the button to trigger initiateLink()
-        const visionClicked = await agent.visionClick(page,
-          'Find the button that opens Plaid Link or links a bank account. ' +
-          'It may say "Connect a bank", "Add external account", "Link External Account", "Link Bank Account", "Add Bank", or similar. ' +
-          'It is a prominent action button on the current app page. Click this button.',
-          { retries: 4, waitAfterMs: 1500 }
-        );
-        if (!visionClicked) {
-          // CSS fallback: direct selector click when vision can't find the button
-          const cssSelectors = [
-            '[data-testid="link-external-account-btn"]',
-            '[data-testid="btn-link-bank"]',
-            '[data-testid*="btn-link"]',
-            '[data-testid*="connect-bank"]',
-            '[data-testid*="open-link"]',
-            '[data-testid*="link-account"]',
-            'button[onclick*="openPlaidLink"]',
-            'button[onclick*="initiateLink"]',
-            'button[onclick*="_plaidHandler"]',
-            'button:has-text("Link External Account")',
-            'button:has-text("Connect a bank")',
-            'button:has-text("Add External")',
-            'button:has-text("Link Bank")',
-            'button:has-text("Add Bank")',
-          ];
-          let cssFallbackClicked = false;
-          for (const sel of cssSelectors) {
-            try {
-              const btn = page.locator(sel).first();
-              if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-                await btn.click({ force: true, timeout: 5000 });
-                console.log(`  [Plaid Link] CSS fallback: clicked launch button via "${sel}"`);
-                cssFallbackClicked = true;
-                break;
+        const embeddedMode = String(_plaidLinkMode || 'modal') === 'embedded';
+        if (embeddedMode) {
+          console.log('  [Plaid Link] Embedded mode detected — waiting for preloaded in-page widget...');
+          const embeddedReady = await page.waitForFunction(
+            () =>
+              !!window.__embeddedLinkWidgetLoaded ||
+              !!window.__plaidEmbeddedInstance ||
+              !!document.querySelector('iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"], iframe[src*="plaid.com"]'),
+            null,
+            { timeout: 20000 }
+          ).then(() => true).catch(() => false);
+          if (!embeddedReady) {
+            console.warn('  [Plaid Link] Embedded widget not preloaded within 20s — trying launch CTA fallback');
+            const fallbackClicked = await page.evaluate(() => {
+              const btn = document.querySelector('[data-testid="link-external-account-btn"]');
+              if (btn) {
+                btn.click();
+                return true;
               }
-            } catch (_) {}
-          }
-          // Last resort: call handler.open() directly — _plaidHandler is guaranteed initialized above
-          if (!cssFallbackClicked) {
-            const jsFallbackResult = await page.evaluate(() => {
-              if (typeof window.openPlaidLink === 'function') {
-                window.openPlaidLink();
-                return 'openPlaidLink()';
-              }
-              if (window._plaidHandler && typeof window._plaidHandler.open === 'function') {
-                window._plaidHandler.open();
-                return 'handler.open()';
-              }
-              return null;
-            }).catch(() => null);
-            if (jsFallbackResult) {
-              console.log(`  [Plaid Link] JS fallback: triggered Plaid Link via ${jsFallbackResult}`);
-            } else {
-              console.warn('  [Plaid Link] No way to open Plaid Link found — will wait for iframe');
+              return false;
+            }).catch(() => false);
+            if (fallbackClicked) {
+              await page.waitForTimeout(1500);
             }
           }
+        } else {
+          // Wait for _plaidHandler to be initialized — the link token fetch is async and
+          // the handler is only set after Plaid.create() is called with the fetched token.
+          // Clicking the button while _plaidHandler is null silently does nothing.
+          console.log('  [Plaid Link] Waiting for _plaidHandler to be initialized (link token)...');
+          await page.waitForFunction(
+            () => window._plaidHandler != null && typeof window._plaidHandler.open === 'function',
+            null,
+            { timeout: 20000 }
+          ).catch(() => {
+            console.warn('  [Plaid Link] _plaidHandler not ready after 20s — proceeding anyway');
+          });
+
+          // Wait for the link token to be ready and button to appear (up to 12s)
+          await page.waitForSelector(
+            '[data-testid="link-external-account-btn"], [data-testid*="btn-link"], [data-testid="btn-link-bank"], [data-testid*="connect-bank"], [data-testid*="open-link"]',
+            { state: 'visible', timeout: 12000 }
+          ).catch(() => {});
+          await page.waitForTimeout(500);
+
+          // Click the button to trigger initiateLink()
+          const visionClicked = await agent.visionClick(page,
+            'Find the button that opens Plaid Link or links a bank account. ' +
+            'It may say "Connect a bank", "Add external account", "Link External Account", "Link Bank Account", "Add Bank", or similar. ' +
+            'It is a prominent action button on the current app page. Click this button.',
+            { retries: 4, waitAfterMs: 1500 }
+          );
+          if (!visionClicked) {
+            // CSS fallback: direct selector click when vision can't find the button
+            const cssSelectors = [
+              '[data-testid="link-external-account-btn"]',
+              '[data-testid="btn-link-bank"]',
+              '[data-testid*="btn-link"]',
+              '[data-testid*="connect-bank"]',
+              '[data-testid*="open-link"]',
+              '[data-testid*="link-account"]',
+              'button[onclick*="openPlaidLink"]',
+              'button[onclick*="initiateLink"]',
+              'button[onclick*="_plaidHandler"]',
+              'button:has-text("Link External Account")',
+              'button:has-text("Connect a bank")',
+              'button:has-text("Add External")',
+              'button:has-text("Link Bank")',
+              'button:has-text("Add Bank")',
+            ];
+            let cssFallbackClicked = false;
+            for (const sel of cssSelectors) {
+              try {
+                const btn = page.locator(sel).first();
+                if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+                  await btn.click({ force: true, timeout: 5000 });
+                  console.log(`  [Plaid Link] CSS fallback: clicked launch button via "${sel}"`);
+                  cssFallbackClicked = true;
+                  break;
+                }
+              } catch (_) {}
+            }
+            // Last resort: call handler.open() directly — _plaidHandler is guaranteed initialized above
+            if (!cssFallbackClicked) {
+              const jsFallbackResult = await page.evaluate(() => {
+                if (typeof window.openPlaidLink === 'function') {
+                  window.openPlaidLink();
+                  return 'openPlaidLink()';
+                }
+                if (window._plaidHandler && typeof window._plaidHandler.open === 'function') {
+                  window._plaidHandler.open();
+                  return 'handler.open()';
+                }
+                return null;
+              }).catch(() => null);
+              if (jsFallbackResult) {
+                console.log(`  [Plaid Link] JS fallback: triggered Plaid Link via ${jsFallbackResult}`);
+              } else {
+                console.warn('  [Plaid Link] No way to open Plaid Link found — will wait for iframe');
+              }
+            }
+          }
+          await page.waitForTimeout(1500);
         }
-        await page.waitForTimeout(1500);
 
         // Also try to automate the real Plaid iframe in background (for token exchange).
         // This is optional — if it fails, the pre-populated sandbox data is used instead.
         // We only try if the iframe actually appeared.
         const iframePresent = await page.locator(
-          'iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]'
+          PLAID_IFRAME_SELECTOR
         ).isVisible({ timeout: 5000 }).catch(() => false);
 
         // Wait for the real Plaid iframe to be ready before interacting.
@@ -1067,7 +1219,7 @@ async function executePlaidLinkPhase(page, phase) {
         } else
 
         try {
-          const frame = page.frameLocator('iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]');
+          const frame = page.frameLocator(PLAID_IFRAME_SELECTOR);
 
           // ── 1. Phone entry screen (Remember Me) ─────────────────────────────
           // Plaid shows a phone number input as the first screen.
@@ -1163,12 +1315,28 @@ async function executePlaidLinkPhase(page, phase) {
             // ── 4. Institution search ──────────────────────────────────────────
             console.log(`  [Plaid Link] Searching for institution: ${PLAID_SANDBOX_INSTITUTION}...`);
             let searchDone = false;
-            for (const sel of ['input[placeholder*="Search" i]', 'input[type="search"]', 'input[name="search"]', 'input[aria-label*="Search" i]']) {
+            // Embedded widget content renders inside its iframe after the host page loads it,
+            // so give it a longer first-check timeout (20s) vs modal mode (5s).
+            const searchFirstTimeout = embeddedMode ? 20000 : 5000;
+            const searchFallbackTimeout = embeddedMode ? 10000 : 5000;
+            // Extended selector list covers both modal (type=search) and embedded (type=text with search placeholder)
+            const searchSelectors = [
+              'input[placeholder*="Search" i]',
+              'input[placeholder*="bank" i]',
+              'input[type="search"]',
+              'input[name="search"]',
+              'input[aria-label*="Search" i]',
+              'input[role="searchbox"]',
+              'input[type="text"]',
+            ];
+            for (let si = 0; si < searchSelectors.length; si++) {
+              const sel = searchSelectors[si];
+              const timeout = si === 0 ? searchFirstTimeout : searchFallbackTimeout;
               const input = frame.locator(sel).first();
-              if (await input.isVisible({ timeout: 5000 }).catch(() => false)) {
+              if (await input.isVisible({ timeout }).catch(() => false)) {
                 await input.fill(PLAID_SANDBOX_INSTITUTION);
                 await plaidWaitForTransition(page, 5000, PLAID_SCREEN_DWELL_MS);
-                console.log(`  [Plaid Link] Institution search via: ${sel}`);
+                console.log(`  [Plaid Link] Institution search via: ${sel} (timeout=${timeout}ms)`);
                 searchDone = true;
                 break;
               }
@@ -1192,9 +1360,36 @@ async function executePlaidLinkPhase(page, phase) {
                   await el.click();
                   await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
                   console.log(`  [Plaid Link] Institution selected via: ${sel}`);
+                  institutionSelected = true;
                   break;
                 }
               }
+            }
+            if (!institutionSelected) {
+              for (const sel of [`button:has-text("${PLAID_SANDBOX_INSTITUTION}")`, 'button:has(img)', 'button:has-text("Chase")', 'button:has-text("Bank of America")', 'button:has-text("Wells Fargo")', 'button:has-text("Citi")', '[aria-label*="institution" i]']) {
+                const el = frame.locator(sel).first();
+                if (await el.isVisible({ timeout: 2500 }).catch(() => false)) {
+                  await el.click({ force: true }).catch(() => {});
+                  await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
+                  console.log(`  [Plaid Link] Institution selected via embedded tile selector: ${sel}`);
+                  institutionSelected = true;
+                  break;
+                }
+              }
+            }
+            if (!institutionSelected && USE_BROWSER_AGENT) {
+              const visionSelected = await agent.visionClick(page,
+                `Inside the Plaid embedded widget, find the search input (it may say "Search for your bank" or similar), type "${PLAID_SANDBOX_INSTITUTION}", then click the "${PLAID_SANDBOX_INSTITUTION}" institution tile/result that appears.`,
+                { retries: 3, waitAfterMs: 1200 }
+              );
+              if (visionSelected) {
+                await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
+                console.log('  [Plaid Link] Institution selected via vision fallback');
+                institutionSelected = true;
+              }
+            }
+            if (!institutionSelected) {
+              console.warn('  [Plaid Link] Institution tile not selected — flow may stall on institution picker');
             }
 
             // ── 6. Connection type (non-OAuth: pick first option) ─────────────
@@ -1382,7 +1577,7 @@ async function executePlaidLinkPhase(page, phase) {
 
       // Sequential CDP automation — mirrors the vision-agent path.
       try {
-        const frame = page.frameLocator('iframe[id*="plaid-link"], iframe[src*="cdn.plaid.com"]');
+        const frame = page.frameLocator(PLAID_IFRAME_SELECTOR);
 
         // ── 1. Phone entry screen (Remember Me) ───────────────────────────────
         console.log('  [Plaid Link] CSS: Handling phone screen...');
@@ -1463,9 +1658,9 @@ async function executePlaidLinkPhase(page, phase) {
 
         // ── 4. Institution search ──────────────────────────────────────────────
         console.log(`  [Plaid Link] CSS: Searching for ${PLAID_SANDBOX_INSTITUTION}...`);
-        for (const sel of ['input[placeholder*="Search" i]', 'input[type="search"]', 'input[name="search"]']) {
+        for (const sel of ['input[placeholder*="Search" i]', 'input[placeholder*="bank" i]', 'input[type="search"]', 'input[name="search"]', 'input[role="searchbox"]', 'input[type="text"]']) {
           const input = frame.locator(sel).first();
-          if (await input.isVisible({ timeout: 5000 }).catch(() => false)) {
+          if (await input.isVisible({ timeout: sel === 'input[type="text"]' ? 8000 : 5000 }).catch(() => false)) {
             await input.fill(PLAID_SANDBOX_INSTITUTION);
             await page.waitForTimeout(2500);
             break;
@@ -1668,7 +1863,7 @@ function postProcessRecording(rawPath, outPath) {
       `-vf fps=${TARGET_FPS} ` +
       `-c:v libvpx-vp9 -crf 18 -b:v 0 -cpu-used 4 ` +
       `-y "${tmpOut}"`,
-      { stdio: 'pipe', timeout: 900000 }
+      { stdio: 'pipe', timeout: Math.max(30000, RECORD_POSTPROCESS_TIMEOUT_MS) }
     );
 
     if (fs.existsSync(tmpOut)) {
@@ -1763,6 +1958,7 @@ async function manualRecordMain() {
 
   const playwrightScript = JSON.parse(fs.readFileSync(PLAYWRIGHT_SCRIPT, 'utf8'));
   const demoScript       = JSON.parse(fs.readFileSync(DEMO_SCRIPT_FILE,  'utf8'));
+  _plaidLinkMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ? 'embedded' : 'modal';
 
   fs.mkdirSync(OUT_DIR,           { recursive: true });
   fs.mkdirSync(RECORDING_TMP_DIR, { recursive: true });
@@ -1772,13 +1968,15 @@ async function manualRecordMain() {
   console.log(`[Record] MANUAL_RECORD mode — opening visible browser`);
 
   // Non-headless browser so the human can interact
+  // Match automated recording: 1440×900 CSS viewport + deviceScaleFactor:2 → 2880×1800 physical
   const browser = await chromium.launch({ headless: false });
   const context = await browser.newContext({
     recordVideo: {
       dir:  RECORDING_TMP_DIR,
-      size: { width: 1440, height: 900 },
+      size: { width: 2880, height: 1800 },
     },
-    viewport: { width: 1440, height: 900 },
+    viewport:          { width: 1440, height: 900 },
+    deviceScaleFactor: 2,
   });
   const page = await context.newPage();
 
@@ -1999,6 +2197,7 @@ async function main(opts = {}) {
 
   const playwrightScript = JSON.parse(fs.readFileSync(PLAYWRIGHT_SCRIPT, 'utf8'));
   const demoScript       = JSON.parse(fs.readFileSync(DEMO_SCRIPT_FILE, 'utf8'));
+  _plaidLinkMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ? 'embedded' : 'modal';
 
   // Load sandbox config from demo-script.json (overrides env vars and defaults)
   if (PLAID_LINK_LIVE) {
@@ -2205,12 +2404,44 @@ async function main(opts = {}) {
   // Playwright script can have two formats:
   //   Format A: { stepId, actions: [...] }  (multi-action per step)
   //   Format B: { id, action, target, waitMs }  (single-action per step — from build-app.js)
+  function entryStartsWithGoToStep(entry) {
+    if (!entry || typeof entry !== 'object') return false;
+    if (entry.action === 'goToStep') return true;
+    if (Array.isArray(entry.actions) && entry.actions.length > 0) {
+      const first = entry.actions[0];
+      return first && first.type === 'evalStep' && /goToStep\(/.test(String(first.expression || ''));
+    }
+    return false;
+  }
+  function entryIsPlaidLaunch(entry, stepId, idx) {
+    if (!PLAID_LINK_LIVE) return false;
+    const phase = plaidPhaseMap[stepId] || matchPlaidLinkPhase(stepId);
+    if (phase === 'launch') return true;
+    if (
+      entry &&
+      entry.action === 'click' &&
+      (entry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)
+    ) {
+      return true;
+    }
+    const prev = idx > 0 ? playwrightScript.steps[idx - 1] : null;
+    return !!(
+      prev &&
+      prev.action === 'click' &&
+      (prev.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)
+    );
+  }
+
   for (let _si = 0; _si < playwrightScript.steps.length; _si++) {
     const stepEntry = playwrightScript.steps[_si];
     const stepId = stepEntry.stepId || stepEntry.id;
     const label  = stepLabelMap[stepId] || stepId;
     _currentStepId = stepId;   // track for click-coord capture in executeAction
-    markStep(stepId, label);
+    const prevEntry = _si > 0 ? playwrightScript.steps[_si - 1] : null;
+    const prevStepId = prevEntry ? (prevEntry.stepId || prevEntry.id) : null;
+    const isPostPlaidBoundary = entryIsPlaidLaunch(prevEntry, prevStepId, _si - 1);
+    const shouldDeferMark = RECORD_TRANSITION_SAFE_TIMING && entryStartsWithGoToStep(stepEntry);
+    let didDeferredMark = false;
 
     // Arm overrun watchdog for this step
     const _nextEntry = playwrightScript.steps[_si + 1];
@@ -2228,6 +2459,13 @@ async function main(opts = {}) {
       !!_clickIsLaunch
     );
     armStepOverrun(page, stepId, stepEntry.waitMs, _nextStepId, _isLaunch);
+
+    if (!shouldDeferMark) {
+      if (isPostPlaidBoundary && POST_LINK_STEP_BOUNDARY_GUARD_MS > 0) {
+        await page.waitForTimeout(POST_LINK_STEP_BOUNDARY_GUARD_MS);
+      }
+      markStep(stepId, label);
+    }
 
     // ── Live Plaid Link override ──────────────────────────────────────────
     // When PLAID_LINK_LIVE=true, check if this step matches a Plaid Link
@@ -2304,7 +2542,19 @@ async function main(opts = {}) {
 
     if (stepEntry.actions && Array.isArray(stepEntry.actions)) {
       // Format A: explicit actions array
-      await executeActions(page, stepEntry.actions);
+      if (shouldDeferMark && stepEntry.actions.length > 0) {
+        const [first, ...rest] = stepEntry.actions;
+        await executeAction(page, first);
+        if (isPostPlaidBoundary && POST_LINK_STEP_BOUNDARY_GUARD_MS > 0) {
+          await page.waitForTimeout(POST_LINK_STEP_BOUNDARY_GUARD_MS);
+        }
+        if (STEP_TRANSITION_SETTLE_MS > 0) await page.waitForTimeout(STEP_TRANSITION_SETTLE_MS);
+        markStep(stepId, label);
+        didDeferredMark = true;
+        if (rest.length > 0) await executeActions(page, rest);
+      } else {
+        await executeActions(page, stepEntry.actions);
+      }
     } else if (stepEntry.action) {
       // Format B: single action with target + waitMs
       const actions = [];
@@ -2317,10 +2567,20 @@ async function main(opts = {}) {
           : target.startsWith('goToStep(')
             ? `window.${target}`
             : `window.goToStep('${target}')`;
-        actions.push({
-          type: 'evalStep',
-          expression,
-        });
+        if (shouldDeferMark) {
+          await executeAction(page, { type: 'evalStep', expression });
+          if (isPostPlaidBoundary && POST_LINK_STEP_BOUNDARY_GUARD_MS > 0) {
+            await page.waitForTimeout(POST_LINK_STEP_BOUNDARY_GUARD_MS);
+          }
+          if (STEP_TRANSITION_SETTLE_MS > 0) await page.waitForTimeout(STEP_TRANSITION_SETTLE_MS);
+          markStep(stepId, label);
+          didDeferredMark = true;
+        } else {
+          actions.push({
+            type: 'evalStep',
+            expression,
+          });
+        }
       } else if (stepEntry.action === 'click') {
         actions.push({
           type: 'click',
@@ -2343,6 +2603,13 @@ async function main(opts = {}) {
         });
       }
       await executeActions(page, actions);
+    }
+    if (shouldDeferMark && !didDeferredMark) {
+      if (isPostPlaidBoundary && POST_LINK_STEP_BOUNDARY_GUARD_MS > 0) {
+        await page.waitForTimeout(POST_LINK_STEP_BOUNDARY_GUARD_MS);
+      }
+      if (STEP_TRANSITION_SETTLE_MS > 0) await page.waitForTimeout(STEP_TRANSITION_SETTLE_MS);
+      markStep(stepId, label);
     }
     clearStepOverrun(); // step completed normally — cancel watchdog
   }

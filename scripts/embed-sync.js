@@ -143,8 +143,11 @@ async function main() {
 
     // Determine the video segment start/duration.
     // Prefer processed-step-timing.json for raw video coordinates;
-    // fall back to manifest comp-space startMs.
-    let videoStartS = clip.startMs / 1000;
+    // fall back to processedStartMs (raw recording position) then compStartMs.
+    // NOTE: After resync-audio runs, clip.startMs is comp-space time — NOT raw video time.
+    // Using comp-space time here would extract the wrong video segment after any speed/freeze
+    // adjustment. processedStartMs is always set by resync-audio and is safe to use as fallback.
+    let videoStartS = ((clip.processedStartMs ?? clip.startMs) || 0) / 1000;
     let videoDurS   = clip.audioDurationMs / 1000;
 
     if (processedTiming) {

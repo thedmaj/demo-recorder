@@ -1,6 +1,6 @@
 <!--
   Minimal slide skeleton (Plaid-only).
-  For full structure — header logo lockup, footer strip, three JSON panel controls, renderjson wiring —
+  For full structure — header logo lockup, footer strip, single edge JSON toggle control, renderjson wiring —
   use pipeline-slide-shell.html + PIPELINE_SLIDE_SHELL_RULES.md (injected into the build prompt).
 -->
 
@@ -53,13 +53,11 @@
     </div>
 
     <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none" aria-label="API JSON panel">
+      <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle" aria-label="Expand API JSON panel" aria-expanded="false">
+        <span class="api-panel-toggle-icon" aria-hidden="true"></span>
+      </button>
       <header class="side-panel-header">
         <span>API Response</span>
-        <div class="api-panel-header-actions">
-          <button type="button" id="api-json-panel-show" data-testid="api-json-panel-show">Show JSON</button>
-          <button type="button" id="api-json-panel-hide" data-testid="api-json-panel-hide">Hide JSON</button>
-          <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle">Show JSON</button>
-        </div>
       </header>
       <div class="side-panel-body">
         <div id="api-response-content"></div>
@@ -72,8 +70,8 @@
         collapsedByDefault: true,
         jsonExpandLevel: 'all',
         autoResize: true,
-        minWidthPx: 360,
-        maxWidthViewportRatio: 0.52
+        minWidthPx: 414,
+        maxWidthViewportRatio: 0.60
       }, window.__API_PANEL_CONFIG || {});
     </script>
   </body>

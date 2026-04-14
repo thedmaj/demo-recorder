@@ -1,7 +1,7 @@
 # Slide Template Rules (Plaid-only)
 
 ## Canonical HTML shell (required reference)
-- Use **`pipeline-slide-shell.html`** as the structural source of truth for slide steps (`.slide-root` regions) **and** the global `#api-response-panel` chrome (Show JSON, Hide JSON, `api-panel-toggle`).
+- Use **`pipeline-slide-shell.html`** as the structural source of truth for slide steps (`.slide-root` regions) **and** the global `#api-response-panel` chrome (single edge toggle icon `api-panel-toggle`).
 - Merge / adaptation rules live in **`PIPELINE_SLIDE_SHELL_RULES.md`**.
 - `base.html` and `components.html` remain optional shortcuts; they do not replace the full shell for new builds.
 
@@ -12,6 +12,11 @@ Slides are a supplement to PowerPoint in presentations. They must be visually co
 - **Slides** (`.slide-root`): optional steps that explain **behind-the-scenes** API calls and data in a **Plaid-only** deck style. Use for technical storytelling, not for the bank’s consumer UI.
 - **Plaid insight steps** (e.g. `identity-match-insight`, `auth-insight`): full-viewport **product insight** layouts in the demo flow. They use the DOM contract (dark insight chrome + **global** `#api-response-panel` for JSON). They are **not** slides unless you intentionally wrap content in `.slide-root`.
 - **Host bank app** (dashboard, transfers, Link host page): uses **Brandfetch-derived** tokens from `brand/<slug>.json` — never the slide template’s Plaid gradient as the full-page background.
+
+## Host app vs slides — zero component reuse (non-negotiable)
+- **Slides must not** import or visually mimic **host demo app UI**: no host nav/sidebar, host headers/banners, host action cards (for example “add / link account” dashboard cards), host transfer or account-overview layouts, host `data-testid` chrome copied as slide decoration, or host-specific typography/layout blocks inside `.slide-root` / `sceneType: "slide"` steps. Slides are Plaid-only deck surfaces; restate outcomes in **presentation** copy, not by re-embedding the customer app shell.
+- **Host and insight steps must not** import **slide deck UI**: no `.slide-root`, `.slide-header`, `.slide-hero`, `.slide-panels` / `.slide-panel`, `.slide-callout`, `.slide-footer`, slide header pill + endpoint row, or other `pipeline-slide-shell.html` marketing/deck fragments inside `sceneType: "host"`, `"link"`, or `"insight"` steps. Do not apply `slide.css` layout motifs to full-page host surfaces.
+- **Allowed shared infrastructure only:** the single global `#api-response-panel` (and `#link-events-panel` hidden) per the DOM contract — not a license to embed host cards or slide panels inside the wrong step type.
 
 ## Scene metadata contract (required for alignment)
 - Every `demo-script.json` step should include `sceneType`:
@@ -53,7 +58,7 @@ When generating a slide step, match **`pipeline-slide-shell.html`** (not only pr
 - JSON panel eligibility is endpoint-driven: only steps with explicit `apiResponse.endpoint` in `demo-script.json` may use/show JSON panel content.
 - For endpoint steps with `apiResponse`, wire panel updates through the shared step contract (`goToStep` + `window._stepApiResponses`), not ad hoc per-step display logic.
 - Default behavior: `#api-response-panel` is hidden/collapsed on initial page load (`display:none`).
-- Persist **three** panel controls in the header: `data-testid="api-json-panel-show"`, `data-testid="api-json-panel-hide"`, and `data-testid="api-panel-toggle"` (toggle must call `window.toggleApiPanel()` for Playwright parity).
+- Persist **one** panel control: edge toggle icon `data-testid="api-panel-toggle"` (must call `window.toggleApiPanel()` for Playwright parity). Do not include Show JSON / Hide JSON buttons.
 - On API-relevant insight/slide steps, hydrate payload data but keep panel collapsed until toggled open (unless the prompt says otherwise).
 - When opened, render JSON **fully expanded** by default via renderjson (`set_show_to_level('all')` or equivalent deep level — no collapsed nested payload by default).
 - Use a global runtime config constant for all builds (for example `window.__API_PANEL_CONFIG`) to centralize:
@@ -96,6 +101,7 @@ When generating a slide step, match **`pipeline-slide-shell.html`** (not only pr
 - If a metric is shown in host UI, include plain-language justification tied to user benefit (for example, why the user should care or what action to take).
 
 ## Agent constraints
+- Obey **Host app vs slides — zero component reuse** above (no host widgets in slides; no slide deck components in host/insight).
 - Do **not** use host-app branding (no TD shell layout, no TD colors).
 - Do **not** invent new layout patterns for every slide; reuse `.slide-panel` and `.slide-callout`.
 - Slides should avoid heavy tables; if data must be shown, prefer a panel with 3–6 short bullets.
@@ -104,6 +110,8 @@ When generating a slide step, match **`pipeline-slide-shell.html`** (not only pr
 - `.slide-root` uses **fluid width/height**: `width: 100%` with `max-width: min(1440px, 100vw)`, **`aspect-ratio: 16 / 10`**, and `max-height: min(900px, 100vh, 100dvh)` so slides scale down on smaller windows while matching the **1440×900** recording frame when space allows.
 - Do **not** set fixed `width: 1440px; height: 900px` on `.slide-root` — the template CSS already handles caps.
 - Inside a `.step`, let `.slide-root` fill the step (`width: 100%`); the step viewport still targets 1440×900 for Playwright.
+- On wider viewports, keep slide content visually centered using a bordered inner content frame (for example `.slide-body` with subtle border/background and auto horizontal margins).
+- If slide content includes tables, constrain effective table width and cell padding so columns do not spread edge-to-edge.
 
 ## Presentation checklist
 - Ensure all text remains legible at 125% zoom.

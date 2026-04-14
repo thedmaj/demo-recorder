@@ -102,11 +102,25 @@ function buildInverseSegments(syncMap) {
  * @param {Array}   syncMap     - SYNC_MAP_S entries from sync-map.json ({ compStart, compEnd, videoStart, mode, speed? })
  * @returns {number} composition time in ms
  */
+// Module-level cache: avoid rebuilding inverse segments on every lookup when the
+// same syncMap array reference and length are reused (e.g. resync-audio calls this
+// 2× per clip with a stable, immutable array).
+// Length is included in the cache key so that callers like auto-gap.js that push
+// to the same array between calls correctly invalidate the cache.
+let _cachedSyncMap = null;
+let _cachedLen     = -1;
+let _cachedSegs    = null;
+
 function processedToCompMs(processedMs, syncMap) {
   if (!syncMap || !syncMap.length) return processedMs;
 
   const processedS = processedMs / 1000;
-  const segs = buildInverseSegments(syncMap);
+  if (syncMap !== _cachedSyncMap || syncMap.length !== _cachedLen) {
+    _cachedSegs    = buildInverseSegments(syncMap);
+    _cachedSyncMap = syncMap;
+    _cachedLen     = syncMap.length;
+  }
+  const segs = _cachedSegs;
 
   for (const seg of segs) {
     if (seg.isFreezePoint) continue;

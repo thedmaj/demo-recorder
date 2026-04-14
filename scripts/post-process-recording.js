@@ -207,11 +207,19 @@ function addKeep(start, end, label) {
 // ── Range 1: App start → phone Continue click ─────────────────────────────────
 // Shows: app loading, phone screen (pre-filled), Continue clicked.
 // End: a half-second after phone-submitted so the click lands visually.
-addKeep(
-  0,
-  T['phone-submitted'] != null ? T['phone-submitted'] + PHONE_TAIL : null,
-  'app + phone screen'
-);
+//
+// Embedded Link fallback: when there is no phone screen (phone-submitted=null),
+// the app still has content before the institution list (patient portal,
+// payment method selection, etc.). Keep from 0 → institution-list-shown so
+// those screens are preserved and not cut along with the Plaid loading gap.
+if (T['phone-submitted'] != null) {
+  addKeep(0, T['phone-submitted'] + PHONE_TAIL, 'app + phone screen');
+} else if (T['institution-list-shown'] != null && T['institution-list-shown'] > 0.5) {
+  // Embedded / no-phone flow: keep everything before the Plaid widget loads.
+  // This captures host-app screens (portal, payment method selection, etc.).
+  addKeep(0, T['institution-list-shown'], 'app screens (pre-embedded-link)');
+  console.log(`  [PostProcess] Embedded mode: keeping pre-link app screens [0 → ${T['institution-list-shown'].toFixed(3)}s]`);
+}
 
 // ── Range 2a: OTP screen appearing (brief) ───────────────────────────────────
 // Shows the OTP entry screen arriving. Cut before the long fill() wait.

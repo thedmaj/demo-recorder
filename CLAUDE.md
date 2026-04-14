@@ -119,21 +119,23 @@ The real Plaid Link modal (`cdn.plaid.com`) **IS visible** in the recorded video
 
 **Architecture: Single real-SDK step**
 - The demo script has ONE Plaid Link step with `"plaidPhase": "launch"` — no sub-steps
-- The host app has a button that calls `window._plaidHandler.open()` — no simulated overlay divs
+- Modal mode uses a host button that calls `window._plaidHandler.open()`; embedded mode starts from the in-page container mount/activation
 - The real Plaid SDK modal appears as an iframe over the host page during the entire flow
 - `record-local.js` uses CDP frameLocator to automate the real iframe (phone → OTP → institution → account)
 - When `onSuccess` fires, the host app advances to the first post-link step
 
 **Build agent instructions (no-capture mode):**
 - Do NOT build step divs for link-consent, link-otp, link-account-select, link-success, or any Plaid screens
-- The Plaid Link button (`data-testid="link-external-account-btn"`) MUST be inside the initiate-link step div
-- Button onclick: `if (window._plaidHandler) window._plaidHandler.open();` — no goToStep call
+- Modal mode only: include Plaid Link button (`data-testid="link-external-account-btn"`) inside the initiate-link step div
+- Embedded mode: do NOT add "Connect Bank Account" / "Link Bank Account" / similar launch CTA buttons; launch starts from embedded container activation
+- Modal button onclick: `if (window._plaidHandler) window._plaidHandler.open();` — no goToStep call
 - `window._plaidLinkComplete = true` is set ONLY in `onSuccess` — NEVER in a goToStep handler
 - `onSuccess` stores institution/account metadata: `window._plaidInstitutionName`, `window._plaidAccountName`, `window._plaidAccountMask` — use these in post-link steps, never hardcode bank names
 - Pre-populate all post-link API responses with sandbox data
 - The initiate-link step in `demo-script.json` MUST have `"plaidPhase": "launch"`
-- The playwright-script for this step: ONE entry with `action:"click"`, `target:"[data-testid=\"link-external-account-btn\"]"`, `waitMs: 120000`
-  - NEVER split into a goToStep entry + click entry — this causes duplicate `markStep` calls
+- Modal playwright entry: ONE entry with `action:"click"`, `target:"[data-testid=\"link-external-account-btn\"]"`, `waitMs: 120000`
+- Embedded playwright entry: ONE entry with `action:"goToStep"`, `target:"<launch-step-id>"`, `waitMs: 120000`
+  - NEVER split into a goToStep entry + click entry for the same launch step — this causes duplicate `markStep` calls
 
 **Plaid Link demo-script structure:**
 - Single Plaid Link step (e.g. `"id": "wf-link-launch"`, `"plaidPhase": "launch"`)
@@ -158,6 +160,27 @@ a storyboard mismatch where audio precedes the visual it describes.
 **Recording behavior:**
 - Institution: Defaults to **First Platypus Bank** / Remember Me flow (non-OAuth)
 - The "Save with Plaid" phone screen is auto-dismissed by the recording script
+
+### Embedded Link UX sizing + pre-link guardrail (REQUIRED)
+
+When `plaidLinkMode` is `embedded`, treat sizing and messaging as a hard contract:
+
+- Pre-link trust messaging and the embedded widget must be shown in the SAME launch step
+  (`plaidPhase: "launch"`). Do not split into separate explainer and embedded-launch steps.
+- Launch step must include:
+  - `data-testid="plaid-embedded-link-container"`
+  - security + ease copy (for example encryption/trust and instant/no-manual-entry guidance)
+- Do NOT include `data-testid="link-external-account-btn"` in embedded mode.
+- Select container size by use case:
+  - **E-commerce checkout**: small profile, ~`440x200`, target `3-4` institutions visible
+  - **Bill pay**: medium profile, ~`400x270`, target `4-6` institutions visible
+  - **Account funding inbound payments**: large profile, ~`700x350`, target `6-9` institutions visible
+- Runtime metadata must be emitted for deterministic QA:
+  - `window.__embeddedLinkUseCase`
+  - `window.__embeddedLinkSizeProfile` (`small|medium|large`)
+  - `window.__embeddedLinkExpectedInstitutionTilesMin`
+  - `window.__embeddedLinkExpectedInstitutionTilesMax`
+  - `window.__embeddedLinkExpectedInstitutionTileCount`
 
 ### CRA / Consumer Report Link Requirements (Base Report + Income Insights)
 
@@ -394,6 +417,8 @@ Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `emb
 
 ### Slide template (PowerPoint supplement)
 Slides are generated from a reusable Plaid-only template so the styling stays consistent across pipeline runs and presentations. **Slides are only for behind-the-scenes API/data explanation** (optional `.slide-root` steps). The **host bank UI** uses Brandfetch-driven `brand/<slug>.json`, not slide chrome. Full-viewport **Plaid insight** steps use the insight + `#api-response-panel` contract unless they explicitly use `.slide-root`.
+
+**Non-negotiable:** No cross-reuse of UI **components** between surfaces — do not put host app chrome (nav, banners, account cards, dashboard modules) inside slide steps, and do not put slide deck fragments (`.slide-root` / slide header–body–footer shell) inside host or insight steps. The global `#api-response-panel` is the only intentional shared control between insight/slide and the rest of the app.
 
 - Template folder: `templates/slide-template/`
   - `pipeline-slide-shell.html` — **canonical** slide + API JSON panel HTML reference (layer-v2 / TD-final lineage)

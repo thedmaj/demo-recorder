@@ -30,6 +30,17 @@ For any one Plaid Link launch event, build **exactly one** pre-Link explainer sc
 - The next user action from that screen should launch Plaid Link immediately.
 - Do **not** chain multiple pre-Link explanation screens back-to-back.
 
+### Embedded-mode override (authoritative)
+
+When `plaidLinkMode` is `embedded`, pre-Link messaging and embedded Link must be combined in the same launch step.
+
+- Do not use one explainer step plus a second embedded-launch step.
+- Keep trust copy, CTA, and `plaid-embedded-link-container` together in the active launch screen.
+- Enforce use-case size profile in the same screen:
+  - checkout: small (about 3 visible institutions)
+  - bill pay: medium (about 4-6 visible institutions)
+  - inbound funding: large (about 6-9 visible institutions)
+
 ### Anti-pattern (do NOT do this)
 - Screen A: "Add a bank account to improve your offer"
 - Then Screen B: "Connect your bank account"
@@ -39,7 +50,7 @@ This duplicated pre-Link sequence adds friction and consistently hurts completio
 
 ### Required structure
 - Host flow steps (phone, OTP, personal details, bureau status, etc.)
-- **One** pre-Link screen
+- **One** pre-Link screen OR one combined embedded launch screen
 - Plaid Link launch (`plaidPhase: "launch"`)
 
 If any example in this document appears to suggest multiple consecutive pre-Link explainer screens,
@@ -369,6 +380,11 @@ There are two ways to hand off users to Plaid Link in a credit flow. The choice 
 - At the bottom of the grid: "Manually connect" as a small muted text link
 - Below that: Plaid wordmark + "What is Plaid Passport?" link (small, secondary)
 - Full-width "Next" button anchored to the bottom (rounded, brand fill color — e.g., lavender/light purple)
+
+**Sizing by use case (hard guidance):**
+- E-commerce checkout: prefer small embedded container (about 3 institution tiles visible)
+- Bill pay: prefer medium embedded container (about 4-6 institution tiles visible)
+- Account funding inbound payments: prefer large embedded container (about 6-9 institution tiles visible)
 
 **Why Embedded works better for credit:**
 - Eliminates context switching at the moment of highest commitment

@@ -391,6 +391,79 @@ function _bfThemeWeight(src, isWordmark) {
   return isWordmark ? 2 : 1;
 }
 
+function _isThemeUrl(src, theme) {
+  return new RegExp(`/theme/${theme}/`, 'i').test(String(src || ''));
+}
+
+function _replaceThemeInUrl(src, fromTheme, toTheme) {
+  return String(src || '').replace(new RegExp(`/theme/${fromTheme}/`, 'i'), `/theme/${toTheme}/`);
+}
+
+function _buildLogoSrcSet(rawData) {
+  const set = new Set();
+  for (const row of rawData?.logos || []) {
+    const src = String(row?.src || '');
+    if (src) set.add(src);
+  }
+  return set;
+}
+
+function _pickBestThemeVariant(rawData, { theme, preferIcon = false } = {}) {
+  let best = { score: -1, src: null };
+  const targetTheme = String(theme || '').toLowerCase();
+  for (const row of rawData?.logos || []) {
+    const src = String(row?.src || '');
+    if (!src || !_isThemeUrl(src, targetTheme)) continue;
+    const type = String(row?.brandfetchType || '').toLowerCase();
+    const isIcon = type === 'icon';
+    const isWordmark = !isIcon;
+    const score =
+      _bfTypeWeight(type) * 20 +
+      _bfFormatWeight({ format: row?.format }) +
+      _bfThemeWeight(src, isWordmark) +
+      (preferIcon ? (isIcon ? 5 : -2) : (isWordmark ? 5 : -2));
+    if (score > best.score) best = { score, src };
+  }
+  return best.src || null;
+}
+
+function enforceLogoContrast(profile, rawData) {
+  if (!profile || !profile.logo || !rawData) return;
+  const mode = String(profile.mode || '').toLowerCase();
+  const logo = profile.logo;
+  const srcSet = _buildLogoSrcSet(rawData);
+  const currentImage = String(logo.imageUrl || '');
+  const currentIcon = String(logo.iconUrl || '');
+
+  if (mode === 'light') {
+    if (currentImage && _isThemeUrl(currentImage, 'light')) {
+      let replacement = null;
+      const candidateBySwap = _replaceThemeInUrl(currentImage, 'light', 'dark');
+      if (srcSet.has(candidateBySwap)) replacement = candidateBySwap;
+      if (!replacement) replacement = _pickBestThemeVariant(rawData, { theme: 'dark', preferIcon: false });
+      if (replacement) {
+        logo.darkImageUrl = replacement;
+        logo.imageUrl = replacement;
+        logo._contrastAdjusted = true;
+      }
+    }
+    if (currentIcon && _isThemeUrl(currentIcon, 'light')) {
+      let replacement = null;
+      const candidateBySwap = _replaceThemeInUrl(currentIcon, 'light', 'dark');
+      if (srcSet.has(candidateBySwap)) replacement = candidateBySwap;
+      if (!replacement) replacement = _pickBestThemeVariant(rawData, { theme: 'dark', preferIcon: true });
+      if (replacement) {
+        logo.darkIconUrl = replacement;
+        logo.iconUrl = replacement;
+        logo._contrastAdjusted = true;
+      }
+    }
+    // Safety net when all returned assets are light/transparent.
+    logo.shellBg = 'rgba(15,23,42,0.78)';
+    logo.shellBorder = 'rgba(15,23,42,0.45)';
+  }
+}
+
 /** Pick best wordmark + icon URLs (Brandfetch returns many formats; first 3 were often wrong). */
 function pickBrandfetchLogoUrls(data) {
   let bestWord = { score: -1, src: null };
@@ -555,6 +628,10 @@ async function main() {
   profile._extractDomain = domain;
   mergeFetchedLogoUrls(profile, rawData);
   if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
+  enforceLogoContrast(profile, rawData);
+  if (profile.logo && profile.logo._contrastAdjusted) {
+    console.log('[BrandExtract] Applied contrast-safe logo adjustments for light host mode.');
+  }
   if (!profile.logo.shellBg) {
     profile.logo.shellBg = profile.mode === 'light'
       ? 'rgba(15,23,42,0.06)'

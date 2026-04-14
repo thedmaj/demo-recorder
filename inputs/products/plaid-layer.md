@@ -8,8 +8,8 @@ use_cases:
   - returning-user-verification
   - kyc-auto-fill
 last_human_review: "2026-03-12"
-last_ai_update: "2026-04-08T00:00:00Z"
-needs_review: false
+last_ai_update: "2026-04-13T05:45:24.658Z"
+needs_review: true
 approved: false
 version: 1
 ---
@@ -117,6 +117,13 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-04-13 — Run: 2026-04-13-Uses-Ynab-To-Manage-Identity-Monitor-Layer-Income-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Pre-verified identity from bank-verified sources
+- [high] Network effect at scale
+- [high] No additional verification step for returning users
+- [high] Template-driven flexibility
 
 ### 2026-03-12 — Scaffold created [human]
 Empty scaffold for Layer product. To be populated by pipeline research runs.

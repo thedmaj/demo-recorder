@@ -327,7 +327,6 @@ async function main() {
           _autoGap:   true,
           _reason:    `auto-gap clip: video ${(videoDurationMs/1000).toFixed(2)}s > narr ${(narrationMs/1000).toFixed(2)}s + gap ${(gapMs/1000).toFixed(2)}s`,
         });
-        newSegments.sort((a, b) => a.compStart - b.compStart);
         clippedCount++;
       }
 
@@ -363,7 +362,6 @@ async function main() {
         _autoGap:   true,
         _reason:    `auto-gap freeze: narr ${(narrationMs/1000).toFixed(2)}s + gap ${(gapMs/1000).toFixed(2)}s > video ${(videoDurationMs/1000).toFixed(2)}s`,
       });
-      newSegments.sort((a, b) => a.compStart - b.compStart);
       action = 'freeze';
       frozenCount++;
 
@@ -394,7 +392,6 @@ async function main() {
           _reason:    'auto-gap governed near-1x segment',
         });
       }
-      newSegments.sort((a, b) => a.compStart - b.compStart);
       compEndMs = governedEndMs;
     }
 
@@ -436,6 +433,12 @@ async function main() {
 
   const totalSavingsMs = reportSteps.reduce((a, s) => a + (s.action==='clip'||s.action==='warn-too-fast' ? Math.max(0,s.overrunMs) : 0), 0);
   const totalFreezeMs  = reportSteps.reduce((a, s) => a + s.freezeDurMs, 0);
+
+  // Single sort after the main loop (replaces the O(n²logn) per-push sorts that were
+  // previously inside each branch). buildInverseSegments already sorts its own copy,
+  // so mid-loop processedToCompMs calls were unaffected; this sort is for downstream
+  // consumers that assume newSegments is ordered (e.g. the coverage-fill pass below).
+  newSegments.sort((a, b) => a.compStart - b.compStart);
 
   // Ensure explicit sync governance for the full composition range covered by steps.
   // This avoids "unowned" comp-time islands that can drift audio across screens.

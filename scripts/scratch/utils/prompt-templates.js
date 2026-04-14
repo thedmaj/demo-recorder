@@ -834,6 +834,10 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `- insight: Plaid insight step using global api-response-panel (NOT .slide-root)\n` +
       `- slide: template-driven slide step that uses .slide-root\n` +
       `Do not label insight steps as slide unless they intentionally render .slide-root.\n\n` +
+      `HOST VS SLIDE — ZERO COMPONENT CROSS-REUSE (CRITICAL):\n` +
+      `Do not describe or require host demo UI (nav, banners, account cards, dashboard modules) inside slide visualState or slide copy — slides are Plaid-only deck surfaces.\n` +
+      `Do not describe or require slide deck shell (.slide-root regions, slide header/footer strips, slide panel grid) inside host, link, or insight visualState.\n` +
+      `Narrative may echo themes; DOM/layout systems must stay separate except the shared global #api-response-panel on insight/slide per pipeline contract.\n\n` +
       `FINAL VALUE SUMMARY SLIDE RULE (CRITICAL):\n` +
       `The LAST step in the demo MUST be a Plaid-branded value-summary slide (sceneType:"slide").\n` +
       `Use step id "value-summary-slide" exactly for the final step unless the user explicitly overrides.\n` +
@@ -854,7 +858,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
     text:
       `## PLAID LINK IMPLEMENTATION MODE\n\n` +
       `Detected mode from prompt context: ${embeddedLinkMode}\n` +
-      `- If mode is "embedded": output "plaidLinkMode":"embedded" and keep Link narration/UI assumptions aligned to hosted/embedded flow.\n` +
+      `- If mode is "embedded": output "plaidLinkMode":"embedded" and keep Link narration/UI assumptions aligned to embedded in-page flow.\n` +
       `- If mode is "modal": output "plaidLinkMode":"modal" and use standard in-page Plaid Link assumptions.\n`,
   });
 
@@ -920,8 +924,8 @@ function buildAppArchitectureBriefPrompt(demoScript, opts = {}) {
       `IMPORTANT — LIVE PLAID LINK MODE:\n` +
       `Resolved mode: ${mode}.\n` +
       (mode === 'embedded'
-        ? `Use Hosted/Embedded Link assumptions: token create + hosted_link_url launch behavior.\n` +
-          `Do not rely on modal-only iframe assumptions for launch success.\n`
+        ? `Use Embedded Institution Search assumptions: in-page widget mount via Plaid.createEmbedded(token, container).\n` +
+          `Do NOT use hosted_link_url redirects/new windows/popups for embedded mode.\n`
         : `Use standard Plaid.create modal assumptions (iframe appears in-app after open()).\n`) +
       `Do NOT describe a mock Plaid Link modal unless explicitly requested by mode.\n` +
       `The architecture should account for token create success checks and deterministic launch signaling.\n\n`;
@@ -1017,6 +1021,7 @@ function buildAppFrameworkPlanPrompt(demoScript, architectureBrief, opts = {}) {
  * @param {string} [opts.buildViewMode] desktop | mobile-auto | mobile-simulated
  * @param {string} [opts.layerMockTemplate] Optional reusable Layer mobile mock library markdown
  * @param {string} [opts.layerMobileSkeletonHtml] Canonical Layer mobile skeleton HTML (hard contract)
+ * @param {string} [opts.buildMode] app | slides (default app)
  * @param {string} [opts.brandSiteReferenceBase64] Optional PNG base64 of brand site viewport (1440×900) for visual inspiration only
  * @returns {{ system: string, userMessages: Array }}
  */
@@ -1047,6 +1052,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
   const layeredBuildEnabled = !!opts.layeredBuildEnabled;
   const mobileVisualEnabled = !!opts.mobileVisualEnabled;
   const buildViewMode = String(opts.buildViewMode || 'desktop').toLowerCase();
+  const buildMode = String(opts.buildMode || 'app').toLowerCase() === 'slides' ? 'slides' : 'app';
   const layerMockTemplate = typeof opts.layerMockTemplate === 'string' ? opts.layerMockTemplate.trim() : '';
   const layerMobileSkeletonHtml =
     typeof opts.layerMobileSkeletonHtml === 'string' ? opts.layerMobileSkeletonHtml.trim() : '';
@@ -1089,6 +1095,13 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `When a **PLAID INTEGRATION SKILL** block appears in the user message, use it for Link tokens, ` +
     `product API ordering, and sandbox-oriented integration patterns. This prompt's DOM contract ` +
     `(steps, data-testid, panels, Playwright JSON) overrides generic integration advice where they differ.\n\n` +
+    `BUILD PHASE FOCUS (mode=${buildMode}):\n` +
+    (buildMode === 'slides'
+      ? `- Prioritize slide quality and slide contract compliance first (.slide-root, slide copy/state parity, and API JSON rail contract).\n` +
+        `- Preserve host app and Plaid interaction wiring unless a slide contract issue requires a shared-shell fix.\n`
+      : `- Prioritize host app flow integrity first (step navigation, Plaid launch flow, selector/Playwright contracts, API panel wiring).\n` +
+        `- Keep slide steps valid, but optimize for demo-app correctness and deterministic walkthrough coverage.\n`) +
+    `\n` +
     `DOM CONTRACT (mandatory — Playwright depends on this exactly):\n` +
     cdnRule +
     renderBrandBlock(brand) + `\n` +
@@ -1098,6 +1111,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     (slideTemplateCss
       ? `SLIDE TEMPLATE CSS (scoped — embed verbatim in <style>):\n${slideTemplateCss}\n\n` +
         `SLIDE VS HOST APP (critical):\n` +
+        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\` / slide steps. Do not embed slide deck shell (\`.slide-root\`, slide header/body/footer, \`.slide-panel\` / hero / callout patterns from pipeline-slide-shell) inside host, link, or insight steps. Restate ideas in the correct surface’s own layout system. Shared exception: the single global \`#api-response-panel\` per DOM contract only.\n` +
         `- The slide CSS above applies ONLY inside a step div that contains \`.slide-root\` (optional slide-type steps).\n` +
         `- Do NOT restyle \`html\` or \`body\` using slide tokens. The HOST BANK UI (nav, cards, TD/chrome, consumer screens, Plaid Link host page) MUST follow the HOST APP DESIGN SYSTEM block only.\n` +
         `- Full-viewport Plaid *insight* steps (*-insight, API reveal) are NOT slides unless the step explicitly uses \`.slide-root\`. Use insight layout + global api-response-panel per DOM contract — not slide template chrome.\n` +
@@ -1105,7 +1119,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `- For API endpoint storytelling slides/insights, keep one raw JSON mechanism only: global \`#api-response-panel\`. Never render duplicate inline raw JSON containers in \`.slide-root\`.\n` +
         `- JSON panel eligibility is endpoint-driven: only steps with explicit \`apiResponse.endpoint\` may use/show JSON panel behavior.\n` +
         `- If a step has \`apiResponse\`, keep the side panel collapsed/hidden by default on initial page load.\n` +
-        `- Include JSON panel controls: \`data-testid="api-json-panel-show"\`, \`data-testid="api-json-panel-hide"\`, and \`data-testid="api-panel-toggle"\` with \`window.toggleApiPanel()\`.\n` +
+        `- Include one JSON panel edge toggle control: \`data-testid="api-panel-toggle"\` with \`window.toggleApiPanel()\` (no Show/Hide JSON buttons).\n` +
         `- When panel is shown, render JSON fully expanded via renderjson (\`set_show_to_level('all')\` or equivalent).\n` +
         `- Add a global API panel config constant for runtime behavior (collapsed-by-default, expanded JSON level, auto-resize guardrails).\n` +
         `- Use the presentation slide template/rules for JSON panel visual styling; do not invent ad-hoc JSON panel styles.\n` +
@@ -1117,7 +1131,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
       ? `CANONICAL SLIDE + API PANEL HTML SHELL (structure reference from pipeline-slide-shell.html — merge patterns into index.html; adapt copy per demo-script; omit preview-only script blocks if present):\n` +
         `[[[PIPELINE_SLIDE_SHELL_HTML_BEGIN]]]\n${slideTemplateShellHtml}\n[[[PIPELINE_SLIDE_SHELL_HTML_END]]]\n\n` +
         `SHELL MERGE RULES:\n` +
-        `- Match header/body/footer regions, side panels, and JSON control wiring (\`api-json-panel-show\`, \`api-json-panel-hide\`, \`api-panel-toggle\` + \`toggleApiPanel\`).\n` +
+        `- Match header/body/footer regions, side panels, and JSON control wiring (\`api-panel-toggle\` edge icon + \`toggleApiPanel\`).\n` +
         `- Use renderjson with \`set_show_to_level('all')\` (or deep numeric level) so JSON is fully expanded when the panel is shown.\n` +
         `- Production demos: keep \`__API_PANEL_CONFIG.collapsedByDefault: true\` unless the prompt specifies otherwise.\n\n`
       : '') +
@@ -1143,7 +1157,10 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `    force desktop presentation automatically for that step. Do NOT render slide steps inside the mobile shell.\n` +
         `  - No user view toggle UI for mobile demos. View mode switching is runtime-automatic per active step.\n` +
         `  - This mode is PRESENTATION-ONLY. Do not claim it validates true Plaid mobile runtime behavior.\n`
-      : '') +
+      : `DESKTOP-ONLY MODE (MANDATORY):\n` +
+        `  - Do NOT render any phone/mobile simulator wrappers.\n` +
+        `  - Forbidden in desktop mode: data-testid="mobile-simulator-shell", phone mock frames, mobile-shell classes, mobile view toggles.\n` +
+        `  - Keep host app responsive for desktop widths only (1280×800, 1440×900, 1728×1117).\n`) +
     `- Each step: <div data-testid="step-{id}" class="step"> (only one .active at a time)\n` +
     `- Final summary slide contract (CRITICAL):\n` +
     `    - The step id "value-summary-slide" must render as <div data-testid="step-value-summary-slide" class="step">.\n` +
@@ -1173,7 +1190,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
     `    Not ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ or any other emoji/symbol character.\n` +
     `  - Never hand-draw, merge, or invent icon paths. Use inline Heroicons SVG from stock Heroicons (https://heroicons.com), copied verbatim.\n` +
-    `  - Plaid launch CTA icon is pipeline-controlled: for data-testid="link-external-account-btn", do not add symbol glyphs or custom icon text.\n` +
+    `  - Plaid launch CTA icon is pipeline-controlled in modal mode only (for data-testid="link-external-account-btn"); do not add symbol glyphs or custom icon text.\n` +
     `  - Do not wrap the launch CTA contents in flex-grow / fill layouts that scale the icon (e.g. avoid flex:1 on the icon wrapper). The pipeline injects a fixed ~20px Heroicons link SVG + layout CSS.\n` +
     `  - EXCEPTION: exactly ONE Brandfetch bank <img> in the host nav per the design system (wordmark URL, or icon URL only if no wordmark). No second bank <img> beside it.\n` +
     `  - Outline style for UI chrome; solid style for active/filled states.\n` +
@@ -1193,7 +1210,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses on endpoint steps.\n` +
     `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
     `    - Default UX: keep #api-response-panel hidden/collapsed on initial page load (display:none).\n` +
-    `    - Add JSON panel buttons: data-testid="api-json-panel-show", data-testid="api-json-panel-hide", and data-testid="api-panel-toggle" plus window.toggleApiPanel().\n` +
+    `    - Add one JSON panel edge-toggle button: data-testid="api-panel-toggle" plus window.toggleApiPanel(). Do not add Show JSON / Hide JSON buttons.\n` +
     `    - On API insight/slide steps, hydrate JSON payloads but keep panel collapsed until toggled open.\n` +
     `    - When opened, render JSON fully expanded via renderjson (set_show_to_level('all') or equivalent).\n` +
     `    - Ensure .side-panel-body is vertically scrollable for long JSON payloads.\n` +
@@ -1202,7 +1219,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `    - Use renderjson for JSON rendering:\n` +
     `      <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n` +
     `      and style keys/strings/numbers to match Plaid slide theme colors.\n` +
-    `    - It slides in from the right as a glassmorphism overlay.\n` +
+    `    - It slides in from the right as a glassmorphism overlay with a light-green edge chevron control that flips direction on collapse/expand.\n` +
     `    - CRITICAL: Do NOT create any inline JSON display panels inside step divs.\n` +
     `      No "insight-right", no "auth-json-panel", no "-json-panel" divs of any kind.\n` +
     `      Every step div shows ONLY the customer-facing demo screen — zero raw JSON in the layout.\n` +
@@ -1213,6 +1230,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `      Identity score + pass threshold/status for happy-path approval.\n` +
     `    - Ensure request/response content aligns with the slide claim: endpoint label, fields, and highlighted bullets\n` +
     `      must describe the same API context.\n` +
+    `    - On widescreen layouts, center slide content and add a subtle border/frame around the content area; table scenes should constrain width/padding so columns stay readable and not overly spread.\n` +
     `HOST UI PROFESSIONALISM (enterprise fintech — non-negotiable for host/customer screens):\n` +
     `  - The host app must read as a credible bank or fintech product UI, not a marketing landing page, Dribbble concept, or game.\n` +
     `  - Visual hierarchy: clear typographic scale, restrained shadows, consistent spacing rhythm, one obvious primary CTA per screen where appropriate.\n` +
@@ -1231,6 +1249,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `  - NAVIGATION CONTRACT: goToStep(id) must activate [data-testid="step-\${id}"] reliably and never leave active step as none.\n` +
     `  - SELECTOR CONTRACT: Every selector used by playwright-script.json must exist and be visible on the target step before interaction.\n` +
     `  - LINK LAUNCH CONTRACT: Required launch selectors (apply-financing-btn, continue-application-btn, link-external-account-btn) must be present and visible when referenced.\n` +
+    `    Embedded mode exception: do NOT require link-external-account-btn; require plaid-embedded-link-container instead.\n` +
     `  - API PANEL CONTRACT: For API insight steps, #api-response-panel must render non-empty JSON from step API data when shown; never display an empty visible panel.\n` +
     `  - API STORY ALIGNMENT CONTRACT: Endpoint label, response fields, and narration must describe the same API context.\n` +
     `- All interactive elements must have data-testid attributes in kebab-case that match\n` +
@@ -1416,7 +1435,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     text:
       `## PLAID LINK MODE\n\n` +
       `Resolved Plaid Link mode for this build: ${plaidLinkMode}\n` +
-      `- embedded: hosted_link token config + hosted_link_url launch behavior.\n` +
+      `- embedded: in-page Embedded Institution Search widget via Plaid.createEmbedded; no hosted_link_url redirects.\n` +
       `- modal: in-page Plaid.create handler flow.\n`,
   });
 
@@ -1469,6 +1488,21 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           ? issueLines.join('\n')
           : 'No specific issues logged — general quality improvement pass.'),
     });
+
+    if (opts.fixMode === 'touchup') {
+      contentBlocks.push({
+        type: 'text',
+        text:
+          `## TOUCHUP MODE (SCOPED)\n\n` +
+          `You are in touchup mode. Preserve existing structure and apply minimal targeted edits.\n` +
+          `- Do not rewrite unrelated steps.\n` +
+          `- Preserve goToStep/getCurrentStep behavior and Plaid launch/token handlers.\n` +
+          `- Maintain existing data-testid contract.\n` +
+          (opts.touchupStepId
+            ? `- Primary scope step: "${opts.touchupStepId}".\n`
+            : ''),
+      });
+    }
 
     // Attach QA frame screenshots for failed steps so the build agent can see the visual issues
     if (opts.qaFrames && opts.qaFrames.length > 0) {
@@ -1654,7 +1688,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         type: 'text',
         text:
           `## LIVE PLAID LINK MODE\n\n` +
-          `The real Plaid Link SDK renders its own modal UI — do NOT build simulated Plaid step divs.\n` +
+          `${plaidLinkMode === 'embedded'
+            ? `This run uses Embedded Institution Search (in-page container) — do NOT build simulated Plaid step divs.\n`
+            : `The real Plaid Link SDK renders its own modal UI — do NOT build simulated Plaid step divs.\n`}` +
           `The recording uses headless:false which captures the real Plaid iframe in the video.\n` +
           `Your step list goes directly from the initiate-link step to the post-link customer UI steps.\n\n` +
           `Follow these rules precisely:\n\n` +
@@ -1695,10 +1731,14 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `     credentialScope: 'cra'\n` +
           `   If CRA_LAYER_TEMPLATE is configured server-side, the backend will use it automatically\n` +
           `   with CRA credentials to initialize the CRA/Layer session token path.\n\n` +
-          `3. INITIATE LINK BUTTON: The "Link External Account" button\n` +
-          `   (data-testid="link-external-account-btn") MUST be inside the initiate-link step div.\n` +
-          `   Clicking it runs: if (window._plaidHandler) window._plaidHandler.open();\n` +
-          `   Do NOT call goToStep — the Plaid SDK opens its own iframe modal immediately.\n\n` +
+          `${plaidLinkMode === 'embedded'
+            ? `3. EMBEDDED LAUNCH (NO BUTTON): Do NOT add "Connect Bank Account", "Link Bank Account", or similar CTA button.\n` +
+              `   Embedded mode starts from activating the in-page container (data-testid="plaid-embedded-link-container").\n` +
+              `   Do NOT use hosted redirects/popups for embedded mode.\n\n`
+            : `3. INITIATE LINK BUTTON: The "Link External Account" button\n` +
+              `   (data-testid="link-external-account-btn") MUST be inside the initiate-link step div.\n` +
+              `   Clicking it runs: if (window._plaidHandler) window._plaidHandler.open();\n` +
+              `   Do NOT call goToStep — the Plaid SDK opens its own iframe modal immediately.\n\n`}` +
           `4. NO SIMULATED PLAID STEPS: Do NOT build step divs for institution search, OTP, credentials,\n` +
           `   account selection, or a Plaid success screen. The real SDK handles all of that inside\n` +
           `   its own cross-origin iframe. The recording automation interacts with the iframe directly.\n\n` +
@@ -1715,14 +1755,46 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
           `8. PLAYWRIGHT SCRIPT — CRITICAL RULES:\n` +
           `   a. The initiate-link step in demo-script.json MUST have "plaidPhase": "launch".\n` +
           `      This tells record-local.js it is the Plaid launch step (disables the overrun timer).\n` +
-          `   b. The playwright-script entry for this step must be a SINGLE action:\n` +
-          `      { "id": "<initiate-link-step-id>", "action": "click",\n` +
-          `        "target": "[data-testid=\\"link-external-account-btn\\"]", "waitMs": 120000 }\n` +
-          `      Do NOT split into a goToStep entry + a click entry — that creates duplicate markStep\n` +
-          `      calls and corrupts the step-timing.json. One entry, one click, one markStep.\n` +
+          `   b. The playwright-script entry for this step must be a SINGLE action.\n` +
+          `${plaidLinkMode === 'embedded'
+            ? `      Embedded: { "id": "<initiate-link-step-id>", "action": "goToStep", "target": "<initiate-link-step-id>", "waitMs": 120000 }\n` +
+              `      Do not use a click target for embedded launch in this mode.\n`
+            : `      Modal: { "id": "<initiate-link-step-id>", "action": "click",\n` +
+              `        "target": "[data-testid=\\"link-external-account-btn\\"]", "waitMs": 120000 }\n` +
+              `      Do NOT split into a goToStep entry + a click entry — that creates duplicate markStep\n` +
+              `      calls and corrupts the step-timing.json. One entry, one click, one markStep.\n`}` +
           `   c. Do NOT include playwright steps for institution search, credentials, or account selection.\n` +
           `      The recording automation handles those internally via CDP iframe automation.`,
       });
+
+      if (plaidLinkMode === 'embedded') {
+        contentBlocks.push({
+          type: 'text',
+          text:
+            `## EMBEDDED LINK OVERRIDE (HIGHEST PRIORITY)\n\n` +
+            `This run is embedded mode. Override any modal/hosted assumptions:\n` +
+            `1. Do NOT use hosted_link or hosted_link_url in app code.\n` +
+            `2. In launch step, render an in-page container: data-testid="plaid-embedded-link-container".\n` +
+            `3. Mount Plaid Embedded Institution Search in that container using Plaid.createEmbedded(...).\n` +
+            `4. Embedded widget should auto-load when launch step becomes active.\n` +
+            `5. Do NOT include "Connect/Link Bank Account" CTA buttons in embedded mode.\n` +
+            `6. HARD CO-LOCATION RULE: the launch step must contain data-testid="plaid-embedded-link-container".\n` +
+            `   Do NOT split into a separate explainer step followed by an embedded-only step.\n` +
+            `7. Use-case sizing matrix (required):\n` +
+            `   - e-commerce checkout => small profile (~440x200, ~3-4 institutions)\n` +
+            `   - bill pay => medium profile (~400x270, ~4-6 institutions)\n` +
+            `   - account funding inbound payments => large profile (~700x350, ~6-9 institutions)\n` +
+            `8. Expose runtime metadata for QA:\n` +
+            `   __embeddedLinkSizeProfile, __embeddedLinkUseCase,\n` +
+            `   __embeddedLinkExpectedInstitutionTilesMin/Max, __embeddedLinkExpectedInstitutionTileCount.\n` +
+            `9. Container fill contract (required):\n` +
+            `   - Container must use position:relative; overflow:hidden; display:block; width:100%;\n` +
+            `   - Reserve space with both height and min-height from selected size profile.\n` +
+            `   - Any Plaid iframe/wrapper inside container must be forced to fill:\n` +
+            `     position:absolute; inset:0; width:100%; height:100%; max-width:100%; max-height:100%; border:0.\n` +
+            `   - Apply fill styling even when iframe is already in-place (not only when reparenting).\n`,
+        });
+      }
 
       // Plaid Link reference screenshots — DISABLED (plaid-link-capture stage off)
       // To restore: re-enable plaid-link-capture in orchestrator.js and uncomment below.
@@ -1755,8 +1827,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
       `## DESIGN PLUGIN: Plaid Link Asset Library (pixel-perfect reference)\n\n` +
       `The following HTML/CSS is a production-accurate prototype of Plaid Link's Core Credentials ` +
       `flow, derived directly from Plaid's official Product Shots Toolkit Figma file. ` +
-      `When generating the Plaid Link modal steps (institution search, credentials, account ` +
-      `selection, connected), use this exact component structure, CSS class names, color tokens, ` +
+      `${plaidLinkMode === 'embedded'
+        ? `When generating embedded launch UX, use this as styling/component reference for in-page institution selection and trust surfaces (not a hosted redirect flow). `
+        : `When generating the Plaid Link modal steps (institution search, credentials, account selection, connected), use this exact component structure, CSS class names, color tokens, `}` +
       `and layout as your reference. Do NOT deviate from the design tokens defined here.\n\n` +
       `Key design tokens from the asset library:\n` +
       `  --link-bg: #ffffff (modal background)\n` +

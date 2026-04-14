@@ -1,108 +1,72 @@
 ================================================================================
-Chase Sapphire — Second-Look Underwriting with Plaid Check Base Report + Income Insights
+TD Bank (US) Account Funding — Ownership-Verified Instant Pay by Bank
 ================================================================================
 
-**Host:** **Chase** — consumer credit cards / premium rewards  
-**Canonical URL:** https://www.chase.com/  
-**Brand URL:** https://www.chase.com/
+## Objective
+Create a production-grade, hyper-realistic TD funding journey where a customer links an external account, verifies ownership, enters a funding amount, and receives an instant low-risk Pay by Bank approval.
 
-**Glean / internal research notes (CRA second-look):**
-- Base Report = foundational CRA: up to 24 months consumer-permissioned bank data, identity, balances, categorized cash-flow, account stability signals.
-- Income Insights = income add-on: historical gross/net income, forecasted income, employer, frequency, predicted next pay date — retrieved after Base Report path.
-- Link: `products: ["cra_base_report","cra_income_insights"]`; user must exist via `/user/create` with identity (name, DOB, emails, phones, addresses; partial SSN recommended). Token: `consumer_report_permissible_purpose` (e.g. credit review / account review credit use case), `cra_options`, webhook; report is async (`USER_CHECK_REPORT_READY` / check report ready lifecycle) before GETs.
-- Second-look narrative: applicant pended or not fully approved on bureau-only path; bank offers permissioned cash-flow + income verification to expand the credit box responsibly.
+Prioritize visual credibility and authentic UX over rigid storyboard literalism while preserving product truth and compliance constraints.
 
-**User journey (one sentence):**  
-A Chase Sapphire applicant receives a not-instant approval after the initial bureau review and is invited to link accounts through Plaid Check Link (CRA) so underwriters can complete a second look using Base Report and Income Insights before a final decision.
+## Core Context
+- **Host:** TD Bank (United States) — retail banking / digital servicing
+- **Canonical URL:** https://www.td.com
+- **Brand URL:** https://www.td.com
+- **Primary product family:** `funding`
+- **Products featured:** Plaid Link, Plaid Identity Match, Plaid Auth, Plaid Signal
+- **Solutions supported:** Funding, Account Opening, Fraud & Risk Controls
+- **Primary messaging file:** `inputs/plaid-value-props.md`
+- **Research depth:** messaging
 
-**Story arc (short prose):**  
-Bureau-first decisioning leaves good borrowers invisible. Chase offers a clear second look: the applicant consents to Plaid Check Link, links a non-OAuth sandbox bank with a CRA test persona, and Plaid generates a consumer report. After a report-ready beat, underwriters review Base Report cash-flow context and Income Insights for ability-to-pay — ending in a confident approved outcome for the demo.
+## Non-Negotiables
+- Use live Plaid Link and real happy-path flow capture.
+- Keep product naming and semantics accurate (approved product names only).
+- Signal interpretation must remain correct: lower score = lower ACH return risk; happy path = low score + `ACCEPT`.
+- Show a clear business outcome at the end (instant, trusted funding completion).
+- Use TD-like consumer banking chrome for host steps; keep Plaid insight steps visually distinct.
+- Design for 1440x900.
 
--------------------------------------------------------------------------------
-PRODUCTS & FAMILY
--------------------------------------------------------------------------------
+## Creative Freedom (Explicit)
+- Choose the strongest UX structure, spacing, and interaction hierarchy for realism.
+- You may merge/split host moments as needed if business logic is preserved.
+- Prefer natural product UX patterns (information architecture, progressive disclosure, meaningful affordances) over checklist-like UI.
+- Avoid generic template aesthetics; make it feel like a real TD production surface.
 
-**Products featured (approved names only):**  
-Plaid Link (Consumer Report by Plaid Check — CRA Check Link), Plaid Check Base Report, CRA Income Insights
+## Scene Goals (Outcome-Based, Ordered)
+1. Establish TD funding context and user motivation to add an external account.
+2. Build trust before handoff (security + speed + clarity of next action).
+3. Show Plaid Link completion as the connection moment.
+4. Confirm ownership and account readiness using Identity Match + Auth insights.
+5. Capture funding amount and run Signal decisioning for that exact transaction.
+6. Reveal low-risk `ACCEPT` and instant funding confirmation with quantified value.
 
-**Solutions supported** (one or multiple; used to query Solutions Master foundation):  
-Consumer Report Underwriting, Credit Decisioning, Onboarding Conversion Optimization
+## Persona and Required On-Screen Data
+- **Persona:** Maya Patel, TD retail customer
+- **Context:** Funding a TD checking account from an external account for an upcoming bill
+- **Must-show fields:** external account mask, funding amount, ownership status, routing/account readiness, Signal score + `ACCEPT`
 
-**Primary product family** (pick one — aligns with pipeline profiles):  
-`cra_base_report`
+## Evidence Anchors (Externally Safe Ranges)
+- Funded account conversion lift: **+10% to +25%**
+- Time to first fund: **2x to 8x faster**
+- Funding-step drop-off reduction: **15% to 30% lower**
+- ACH risk outcome improvement: **30% to 50% fewer ACH return / unauthorized outcomes**
+- Funding cost-to-serve reduction: **10% to 20% lower**
+- Funding-related support contact reduction: **20% to 40% fewer**
 
-**Primary messaging file for this demo** (pick one to own stats):  
-`inputs/products/plaid-cra-base-report.md`
+Use range-based language (“can help,” “supports,” “observed range”). Avoid deterministic guarantees.
 
-**Research depth:** full
+## Constraints
+- Frame outputs as decision support for account funding and risk controls; do not claim guaranteed approvals.
+- Keep one coherent stats source and avoid conflicting claims.
 
--------------------------------------------------------------------------------
-CONNECTION & RECORDING (checklist)
--------------------------------------------------------------------------------
-
-  [x] **Live Plaid Link** — real CRA Check Link SDK (`plaidPhase: "launch"` single step; no simulated Link divs)
-  [ ] **Plaid Layer** / standard OAuth bank Link — not primary; CRA uses Check Link flow
-  [x] **Sandbox / persona** — First Platypus Bank non-OAuth; CRA login `user_credit_profile_excellent` / `pass_good` (strong second-look story); see `inputs/plaid-link-sandbox.md` §3 and §7
-
--------------------------------------------------------------------------------
-STORYBOARD BEATS (ORDER = SCRIPT ORDER)
--------------------------------------------------------------------------------
-
-**Use these exact `id` values once each in `demo-script.json` (no duplicates; do not use `value-summary-slide`):**
-
-| # | `id` (exact) | Beat | What the viewer sees | Narration focus | Reveal / CTA |
-|---|----------------|------|----------------------|-----------------|--------------|
-| 1 | `chase-sapphire-status` | host | Chase-branded Sapphire application status: initial review complete — “We need a bit more information” / not instant approve (light neutral host UI) | Bureau-first friction; second look is optional, fast, permissioned | **Continue to verify with Plaid** |
-| 2 | `chase-second-look-offer` | host | Plain-language explainer: link accounts so Chase can review cash flow and income for underwriting (FCRA consent copy at high level) | Trust + control; data use for credit decision only | **Start Plaid verification** — narration ends as user taps CTA |
-| 3 | `plaid-link-cra` | link-launch | **Single** real CRA Plaid Link step (`plaidPhase: "launch"`): consent → institution → CRA credentials → accounts → success | Narration **inside** modal only: consent, linking, success — not “she opens Link” | Linked; advance host on `onSuccess` |
-| 4 | `slide-cra-setup-lifecycle` | slide | `.slide-root` Plaid slide: `/user/create` + `/link/token/create` intent (products `cra_base_report` + `cra_income_insights`, permissible purpose, webhook, async lifecycle) | Why report is not instant; compliance-aware setup | **Report requested** |
-| 5 | `chase-report-generating` | host | “We’re generating your consumer report” progress / status card | Short wait state mirrors async CRA | **View decision factors** when ready |
-| 6 | `slide-base-report-insight` | slide | Base Report insight: `/cra/check_report/base_report/get` — balances, inflows/outflows, ownership, stability (JSON panel or structured insight per pipeline) | Cash-flow context beyond the bureau | **Base Report ready** |
-| 7 | `slide-income-insights` | slide | Income Insights: `/cra/check_report/income_insights/get` — income signals, employer/frequency where shown | Ability-to-pay reinforcement | **Income Insights ready** |
-| 8 | `chase-final-approval` | host | Final Sapphire decision: approved / credit line assigned (realistic premium card outcome) | Second look converted a maybe into a yes | **Accept card** / **Continue to card** |
-| 9 | `slide-cra-second-look-roi` | slide | ROI: second-look underwriting with consumer-permissioned CRA (use stats only from `plaid-cra-base-report.md` approved rows) | Scale second looks without manual doc chase | **Fund more good applicants** |
-
-**Product-specific reminders** (delete if N/A):  
-- CRA: **one** live Link launch step; `/link/token/create` includes both **`cra_base_report`** and **`cra_income_insights`**; show **report-ready** before pulling insights.  
-- Host application screens = **light** Chase chrome; CRA setup / API lifecycle beats = **Plaid `.slide-root`** per `CLAUDE.md`.  
-- Link: pre-Link step narration ends on the **button**; Link step = in-modal only.  
-- Do **not** use `user_bank_income` for CRA Check Link — use **`user_credit_profile_*`** with **`pass_good`**.
-
-**Compliance / user data (one line):**  
-FCRA consumer report for credit underwriting; `/user/create` identity context and permissible purpose configured before report creation; async consumer-report lifecycle shown before data retrieval.
-
--------------------------------------------------------------------------------
-PERSONA & SAMPLE DATA
--------------------------------------------------------------------------------
-
-**Name / role:** Daniel Okonkwo, tech analyst applying for Chase Sapphire Preferred  
-**Company / context:** Online card application → second-look path  
-**Sample fields that must appear on screen:** Applicant name, masked account identifiers post-Link, report-ready status, Base Report themes (inflows/outflows/stability), Income Insights labels (income band / employer / pay frequency as appropriate to sandbox UI), final approved APR or credit line (realistic, not generic placeholders)
-
--------------------------------------------------------------------------------
-HOST CHROME (LIGHT TOUCH)
--------------------------------------------------------------------------------
-
-Chase-owned **light** application and decision screens (headers, typography, Sapphire-adjacent accent — brand from Brand URL). Primary CTAs for second look and final approval. Plaid-dark slides only for API/report education steps.
-
-**Viewport:** 1440×900.
-
--------------------------------------------------------------------------------
-OPTIONAL: SLIDE SUPPLEMENT
--------------------------------------------------------------------------------
-
+## Optional Slide Supplement
 [[SLIDE_OUTPUT_BEGIN]]
-Include **4** Plaid-branded slides where noted: (1) CRA setup + token/user lifecycle, (2) Base Report retrieval panel with realistic sandbox-flavored JSON summary, (3) Income Insights retrieval panel, (4) executive summary for second-look underwriting. JSON visible in side panel or collapsed per build QA contract; prefer right-hand API panel alignment with `demo-script.json` visualState.
+Include up to 3 Plaid insight slides aligned to API milestones:
+1) Identity Match (ownership verification)
+2) Auth (ACH rails readiness)
+3) Signal (risk decision and recommendation)
+
+Use centered framed slide content and the global API JSON side panel contract.
 [[SLIDE_OUTPUT_END]]
-
--------------------------------------------------------------------------------
-PRE-FLIGHT
--------------------------------------------------------------------------------
-
-  [x] Stats owned by `inputs/products/plaid-cra-base-report.md` only  
-  [x] CRA Link + async report path + both products on token  
-  [x] Storyboard order matches goToStep flow  
-  [x] Live CRA Link consistent with `PLAID_LINK_LIVE` / sandbox
 
 ================================================================================
 END OF SPECIFICATION

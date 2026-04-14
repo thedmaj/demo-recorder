@@ -142,7 +142,7 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
     switch (urlPath) {
       case '/api/create-link-token': {
         const resolvedLinkMode = resolveMode({
-          explicitMode: body.linkMode || body.link_mode,
+          explicitMode: body.linkMode || body.link_mode || context.plaidLinkMode,
           promptText: JSON.stringify(body || {}),
         });
         const linkModeAdapter = getLinkModeAdapter(resolvedLinkMode);
@@ -163,10 +163,10 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
           productFamily:        body.productFamily || body.product_family || null,
           credentialScope:      body.credentialScope || body.credential_scope || null,
           linkMode:             resolvedLinkMode,
-          hosted_link:          body.hosted_link && typeof body.hosted_link === 'object' ? body.hosted_link : undefined,
           runDir:               context.runDir || process.env.PIPELINE_RUN_DIR || null,
         };
         const modeScopedOpts = linkModeAdapter.prepareCreateLinkTokenBody(baseOpts);
+        modeScopedOpts.linkMode = resolvedLinkMode;
         if (body.plaid_user_id || body.plaidUserId) {
           modeScopedOpts.plaidCheckUserId = body.plaid_user_id || body.plaidUserId;
         }
@@ -295,8 +295,25 @@ async function startServer(port = 3737, rootDir) {
   const runDirFromScratch = path.basename(SCRATCH_APP_DIR) === 'scratch-app'
     ? path.dirname(SCRATCH_APP_DIR)
     : null;
+  let runPlaidLinkMode = null;
+  try {
+    const modeRunDir = runDirFromScratch || process.env.PIPELINE_RUN_DIR || null;
+    if (modeRunDir) {
+      const demoScriptPath = path.join(modeRunDir, 'demo-script.json');
+      if (fs.existsSync(demoScriptPath)) {
+        const parsed = JSON.parse(fs.readFileSync(demoScriptPath, 'utf8'));
+        const mode = String(parsed && parsed.plaidLinkMode || '').trim().toLowerCase();
+        if (mode === 'embedded' || mode === 'modal') runPlaidLinkMode = mode;
+        if (!runPlaidLinkMode) {
+          const flowMode = String(parsed?.plaidSandboxConfig?.plaidLinkFlow || '').trim().toLowerCase();
+          if (flowMode === 'embedded' || flowMode === 'modal') runPlaidLinkMode = flowMode;
+        }
+      }
+    }
+  } catch (_) {}
   const apiContext = {
     runDir: runDirFromScratch || process.env.PIPELINE_RUN_DIR || null,
+    plaidLinkMode: runPlaidLinkMode,
   };
   const server = http.createServer(async (req, res) => {
     // Strip query string and URL-decode

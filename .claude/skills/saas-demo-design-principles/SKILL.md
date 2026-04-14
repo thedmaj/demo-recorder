@@ -67,6 +67,13 @@ Problem → returning user friction → layer_ready event → pre-filled flow �
 - Prohibited words: "simply", "just", "unfortunately", "robust", "seamless", "Trust Index"
 - Host **Plaid Link launch** CTAs with a normal inline icon scale (the icon supports the label; it must not read as a hero graphic filling the button)
 
+## Slide UX Guardrails
+
+- API JSON rail on slides uses a **single edge toggle icon** (`data-testid="api-panel-toggle"`), not separate Show/Hide JSON buttons.
+- Edge toggle should use a light-green affordance and flip chevron direction between collapsed and expanded states.
+- On wider screens, keep slide content visually centered with a subtle bordered content frame.
+- If a slide includes a table, constrain table width and cell padding so columns remain readable and do not stretch edge-to-edge.
+
 ## Plaid Brand Voice
 
 - Confident, precise, outcome-focused

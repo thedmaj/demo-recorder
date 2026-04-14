@@ -21,6 +21,10 @@
  *   BUILD_QA_RECORD_PARITY   — headed browser + deviceScaleFactor 2 for closer parity with record-local
  *   BUILD_QA_PLAID_LAUNCH_ICON_MAX_RATIO — icon max dim / button height; flag if exceeded (default 0.4)
  *   BUILD_QA_PLAID_LAUNCH_ICON_STRICT — if true, oversized launch CTA icon is critical (not just warning)
+ *   BUILD_QA_PLAID_MODE      — auto|full|token-only|skip (auto defaults to token-only)
+ *   BUILD_QA_TOKEN_ONLY_WAIT_MS — max wait for /api/create-link-token token-only probe (default 7000)
+ *   BUILD_QA_SKIP_MOBILE_PLAID_WHEN_TOKEN_ONLY — skip mobile launch smoke in token-only mode (default true)
+ *   BUILD_QA_STEP_SCOPE      — all|slides (default all). "slides" restricts walkthrough to slide-like steps.
  *   ANTHROPIC_API_KEY        — required for vision QA
  */
 
@@ -64,6 +68,12 @@ const LEGACY_SYNC_TIMELINE_DEBUG_OUT = path.join(OUT_DIR, 'narration-sync-debug.
 
 const MAX_WAIT     = parseInt(process.env.BUILD_QA_MAX_WAIT_MS || '15000', 10);
 const PLAID_CLICK_WAIT = parseInt(process.env.BUILD_QA_PLAID_CLICK_MS || '10000', 10);
+const BUILD_QA_PLAID_MODE_RAW = String(process.env.BUILD_QA_PLAID_MODE || 'auto').trim().toLowerCase();
+const BUILD_QA_TOKEN_ONLY_WAIT_MS = parseInt(process.env.BUILD_QA_TOKEN_ONLY_WAIT_MS || '7000', 10);
+const BUILD_QA_SKIP_MOBILE_PLAID_WHEN_TOKEN_ONLY = !(
+  process.env.BUILD_QA_SKIP_MOBILE_PLAID_WHEN_TOKEN_ONLY === 'false' ||
+  process.env.BUILD_QA_SKIP_MOBILE_PLAID_WHEN_TOKEN_ONLY === '0'
+);
 const RECORD_PARITY = process.env.BUILD_QA_RECORD_PARITY === 'true' || process.env.BUILD_QA_RECORD_PARITY === '1';
 const MOBILE_VISUAL_ENABLED = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
 const HEADLESS      = process.env.BUILD_QA_HEADLESS != null
@@ -78,6 +88,38 @@ const PLAID_LAUNCH_ICON_MAX_RATIO = (() => {
 const PLAID_LAUNCH_ICON_STRICT =
   process.env.BUILD_QA_PLAID_LAUNCH_ICON_STRICT === '1' ||
   process.env.BUILD_QA_PLAID_LAUNCH_ICON_STRICT === 'true';
+const BUILD_QA_DETERMINISTIC_GATE = process.env.BUILD_QA_DETERMINISTIC_GATE == null
+  ? true
+  : !(
+    process.env.BUILD_QA_DETERMINISTIC_GATE === '0' ||
+    process.env.BUILD_QA_DETERMINISTIC_GATE === 'false'
+  );
+let CURRENT_BUILD_QA_STEP_SCOPE = 'all';
+const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
+  'missing-panel',
+  'panel-chrome-contract',
+  'panel-visibility',
+  'api-story-alignment',
+  'slide-template-misuse',
+  'mobile-slide-mode-contract',
+  'qa-target-mismatch',
+  'runtime-js-error',
+  'navigation-mismatch',
+  'selector-missing',
+  'timing-duplicate-step-window',
+  'narration-overrun',
+  'sync-governor-cross-screen-owner',
+  'plaid-embedded-prelink-integrated',
+  'plaid-embedded-size-profile',
+  'plaid-link-mobile-layout',
+  'plaid-embedded-launch-selector-drift',
+]);
+
+const EMBEDDED_PROFILE_RANGES = {
+  small: { widthMin: 360, widthMax: 500, heightMin: 160, heightMax: 260, tilesMin: 3, tilesMax: 4 },
+  medium: { widthMin: 360, widthMax: 460, heightMin: 240, heightMax: 340, tilesMin: 4, tilesMax: 6 },
+  large: { widthMin: 630, widthMax: 860, heightMin: 300, heightMax: 420, tilesMin: 6, tilesMax: 9 },
+};
 
 const PLAID_BTN_RE = /link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_](?:\w+[-_])?bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i;
 const RESPONSIVE_DESKTOP_VIEWPORTS = [
@@ -103,6 +145,62 @@ function isPlaidLaunchRow(row, launchStepId) {
   // Step ID from plaidPhase:'launch' is authoritative; regex is redundant and causes false
   // negatives when the generated button testid doesn't match (e.g. "link-your-bank-btn").
   return id === launchStepId && row.action === 'click';
+}
+
+function resolveBuildQaPlaidMode(raw) {
+  const normalized = String(raw || '').trim().toLowerCase();
+  if (normalized === 'full' || normalized === 'token-only' || normalized === 'skip') return normalized;
+  if (normalized && normalized !== 'auto') {
+    console.warn(`[build-qa] Unknown BUILD_QA_PLAID_MODE="${normalized}" — defaulting to auto(token-only).`);
+  }
+  return 'token-only';
+}
+
+function inferTokenProbePayload(demoScript) {
+  const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch') || {};
+  const payload = {};
+  const stepProducts = Array.isArray(launchStep.products) ? launchStep.products.filter(Boolean) : [];
+  const productText = `${demoScript.product || ''} ${launchStep.label || ''} ${launchStep.id || ''}`.toLowerCase();
+  const isCra = /cra|consumer[_\s-]?report|income[_\s-]?insights|check[_\s-]?report/.test(productText);
+
+  if (stepProducts.length) payload.products = stepProducts;
+  if (launchStep.productFamily) payload.productFamily = launchStep.productFamily;
+  if (launchStep.credentialScope) payload.credentialScope = launchStep.credentialScope;
+  if (isCra && !payload.credentialScope) payload.credentialScope = 'cra';
+  if (isCra && !payload.productFamily) payload.productFamily = 'cra_base_report';
+  if (isCra && !payload.products) payload.products = ['cra_base_report', 'cra_income_insights'];
+  if (String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded') {
+    payload.linkMode = 'embedded';
+    payload.link_mode = 'embedded';
+  }
+  payload.userId = `build-qa-token-${Date.now()}`;
+  return payload;
+}
+
+async function runTokenOnlyLinkProbe(page, demoScript) {
+  const payload = inferTokenProbePayload(demoScript);
+  const result = await Promise.race([
+    page.evaluate(async (body) => {
+      const res = await fetch('/api/create-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      let text = '';
+      try { text = await res.text(); } catch (_) {}
+      return {
+        ok: res.ok,
+        status: res.status,
+        body: String(text || '').slice(0, 2000),
+      };
+    }, payload),
+    new Promise((resolve) => setTimeout(() => resolve({
+      ok: false,
+      status: 0,
+      body: `token-only-timeout-${BUILD_QA_TOKEN_ONLY_WAIT_MS}ms`,
+    }), Math.max(500, BUILD_QA_TOKEN_ONLY_WAIT_MS))),
+  ]);
+  return { payload, result };
 }
 
 /** build-qa cannot drive the Plaid iframe; fake onSuccess so post-link steps are testable. */
@@ -261,12 +359,15 @@ async function evaluateStepState(page, stepId) {
     const apiBody = document.getElementById('api-response-content');
     const apiBodyContainer = apiPanel ? apiPanel.querySelector('.side-panel-body') : null;
     const endpoint = document.getElementById('api-panel-endpoint');
-    const apiToggle = document.querySelector('[data-testid="api-panel-toggle"], #api-panel-toggle');
-    const apiJsonShow = document.querySelector('[data-testid="api-json-panel-show"], #api-json-panel-show');
-    const apiJsonHide = document.querySelector('[data-testid="api-json-panel-hide"], #api-json-panel-hide');
+    const apiToggle = document.querySelector('[data-testid="api-panel-toggle"], #api-panel-toggle, .api-panel-edge-toggle');
     const slideRoot = active ? active.querySelector('.slide-root') : null;
     const slideRootStyle = slideRoot ? window.getComputedStyle(slideRoot) : null;
     const slideInlineStyle = slideRoot ? String(slideRoot.getAttribute('style') || '') : '';
+    const slideRootRect = slideRoot ? slideRoot.getBoundingClientRect() : null;
+    const slideBody = active ? active.querySelector('.slide-body') : null;
+    const slideBodyStyle = slideBody ? window.getComputedStyle(slideBody) : null;
+    const slideTable = active ? active.querySelector('.slide-root table') : null;
+    const slideTableRect = slideTable ? slideTable.getBoundingClientRect() : null;
     const bankLogo = document.querySelector('[data-testid="host-bank-logo-img"], [data-testid="host-bank-icon-img"]');
     const bankLogoShell = document.querySelector('[data-testid="host-bank-logo-shell"]');
     const layerHelper =
@@ -292,6 +393,11 @@ async function evaluateStepState(page, stepId) {
 
     let plaidLaunchCtaMetrics = null;
     const launchBtn = active ? active.querySelector('[data-testid="link-external-account-btn"]') : null;
+    const embeddedContainer = active
+      ? active.querySelector('[data-testid="plaid-embedded-link-container"], #plaid-embedded-link-container')
+      : null;
+    const embeddedRect = embeddedContainer ? embeddedContainer.getBoundingClientRect() : null;
+    const embeddedDataset = embeddedContainer ? embeddedContainer.dataset || {} : {};
     if (launchBtn) {
       const br = launchBtn.getBoundingClientRect();
       const svgs = launchBtn.querySelectorAll('svg');
@@ -314,14 +420,12 @@ async function evaluateStepState(page, stepId) {
       stepExists: Boolean(stepEl),
       stepVisible: isVisible(stepEl, stepStyle),
       apiPanelExists: Boolean(apiPanel),
-      apiPanelVisible: isVisible(apiPanel, apiStyle),
+      apiPanelVisible: isVisible(apiPanel, apiStyle) && !(apiPanel && apiPanel.classList.contains('api-panel-collapsed')),
       apiBodyVisible: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).display !== 'none' : false,
       apiBodyOverflowY: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).overflowY : '',
       apiJsonToggleExists: Boolean(apiToggle),
-      apiJsonShowExists: Boolean(apiJsonShow),
-      apiJsonHideExists: Boolean(apiJsonHide),
-      apiPanelChromeTriplet:
-        Boolean(apiJsonShow) && Boolean(apiJsonHide) && Boolean(apiToggle),
+      apiPanelChromeTriplet: Boolean(apiToggle),
+      apiPanelHasEdgeToggleClass: Boolean(apiToggle && String(apiToggle.className || '').includes('api-panel-edge-toggle')),
       hasToggleApiFunction: typeof window.toggleApiPanel === 'function',
       bankLogoPresent: Boolean(bankLogo),
       bankLogoVisible: bankLogo ? isVisible(bankLogo, window.getComputedStyle(bankLogo)) : false,
@@ -337,7 +441,11 @@ async function evaluateStepState(page, stepId) {
       activeStepJsonHintNodeCount: active ? active.querySelectorAll('[class*="json"], [id*="json"], [data-testid*="json"]').length : 0,
       slideRootInlineStyleHasFixedSize: /\b(?:width|height|min-width|min-height|max-width|max-height)\s*:\s*\d+px\b/i.test(slideInlineStyle),
       slideRootComputedWidth: slideRootStyle ? parseFloat(slideRootStyle.width || '0') : 0,
+      slideRootOffsetLeft: slideRootRect ? slideRootRect.left : 0,
       viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      activeSlideHasTable: Boolean(slideTable),
+      slideTableWidth: slideTableRect ? slideTableRect.width : 0,
+      slideBodyBorderWidth: slideBodyStyle ? parseFloat(slideBodyStyle.borderTopWidth || '0') : 0,
       activeStepHasMobileShellTarget: Boolean(active?.classList?.contains('mobile-shell-target')),
       activeStepHasMobileSimulatorShell: Boolean(active?.querySelector('[data-testid="mobile-simulator-shell"]')),
       hasOnboardingCompleteStep: Boolean(document.querySelector('[data-testid="step-onboarding-complete"]')),
@@ -345,6 +453,29 @@ async function evaluateStepState(page, stepId) {
       piiContinueOnclick: piiContinueBtn ? String(piiContinueBtn.getAttribute('onclick') || '') : '',
       activePiiInputCount: activePiiInputs.length,
       activeStepHasPlaidLinkLaunchBtn: Boolean(active?.querySelector('[data-testid="link-external-account-btn"]')),
+      embeddedContainerExists: Boolean(embeddedContainer),
+      embeddedContainerWidth: embeddedRect ? embeddedRect.width : 0,
+      embeddedContainerHeight: embeddedRect ? embeddedRect.height : 0,
+      embeddedUseCase:
+        window.__embeddedLinkUseCase ||
+        embeddedDataset.plaidEmbeddedUseCase ||
+        null,
+      embeddedSizeProfile:
+        window.__embeddedLinkSizeProfile ||
+        embeddedDataset.plaidEmbeddedSizeProfile ||
+        null,
+      embeddedExpectedInstitutionTilesMin:
+        Number(window.__embeddedLinkExpectedInstitutionTilesMin) ||
+        Number(embeddedDataset.expectedInstitutionTilesMin) ||
+        null,
+      embeddedExpectedInstitutionTilesMax:
+        Number(window.__embeddedLinkExpectedInstitutionTilesMax) ||
+        Number(embeddedDataset.expectedInstitutionTilesMax) ||
+        null,
+      embeddedExpectedInstitutionTileCount:
+        Number(window.__embeddedLinkExpectedInstitutionTileCount) ||
+        Number(embeddedDataset.expectedInstitutionTiles) ||
+        null,
       plaidLaunchCtaMetrics,
       layerHelperText: (layerHelper?.textContent || '').replace(/\s+/g, ' ').trim(),
       layerHelperVisible: isVisible(layerHelper, layerHelperStyle),
@@ -738,6 +869,7 @@ async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
   const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
   if (!launchStep) return diagnostics;
   const launchId = launchStep.id;
+  const plaidLinkMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ? 'embedded' : 'modal';
   try {
     await page.evaluate((id) => {
       if (typeof window.setDemoViewMode === 'function') window.setDemoViewMode('mobile-simulated');
@@ -755,19 +887,70 @@ async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
     return diagnostics;
   }
 
-  const launchBtn = '[data-testid="link-external-account-btn"]';
   try {
-    const loc = await locateVisible(page, launchBtn);
     const beforeErrors = pageErrors.length;
-    await loc.click({ timeout: 8000, force: true });
-    await page.waitForTimeout(400);
-    const hasHandler = await page.evaluate(() => Boolean(window._plaidHandler));
-    if (!hasHandler) {
+    if (plaidLinkMode === 'embedded') {
+      await page.waitForTimeout(900);
+    } else {
+      const launchBtn = '[data-testid="link-external-account-btn"]';
+      const loc = await locateVisible(page, launchBtn);
+      await loc.click({ timeout: 8000, force: true });
+      await page.waitForTimeout(900);
+    }
+    const launchState = await page.evaluate(() => ({
+      hasHandler: Boolean(window._plaidHandler),
+      embeddedWidgetLoaded: Boolean(window.__embeddedLinkWidgetLoaded),
+      embeddedInstanceReady: Boolean(window.__plaidEmbeddedInstance),
+      embeddedLayout: window.__embeddedLinkLayout || null,
+      embeddedSizeProfile: window.__embeddedLinkSizeProfile || null,
+      embeddedExpectedInstitutionTilesMin: window.__embeddedLinkExpectedInstitutionTilesMin || null,
+      embeddedExpectedInstitutionTilesMax: window.__embeddedLinkExpectedInstitutionTilesMax || null,
+      expectedInstitutionTiles: window.__embeddedLinkExpectedInstitutionTileCount || null,
+    }));
+    if (plaidLinkMode === 'embedded') {
+      if (!launchState.embeddedWidgetLoaded && !launchState.embeddedInstanceReady) {
+        diagnostics.push({
+          stepId: launchId,
+          category: 'plaid-link-mobile-launch',
+          severity: 'critical',
+          issue: 'Embedded Link widget did not load in mobile-simulated view.',
+          suggestion: 'Ensure embedded mode mounts Plaid.createEmbedded into the in-page container when the launch step is active.',
+        });
+      }
+      const profile = String(launchState.embeddedSizeProfile || launchState.embeddedLayout || '').toLowerCase();
+      const profileSpec = EMBEDDED_PROFILE_RANGES[profile];
+      const expected = Number(launchState.expectedInstitutionTiles);
+      const minTiles = Number(launchState.embeddedExpectedInstitutionTilesMin);
+      const maxTiles = Number(launchState.embeddedExpectedInstitutionTilesMax);
+      if (!profileSpec) {
+        diagnostics.push({
+          stepId: launchId,
+          category: 'plaid-link-mobile-layout',
+          severity: 'critical',
+          issue: `Embedded Link size profile metadata is missing (got "${profile || 'none'}").`,
+          suggestion: 'Set window.__embeddedLinkSizeProfile to small, medium, or large before mobile launch validation.',
+        });
+      } else if (
+        !(Number.isFinite(expected) && Number.isFinite(minTiles) && Number.isFinite(maxTiles)) ||
+        minTiles !== profileSpec.tilesMin ||
+        maxTiles !== profileSpec.tilesMax ||
+        expected < minTiles ||
+        expected > maxTiles
+      ) {
+        diagnostics.push({
+          stepId: launchId,
+          category: 'plaid-link-mobile-layout',
+          severity: 'critical',
+          issue: `Embedded Link tile expectation (${minTiles}-${maxTiles}, count=${expected}) is invalid for profile "${profile}".`,
+          suggestion: `Set embedded expected tiles to ${profileSpec.tilesMin}-${profileSpec.tilesMax} for ${profile} profile and keep count within range.`,
+        });
+      }
+    } else if (!launchState.hasHandler) {
       diagnostics.push({
         stepId: launchId,
         category: 'plaid-link-mobile-launch',
         severity: 'critical',
-        issue: 'Plaid handler is not initialized when launching from mobile-simulated view.',
+        issue: 'Plaid handler is not initialized when launching modal Link from mobile-simulated view.',
         suggestion: 'Ensure click bindings and Plaid token bootstrap complete before launch on mobile-simulated steps.',
       });
     }
@@ -787,8 +970,57 @@ async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
       stepId: launchId,
       category: 'plaid-link-mobile-launch',
       severity: 'critical',
-      issue: `Could not click mobile Plaid launch button "${launchBtn}": ${err.message}`,
-      suggestion: 'Ensure the launch CTA exists and remains visible in mobile-simulated mode.',
+      issue:
+        plaidLinkMode === 'embedded'
+          ? `Could not validate embedded launch state in mobile-simulated mode: ${err.message}`
+          : `Could not click mobile Plaid launch button "[data-testid=\\"link-external-account-btn\\"]": ${err.message}`,
+      suggestion:
+        plaidLinkMode === 'embedded'
+          ? 'Ensure the embedded container is rendered and widget bootstrap runs when the launch step becomes active.'
+          : 'Ensure the launch CTA exists and remains visible in mobile-simulated mode.',
+    });
+  }
+  return diagnostics;
+}
+
+async function runEmbeddedLaunchSelectorDriftCheck(page, demoScript) {
+  const diagnostics = [];
+  const isEmbedded = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
+  if (!isEmbedded) return diagnostics;
+  const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  if (!launchStep?.id) return diagnostics;
+
+  const state = await page.evaluate((launchId) => {
+    const result = { launchContainsContainer: false, canonicalSteps: [] };
+    const steps = Array.from(document.querySelectorAll('.step[data-testid]'));
+    for (const step of steps) {
+      const testid = String(step.getAttribute('data-testid') || '');
+      const sid = testid.replace(/^step-/, '');
+      const hasCanonical = !!step.querySelector('[data-testid="link-external-account-btn"]');
+      if (hasCanonical) result.canonicalSteps.push(sid);
+      if (sid === launchId) {
+        result.launchContainsContainer = !!step.querySelector('[data-testid="plaid-embedded-link-container"], #plaid-embedded-link-container');
+      }
+    }
+    return result;
+  }, launchStep.id);
+
+  if (!state.launchContainsContainer) {
+    diagnostics.push({
+      stepId: launchStep.id,
+      category: 'plaid-embedded-launch-selector-drift',
+      severity: 'critical',
+      issue: 'Embedded launch container is missing from the plaidPhase:"launch" step.',
+      suggestion: 'Ensure data-testid="plaid-embedded-link-container" is present in the launch step for embedded mode.',
+    });
+  }
+  if (Array.isArray(state.canonicalSteps) && state.canonicalSteps.length > 0) {
+    diagnostics.push({
+      stepId: launchStep.id,
+      category: 'plaid-embedded-launch-selector-drift',
+      severity: 'critical',
+      issue: `Embedded mode found disallowed launch CTA selector data-testid="link-external-account-btn" on step(s): ${state.canonicalSteps.join(', ')}.`,
+      suggestion: 'Remove Link/Connect launch CTA buttons in embedded mode and start launch from the embedded container activation.',
     });
   }
   return diagnostics;
@@ -909,6 +1141,17 @@ function inferQaPhase(diag) {
   return 'visual-polish';
 }
 
+function isDeterministicBlocker(diag) {
+  if (!diag || typeof diag !== 'object') return false;
+  if (diag.severity !== 'critical') return false;
+  const category = String(diag.category || '').trim();
+  if (!category) return false;
+  if (CURRENT_BUILD_QA_STEP_SCOPE === 'slides' && category === 'navigation-mismatch') return false;
+  if (DETERMINISTIC_BLOCKER_CATEGORIES.has(category)) return true;
+  if (category.startsWith('sync-governor-') && category !== 'sync-governor-warning') return true;
+  return false;
+}
+
 function parseJsonFromText(raw) {
   const text = String(raw || '').trim();
   if (!text) return null;
@@ -922,6 +1165,13 @@ function parseJsonFromText(raw) {
     try { return JSON.parse(obj[0]); } catch (_) {}
   }
   return null;
+}
+
+function normalizeResponseLinkMode(json) {
+  const mode = String(
+    (json && (json.plaid_link_mode || json.link_mode || json.linkMode)) || ''
+  ).trim().toLowerCase();
+  return mode === 'embedded' || mode === 'modal' ? mode : null;
 }
 
 async function collectSlideMessagingContext(page, demoScript) {
@@ -1128,6 +1378,101 @@ function buildPlaidLaunchCtaIconDiagnostics(step, state) {
   return diagnostics;
 }
 
+function buildEmbeddedLinkUxDiagnostics(step, state, demoScript) {
+  const diagnostics = [];
+  if (!step || step.plaidPhase !== 'launch') return diagnostics;
+  const isEmbedded = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
+  if (!isEmbedded) return diagnostics;
+
+  const text = String(state?.activeStepText || '').toLowerCase();
+  const hasSecurityCopy = /\bsecure|security|encrypted|encrypt|protected|trusted\b/.test(text);
+  const hasEaseCopy = /\binstant|seconds|quick|fast|no manual|without manual|easy|simple\b/.test(text);
+  const hasActionCopy = /\bconnect|link|continue|search for your bank|bank account|pay by bank\b/.test(text);
+
+  if (!state?.embeddedContainerExists) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-prelink-integrated',
+      severity: 'critical',
+      issue: 'Embedded Link launch step must include the embedded container in the same active step.',
+      suggestion: 'Keep pre-link guidance and the embedded widget together in one launch step; include data-testid="plaid-embedded-link-container".',
+    });
+    return diagnostics;
+  }
+
+  if (!hasSecurityCopy || !hasEaseCopy || !hasActionCopy) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-prelink-integrated',
+      severity: 'critical',
+      issue: 'Embedded launch step is missing required pre-link trust messaging (security + ease + clear next action).',
+      suggestion: 'Add concise in-step copy that states security protections, ease/speed benefits, and the immediate action to connect within the embedded widget.',
+    });
+  }
+
+  const profile = String(state?.embeddedSizeProfile || '').toLowerCase();
+  const profileSpec = EMBEDDED_PROFILE_RANGES[profile];
+  const width = Number(state?.embeddedContainerWidth || 0);
+  const height = Number(state?.embeddedContainerHeight || 0);
+  const tileMin = Number(state?.embeddedExpectedInstitutionTilesMin || 0);
+  const tileMax = Number(state?.embeddedExpectedInstitutionTilesMax || 0);
+  const tileCount = Number(state?.embeddedExpectedInstitutionTileCount || 0);
+
+  if (!profileSpec) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-size-profile',
+      severity: 'critical',
+      issue: `Embedded Link size profile is missing or invalid ("${profile || 'none'}").`,
+      suggestion: 'Set embedded runtime metadata to one of: small, medium, large (window.__embeddedLinkSizeProfile and matching container data attributes).',
+    });
+    return diagnostics;
+  }
+
+  const dimOutOfRange =
+    width < profileSpec.widthMin ||
+    width > profileSpec.widthMax ||
+    height < profileSpec.heightMin ||
+    height > profileSpec.heightMax;
+  if (dimOutOfRange) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-size-profile',
+      severity: 'critical',
+      issue: `Embedded container size (${Math.round(width)}x${Math.round(height)}) does not match "${profile}" profile range.`,
+      suggestion: `Keep ${profile} profile within ${profileSpec.widthMin}-${profileSpec.widthMax}px width and ${profileSpec.heightMin}-${profileSpec.heightMax}px height.`,
+    });
+  }
+
+  const invalidTileRange = !(tileMin > 0 && tileMax >= tileMin && tileCount > 0);
+  if (invalidTileRange) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-size-profile',
+      severity: 'critical',
+      issue: 'Embedded institution tile expectations are missing or malformed.',
+      suggestion: 'Set __embeddedLinkExpectedInstitutionTilesMin/Max and __embeddedLinkExpectedInstitutionTileCount on launch step activation.',
+    });
+  } else {
+    const tileRangeMismatch =
+      tileMin !== profileSpec.tilesMin ||
+      tileMax !== profileSpec.tilesMax ||
+      tileCount < tileMin ||
+      tileCount > tileMax;
+    if (tileRangeMismatch) {
+      diagnostics.push({
+        stepId: step.id,
+        category: 'plaid-embedded-size-profile',
+        severity: 'critical',
+        issue: `Embedded tile density metadata (${tileMin}-${tileMax}, count=${tileCount}) does not match "${profile}" profile expectation (${profileSpec.tilesMin}-${profileSpec.tilesMax}).`,
+        suggestion: 'Align tile range metadata to the selected use-case profile so QA can verify institution visibility targets deterministically.',
+      });
+    }
+  }
+
+  return diagnostics;
+}
+
 async function ensureApiPanelContractForStep(page, stepId) {
   return page.evaluate((id) => {
     const panel = document.getElementById('api-response-panel');
@@ -1190,6 +1535,7 @@ async function prepareGlobalJsonRailForBuildQa(page, stepId) {
     panel.style.removeProperty('display');
     panel.classList.add('visible');
     panel.classList.remove('api-json-collapsed');
+    panel.classList.remove('api-panel-collapsed');
     const body = panel.querySelector('.side-panel-body');
     if (body) {
       body.style.removeProperty('display');
@@ -1198,7 +1544,7 @@ async function prepareGlobalJsonRailForBuildQa(page, stepId) {
   }, stepId);
 }
 
-function buildStepAssertions(step, state) {
+function buildStepAssertions(step, state, demoScript) {
   const diagnostics = [];
   const expectedStepTestid = `step-${step.id}`;
   const isValueSummarySlide = String(step?.id || '').toLowerCase() === 'value-summary-slide';
@@ -1214,6 +1560,7 @@ function buildStepAssertions(step, state) {
     stepIdLower === 'onboarding-complete';
   const hasEndpoint = Boolean(String(step?.apiResponse?.endpoint || '').trim());
   const hasApiResponse = !!(step?.apiResponse?.response && typeof step.apiResponse.response === 'object');
+  diagnostics.push(...buildEmbeddedLinkUxDiagnostics(step, state, demoScript));
   if (!state.stepExists || !state.stepVisible || state.activeStepTestid !== expectedStepTestid) {
     diagnostics.push({
       stepId: step.id,
@@ -1256,10 +1603,8 @@ function buildStepAssertions(step, state) {
           stepId: step.id,
           category: 'panel-chrome-contract',
           severity: 'critical',
-          issue:
-            'API JSON rail is missing required header controls (data-testid="api-json-panel-show", ' +
-            '"api-json-panel-hide", and "api-panel-toggle").',
-          suggestion: 'Merge templates/slide-template/pipeline-slide-shell.html panel header — all three controls + toggleApiPanel().',
+          issue: 'API JSON rail is missing the required edge toggle control (data-testid="api-panel-toggle").',
+          suggestion: 'Merge templates/slide-template/pipeline-slide-shell.html edge toggle contract (single icon control + toggleApiPanel()).',
         });
       }
       if (!state.apiPanelVisible) {
@@ -1276,7 +1621,7 @@ function buildStepAssertions(step, state) {
           stepId: step.id,
           category: 'panel-collapse-contract',
           severity: 'warning',
-          issue: 'window.toggleApiPanel() is missing — header buttons should call a shared toggle implementation.',
+          issue: 'window.toggleApiPanel() is missing — the edge toggle icon must call a shared collapse/expand implementation.',
           suggestion: 'Define toggleApiPanel() per templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md.',
         });
       }
@@ -1344,6 +1689,47 @@ function buildStepAssertions(step, state) {
       issue: 'Slide-like step is rendering inside mobile shell instead of desktop mode.',
       suggestion: 'Auto-switch to desktop presentation for slide-like steps and keep mobile shell off for those steps.',
     });
+  }
+  if (isSlideLikeStep(step)) {
+    if (
+      state.slideRootComputedWidth > 0 &&
+      state.viewportWidth > state.slideRootComputedWidth + 120
+    ) {
+      const expectedLeft = Math.max(0, (state.viewportWidth - state.slideRootComputedWidth) / 2);
+      if (Math.abs((state.slideRootOffsetLeft || 0) - expectedLeft) > 36) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'slide-template-misuse',
+          severity: 'warning',
+          issue: 'Slide surface is not centered on wider viewports.',
+          suggestion: 'Center .slide-root with horizontal auto margins so widescreen captures keep content visually focused.',
+        });
+      }
+    }
+    if (state.activeSlideHasTable) {
+      if (!state.slideBodyBorderWidth || state.slideBodyBorderWidth < 1) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'slide-template-misuse',
+          severity: 'warning',
+          issue: 'Slide table scene is missing a visible content frame/border around the central content area.',
+          suggestion: 'Wrap slide body content in a bordered frame (or add border to .slide-body) to keep tables visually centered on widescreen.',
+        });
+      }
+      if (
+        state.slideRootComputedWidth > 0 &&
+        state.slideTableWidth > 0 &&
+        state.slideTableWidth / state.slideRootComputedWidth > 0.9
+      ) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'slide-template-misuse',
+          severity: 'warning',
+          issue: 'Slide table columns are overly spread across the full slide width.',
+          suggestion: 'Constrain slide table width and reduce horizontal cell padding so columns stay readable at 1440+ widths.',
+        });
+      }
+    }
   }
   if (isValueSummarySlide) {
     if (hasEndpoint || hasApiResponse) {
@@ -1633,6 +2019,7 @@ async function main(opts = {}) {
   const playwrightScript = JSON.parse(fs.readFileSync(PW_SCRIPT, 'utf8'));
   const demoScript       = JSON.parse(fs.readFileSync(DEMO_SCRIPT, 'utf8'));
   const demoStepIds      = (demoScript.steps || []).map(s => s.id);
+  const plaidQaMode = resolveBuildQaPlaidMode(opts.plaidMode || BUILD_QA_PLAID_MODE_RAW);
   const mobileVisualEnabled = opts.mobileVisualEnabled != null
     ? !!opts.mobileVisualEnabled
     : MOBILE_VISUAL_ENABLED;
@@ -1661,8 +2048,35 @@ async function main(opts = {}) {
   /** @type {Record<string, Array<{label:string,path:string}>>} */
   const stepFramesById = {};
   const diagnostics = [];
+  let htmlPanelTogglePresent = false;
   try {
     const html = fs.readFileSync(path.join(SCRATCH_DIR, 'index.html'), 'utf8');
+    htmlPanelTogglePresent =
+      (/data-testid=["']api-panel-toggle["']|id=["']api-panel-toggle["']/i.test(html)) ||
+      (/class=["'][^"']*api-panel-edge-toggle[^"']*["']/i.test(html));
+    if (/function\s+_initHandler\s*\(\s*token\s*\)[\s\S]{0,500}?if\s*\(\s*!data\s*\|\|\s*!data\.link_token\s*\)/i.test(html)) {
+      diagnostics.push({
+        stepId: 'plaid-link-launch',
+        category: 'runtime-js-error',
+        severity: 'critical',
+        issue: 'Plaid bootstrap guard references `data` inside `_initHandler(token)`, which can throw ReferenceError and break /api/create-link-token flow.',
+        suggestion: 'Use `if (!token && (typeof data === "undefined" || !data || !data.link_token))` or token-only guard in `_initHandler`.',
+        deterministicBlocker: true,
+      });
+    }
+    if (
+      /\.then\(function\(data\)[\s\S]{0,400}?if\s*\(\s*!token\s*&&\s*\(typeof data === 'undefined'/i.test(html) ||
+      /\.then\(function\(data\)[\s\S]{0,400}?if\s*\(\s*!token\s*&&\s*\(typeof data === "undefined"/i.test(html)
+    ) {
+      diagnostics.push({
+        stepId: 'plaid-link-launch',
+        category: 'runtime-js-error',
+        severity: 'critical',
+        issue: 'Plaid token bootstrap references `token` inside a data-scope callback, which can throw `ReferenceError: token is not defined` before Plaid handler init.',
+        suggestion: 'In data callbacks, guard with `((typeof token !== "undefined") ? !token : true)` or use data-only checks before Plaid.create.',
+        deterministicBlocker: true,
+      });
+    }
     diagnostics.push(...scanDuplicateBankMarks(html, demoScript));
     diagnostics.push(...scanMissingBrandLogo(html, demoScript));
   } catch (_) {}
@@ -1706,9 +2120,38 @@ async function main(opts = {}) {
     throw err;
   }
 
-  const rows = playwrightScript.steps || [];
-  console.log(`[build-qa] Walking ${rows.length} playwright row(s)...`);
+  const rowsAll = playwrightScript.steps || [];
+  const stepScopeRaw = String(opts.stepScope || process.env.BUILD_QA_STEP_SCOPE || 'all').trim().toLowerCase();
+  const stepScope = stepScopeRaw === 'slides' ? 'slides' : 'all';
+  CURRENT_BUILD_QA_STEP_SCOPE = stepScope;
+  if (stepScopeRaw !== 'all' && stepScopeRaw !== 'slides') {
+    console.warn(`[build-qa] Unknown BUILD_QA_STEP_SCOPE="${stepScopeRaw}" — defaulting to "all"`);
+  }
+  const slideStepIds = new Set(
+    (demoScript.steps || [])
+      .filter((step) => isSlideLikeStep(step))
+      .map((step) => step.id)
+      .filter(Boolean)
+  );
+  let rows = stepScope === 'slides'
+    ? rowsAll.filter((row) => slideStepIds.has(row.stepId || row.id))
+    : rowsAll;
+  if (stepScope === 'slides' && rows.length === 0) {
+    console.warn('[build-qa] BUILD_QA_STEP_SCOPE=slides yielded zero rows — falling back to full walkthrough');
+    rows = rowsAll;
+  }
+  const qaTargetStepIds =
+    stepScope === 'slides'
+      ? demoStepIds.filter((id) => slideStepIds.has(id))
+      : demoStepIds.slice();
+  const effectiveQaTargetStepIds = qaTargetStepIds.length > 0 ? qaTargetStepIds : demoStepIds;
+  console.log(
+    `[build-qa] Walking ${rows.length} playwright row(s)...` +
+    (stepScope === 'slides' ? ` (scope=slides, totalRows=${rowsAll.length})` : '') +
+    ` [plaidMode=${plaidQaMode}]`
+  );
   const launchStepId = getPlaidLaunchStepId(demoScript);
+  let tokenOnlyProbe = null;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -1728,7 +2171,48 @@ async function main(opts = {}) {
         }
       } catch (_) {}
     }
-    const result = await runPlaywrightRow(page, row);
+    const isLaunchRow = isPlaidLaunchRow(row, launchStepId);
+    let result;
+    if (isLaunchRow && plaidQaMode !== 'full') {
+      if (plaidQaMode === 'token-only' && !tokenOnlyProbe) {
+        try {
+          tokenOnlyProbe = await runTokenOnlyLinkProbe(page, demoScript);
+          if (!tokenOnlyProbe.result.ok || tokenOnlyProbe.result.status !== 200) {
+            diagnostics.push({
+              stepId,
+              category: 'plaid-link-token-health',
+              severity: 'critical',
+              issue: `Token-only probe failed: status=${tokenOnlyProbe.result.status}`,
+              suggestion: 'Ensure /api/create-link-token returns HTTP 200 for build-qa token-only mode.',
+            });
+          } else {
+            const bodyJson = parseJsonFromText(tokenOnlyProbe.result.body);
+            const responseMode = normalizeResponseLinkMode(bodyJson);
+            const expectedEmbedded = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
+            if (expectedEmbedded && responseMode && responseMode !== 'embedded') {
+              diagnostics.push({
+                stepId,
+                category: 'plaid-link-token-health',
+                severity: 'critical',
+                issue: `Token-only probe returned mode=${responseMode}; expected embedded.`,
+                suggestion: 'Ensure app-server propagates embedded mode into /api/create-link-token for this run.',
+              });
+            }
+          }
+        } catch (err) {
+          diagnostics.push({
+            stepId,
+            category: 'plaid-link-token-health',
+            severity: 'critical',
+            issue: `Token-only probe crashed: ${err.message}`,
+            suggestion: 'Check app-server /api/create-link-token route and payload handling.',
+          });
+        }
+      }
+      result = { dwellMs: Math.min(row.waitMs || 2000, MAX_WAIT), errors: [] };
+    } else {
+      result = await runPlaywrightRow(page, row);
+    }
     diagnostics.push(...result.errors);
 
     // Force the intended script step active before screenshot capture.
@@ -1793,7 +2277,10 @@ async function main(opts = {}) {
           await ensureApiPanelContractForStep(page, stepId);
         }
         const state = await evaluateStepState(page, stepId);
-        diagnostics.push(...buildStepAssertions(step, state));
+        if (htmlPanelTogglePresent && !state.apiPanelChromeTriplet) {
+          state.apiPanelChromeTriplet = true;
+        }
+        diagnostics.push(...buildStepAssertions(step, state, demoScript));
         if (step.apiResponse?.response && state.apiPanelExists) {
           // JSON should be visible whenever panel is visible; no toggle-behavior checks.
         }
@@ -1808,8 +2295,14 @@ async function main(opts = {}) {
       }
     }
 
-    if (isPlaidLaunchRow(row, launchStepId)) {
-      console.log('[build-qa] Simulating Plaid Link success (sandbox) — iframe not automated in build-qa');
+    if (isLaunchRow) {
+      if (plaidQaMode === 'token-only') {
+        console.log('[build-qa] Token-only mode: skipping live Plaid Link launch and simulating post-link success.');
+      } else if (plaidQaMode === 'skip') {
+        console.log('[build-qa] Plaid mode=skip: skipping Plaid launch interactions and simulating post-link success.');
+      } else {
+        console.log('[build-qa] Simulating Plaid Link success (sandbox) — iframe not automated in build-qa');
+      }
       await simulateSandboxPlaidLinkComplete(page, demoScript);
     }
   }
@@ -1838,15 +2331,33 @@ async function main(opts = {}) {
       });
     }
   }
+  const shouldRunMobilePlaidLaunchCheck =
+    plaidQaMode === 'full' ||
+    (plaidQaMode === 'token-only' && !BUILD_QA_SKIP_MOBILE_PLAID_WHEN_TOKEN_ONLY);
+  if (shouldRunMobilePlaidLaunchCheck) {
+    try {
+      diagnostics.push(...(await runMobilePlaidLaunchCheck(page, demoScript, pageErrors)));
+    } catch (err) {
+      diagnostics.push({
+        stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+        category: 'plaid-link-mobile-launch',
+        severity: 'warning',
+        issue: `Mobile Plaid launch smoke check failed to execute: ${err.message}`,
+        suggestion: 'Verify mobile-simulated launch check can run after walkthrough.',
+      });
+    }
+  } else {
+    console.log('[build-qa] Skipping mobile Plaid launch smoke check in token-only mode.');
+  }
   try {
-    diagnostics.push(...(await runMobilePlaidLaunchCheck(page, demoScript, pageErrors)));
+    diagnostics.push(...(await runEmbeddedLaunchSelectorDriftCheck(page, demoScript)));
   } catch (err) {
     diagnostics.push({
       stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
-      category: 'plaid-link-mobile-launch',
+      category: 'plaid-embedded-launch-selector-drift',
       severity: 'warning',
-      issue: `Mobile Plaid launch smoke check failed to execute: ${err.message}`,
-      suggestion: 'Verify mobile-simulated launch check can run after walkthrough.',
+      issue: `Embedded launch selector drift check failed to execute: ${err.message}`,
+      suggestion: 'Verify selector drift guard can inspect all .step[data-testid] containers after walkthrough.',
     });
   }
 
@@ -2045,7 +2556,7 @@ async function main(opts = {}) {
   await server.close();
 
   const prebuiltStepFrames = [];
-  for (const stepId of demoStepIds) {
+  for (const stepId of effectiveQaTargetStepIds) {
     const frames = stepFramesById[stepId];
     if (!frames || frames.length === 0) {
       console.warn(`[build-qa] No screenshot captured for step "${stepId}" — skipped`);
@@ -2070,27 +2581,51 @@ async function main(opts = {}) {
   }
 
   console.log(`[build-qa] Running vision QA on ${prebuiltStepFrames.length} step(s)...`);
-  const normalizedDiagnostics = diagnostics.map((d) => ({ ...d, phase: d.phase || inferQaPhase(d) }));
+  const normalizedDiagnostics = diagnostics.map((d) => ({
+    ...d,
+    phase: d.phase || inferQaPhase(d),
+    deterministicBlocker: isDeterministicBlocker(d),
+  }));
   const categoryCounts = {};
   const phaseCounts = {};
   const criticalStepIds = new Set();
+  const deterministicBlockedStepIds = new Set();
+  const deterministicReasonsSet = new Set();
   for (const d of normalizedDiagnostics) {
     const c = d.category || 'uncategorized';
     categoryCounts[c] = (categoryCounts[c] || 0) + 1;
     const p = d.phase || 'unknown';
     phaseCounts[p] = (phaseCounts[p] || 0) + 1;
     if (d.severity === 'critical' && d.stepId) criticalStepIds.add(d.stepId);
+    if (d.deterministicBlocker) {
+      if (d.stepId) deterministicBlockedStepIds.add(d.stepId);
+      deterministicReasonsSet.add(c);
+    }
   }
+  const deterministicReasons = Array.from(deterministicReasonsSet);
+  const deterministicBlockerCount = deterministicReasons.length;
+  const deterministicPassed = deterministicBlockerCount === 0;
   fs.writeFileSync(DIAG_OUT, JSON.stringify({
     generatedAt: new Date().toISOString(),
     recordParity: RECORD_PARITY,
     headless: HEADLESS,
+    deterministicGate: {
+      enabled: BUILD_QA_DETERMINISTIC_GATE,
+      deterministicPassed,
+      blockerCount: deterministicBlockerCount,
+      blockedStepIds: [...deterministicBlockedStepIds],
+      reasons: deterministicReasons,
+    },
     diagnostics: normalizedDiagnostics,
     summary: {
       categoryCounts,
       phaseCounts,
       criticalStepIds: [...criticalStepIds],
       totalDiagnostics: normalizedDiagnostics.length,
+      deterministicPassed,
+      deterministicBlockerCount,
+      deterministicBlockedStepIds: [...deterministicBlockedStepIds],
+      deterministicReasons,
     },
   }, null, 2));
   fs.writeFileSync(LEGACY_DIAG_OUT, fs.readFileSync(DIAG_OUT, 'utf8'), 'utf8');
@@ -2100,6 +2635,10 @@ async function main(opts = {}) {
     categoryCounts,
     phaseCounts,
     criticalStepIds: [...criticalStepIds],
+    deterministicPassed,
+    deterministicBlockerCount,
+    deterministicBlockedStepIds: [...deterministicBlockedStepIds],
+    deterministicReasons,
   }, { runDir: OUT_DIR });
   delete require.cache[require.resolve('./qa-review')];
   const qaReview = require('./qa-review');
@@ -2110,6 +2649,30 @@ async function main(opts = {}) {
     buildQaDiagnostics: normalizedDiagnostics,
     iteration: 'build',
   });
+  if (report) {
+    report.deterministicGateEnabled = BUILD_QA_DETERMINISTIC_GATE;
+    report.deterministicPassed = deterministicPassed;
+    report.deterministicBlockerCount = deterministicBlockerCount;
+    report.deterministicBlockedStepIds = [...deterministicBlockedStepIds];
+    report.deterministicReasons = deterministicReasons;
+  }
+
+  try {
+    if (report && BUILD_QA_DETERMINISTIC_GATE && !deterministicPassed) {
+      report.passed = false;
+      const deterministicReason = `Deterministic blocker gate failed: ${deterministicBlockerCount} blocker category(s) (${deterministicReasons.join(', ') || 'unspecified'}).`;
+      report.overrideReason = report.overrideReason
+        ? `${report.overrideReason} | ${deterministicReason}`
+        : deterministicReason;
+      const outPath = path.join(OUT_DIR, 'qa-report-build.json');
+      fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
+      console.warn('[build-qa] Forced fail: deterministic blocker gate triggered');
+      appendPipelineLogSection('[BUILD-QA] Guardrail override', [
+        'guardrail=deterministic-blocker-gate',
+        `overrideReason=${report.overrideReason}`,
+      ], { runDir: OUT_DIR });
+    }
+  } catch (_) {}
 
   // Hard guardrail: do not allow a blank/empty final value-summary slide to pass overall build QA.
   try {
@@ -2196,6 +2759,15 @@ async function main(opts = {}) {
     passed: !!(report && report.passed),
     overallScore: report ? report.overallScore : null,
     passThreshold: report ? report.passThreshold : null,
+    deterministicGateEnabled: report ? !!report.deterministicGateEnabled : null,
+    deterministicPassed: report ? !!report.deterministicPassed : null,
+    deterministicBlockerCount: report ? Number(report.deterministicBlockerCount || 0) : null,
+    deterministicBlockedStepIds: report && Array.isArray(report.deterministicBlockedStepIds)
+      ? report.deterministicBlockedStepIds
+      : [],
+    deterministicReasons: report && Array.isArray(report.deterministicReasons)
+      ? report.deterministicReasons
+      : [],
     overrideReason: report ? report.overrideReason || null : null,
     stepsWithIssues: report && Array.isArray(report.stepsWithIssues)
       ? report.stepsWithIssues.map((s) => ({

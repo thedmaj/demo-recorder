@@ -5,12 +5,8 @@ function prepareCreateLinkTokenBody(body) {
   // Plaid /link/token/create does not accept mode helper fields.
   delete out.linkMode;
   delete out.link_mode;
-  const hosted = (out.hosted_link && typeof out.hosted_link === 'object') ? { ...out.hosted_link } : {};
-  const completionRedirect = process.env.PLAID_HOSTED_LINK_COMPLETION_REDIRECT_URI;
-  if (completionRedirect && typeof completionRedirect === 'string' && completionRedirect.trim()) {
-    hosted.completion_redirect_uri = hosted.completion_redirect_uri || completionRedirect.trim();
-  }
-  out.hosted_link = hosted;
+  // Embedded Institution Search does NOT use hosted_link_url redirect flow.
+  delete out.hosted_link;
   return out;
 }
 
@@ -20,27 +16,25 @@ function validateTokenResponse(json) {
   if (!json || typeof json.link_token !== 'string' || !json.link_token.trim()) {
     errs.push('Missing link_token in token response.');
   }
-  if (!json || typeof json.hosted_link_url !== 'string' || !json.hosted_link_url.trim()) {
-    errs.push('Missing hosted_link_url in embedded token response.');
-  }
   return {
     ok: errs.length === 0,
     errors: errs,
-    requiredFields: ['link_token', 'hosted_link_url'],
+    requiredFields: ['link_token'],
   };
 }
 
 function isLaunchObserved(domState) {
   if (!domState || typeof domState !== 'object') return false;
-  if (domState.hostedOpened) return true;
-  if (Array.isArray(domState.openedUrls)) {
-    return domState.openedUrls.some((u) => /plaid\.com/i.test(String(u || '')));
-  }
-  return false;
+  return !!(
+    domState.embeddedWidgetLoaded ||
+    domState.embeddedInstanceReady ||
+    domState.hasPlaidIframe ||
+    domState.hasHandler
+  );
 }
 
 function launchSignalDescription() {
-  return 'embedded launch signal (hosted Plaid URL open attempt)';
+  return 'embedded launch signal (in-page embedded widget rendered)';
 }
 
 module.exports = {

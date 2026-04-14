@@ -16,7 +16,16 @@
 
 'use strict';
 
+// Preserve explicitly provided shell env values before dotenv override.
+const ORCHESTRATOR_PRESERVED_ENV_KEYS = ['RECORDING_FPS', 'RECORD_POSTPROCESS_TIMEOUT_MS'];
+const orchestratorPreservedEnv = {};
+for (const key of ORCHESTRATOR_PRESERVED_ENV_KEYS) {
+  if (process.env[key] != null) orchestratorPreservedEnv[key] = process.env[key];
+}
 require('dotenv').config({ override: true });
+for (const [key, value] of Object.entries(orchestratorPreservedEnv)) {
+  process.env[key] = value;
+}
 
 const fs            = require('fs');
 const path          = require('path');
@@ -104,6 +113,9 @@ function parseArgs() {
   const toArg         = args.find(a => a.startsWith('--to='));
   const runIdArg      = args.find(a => a.startsWith('--run-id='));
   const recordModeArg = args.find(a => a.startsWith('--record-mode='));
+  const qaThresholdArg = args.find(a => a.startsWith('--qa-threshold='));
+  const maxRefineArg = args.find(a => a.startsWith('--max-refinement-iterations='));
+  const buildFixModeArg = args.find(a => a.startsWith('--build-fix-mode='));
   const noTouchup     = args.includes('--no-touchup');
 
   const mode       = modeArg       ? modeArg.replace('--mode=', '').toLowerCase()        : null;
@@ -112,8 +124,23 @@ function parseArgs() {
   const runId      = runIdArg      ? runIdArg.replace('--run-id=', '').trim()             : null;
   const recordMode = recordModeArg ? recordModeArg.replace('--record-mode=', '').toLowerCase()
                                    : (process.env.RECORD_MODE || '').toLowerCase() || null;
+  const qaThreshold = qaThresholdArg ? parseInt(qaThresholdArg.replace('--qa-threshold=', '').trim(), 10) : null;
+  const maxRefinementIterations = maxRefineArg
+    ? parseInt(maxRefineArg.replace('--max-refinement-iterations=', '').trim(), 10)
+    : null;
+  const buildFixMode = buildFixModeArg ? buildFixModeArg.replace('--build-fix-mode=', '').trim().toLowerCase() : null;
 
-  return { mode, fromStage, toStage, runId, noTouchup, recordMode };
+  return {
+    mode,
+    fromStage,
+    toStage,
+    runId,
+    noTouchup,
+    recordMode,
+    qaThreshold,
+    maxRefinementIterations,
+    buildFixMode,
+  };
 }
 
 // ── Prompt file loading ───────────────────────────────────────────────────────
@@ -353,9 +380,24 @@ function extractCompanyToken(promptText) {
 }
 
 function extractApiTokens(promptText) {
-  const lower = String(promptText || '').toLowerCase();
+  const source = String(promptText || '');
+  const lower = source.toLowerCase();
   const labels = [];
   const add = (x) => { if (!labels.includes(x)) labels.push(x); };
+
+  // Explicit product declarations (preferred over broad keyword scans), e.g.
+  // "Products: Auth, Identity, Signal" or "Key products used: CRA, Layer".
+  const declared = [];
+  const declRe = /(products?\s*(?:used)?|key\s+products?|apis?)\s*:\s*([^\n]+)/gi;
+  let m;
+  while ((m = declRe.exec(source))) {
+    const tail = String(m[2] || '')
+      .split(/[|,;/]/g)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    declared.push(...tail);
+  }
+  const declaredText = declared.join(' ').toLowerCase();
 
   // CRA / Check income insights — only when explicitly in scope or positively mentioned (not disclaimers).
   if (shouldIncludeCraRunNameToken(String(promptText || ''))) {
@@ -366,7 +408,9 @@ function extractApiTokens(promptText) {
   if (/\bsignal\b/.test(lower)) add('Signal');
   if (/\bassets\b/.test(lower)) add('Assets');
   if (/\bmonitor\b/.test(lower)) add('Monitor');
-  if (/\blayer\b/.test(lower)) add('Layer');
+  // Do NOT add Layer from broad prompt keyword scans (too noisy / often incidental).
+  // Only include Layer when explicitly declared in the product/API list.
+  if (/\blayer\b/.test(declaredText)) add('Layer');
   if (/\btransfer\b/.test(lower)) add('Transfer');
   if (/\bincome\b/.test(lower) && !labels.includes('CRA')) add('Income');
   if (/\bstatements\b/.test(lower)) add('Statements');
@@ -377,7 +421,14 @@ function extractApiTokens(promptText) {
 
 function promptIndicatesMobileVisual(promptText) {
   const text = String(promptText || '').toLowerCase();
-  return /\bmobile\b|\bphone-first\b|\bphone first\b|\bmobile[-\s]?simulated\b|\b390\s*[x×]\s*844\b|\bmobile demo\b/.test(text);
+  if (/\bdesktop[-\s]?only\b|\bno mobile\b|\bdo not use mobile\b|\bwithout mobile\b/.test(text)) {
+    return false;
+  }
+  return (
+    /\bmobile build\b|\bmobile demo build\b|\bmobile visual build\b/.test(text) ||
+    /\bmobile[-\s]?simulated build\b|\buse (?:the )?mobile app framework\b/.test(text) ||
+    /\bviewmode\s*:\s*mobile(?:-auto|-simulated)?\b/.test(text)
+  );
 }
 
 function buildRunNameStem(promptText) {
@@ -756,6 +807,248 @@ function resolveStartIndex(fromStage) {
   return idx;
 }
 
+// ── Build fix-mode routing (Phase 1) ─────────────────────────────────────────
+
+const VALID_BUILD_FIX_MODES = new Set(['auto', 'touchup', 'fullbuild']);
+const VALID_BUILD_PHASE_MODES = new Set(['app', 'slides']);
+
+function parseBoolEnv(value, defaultValue = false) {
+  if (value == null) return defaultValue;
+  const v = String(value).trim().toLowerCase();
+  if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+  if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+  return defaultValue;
+}
+
+function readJsonSafe(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseColorLuminance(input) {
+  const c = String(input || '').trim().toLowerCase();
+  if (!c) return null;
+  const hex = c.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hex) {
+    let raw = hex[1];
+    if (raw.length === 3) raw = raw.split('').map((x) => x + x).join('');
+    const r = parseInt(raw.slice(0, 2), 16);
+    const g = parseInt(raw.slice(2, 4), 16);
+    const b = parseInt(raw.slice(4, 6), 16);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  }
+  const rgb = c.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgb) {
+    const parts = rgb[1].split(',').map((p) => parseFloat(p.trim()));
+    if (parts.length >= 3 && parts.slice(0, 3).every((n) => Number.isFinite(n))) {
+      const [r, g, b] = parts;
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    }
+  }
+  return null;
+}
+
+function runBrandLogoContrastGate(versionedDir) {
+  const strict = String(process.env.BRAND_LOGO_CONTRAST_STRICT || 'true').toLowerCase() !== 'false';
+  const script = readJsonSafe(path.join(versionedDir, 'demo-script.json'));
+  const company = String(script?.persona?.company || '').trim();
+  if (!company) return;
+  const slug = company.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!slug || slug === 'plaid') return;
+
+  const profilePath = path.join(versionedDir, 'artifacts', 'brand', `${slug}.json`);
+  const profile = readJsonSafe(profilePath);
+  if (!profile) return;
+
+  const mode = String(profile?.mode || '').toLowerCase();
+  const imageUrl = String(profile?.logo?.imageUrl || '').toLowerCase();
+  const shellBg = String(profile?.logo?.shellBg || '');
+  const shellLum = parseColorLuminance(shellBg);
+  const isLightThemeAsset = /\/theme\/light\//.test(imageUrl);
+  const shellIsTooLight = shellLum == null || shellLum > 0.55;
+  if (mode === 'light' && isLightThemeAsset && shellIsTooLight) {
+    const msg =
+      `[BrandExtract] Logo contrast gate failed: light-theme logo asset on light host mode ` +
+      `(logo=${profile?.logo?.imageUrl || 'n/a'}, shellBg=${shellBg || 'n/a'}).`;
+    if (strict) {
+      throw new Error(
+        `${msg} Update brand profile to a dark logo variant or darken logo shell. ` +
+        `Set BRAND_LOGO_CONTRAST_STRICT=false to warn-only.`
+      );
+    }
+    cliWarn(msg);
+  }
+}
+
+function detectPlaywrightAlignmentMismatch(versionedDir) {
+  const scriptFile = path.join(versionedDir, 'demo-script.json');
+  const playwrightFile = path.join(versionedDir, 'scratch-app', 'playwright-script.json');
+  const demoScript = readJsonSafe(scriptFile);
+  const playwright = readJsonSafe(playwrightFile);
+  if (!demoScript || !Array.isArray(demoScript.steps) || !playwright || !Array.isArray(playwright.steps)) {
+    return true;
+  }
+  const scriptIds = demoScript.steps.map((s) => s?.id).filter(Boolean);
+  const rowIdsAll = playwright.steps.map((s) => s?.id || s?.stepId).filter(Boolean);
+  if (scriptIds.length === 0 || rowIdsAll.length === 0) return true;
+
+  // Unknown step ids in playwright script usually indicate drift.
+  const scriptIdSet = new Set(scriptIds);
+  const unknownRows = rowIdsAll.filter((id) => !scriptIdSet.has(id));
+  if (unknownRows.length > 0) return true;
+
+  // Allow duplicate playwright rows per step, but require full coverage.
+  for (const id of scriptIds) {
+    if (!rowIdsAll.includes(id)) return true;
+  }
+
+  // Ensure first occurrence order of script steps is preserved.
+  const firstIndex = new Map();
+  rowIdsAll.forEach((id, idx) => {
+    if (!firstIndex.has(id)) firstIndex.set(id, idx);
+  });
+  for (let i = 1; i < scriptIds.length; i++) {
+    const prev = firstIndex.get(scriptIds[i - 1]);
+    const curr = firstIndex.get(scriptIds[i]);
+    if (prev == null || curr == null || curr < prev) return true;
+  }
+
+  return false;
+}
+
+function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, iteration, requestedBuildFixMode }) {
+  let requestedMode = String(requestedBuildFixMode || process.env.BUILD_FIX_MODE || 'auto').toLowerCase().trim();
+  if (!VALID_BUILD_FIX_MODES.has(requestedMode)) {
+    cliWarn(`[Orchestrator] Unknown BUILD_FIX_MODE="${requestedMode}" — defaulting to auto.`);
+    requestedMode = 'auto';
+  }
+
+  const fullbuildStepThreshold = Math.max(
+    1,
+    parseInt(process.env.BUILD_FIX_FULLBUILD_STEP_THRESHOLD || '3', 10) || 3
+  );
+  const touchupEnabled = parseBoolEnv(process.env.TOUCHUP_ENABLED, true);
+  const reasons = [];
+  let evaluatedMode = requestedMode === 'auto' ? 'touchup' : requestedMode;
+
+  const qaReportPath = path.join(versionedDir, `qa-report-${iteration}.json`);
+  const qaReport = readJsonSafe(qaReportPath);
+  const stepsWithIssues = Array.isArray(qaResult?.stepsWithIssues)
+    ? qaResult.stepsWithIssues
+    : [];
+  const deterministicPassed = qaResult?.deterministicPassed != null
+    ? !!qaResult.deterministicPassed
+    : qaReport?.deterministicPassed != null
+      ? !!qaReport.deterministicPassed
+      : true;
+  const deterministicBlockerCount = Number(
+    qaResult?.deterministicBlockerCount ??
+    qaResult?.deterministicCriticalCount ??
+    qaReport?.deterministicBlockerCount ??
+    qaReport?.deterministicCriticalCount ??
+    0
+  );
+  const deterministicReasons = Array.isArray(qaResult?.deterministicReasons)
+    ? qaResult.deterministicReasons
+    : Array.isArray(qaReport?.deterministicReasons)
+      ? qaReport.deterministicReasons
+      : [];
+
+  if (requestedMode === 'auto') {
+    if (!fs.existsSync(path.join(versionedDir, 'scratch-app', 'index.html'))) {
+      evaluatedMode = 'fullbuild';
+      reasons.push('no_index_html');
+    }
+    if (detectPlaywrightAlignmentMismatch(versionedDir)) {
+      evaluatedMode = 'fullbuild';
+      reasons.push('playwright_demo_script_mismatch');
+    }
+    if (qaReport && typeof qaReport.overrideReason === 'string' && qaReport.overrideReason.trim()) {
+      evaluatedMode = 'fullbuild';
+      reasons.push('build_qa_guardrail_override');
+    }
+    if (!deterministicPassed) {
+      evaluatedMode = 'fullbuild';
+      reasons.push('deterministic_blocker_gate');
+    }
+    const failingDistinctSteps = new Set(
+      stepsWithIssues.map((s) => s?.stepId).filter(Boolean)
+    );
+    if (failingDistinctSteps.size >= fullbuildStepThreshold) {
+      evaluatedMode = 'fullbuild';
+      reasons.push(`failing_steps_gte_${fullbuildStepThreshold}`);
+    }
+    const sharedChromeCategories = new Set(['missing-logo', 'panel-visibility', 'slide-template-misuse']);
+    const sharedChromeStepIds = new Set();
+    for (const step of stepsWithIssues) {
+      const cats = Array.isArray(step?.categories) ? step.categories : [];
+      if (cats.some((c) => sharedChromeCategories.has(String(c)))) {
+        if (step?.stepId) sharedChromeStepIds.add(step.stepId);
+      }
+    }
+    if (sharedChromeStepIds.size >= 2) {
+      evaluatedMode = 'fullbuild';
+      reasons.push('shared_chrome_multistep');
+    }
+    if (reasons.length === 0) {
+      reasons.push('localized_issues_touchup_candidate');
+    }
+  } else {
+    reasons.push(`forced_${requestedMode}`);
+  }
+
+  let executedMode = evaluatedMode;
+  if (evaluatedMode === 'touchup' && !touchupEnabled) {
+    executedMode = 'fullbuild';
+    reasons.push('touchup_disabled_fallback_fullbuild');
+  }
+
+  const touchupStep = stepsWithIssues
+    .filter((s) => s && s.stepId)
+    .sort((a, b) => Number(a.score || 100) - Number(b.score || 100))[0];
+  const touchupStepId = executedMode === 'touchup' ? (touchupStep?.stepId || null) : null;
+
+  return {
+    requestedMode,
+    evaluatedMode,
+    executedMode,
+    reasons,
+    touchupStepId,
+    qaScoreBefore: Number(qaResult?.overallScore || 0),
+    qaThreshold: Number(qaThreshold || 0),
+    qaReportPath,
+    deterministicPassed,
+    deterministicBlockerCount,
+    deterministicReasons,
+  };
+}
+
+function resolveBuildPhaseSequence() {
+  const raw = String(process.env.BUILD_PHASE_SEQUENCE || 'app,slides')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  const appEnabled = parseBoolEnv(process.env.BUILD_PHASE_APP_ENABLED, true);
+  const slidesEnabled = parseBoolEnv(process.env.BUILD_PHASE_SLIDES_ENABLED, true);
+  const enabledByFlag = new Set();
+  if (appEnabled) enabledByFlag.add('app');
+  if (slidesEnabled) enabledByFlag.add('slides');
+  const deduped = [];
+  for (const mode of raw) {
+    if (!VALID_BUILD_PHASE_MODES.has(mode)) continue;
+    if (!enabledByFlag.has(mode)) continue;
+    if (!deduped.includes(mode)) deduped.push(mode);
+  }
+  if (deduped.length > 0) return deduped;
+  if (appEnabled) return ['app'];
+  if (slidesEnabled) return ['slides'];
+  return ['app'];
+}
+
 // ── Remotion props builder ────────────────────────────────────────────────────
 
 function buildRemotionProps() {
@@ -1122,6 +1415,7 @@ function assertNarrationSyncOrThrow(runDir, contextLabel = 'pre-render') {
   const report = validateNarrationSync(runDir);
   const reportPath = writeNarrationSyncReport(runDir, report);
   if (!report.ok) {
+    const strictSync = String(process.env.NARRATION_SYNC_STRICT || 'true').toLowerCase() !== 'false';
     const categoryCounts = {};
     const codeCounts = {};
     for (const v of report.violations || []) {
@@ -1133,6 +1427,16 @@ function assertNarrationSyncOrThrow(runDir, contextLabel = 'pre-render') {
     const failCategories = Object.entries(categoryCounts).map(([k, n]) => `${k}:${n}`).join(', ') || 'none';
     const failCodes = Object.entries(codeCounts).map(([k, n]) => `${k}:${n}`).join(', ') || 'none';
     const sample = report.violations.slice(0, 8).map((v) => `${v.code}: ${v.message}`).join('\n  - ');
+    if (!strictSync) {
+      console.warn(
+        `[narration-sync] STRICT CHECK DISABLED via NARRATION_SYNC_STRICT=false ` +
+        `(${contextLabel}) with ${report.violations.length} violation(s).`
+      );
+      console.warn(`[narration-sync] Fail categories: ${failCategories}`);
+      console.warn(`[narration-sync] Fail codes: ${failCodes}`);
+      console.warn(`[narration-sync] Report: ${reportPath}`);
+      return;
+    }
     throw new Error(
       `CRITICAL: Narration/screen sync governor failed (${contextLabel}). ` +
       `${report.violations.length} violation(s).\n` +
@@ -1229,7 +1533,18 @@ function stageArtifactsForRemotion(runDir) {
 
 // ── Mode A: Scratch pipeline ──────────────────────────────────────────────────
 
-async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, promptText, timer, recordMode }) {
+async function runScratchPipeline({
+  startIdx,
+  endIdx,
+  noTouchup,
+  versionedDir,
+  promptText,
+  timer,
+  recordMode,
+  qaThresholdOverride,
+  maxRefinementIterationsOverride,
+  buildFixModeOverride,
+}) {
   const shouldRun = (stageName) => {
     const idx = STAGES.indexOf(stageName);
     if (idx < 0) return false;
@@ -1433,14 +1748,24 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
       }, timer);
     });
   }
+  runBrandLogoContrastGate(versionedDir);
 
-  // Stage: build
+  // Stage: build + build-qa (phased: app then slides by default)
   const layeredBuildEnabled = process.env.LAYERED_BUILD_ENABLED === 'true' || process.env.LAYERED_BUILD_ENABLED === '1';
   const mobileVisualEnabledFromEnv = process.env.MOBILE_VISUAL_ENABLED === 'true' || process.env.MOBILE_VISUAL_ENABLED === '1';
   const mobileVisualEnabledFromPrompt = promptIndicatesMobileVisual(promptText);
-  const mobileVisualEnabled = mobileVisualEnabledFromEnv || mobileVisualEnabledFromPrompt;
+  const mobileVisualForce = process.env.MOBILE_VISUAL_FORCE === 'true' || process.env.MOBILE_VISUAL_FORCE === '1';
+  const mobileVisualEnabled =
+    mobileVisualEnabledFromPrompt || (mobileVisualEnabledFromEnv && mobileVisualForce);
   const mobileRuntimeEnabled = process.env.MOBILE_RUNTIME_ENABLED === 'true' || process.env.MOBILE_RUNTIME_ENABLED === '1';
-  const buildViewMode = String(process.env.BUILD_VIEW_MODE || 'desktop').toLowerCase();
+  const configuredBuildViewMode = String(process.env.BUILD_VIEW_MODE || 'desktop').toLowerCase();
+  const buildViewMode = mobileVisualEnabled ? configuredBuildViewMode : 'desktop';
+  if (mobileVisualEnabledFromEnv && !mobileVisualEnabledFromPrompt && !mobileVisualForce) {
+    cliWarn(
+      '[Orchestrator] Ignoring MOBILE_VISUAL_ENABLED because prompt has no explicit mobile-build request. ' +
+      'Set MOBILE_VISUAL_FORCE=true to override.'
+    );
+  }
   if (layeredBuildEnabled || mobileVisualEnabled || mobileRuntimeEnabled) {
     cliLog(
       `[Orchestrator] Build lanes — layered=${layeredBuildEnabled}, mobile-visual=${mobileVisualEnabled}, ` +
@@ -1450,29 +1775,140 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
       cliLog('[Orchestrator] mobile-visual enabled from prompt language (mobile intent detected).');
     }
   }
-  await stageRunner('build', async () => {
-    await require('./scratch/build-app').main({
-      layeredBuildEnabled,
-      mobileVisualEnabled,
-      buildViewMode,
-    });
-  });
+  const resolvedBuildIterations = Number.isInteger(maxRefinementIterationsOverride) && maxRefinementIterationsOverride > 0
+    ? maxRefinementIterationsOverride
+    : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
+  const resolvedBuildQaThreshold = Number.isInteger(qaThresholdOverride) && qaThresholdOverride > 0
+    ? qaThresholdOverride
+    : parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+  const requestedBuildFixMode = String(buildFixModeOverride || process.env.BUILD_FIX_MODE || 'auto').toLowerCase();
+  const plaidLinkQaMode = String(process.env.PLAID_LINK_QA_MODE || 'auto').trim().toLowerCase();
+  const buildQaPlaidMode = String(process.env.BUILD_QA_PLAID_MODE || 'auto').trim().toLowerCase();
+  const buildPhaseSequence = resolveBuildPhaseSequence();
+  cliLog(
+    `[Orchestrator] Build phase sequence: ${buildPhaseSequence.join(' -> ')} | ` +
+    `qaThreshold=${resolvedBuildQaThreshold}, maxRefinementIterations=${resolvedBuildIterations}`
+  );
 
-  // Stage: plaid-link-qa — lightweight pre-record smoke test that ensures
-  // live Plaid Link actually launches and /api/create-link-token succeeds.
-  await stageRunner('plaid-link-qa', async () => {
-    delete require.cache[require.resolve('./scratch/plaid-link-qa')];
-    await require('./scratch/plaid-link-qa').main();
-  });
+  const runBuildPhase = async (phaseMode) => {
+    const phaseQaThreshold = phaseMode === 'app'
+      ? Math.max(80, Number(resolvedBuildQaThreshold || 0))
+      : Number(resolvedBuildQaThreshold || 0);
+    const qaStepScope = phaseMode === 'slides' ? 'slides' : 'all';
+    const phaseIterationCap = shouldRun('build-qa') ? resolvedBuildIterations : 1;
+    let phaseQaResult = null;
+    let phaseQaReportPath = null;
+    for (let iter = 1; iter <= phaseIterationCap; iter++) {
+      let fixModeDecision;
+      if (iter === 1) {
+        fixModeDecision = {
+          requestedMode: requestedBuildFixMode,
+          evaluatedMode: 'fullbuild',
+          executedMode: 'fullbuild',
+          reasons: [`initial_${phaseMode}_phase_build`],
+          touchupStepId: null,
+          deterministicPassed: true,
+          deterministicBlockerCount: 0,
+          deterministicReasons: [],
+          qaScoreBefore: Number(phaseQaResult?.overallScore || 0),
+          qaThreshold: phaseQaThreshold,
+        };
+      } else {
+        fixModeDecision = analyzeFixModeForQaIteration({
+          versionedDir,
+          qaResult: phaseQaResult || {},
+          qaThreshold: phaseQaThreshold,
+          iteration: `${phaseMode}-${iter - 1}`,
+          requestedBuildFixMode: buildFixModeOverride,
+        });
+      }
 
-  // Stage: build-qa — Playwright walkthrough + vision QA vs demo-script (no recording)
-  await stageRunner('build-qa', async () => {
-    delete require.cache[require.resolve('./scratch/build-qa')];
-    await require('./scratch/build-qa').main({
-      mobileVisualEnabled,
-      buildViewMode,
-    });
-  });
+      if (shouldRun('build')) {
+        let buildError = null;
+        await runStage('build', async () => {
+          try {
+            await require('./scratch/build-app').main({
+              layeredBuildEnabled,
+              mobileVisualEnabled,
+              buildViewMode,
+              buildMode: phaseMode,
+              qaReportFile: phaseQaReportPath,
+              fixMode: fixModeDecision.executedMode,
+              touchupStepId: fixModeDecision.touchupStepId,
+              fixModeReasonCodes: fixModeDecision.reasons,
+            });
+          } catch (err) {
+            buildError = err;
+            throw err;
+          }
+        }, timer);
+        if (buildError) break;
+      }
+
+      // Stage: plaid-link-qa — run once for app phase only.
+      if (phaseMode === 'app' && iter === 1 && shouldRun('plaid-link-qa')) {
+        await stageRunner('plaid-link-qa', async () => {
+          delete require.cache[require.resolve('./scratch/plaid-link-qa')];
+          await require('./scratch/plaid-link-qa').main({ mode: plaidLinkQaMode });
+        });
+      }
+
+      if (!shouldRun('build-qa')) break;
+
+      let qaError = null;
+      let currentQaResult = null;
+      await runStage('build-qa', async () => {
+        try {
+          delete require.cache[require.resolve('./scratch/build-qa')];
+          currentQaResult = await require('./scratch/build-qa').main({
+            mobileVisualEnabled,
+            buildViewMode,
+            plaidMode: buildQaPlaidMode,
+            stepScope: qaStepScope,
+          });
+        } catch (err) {
+          qaError = err;
+          throw err;
+        }
+      }, timer);
+      if (qaError) break;
+
+      phaseQaResult = currentQaResult || {};
+      try {
+        const phaseReportFile = path.join(versionedDir, `qa-report-${phaseMode}-${iter}.json`);
+        const canonicalReportFile = path.join(versionedDir, 'qa-report-build.json');
+        if (fs.existsSync(canonicalReportFile)) {
+          fs.copyFileSync(canonicalReportFile, phaseReportFile);
+          phaseQaReportPath = phaseReportFile;
+        }
+      } catch (_) {}
+      const qaScore = Number(phaseQaResult?.overallScore || 0);
+      const phasePassed =
+        phaseQaResult?.passed === true &&
+        phaseQaResult?.deterministicPassed !== false &&
+        qaScore >= phaseQaThreshold;
+      if (phasePassed) {
+        cliLog(
+          `[Orchestrator] Build phase "${phaseMode}" passed on iteration ${iter} ` +
+          `(${qaScore}/${phaseQaThreshold}).`
+        );
+        break;
+      }
+      if (iter < phaseIterationCap) {
+        cliWarn(
+          `[Orchestrator] Build phase "${phaseMode}" iteration ${iter} did not pass ` +
+          `(score=${qaScore}, deterministicPassed=${phaseQaResult?.deterministicPassed !== false}).`
+        );
+      }
+    }
+  };
+
+  for (const phaseMode of buildPhaseSequence) {
+    await runBuildPhase(phaseMode);
+  }
+
+  // Plaid QA mode logging
+  cliLog(`[Orchestrator] Plaid QA modes — plaid-link-qa=${plaidLinkQaMode}, build-qa=${buildQaPlaidMode}`);
 
   // Post-build preview: launch a local server and open the app in the browser so a human
   // can step through it with arrow keys / clicks before recording begins.
@@ -1504,8 +1940,34 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
     const manualRecord  = process.env.MANUAL_RECORD === 'true';
     let bestScore     = 0;
     let bestRecording = null;
-    const maxIterations = (studioMode || manualRecord) ? 1 : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
-    const qaThreshold   = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+    const resolvedMaxIterations = Number.isInteger(maxRefinementIterationsOverride) && maxRefinementIterationsOverride > 0
+      ? maxRefinementIterationsOverride
+      : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
+    const resolvedQaThreshold = Number.isInteger(qaThresholdOverride) && qaThresholdOverride > 0
+      ? qaThresholdOverride
+      : parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+    const maxIterations = (studioMode || manualRecord) ? 1 : resolvedMaxIterations;
+    const qaThreshold = resolvedQaThreshold;
+    const effectiveBuildFixMode = String(buildFixModeOverride || process.env.BUILD_FIX_MODE || 'auto').toLowerCase();
+    cliLog(
+      `[Orchestrator] QA refinement config: qaThreshold=${qaThreshold}, ` +
+      `maxRefinementIterations=${maxIterations}, buildFixMode=${effectiveBuildFixMode}` +
+      (Number.isInteger(qaThresholdOverride) || Number.isInteger(maxRefinementIterationsOverride) || !!buildFixModeOverride
+        ? ' [CLI override applied]'
+        : '')
+    );
+    appendPipelineLogJson('[RUN] QA refinement config', {
+      qaThreshold,
+      maxRefinementIterations: maxIterations,
+      buildFixMode: effectiveBuildFixMode,
+      overrides: {
+        qaThreshold: Number.isInteger(qaThresholdOverride) ? qaThresholdOverride : null,
+        maxRefinementIterations: Number.isInteger(maxRefinementIterationsOverride)
+          ? maxRefinementIterationsOverride
+          : null,
+        buildFixMode: buildFixModeOverride || null,
+      },
+    }, { runDir: versionedDir });
 
     // ── Studio mode: human-driven recording, single QA pass (informational only) ──
     if (studioMode) {
@@ -1528,7 +1990,10 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
       cliLog('[Orchestrator] Running QA (informational — studio mode, no re-record)...');
       try {
         delete require.cache[require.resolve('./scratch/qa-review')];
-        const qaResult = await require('./scratch/qa-review').main({ iteration: 1 });
+        const qaResult = await require('./scratch/qa-review').main({
+          iteration: 1,
+          qaPassThreshold: qaThreshold,
+        });
         const score    = qaResult?.overallScore ?? 0;
         cliLog(`[Studio QA] Score: ${score}/100${score >= qaThreshold ? ' — passed' : ` (below ${qaThreshold} threshold — continuing in studio mode)`}`);
         if (score < qaThreshold) {
@@ -1580,14 +2045,28 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
 
       let qaResult;
       try {
-        qaResult = await require('./scratch/qa-review').main({ iteration: iter });
+        qaResult = await require('./scratch/qa-review').main({
+          iteration: iter,
+          qaPassThreshold: qaThreshold,
+        });
       } catch (err) {
         cliError(`[qa] iteration ${iter} failed: ${err.message}`);
         qaResult = { overallScore: 0, passed: false };
       }
 
       const score = qaResult?.overallScore ?? 0;
-      cliLog(`[Orchestrator] QA score: ${score}/${qaThreshold} (threshold)`);
+      const deterministicPassed = qaResult?.deterministicPassed;
+      const deterministicBlockerCount = Number(
+        qaResult?.deterministicBlockerCount ??
+        qaResult?.deterministicCriticalCount ??
+        0
+      );
+      cliLog(
+        `[Orchestrator] QA score: ${score}/${qaThreshold} (threshold)` +
+        (deterministicPassed == null
+          ? ''
+          : ` | deterministicPassed=${deterministicPassed} blockers=${deterministicBlockerCount}`)
+      );
 
       if (score >= qaThreshold) {
         cliLog(`[Orchestrator] QA passed (${score}). Advancing to voiceover.`);
@@ -1620,13 +2099,43 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
       }
 
       if (iter < maxIterations) {
-        cliLog(`[Orchestrator] Score ${score} below threshold. Patching app for iteration ${iter + 1}...`);
+        const fixModeDecision = analyzeFixModeForQaIteration({
+          versionedDir,
+          qaResult,
+          qaThreshold,
+          iteration: iter,
+          requestedBuildFixMode: buildFixModeOverride,
+        });
+        cliLog(
+          `[Orchestrator] Score ${score} below threshold. Fix mode: ` +
+          `${fixModeDecision.executedMode} ` +
+          `(requested=${fixModeDecision.requestedMode}, evaluated=${fixModeDecision.evaluatedMode}, ` +
+          `reason=${fixModeDecision.reasons.join(',')}, deterministicPassed=${fixModeDecision.deterministicPassed}, ` +
+          `deterministicBlockers=${fixModeDecision.deterministicBlockerCount})`
+        );
+        appendPipelineLogJson('[FIX-MODE] QA refinement decision', {
+          iteration: iter,
+          requestedMode: fixModeDecision.requestedMode,
+          evaluatedMode: fixModeDecision.evaluatedMode,
+          executedMode: fixModeDecision.executedMode,
+          reasons: fixModeDecision.reasons,
+          touchupStepId: fixModeDecision.touchupStepId,
+          qaScoreBefore: fixModeDecision.qaScoreBefore,
+          qaThreshold: fixModeDecision.qaThreshold,
+          qaReportPath: fixModeDecision.qaReportPath,
+          deterministicPassed: fixModeDecision.deterministicPassed,
+          deterministicBlockerCount: fixModeDecision.deterministicBlockerCount,
+          deterministicReasons: fixModeDecision.deterministicReasons,
+        }, { runDir: versionedDir });
         try {
           // Bust require cache so edits to build-app.js take effect without restarting
           delete require.cache[require.resolve('./scratch/build-app')];
           await require('./scratch/build-app').main({
             refinementIteration: iter,
             qaReportFile: path.join(versionedDir, `qa-report-${iter}.json`),
+            fixMode: fixModeDecision.executedMode,
+            touchupStepId: fixModeDecision.touchupStepId,
+            fixModeReasonCodes: fixModeDecision.reasons,
           });
         } catch (err) {
           cliError(`[build] refinement iteration ${iter} failed: ${err.message}`);
@@ -1935,99 +2444,199 @@ async function runScratchPipeline({ startIdx, endIdx, noTouchup, versionedDir, p
       const audioDir = path.join(versionedDir, 'audio');
       const manifestPath = path.join(versionedDir, 'voiceover-manifest.json');
 
-      // ── Per-clip stutter/freeze detection ─────────────────────────────────
-      // Stutter: short bursts of silence inside a clip (silencedetect noise=-40dB d=0.15)
-      // Freeze:  a long flat-amplitude segment mid-clip (same filter, duration >= 0.5s)
-      // Both are common ElevenLabs artefacts on long or punctuation-heavy narration strings.
-      const stutteredClips = [];
-      if (fs.existsSync(manifestPath)) {
-        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      // ── Per-clip stutter/freeze detection with retry cap ──────────────────
+      //
+      // Detection thresholds (env-configurable for tuning without code changes):
+      //
+      //   AUDIO_QA_NOISE_DB         default: -45   (dB below which audio counts as silence)
+      //   AUDIO_QA_MIN_SILENCE_S    default: 0.25  (minimum silence duration to consider)
+      //   AUDIO_QA_FREEZE_S         default: 0.50  (silence >= this → FREEZE, else STUTTER)
+      //   AUDIO_QA_STUTTER_MIN_COUNT default: 2    (# of silences required to flag as stutter)
+      //
+      // Calibration rationale (ElevenLabs multilingual_v2, stability=0.75):
+      //   • Natural sentence/clause pauses: -35 to -43 dB, 150–350 ms — NOT artifacts
+      //   • ElevenLabs freeze artifacts: < -50 dB (near-complete silence), 400 ms+
+      //   • The original -40 dB / 0.15 s thresholds caught sentence-boundary pauses as
+      //     "stutters", causing false regeneration of acceptable clips. Tighter thresholds
+      //     here require deeper silence AND longer duration before flagging.
+      //   • STUTTER_MIN_COUNT ≥ 2 avoids flagging a single long sentence pause; a true
+      //     stutter pattern repeats across the clip.
+      //
+      // MAX_AUDIO_REGEN_ATTEMPTS caps the retry loop so a persistently bad TTS response
+      // can't cause an infinite pipeline loop.
+
+      const NOISE_DB          = process.env.AUDIO_QA_NOISE_DB          || '-45dB';
+      const MIN_SILENCE_S     = parseFloat(process.env.AUDIO_QA_MIN_SILENCE_S    || '0.25');
+      const FREEZE_S          = parseFloat(process.env.AUDIO_QA_FREEZE_S         || '0.50');
+      const STUTTER_MIN_COUNT = parseInt(process.env.AUDIO_QA_STUTTER_MIN_COUNT  || '2', 10);
+      const MAX_AUDIO_REGEN_ATTEMPTS = 3;
+      const regenAttemptCounts = {}; // { [clipId]: number }
+
+      // Leading / trailing exclusion windows scale with MIN_SILENCE_S so they stay meaningful.
+      const LEAD_EXCL_S  = Math.max(0.1,  MIN_SILENCE_S * 0.5); // ignore within 0.5× of clip start
+      const TRAIL_EXCL_S = Math.max(0.3,  MIN_SILENCE_S);       // ignore within 1× of clip end
+
+      function detectStutteredClips(clips) {
         const { spawnSync: spawnSyncAudio } = require('child_process');
-
-        for (const clip of (manifest.clips || [])) {
+        const found = [];
+        for (const clip of clips) {
           if (!fs.existsSync(clip.audioFile)) continue;
-
-          // Run silencedetect on individual clip file
           const r = spawnSyncAudio(
             'ffmpeg',
-            ['-i', clip.audioFile, '-af', 'silencedetect=noise=-40dB:d=0.15', '-f', 'null', '-'],
+            ['-i', clip.audioFile, '-af', `silencedetect=noise=${NOISE_DB}:d=${MIN_SILENCE_S}`, '-f', 'null', '-'],
             { encoding: 'utf8', timeout: 30000 }
           );
           const out = (r.stderr || '') + (r.stdout || '');
           const silenceEnds = [...out.matchAll(/silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/g)];
-
-          // A mid-clip silence (start > 0.05s from clip start) indicates stutter or freeze
           const clipDuration = clip.audioDurationMs / 1000;
           const internalSilences = silenceEnds.filter(m => {
             const end = parseFloat(m[1]);
             const dur = parseFloat(m[2]);
             const start = end - dur;
-            // Ignore leading silence (first 0.1s) and trailing silence (last 0.3s)
-            return start > 0.1 && end < (clipDuration - 0.3) && dur >= 0.15;
+            return start > LEAD_EXCL_S && end < (clipDuration - TRAIL_EXCL_S) && dur >= MIN_SILENCE_S;
           });
+          if (internalSilences.length === 0) continue;
 
-          if (internalSilences.length > 0) {
-            const maxDur = Math.max(...internalSilences.map(m => parseFloat(m[2])));
-            const type = maxDur >= 0.5 ? 'freeze' : 'stutter';
+          const maxDur = Math.max(...internalSilences.map(m => parseFloat(m[2])));
+          const isFreeze   = maxDur >= FREEZE_S;
+          const isStutter  = !isFreeze && internalSilences.length >= STUTTER_MIN_COUNT;
+
+          if (isFreeze || isStutter) {
+            const type = isFreeze ? 'freeze' : 'stutter';
             console.warn(`  [Audio QA] ${type} detected in ${clip.id}: ${internalSilences.length} internal silence(s), max ${maxDur.toFixed(2)}s`);
-            stutteredClips.push({ clip, type, count: internalSilences.length, maxDur });
+            found.push({ clip, type, count: internalSilences.length, maxDur });
+          } else {
+            // Single silence below freeze boundary: log only, do not regenerate.
+            console.log(`  [Audio QA] note: ${clip.id} has ${internalSilences.length} internal silence(s), max ${maxDur.toFixed(2)}s (below regen threshold — likely natural pause)`);
           }
         }
-
-        if (stutteredClips.length > 0) {
-          console.warn(`[Audio QA] ${stutteredClips.length} clip(s) have stutter/freeze — regenerating...`);
-          for (const { clip } of stutteredClips) {
-            // Delete the bad file so generate-voiceover.js regenerates it
-            try { fs.unlinkSync(clip.audioFile); } catch (_) {}
-            console.log(`  [Audio QA] Deleted ${path.basename(clip.audioFile)} for regeneration`);
-          }
-          // Also delete the stitched voiceover so it gets rebuilt
-          const voiceoverPath = path.join(audioDir, 'voiceover.mp3');
-          try { if (fs.existsSync(voiceoverPath)) fs.unlinkSync(voiceoverPath); } catch (_) {}
-
-          // Re-run generate-voiceover.js to regenerate only the deleted clips.
-          // Skip stitching here; resync-audio performs a single authoritative stitch.
-          console.log('[Audio QA] Re-running voiceover generation for affected clips...');
-          execSync('node scripts/generate-voiceover.js --scratch --no-stitch', {
-            stdio: 'inherit',
-            cwd: PROJECT_ROOT,
-          });
-          // Keep audio timeline and sync-governor state coherent after regeneration.
-          execSync('node scripts/resync-audio.js', {
-            stdio: 'inherit',
-            cwd: PROJECT_ROOT,
-            env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
-          });
-          assertNarrationSyncOrThrow(versionedDir, 'post-audio-qa-regeneration');
-          console.log('[Audio QA] Regeneration complete.');
-        } else {
-          console.log('[Audio QA] Per-clip stutter/freeze check: all clips clean.');
-        }
+        return found;
       }
 
-      // ── Overall voiceover quality checks ──────────────────────────────────
-      const { passed, issues } = checkAudioQuality(versionedDir);
+      let stutteredClips = [];
+      let overallResult = { passed: false, issues: [] };
 
-      const durationIssues = issues.filter(i =>
+      try {
+        if (fs.existsSync(manifestPath)) {
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          stutteredClips = detectStutteredClips(manifest.clips || []);
+
+          if (stutteredClips.length > 0) {
+            // ── Backup clips before any deletion so we can restore on failure ──
+            const backupDir = path.join(audioDir, `backup-${Date.now()}`);
+            fs.mkdirSync(backupDir, { recursive: true });
+            for (const { clip } of stutteredClips) {
+              if (fs.existsSync(clip.audioFile)) {
+                fs.copyFileSync(clip.audioFile, path.join(backupDir, path.basename(clip.audioFile)));
+              }
+            }
+
+            // Retry loop: delete bad clips and regenerate, up to MAX_AUDIO_REGEN_ATTEMPTS per clip.
+            let toRegen = stutteredClips;
+            let regenOk = false;
+            try {
+              while (toRegen.length > 0) {
+                const stillBad = toRegen.filter(({ clip }) => {
+                  regenAttemptCounts[clip.id] = (regenAttemptCounts[clip.id] || 0) + 1;
+                  if (regenAttemptCounts[clip.id] > MAX_AUDIO_REGEN_ATTEMPTS) {
+                    console.warn(`  [Audio QA] WARN: ${clip.id} failed ${MAX_AUDIO_REGEN_ATTEMPTS} regeneration attempt(s) — keeping last available clip`);
+                    return false;
+                  }
+                  return true;
+                });
+                if (stillBad.length === 0) break;
+
+                const attemptNum = Math.max(...stillBad.map(s => regenAttemptCounts[s.clip.id]));
+                console.warn(`[Audio QA] ${stillBad.length} clip(s) have stutter/freeze (attempt ${attemptNum}/${MAX_AUDIO_REGEN_ATTEMPTS}) — regenerating...`);
+                for (const { clip } of stillBad) {
+                  try { fs.unlinkSync(clip.audioFile); } catch (_) {}
+                  console.log(`  [Audio QA] Deleted ${path.basename(clip.audioFile)} for regeneration`);
+                }
+                const voiceoverPath = path.join(audioDir, 'voiceover.mp3');
+                try { if (fs.existsSync(voiceoverPath)) fs.unlinkSync(voiceoverPath); } catch (_) {}
+
+                console.log('[Audio QA] Re-running voiceover generation for affected clips...');
+                execSync('node scripts/generate-voiceover.js --scratch --no-stitch', {
+                  stdio: 'inherit',
+                  cwd: PROJECT_ROOT,
+                });
+                execSync('node scripts/resync-audio.js', {
+                  stdio: 'inherit',
+                  cwd: PROJECT_ROOT,
+                  env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
+                });
+
+                const freshManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                const regenIds = new Set(stillBad.map(s => s.clip.id));
+                const regenClips = (freshManifest.clips || []).filter(c => regenIds.has(c.id));
+                toRegen = detectStutteredClips(regenClips);
+              }
+              regenOk = true;
+            } catch (regenErr) {
+              // Regeneration failed — restore original clips from backup so the run
+              // stays in a usable state rather than losing all flagged clips.
+              console.warn(`[Audio QA] Regeneration failed: ${regenErr.message}`);
+              console.warn('[Audio QA] Restoring original clips from backup...');
+              for (const f of fs.readdirSync(backupDir)) {
+                try {
+                  fs.copyFileSync(path.join(backupDir, f), path.join(audioDir, f));
+                  console.log(`  [Audio QA] Restored ${f}`);
+                } catch (_) {}
+              }
+              // Re-stitch voiceover with restored clips so downstream stages work.
+              try {
+                execSync('node scripts/resync-audio.js', {
+                  stdio: 'inherit',
+                  cwd: PROJECT_ROOT,
+                  env:  { ...process.env, PIPELINE_RUN_DIR: versionedDir },
+                });
+              } catch (_) {}
+            }
+
+            // Clean up backup dir (keep on failure to aid manual inspection)
+            if (regenOk) {
+              try { fs.rmSync(backupDir, { recursive: true, force: true }); } catch (_) {}
+            } else {
+              console.warn(`[Audio QA] Backup retained at ${backupDir} for manual inspection.`);
+            }
+
+            assertNarrationSyncOrThrow(versionedDir, 'post-audio-qa-regeneration');
+            console.log('[Audio QA] Regeneration complete.');
+          } else {
+            console.log('[Audio QA] Per-clip stutter/freeze check: all clips clean.');
+          }
+        }
+
+        // ── Overall voiceover quality checks ──────────────────────────────────
+        overallResult = checkAudioQuality(versionedDir);
+      } finally {
+        // Always write the report — even when regeneration throws — so the pipeline
+        // leaves an audit trail of what was detected.
+        const { passed, issues } = overallResult;
+        try {
+          fs.writeFileSync(
+            path.join(versionedDir, 'audio-qa-report.json'),
+            JSON.stringify({
+              passed,
+              issues: issues || [],
+              stutteredClips: stutteredClips.map(s => ({ id: s.clip.id, type: s.type, count: s.count, maxDurS: s.maxDur })),
+              thresholds: { noiseDb: NOISE_DB, minSilenceS: MIN_SILENCE_S, freezeS: FREEZE_S, stutterMinCount: STUTTER_MIN_COUNT },
+              checkedAt: new Date().toISOString(),
+            }, null, 2)
+          );
+        } catch (_) {}
+      }
+
+      const { passed, issues } = overallResult;
+      const durationIssues = (issues || []).filter(i =>
         i.includes('longer than the video') || i.includes('50% longer')
       );
-      const clippingIssues = issues.filter(i => i.includes('clipping') || i.includes('truncated'));
+      const clippingIssues = (issues || []).filter(i => i.includes('clipping') || i.includes('truncated'));
 
-      if (issues.length > 0) {
+      if ((issues || []).length > 0) {
         console.warn('[Audio QA] Overall issues found:');
         for (const issue of issues) console.warn(`  ⚠ ${issue}`);
       }
-
-      // Write audio QA report
-      fs.writeFileSync(
-        path.join(versionedDir, 'audio-qa-report.json'),
-        JSON.stringify({
-          passed,
-          issues,
-          stutteredClips: stutteredClips.map(s => ({ id: s.clip.id, type: s.type, count: s.count, maxDurS: s.maxDur })),
-          checkedAt: new Date().toISOString(),
-        }, null, 2)
-      );
 
       if (durationIssues.length > 0 || clippingIssues.length > 0) {
         const severity = durationIssues.length > 0 ? 'audio-video desync' : 'audio clipping';
@@ -2376,8 +2985,38 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const { mode: cliMode, fromStage, toStage, runId: explicitRunId, noTouchup, recordMode } = parseArgs();
+  const {
+    mode: cliMode,
+    fromStage,
+    toStage,
+    runId: explicitRunId,
+    noTouchup,
+    recordMode,
+    qaThreshold: qaThresholdOverride,
+    maxRefinementIterations: maxRefinementIterationsOverride,
+    buildFixMode: buildFixModeOverride,
+  } = parseArgs();
   let effectiveFromStage = fromStage;
+
+  if (qaThresholdOverride != null && (!Number.isInteger(qaThresholdOverride) || qaThresholdOverride <= 0)) {
+    cliError(`[Orchestrator] Invalid --qa-threshold="${qaThresholdOverride}". Must be a positive integer.`);
+    process.exit(1);
+  }
+  if (
+    maxRefinementIterationsOverride != null &&
+    (!Number.isInteger(maxRefinementIterationsOverride) || maxRefinementIterationsOverride <= 0)
+  ) {
+    cliError(
+      `[Orchestrator] Invalid --max-refinement-iterations="${maxRefinementIterationsOverride}". Must be a positive integer.`
+    );
+    process.exit(1);
+  }
+  if (buildFixModeOverride && !VALID_BUILD_FIX_MODES.has(buildFixModeOverride)) {
+    cliError(
+      `[Orchestrator] Invalid --build-fix-mode="${buildFixModeOverride}". Must be one of: ${Array.from(VALID_BUILD_FIX_MODES).join(', ')}.`
+    );
+    process.exit(1);
+  }
 
   let endIdx = null;
   if (toStage) {
@@ -2545,7 +3184,18 @@ async function main() {
   fs.mkdirSync(versionedDir, { recursive: true });
 
   // Dispatch to the correct pipeline
-  const pipelineArgs = { startIdx, endIdx, noTouchup, versionedDir, promptText, timer, recordMode };
+  const pipelineArgs = {
+    startIdx,
+    endIdx,
+    noTouchup,
+    versionedDir,
+    promptText,
+    timer,
+    recordMode,
+    qaThresholdOverride,
+    maxRefinementIterationsOverride,
+    buildFixModeOverride,
+  };
 
   if (recordMode === 'studio') {
     cliLog('[Orchestrator] Record mode: STUDIO (human-driven via our-recorder)');

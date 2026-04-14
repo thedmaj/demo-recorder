@@ -6,6 +6,8 @@
 
 **Design lineage:** Layout and density from production **2026-03-23-layer-v2**-family demos (including the “TD final” layered build) and subsequent **Auth / Identity / Signal** slide flows — dense multi-panel grids, optional Plaid wordmark in the header, footer strip (`plaid.com`), glass side JSON. This is **Plaid-only** deck polish; do **not** reuse bank/host branding or colors (see **Agent constraints** in `SLIDE_RULES.md`). Mobile shell provenance: `templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`.
 
+**Hard boundary:** Shell patterns (`.slide-root` regions, slide header/body/footer, slide panels/callouts) belong **only** inside `sceneType: "slide"` steps. Do **not** paste slide shell fragments into host or insight steps, and do **not** paste host app banners/cards/nav into `.slide-root`. Shared global JSON rail only: `#api-response-panel` per `SLIDE_RULES.md`.
+
 ## Files
 
 | File | Role |
@@ -30,18 +32,17 @@
   - `renderjson.set_show_to_level('all')` **or** numeric `999` if `'all'` is unsupported in an older bundle.
 - **Hydration:** Implement `window.updateApiResponse(data)` (or the pipeline’s `_showApiPanelStub` pattern) so it clears `#api-response-content`, appends `renderjson(data)`, and respects `__API_PANEL_CONFIG.collapsedByDefault` for panel visibility.
 
-## API panel chrome — Show, Hide, and toggle (all required)
+## API panel chrome — single edge toggle (required)
 
-Persist **three** controls in `#api-response-panel .side-panel-header`:
+Persist **one** control on `#api-response-panel`:
 
 | Control | `data-testid` | Behavior |
 |---------|---------------|----------|
-| Show JSON | `api-json-panel-show` | `display:flex` on `#api-response-panel` |
-| Hide JSON | `api-json-panel-hide` | `display:none` on `#api-response-panel` |
-| Toggle | `api-panel-toggle` | Same as Show/Hide combined (`toggleApiPanel`); label syncs to **Show JSON** / **Hide JSON** |
+| Edge toggle | `api-panel-toggle` | Calls `toggleApiPanel`; chevron direction flips with collapse/expand state |
 
 - Implement `window.toggleApiPanel()` for Playwright / dashboard parity.
-- Keep button labels in sync (e.g. toggle reads **Show JSON** / **Hide JSON** based on visibility).
+- Do **not** include `api-json-panel-show` / `api-json-panel-hide` buttons.
+- Keep edge toggle ARIA state in sync (`aria-expanded` + directional chevron class).
 - `#link-events-panel` remains `display:none` for all demo-facing steps.
 
 ## `window.__API_PANEL_CONFIG`
@@ -70,5 +71,6 @@ Apply Plaid-aligned colors via CSS on `#api-response-content .renderjson …` in
 - [ ] Slide steps include responsive `.slide-root` (no fixed 1440×900 on root).
 - [ ] `value-summary-slide` has **no** `apiResponse` and **no** JSON panel content.
 - [ ] Endpoint slides: body summarizes 3–6 fields; raw JSON only in `#api-response-content`.
-- [ ] All three panel controls present and wired; `toggleApiPanel` works.
+- [ ] Single edge toggle control present and wired; `toggleApiPanel` works.
 - [ ] renderjson tree is **fully expanded** when the user opens the panel.
+- [ ] On widescreen, slide content remains centered in a bordered frame; table scenes do not spread columns edge-to-edge.

@@ -3,60 +3,60 @@
 
 const STEP_TIMING = [
   {
-    "id": "chase-sapphire-status",
-    "label": "Application Status — Review Pending",
-    "startFrame": 0,
-    "endFrame": 442,
-    "audioEndFrame": 291
+    "id": "patient-portal-dashboard",
+    "label": "Patient Portal — Outstanding Balance",
+    "startFrame": 9,
+    "endFrame": 369,
+    "audioEndFrame": 313
   },
   {
-    "id": "plaid-link-cra",
-    "label": "Plaid Check Link — Consumer Report Flow",
-    "startFrame": 442,
-    "endFrame": 1915,
-    "audioEndFrame": 761
+    "id": "payment-method-selection",
+    "label": "Payment Method — Pay by Bank",
+    "startFrame": 369,
+    "endFrame": 388,
+    "audioEndFrame": 641
   },
   {
-    "id": "slide-cra-setup-lifecycle",
-    "label": "CRA Setup & Token Lifecycle",
-    "startFrame": 1915,
-    "endFrame": 2471,
-    "audioEndFrame": 2241
+    "id": "embedded-link-launch",
+    "label": "Connect Bank Account — Plaid Embedded Link",
+    "startFrame": 388,
+    "endFrame": 973,
+    "audioEndFrame": 675
   },
   {
-    "id": "chase-report-generating",
-    "label": "Report Generating — Async Status",
-    "startFrame": 2471,
-    "endFrame": 2923,
-    "audioEndFrame": 2749
+    "id": "identity-match-slide",
+    "label": "Plaid Identity Match — Ownership Verification",
+    "startFrame": 973,
+    "endFrame": 1124,
+    "audioEndFrame": 1296
   },
   {
-    "id": "slide-base-report-insight",
-    "label": "Base Report — Cash-Flow & Account Stability",
-    "startFrame": 2923,
-    "endFrame": 3503,
-    "audioEndFrame": 3273
+    "id": "auth-slide",
+    "label": "Plaid Auth — Verified Account & Routing Numbers",
+    "startFrame": 1124,
+    "endFrame": 1703,
+    "audioEndFrame": 1411
   },
   {
-    "id": "slide-income-insights",
-    "label": "Income Insights — Ability to Pay",
-    "startFrame": 3503,
-    "endFrame": 4084,
-    "audioEndFrame": 3839
+    "id": "signal-slide",
+    "label": "Plaid Signal — ACH Return Risk Assessment",
+    "startFrame": 1703,
+    "endFrame": 1833,
+    "audioEndFrame": 2063
   },
   {
-    "id": "chase-final-approval",
-    "label": "Final Decision — Sapphire Preferred Approved",
-    "startFrame": 4084,
-    "endFrame": 4577,
-    "audioEndFrame": 4386
+    "id": "payment-confirmation",
+    "label": "Payment Confirmed",
+    "startFrame": 1833,
+    "endFrame": 2470,
+    "audioEndFrame": 2160
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 4577,
-    "endFrame": 5132,
-    "audioEndFrame": 4922
+    "startFrame": 2470,
+    "endFrame": 2836,
+    "audioEndFrame": 2806
   }
 ];
 

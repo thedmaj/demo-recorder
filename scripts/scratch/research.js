@@ -724,6 +724,152 @@ function compactResearchMessages(messages, keepTail = 12) {
   return [first, ...tail];
 }
 
+function inferRequiredApiSignalsFromPrompt(promptText) {
+  const text = String(promptText || '').toLowerCase();
+  const apiSignals = [];
+  const mappings = [
+    { aliases: ['identity/match', '/identity/match'], canonical: 'identity/match' },
+    { aliases: ['auth/get', '/auth/get'], canonical: 'auth/get' },
+    { aliases: ['signal/evaluate', '/signal/evaluate'], canonical: 'signal/evaluate' },
+    { aliases: ['transactions/sync', '/transactions/sync'], canonical: 'transactions/sync' },
+    { aliases: ['liabilities/get', '/liabilities/get'], canonical: 'liabilities/get' },
+    { aliases: ['investments/holdings/get', '/investments/holdings/get'], canonical: 'investments/holdings/get' },
+    { aliases: ['cra/check_report/base_report/get', '/cra/check_report/base_report/get'], canonical: 'cra/check_report/base_report/get' },
+    { aliases: ['cra/check_report/income_insights/get', '/cra/check_report/income_insights/get'], canonical: 'cra/check_report/income_insights/get' },
+  ];
+  for (const row of mappings) {
+    if (row.aliases.some((needle) => text.includes(needle))) apiSignals.push(row.canonical);
+  }
+  return Array.from(new Set(apiSignals));
+}
+
+function getRequiredLinkMode(promptText) {
+  const text = String(promptText || '').toLowerCase();
+  if (text.includes('embedded link') || text.includes('link embedded') || text.includes('plaid in bed')) return 'embedded';
+  if (text.includes('modal link') || text.includes('standard link')) return 'modal';
+  return null;
+}
+
+function countBusinessSignals(text) {
+  const signalTerms = [
+    'reduce',
+    'lower',
+    'save',
+    'increase',
+    'improve',
+    'conversion',
+    'adoption',
+    'cost',
+    'risk',
+    'return rate',
+    'roi',
+    'outcome',
+    'efficiency',
+  ];
+  return signalTerms.reduce((acc, term) => acc + (text.includes(term) ? 1 : 0), 0);
+}
+
+function apiSignalAliases(canonical) {
+  const table = {
+    'identity/match': ['identity/match', 'identity match', 'ownership verification', 'name match'],
+    'auth/get': ['auth/get', 'auth', 'account and routing', 'routing numbers', 'account verification'],
+    'signal/evaluate': ['signal/evaluate', 'plaid signal', 'ach return risk', 'signal risk'],
+    'transactions/sync': ['transactions/sync', 'transactions sync'],
+    'liabilities/get': ['liabilities/get', 'liabilities get'],
+    'investments/holdings/get': ['investments/holdings/get', 'holdings get', 'investment holdings'],
+    'cra/check_report/base_report/get': ['cra/check_report/base_report/get', 'base report get', 'base report'],
+    'cra/check_report/income_insights/get': ['cra/check_report/income_insights/get', 'income insights get', 'income insights'],
+  };
+  return table[canonical] || [canonical];
+}
+
+function evaluateResearchSufficiency({
+  mode,
+  iteration,
+  promptText,
+  requiredApiSignals,
+  requiredLinkMode,
+  evidenceText,
+  totalToolCalls,
+  gleanCallCount,
+  askDocsCallCount,
+}) {
+  const lower = String(evidenceText || '').toLowerCase();
+  const thresholds = {
+    messaging: { minIteration: 4, minToolCalls: 5 },
+    gapfill: { minIteration: 3, minToolCalls: 3 },
+    full: { minIteration: 6, minToolCalls: 8 },
+  };
+  const active = thresholds[mode] || thresholds.full;
+
+  const storyReady =
+    /(journey|persona|problem|outcome|story|cta|narration|talking point|talk track)/.test(lower) ||
+    /(journey|persona|problem|outcome|story|cta|narration|talking point|talk track)/.test(String(promptText || '').toLowerCase());
+  const hasApiSpecSignals =
+    /(onSuccess|onExit|onEvent|OPEN|HANDOFF|TRANSITION_VIEW|link event|callback)/i.test(String(evidenceText || ''));
+  const businessSignalCount = countBusinessSignals(lower);
+  const businessReady = businessSignalCount >= (mode === 'gapfill' ? 2 : 3);
+
+  const apiCoverage = {};
+  for (const api of requiredApiSignals) {
+    const aliases = apiSignalAliases(api);
+    apiCoverage[api] = aliases.some((alias) => lower.includes(alias.toLowerCase()));
+  }
+  const missingRequiredApis = requiredApiSignals.filter((api) => !apiCoverage[api]);
+
+  let linkModeCovered = true;
+  if (requiredLinkMode === 'embedded') {
+    linkModeCovered = /(embedded|createembedded|embedded institution search)/.test(lower);
+  } else if (requiredLinkMode === 'modal') {
+    linkModeCovered = /(modal|standard link)/.test(lower);
+  }
+
+  const missingCritical = [];
+  if (requiredApiSignals.length > 0 && missingRequiredApis.length > 0) {
+    missingCritical.push(`missing required API coverage: ${missingRequiredApis.join(', ')}`);
+  }
+  if (requiredLinkMode && !linkModeCovered) {
+    missingCritical.push(`missing required link mode evidence: ${requiredLinkMode}`);
+  }
+  if (!hasApiSpecSignals) {
+    missingCritical.push('missing API callback/event readiness signals');
+  }
+
+  const reasons = [];
+  if (iteration < active.minIteration) reasons.push(`iteration ${iteration} < min ${active.minIteration}`);
+  if (totalToolCalls < active.minToolCalls) reasons.push(`tool calls ${totalToolCalls} < min ${active.minToolCalls}`);
+  if (!storyReady) reasons.push('storyboard/narration signals not sufficient');
+  if (!businessReady) reasons.push(`business signal coverage too low (${businessSignalCount})`);
+  if (missingCritical.length > 0) reasons.push(...missingCritical);
+
+  const sufficient =
+    iteration >= active.minIteration &&
+    totalToolCalls >= active.minToolCalls &&
+    storyReady &&
+    businessReady &&
+    missingCritical.length === 0;
+
+  return {
+    sufficient,
+    reasons,
+    missingCritical,
+    coverage: {
+      mode,
+      iteration,
+      totalToolCalls,
+      gleanCallCount,
+      askDocsCallCount,
+      requiredApiSignals,
+      apiCoverage,
+      requiredLinkMode,
+      linkModeCovered,
+      storyReady,
+      hasApiSpecSignals,
+      businessSignalCount,
+    },
+  };
+}
+
 // ── Main research loop ─────────────────────────────────────────────────────────
 
 async function runResearch(context, productSlug, researchOpts = {}) {
@@ -752,6 +898,33 @@ async function runResearch(context, productSlug, researchOpts = {}) {
   const MAX_TOKEN_RECOVERIES = 2;
   const MAX_TOOL_LOOPS = mode === 'gapfill' ? 8 : mode === 'messaging' ? 12 : 18;
   let forcedSynthesisPrompted = false;
+  let sufficiencyGatePrompted = false;
+  let forcedAfterSufficiencyGate = false;
+  const promptTextForGate =
+    context.type === 'prompt'
+      ? context.content
+      : JSON.stringify(context.content || {});
+  const requiredApiSignals = inferRequiredApiSignalsFromPrompt(promptTextForGate);
+  const requiredLinkMode = getRequiredLinkMode(promptTextForGate);
+  const evidenceChunks = [];
+  const sufficiencyReport = {
+    generatedAt: new Date().toISOString(),
+    mode,
+    requiredApiSignals,
+    requiredLinkMode,
+    checks: [],
+    gateTriggeredAtIteration: null,
+    finalDecisionPath: 'unknown',
+  };
+
+  function persistSufficiencyReport() {
+    try {
+      const reportPath = path.join(OUT_DIR, 'research-sufficiency-report.json');
+      fs.writeFileSync(reportPath, JSON.stringify(sufficiencyReport, null, 2), 'utf8');
+    } catch (err) {
+      console.warn(`Could not write research-sufficiency-report.json: ${err.message}`);
+    }
+  }
 
   while (true) {
     iteration++;
@@ -801,7 +974,37 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       if (synthesizeBlock) {
         console.log('\nResearch complete — structured synthesis received via tool call.\n');
         appendPipelineLogJson('[RESEARCH] Structured synthesis (tool)', synthesizeBlock.input, { runDir: OUT_DIR });
+        sufficiencyReport.finalDecisionPath = sufficiencyGatePrompted
+          ? 'model-synthesized-after-sufficiency-gate'
+          : 'model-synthesized';
+        persistSufficiencyReport();
         return { structured: synthesizeBlock.input };
+      }
+
+      if (sufficiencyGatePrompted) {
+        console.warn('Research sufficiency gate was already passed; forcing synthesis after one extra tool-use turn.');
+        messages.push({ role: 'assistant', content: response.content });
+        const skippedToolResults = toolBlocks.map((block) => ({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: 'Skipped due to sufficiency gate; synthesize using collected evidence.',
+          is_error: true,
+        }));
+        messages.push({ role: 'user', content: skippedToolResults });
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Sufficiency gate already passed. Do not call any more tools. Immediately call synthesize_research ' +
+                'with prioritized findings and unresolved items in gapQuestions.',
+            },
+          ],
+        });
+        forcedAfterSufficiencyGate = true;
+        sufficiencyReport.finalDecisionPath = 'forced-after-gate';
+        continue;
       }
 
       if (iteration >= MAX_TOOL_LOOPS) {
@@ -832,6 +1035,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
           ],
         });
         forcedSynthesisPrompted = true;
+        sufficiencyReport.finalDecisionPath = 'cap-forced';
         continue;
       }
 
@@ -892,6 +1096,59 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       const compacted = compactResearchMessages(messages, toolCaps.compactKeepTail);
       messages.length = 0;
       messages.push(...compacted);
+
+      for (const block of toolBlocks) {
+        const q = String(block.input?.question || block.input?.query || '');
+        evidenceChunks.push(`${block.name} query: ${q}`);
+      }
+      for (const tr of toolResults) {
+        evidenceChunks.push(String(tr.content || '').slice(0, 1000));
+      }
+      const evidenceText = evidenceChunks.join('\n').slice(-120000);
+      const totalToolCalls = evidenceChunks.filter((line) => line.startsWith('ask_plaid_docs query:') || line.startsWith('glean_chat query:')).length;
+      const gleanCallCount = evidenceChunks.filter((line) => line.startsWith('glean_chat query:')).length;
+      const askDocsCallCount = evidenceChunks.filter((line) => line.startsWith('ask_plaid_docs query:')).length;
+      const sufficiency = evaluateResearchSufficiency({
+        mode,
+        iteration,
+        promptText: promptTextForGate,
+        requiredApiSignals,
+        requiredLinkMode,
+        evidenceText,
+        totalToolCalls,
+        gleanCallCount,
+        askDocsCallCount,
+      });
+      sufficiencyReport.checks.push({
+        iteration,
+        sufficient: sufficiency.sufficient,
+        reasons: sufficiency.reasons,
+        missingCritical: sufficiency.missingCritical,
+        coverage: sufficiency.coverage,
+      });
+      appendPipelineLogJson('[RESEARCH] Sufficiency gate check', {
+        iteration,
+        sufficient: sufficiency.sufficient,
+        reasons: sufficiency.reasons,
+        coverage: sufficiency.coverage,
+      }, { runDir: OUT_DIR });
+      if (sufficiency.sufficient && !sufficiencyGatePrompted) {
+        console.log(`  ✓ Sufficiency gate passed at loop ${iteration}; requesting synthesis.`);
+        sufficiencyReport.gateTriggeredAtIteration = iteration;
+        sufficiencyGatePrompted = true;
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text:
+                'Research sufficiency gate passed. Do not call any more tools. Immediately call synthesize_research ' +
+                'using the strongest evidence collected so far and list unresolved non-critical items in gapQuestions.',
+            },
+          ],
+        });
+      }
+      persistSufficiencyReport();
       continue;
     }
 
@@ -905,6 +1162,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
         console.warn('Max-token recovery exhausted; stopping loop with fallback.');
         const textBlock = response.content.find((b) => b.type === 'text');
         finalText = textBlock?.text || '{}';
+        sufficiencyReport.finalDecisionPath = 'max-tokens-fallback';
         break;
       }
       maxTokenRecoveries += 1;
@@ -930,9 +1188,18 @@ async function runResearch(context, productSlug, researchOpts = {}) {
     console.warn(`Unexpected stop_reason: ${response.stop_reason}. Stopping loop.`);
     const textBlock = response.content.find(b => b.type === 'text');
     finalText = textBlock?.text || '{}';
+    sufficiencyReport.finalDecisionPath = 'unexpected-stop-reason';
     break;
   }
 
+  if (!sufficiencyReport.finalDecisionPath || sufficiencyReport.finalDecisionPath === 'unknown') {
+    sufficiencyReport.finalDecisionPath = forcedAfterSufficiencyGate
+      ? 'forced-after-gate'
+      : forcedSynthesisPrompted
+        ? 'cap-forced'
+        : 'text-fallback';
+  }
+  persistSufficiencyReport();
   return finalText;
 }
 

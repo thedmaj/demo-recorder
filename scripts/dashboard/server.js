@@ -6,6 +6,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { execSync, spawn } = require('child_process');
+const AdmZip = require('adm-zip');
 const chokidar = require('chokidar');
 const { loadTimingContract } = require('../timing-contract');
 const { processedToCompMs } = require('../sync-map-utils');
@@ -32,7 +33,8 @@ const PORT = process.env.PORT || 4040;
 // ── ENV whitelist ─────────────────────────────────────────────────────────────
 const ENV_WHITELIST = new Set([
   'SCRATCH_AUTO_APPROVE', 'MANUAL_RECORD', 'FIGMA_REVIEW',
-  'MAX_REFINEMENT_ITERATIONS', 'RECORDING_FPS', 'QA_PASS_THRESHOLD',
+  'MAX_REFINEMENT_ITERATIONS', 'RECORDING_FPS', 'QA_PASS_THRESHOLD', 'BUILD_FIX_MODE',
+  'RECORD_TRANSITION_SAFE_TIMING', 'STEP_TRANSITION_SETTLE_MS', 'POST_LINK_STEP_BOUNDARY_GUARD_MS',
   'PLAID_ENV', 'PLAID_LINK_LIVE', 'PLAID_LINK_CUSTOMIZATION',
   'PLAID_LAYER_TEMPLATE_ID', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_OUTPUT_FORMAT',
 ]);
@@ -235,6 +237,275 @@ function writeEnvWhitelisted(updates) {
   fs.renameSync(tmpFile, ENV_FILE);
 }
 
+function parseEnvFileSimple(filePath) {
+  const out = {};
+  try {
+    const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = String(line || '').trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      out[key] = value;
+    }
+  } catch (_) {}
+  return out;
+}
+
+function addDirectoryToZip(zip, sourceDir, zipPrefix) {
+  const entries = safeReaddir(sourceDir);
+  for (const name of entries) {
+    const abs = path.join(sourceDir, name);
+    let stat = null;
+    try { stat = fs.statSync(abs); } catch (_) { stat = null; }
+    if (!stat) continue;
+    const zipPath = path.posix.join(zipPrefix, name);
+    if (stat.isDirectory()) addDirectoryToZip(zip, abs, zipPath);
+    else if (stat.isFile()) zip.addLocalFile(abs, path.posix.dirname(zipPath), path.posix.basename(zipPath));
+  }
+}
+
+function parseMaybeJson(value, fallback = null) {
+  try { return JSON.parse(value); } catch (_) { return fallback; }
+}
+
+function escapeRegExp(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function fetchWithTimeout(url, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function localizeBrandfetchLogosInHtml(html, opts = {}) {
+  const strict = !!opts.strict;
+  const logoUrlMatches = String(html || '').match(/https:\/\/cdn\.brandfetch\.io\/[^\s"'<>]+/gi) || [];
+  const uniqueUrls = [...new Set(logoUrlMatches)];
+  if (!uniqueUrls.length) return { html: String(html || ''), files: [], failures: [] };
+
+  const files = [];
+  const failures = [];
+  let nextHtml = String(html || '');
+  let index = 0;
+
+  for (const url of uniqueUrls) {
+    index += 1;
+    try {
+      const res = await fetchWithTimeout(url, 12000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+      const u = new URL(url);
+      const pathExt = path.extname(u.pathname || '').toLowerCase();
+      const extFromType =
+        contentType.includes('svg') ? '.svg' :
+        contentType.includes('png') ? '.png' :
+        contentType.includes('jpeg') || contentType.includes('jpg') ? '.jpg' :
+        pathExt || '.bin';
+      const relPath = `frontend/brand-assets/logo-${index}${extFromType}`;
+      const arrayBuf = await res.arrayBuffer();
+      files.push({ relPath, buffer: Buffer.from(arrayBuf) });
+      const escaped = new RegExp(escapeRegExp(url), 'g');
+      nextHtml = nextHtml.replace(escaped, `./brand-assets/logo-${index}${extFromType}`);
+    } catch (err) {
+      failures.push({ url, error: err && err.message ? err.message : String(err) });
+      if (strict) {
+        throw new Error(`Strict portable mode could not download Brandfetch logo "${url}": ${err.message || err}`);
+      }
+    }
+  }
+  return { html: nextHtml, files, failures };
+}
+
+async function buildRunAppPackage(runId) {
+  const strictPortable = true;
+  const runDir = getRunDir(runId);
+  const scratchDir = path.join(runDir, 'scratch-app');
+  if (!fs.existsSync(scratchDir)) {
+    throw new Error(`scratch-app not found for run ${runId}. Complete build stage first.`);
+  }
+
+  const zip = new AdmZip();
+  const root = `${runId}-app-package`;
+  const addText = (relPath, text) => {
+    zip.addFile(path.posix.join(root, relPath), Buffer.from(String(text || ''), 'utf8'));
+  };
+  const addFile = (sourceAbs, targetRel) => {
+    if (!fs.existsSync(sourceAbs)) return;
+    zip.addLocalFile(
+      sourceAbs,
+      path.posix.join(root, path.posix.dirname(targetRel)),
+      path.posix.basename(targetRel)
+    );
+  };
+
+  // Frontend: generated demo app.
+  addDirectoryToZip(zip, scratchDir, path.posix.join(root, 'frontend'));
+  const sourceHtmlPath = path.join(scratchDir, 'index.html');
+  if (fs.existsSync(sourceHtmlPath)) {
+    const sourceHtml = fs.readFileSync(sourceHtmlPath, 'utf8');
+    const localized = await localizeBrandfetchLogosInHtml(sourceHtml, { strict: strictPortable });
+    try { zip.deleteFile(path.posix.join(root, 'frontend/index.html')); } catch (_) {}
+    addText('frontend/index.html', localized.html);
+    for (const f of localized.files) {
+      zip.addFile(path.posix.join(root, f.relPath), f.buffer);
+    }
+    if (strictPortable) {
+      const stillRemoteBrandfetch = /https:\/\/cdn\.brandfetch\.io\//i.test(localized.html);
+      if (stillRemoteBrandfetch) {
+        throw new Error('Strict portable mode failed: remote Brandfetch logo URLs remain in frontend/index.html');
+      }
+    }
+  }
+  // Bundle fallback assets used by app-server so package is offline-friendly.
+  const assetsDir = path.join(PROJECT_ROOT, 'assets');
+  if (fs.existsSync(assetsDir)) {
+    addDirectoryToZip(zip, assetsDir, path.posix.join(root, 'assets'));
+  } else if (strictPortable) {
+    throw new Error('Strict portable mode requires local assets/ directory, but it was not found.');
+  }
+
+  // Core backend/server implementation needed to run the app locally.
+  const utilsRoot = path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils');
+  addFile(path.join(utilsRoot, 'app-server.js'), 'scripts/scratch/utils/app-server.js');
+  addFile(path.join(utilsRoot, 'plaid-backend.js'), 'scripts/scratch/utils/plaid-backend.js');
+  addFile(path.join(utilsRoot, 'link-mode', 'index.js'), 'scripts/scratch/utils/link-mode/index.js');
+  addFile(path.join(utilsRoot, 'link-mode', 'modal.js'), 'scripts/scratch/utils/link-mode/modal.js');
+  addFile(path.join(utilsRoot, 'link-mode', 'embedded.js'), 'scripts/scratch/utils/link-mode/embedded.js');
+
+  // Include run metadata used by app-server/plaid-backend heuristics.
+  addFile(path.join(runDir, 'demo-script.json'), 'demo-script.json');
+  addFile(path.join(runDir, 'pipeline-run-context.json'), 'pipeline-run-context.json');
+
+  const launcher = `'use strict';
+const path = require('path');
+const fs = require('fs');
+function loadDotEnv(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\\r?\\n/);
+  for (const line of lines) {
+    const raw = String(line || '').trim();
+    if (!raw || raw.startsWith('#')) continue;
+    const idx = raw.indexOf('=');
+    if (idx <= 0) continue;
+    const key = raw.slice(0, idx).trim();
+    let val = raw.slice(idx + 1).trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (!Object.prototype.hasOwnProperty.call(process.env, key)) process.env[key] = val;
+  }
+}
+process.env.PIPELINE_RUN_DIR = process.env.PIPELINE_RUN_DIR || __dirname;
+loadDotEnv(path.join(__dirname, '.env'));
+const strictPortable = ${strictPortable ? 'true' : 'false'};
+const requiredEnv = ['PLAID_LINK_LIVE', 'PLAID_ENV', 'PLAID_CLIENT_ID', 'PLAID_SANDBOX_SECRET'];
+if (strictPortable) requiredEnv.push('PORTABLE_MODE');
+const missingEnv = requiredEnv.filter((k) => !String(process.env[k] || '').trim());
+if (missingEnv.length) {
+  console.error('[App Package] Missing required environment variables:', missingEnv.join(', '));
+  console.error('[App Package] Edit .env and set values before starting.');
+  process.exit(1);
+}
+const { startServer } = require('./scripts/scratch/utils/app-server');
+const port = Number(process.env.PORT || 3737);
+startServer(port, path.join(__dirname, 'frontend'))
+  .then(({ url }) => console.log('[App Package] Server running at ' + url))
+  .catch((err) => {
+    console.error('[App Package] Failed to start server:', err && err.message ? err.message : err);
+    process.exit(1);
+  });
+`;
+  addText('server.js', launcher);
+
+  const pkgJson = {
+    name: `${runId}-demo-app-package`,
+    private: true,
+    version: '1.0.0',
+    description: 'Portable Plaid demo app package',
+    scripts: {
+      start: 'node server.js',
+    },
+  };
+  addText('package.json', JSON.stringify(pkgJson, null, 2));
+
+  const envSource = parseEnvFileSimple(ENV_FILE);
+  const envKeys = [
+    'PLAID_LINK_LIVE',
+    'PLAID_ENV',
+    'PLAID_CLIENT_ID',
+    'PLAID_SANDBOX_SECRET',
+    'CRA_CLIENT_ID',
+    'CRA_SECRET',
+    'PLAID_LINK_CUSTOMIZATION',
+    'PLAID_LAYER_TEMPLATE_ID',
+    'PORT',
+    'PORTABLE_MODE',
+  ];
+  const envPairs = {};
+  for (const k of envKeys) {
+    envPairs[k] = Object.prototype.hasOwnProperty.call(envSource, k) ? String(envSource[k] || '') : '';
+  }
+  if (strictPortable) envPairs.PORTABLE_MODE = 'strict';
+  const envWithDefaults = envKeys.map((k) => `${k}=${envPairs[k] || ''}`).join('\n') + '\n';
+  addText('.env', envWithDefaults);
+
+  const readme = `# Demo App Package (${runId})
+
+This package contains only the files needed to run this generated demo app.
+Mode: **strict-portable**
+
+## Included
+
+- \`frontend/\`: generated demo app UI (scratch app)
+- \`scripts/scratch/utils/app-server.js\`: static/API server
+- \`scripts/scratch/utils/plaid-backend.js\`: Plaid API backend routes
+- \`scripts/scratch/utils/link-mode/\`: Plaid link mode adapters
+- \`assets/\`: bundled local fallback assets for offline logo rendering
+- \`.env\`: environment file copied into the package (replace values as needed)
+- \`server.js\`: package launcher
+- \`demo-script.json\`: run metadata for link mode heuristics
+
+## Requirements
+
+- Node.js 18+ (for built-in \`fetch\`)
+
+## Run
+
+1. Install Node via Homebrew:
+   - \`brew install node\`
+2. Open \`.env\` and replace credentials/variables for your target environment.
+3. Start:
+   - \`node server.js\`
+4. Open:
+   - [http://localhost:3737](http://localhost:3737)
+
+## Notes
+
+- \`PLAID_LINK_LIVE\` should be \`true\` for live Plaid flows.
+- If port 3737 is busy, set \`PORT=xxxx\` in \`.env\`.
+- Brandfetch logos are localized into \`frontend/brand-assets/\` during packaging for offline portability.
+- In strict-portable mode, package generation fails if remote Brandfetch URLs cannot be localized.
+`;
+  addText('README.md', readme);
+
+  return zip;
+}
+
 function latestRunId() {
   try {
     const linkTarget = fs.readlinkSync(path.join(OUT_DIR, 'latest'));
@@ -258,6 +529,61 @@ function allocateDashboardRunDir() {
   const runDir = path.join(DEMOS_DIR, runId);
   fs.mkdirSync(runDir, { recursive: true });
   return { runId, runDir };
+}
+
+function normalizeCloneCompanyName(input) {
+  const value = typeof input === 'string' ? input.trim().replace(/\s+/g, ' ') : '';
+  return value || '';
+}
+
+function normalizeCloneWebsite(input) {
+  const raw = typeof input === 'string' ? input.trim() : '';
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw}`;
+}
+
+function touchClonedRunIdentity(runDir, runId, sourceRunId) {
+  const nowIso = new Date().toISOString();
+  const manifestPath = path.join(runDir, 'run-manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        const next = {
+          ...parsed,
+          runId,
+          runDir,
+          updatedAt: nowIso,
+          clonedFromRunId: sourceRunId,
+        };
+        if (!next.createdAt || typeof next.createdAt !== 'string') next.createdAt = nowIso;
+        fs.writeFileSync(manifestPath, JSON.stringify(next, null, 2), 'utf8');
+      }
+    } catch (_) {
+      // best-effort clone metadata update
+    }
+  }
+
+  const contextPath = path.join(runDir, 'pipeline-run-context.json');
+  if (fs.existsSync(contextPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
+      const existingRun = parsed && parsed.run && typeof parsed.run === 'object' ? parsed.run : {};
+      const next = {
+        ...(parsed && typeof parsed === 'object' ? parsed : {}),
+        run: {
+          ...existingRun,
+          runId,
+          clonedFromRunId: sourceRunId,
+        },
+        updatedAt: nowIso,
+      };
+      fs.writeFileSync(contextPath, JSON.stringify(next, null, 2), 'utf8');
+    } catch (_) {
+      // best-effort clone metadata update
+    }
+  }
 }
 
 function getRunArtifacts(runId) {
@@ -939,6 +1265,21 @@ app.get('/api/files/:runId/*', (req, res) => {
   }
 });
 
+app.get('/api/runs/:runId/download-app-package', async (req, res) => {
+  try {
+    const runId = req.params.runId;
+    const zip = await buildRunAppPackage(runId);
+    const buf = zip.toBuffer();
+    const filename = `${runId}-app-package.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ── Config routes ─────────────────────────────────────────────────────────────
 
 app.get('/api/config', (req, res) => {
@@ -1385,11 +1726,30 @@ app.post('/api/pipeline/run', (req, res) => {
       activePipelineRunId = null;
     }
 
-    const { fromStage, toStage, noTouchup, resumeRunId, createNewRun, researchMode } = req.body || {};
+    const {
+      fromStage,
+      toStage,
+      noTouchup,
+      resumeRunId,
+      createNewRun,
+      researchMode,
+      qaThreshold,
+      maxRefinementIterations,
+      buildFixMode,
+    } = req.body || {};
     const args = ['scripts/scratch/orchestrator.js'];
     if (fromStage) args.push(`--from=${fromStage}`);
     if (toStage && typeof toStage === 'string' && toStage.trim()) {
       args.push(`--to=${toStage.trim().toLowerCase()}`);
+    }
+    if (Number.isFinite(Number(qaThreshold)) && Number(qaThreshold) > 0) {
+      args.push(`--qa-threshold=${Math.floor(Number(qaThreshold))}`);
+    }
+    if (Number.isFinite(Number(maxRefinementIterations)) && Number(maxRefinementIterations) > 0) {
+      args.push(`--max-refinement-iterations=${Math.floor(Number(maxRefinementIterations))}`);
+    }
+    if (typeof buildFixMode === 'string' && buildFixMode.trim()) {
+      args.push(`--build-fix-mode=${buildFixMode.trim().toLowerCase()}`);
     }
     if (noTouchup) args.push('--no-touchup');
 
@@ -2609,6 +2969,7 @@ async function launchDemoAppServer(runId) {
     throw new Error(`No built app found for run: ${runId}`);
   }
   let runClientName = null;
+  let runPlaidLinkMode = null;
   try {
     const scriptPath = path.join(runDir, 'demo-script.json');
     if (fs.existsSync(scriptPath)) {
@@ -2617,6 +2978,12 @@ async function launchDemoAppServer(runId) {
         ? parsed.persona.company.trim()
         : '';
       if (personaCompany) runClientName = personaCompany;
+      const parsedMode = parsed && typeof parsed.plaidLinkMode === 'string' ? parsed.plaidLinkMode.trim().toLowerCase() : '';
+      if (parsedMode === 'embedded' || parsedMode === 'modal') runPlaidLinkMode = parsedMode;
+      if (!runPlaidLinkMode) {
+        const flowMode = String(parsed?.plaidSandboxConfig?.plaidLinkFlow || '').trim().toLowerCase();
+        if (flowMode === 'embedded' || flowMode === 'modal') runPlaidLinkMode = flowMode;
+      }
     }
   } catch (_) {}
   if (!runClientName) runClientName = resolveDemoDisplayName(runId, readDemoAppNames());
@@ -2661,6 +3028,7 @@ async function launchDemoAppServer(runId) {
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
           productFamily:         body.productFamily || body.product_family || null,
           credentialScope:       body.credentialScope || body.credential_scope || null,
+          linkMode:              body.linkMode || body.link_mode || runPlaidLinkMode || null,
           runDir:                runDir,
         };
         if (body.plaid_user_id || body.plaidUserId) {
@@ -2705,7 +3073,7 @@ async function launchDemoAppServer(runId) {
   demoApp.get('/', (req, res) => {
     try {
       let html = fs.readFileSync(path.join(scratchAppDir, 'index.html'), 'utf8');
-      const inject = `<script>window.__DEMO_RUN_ID__=${JSON.stringify(runId)};window.__DASHBOARD_ORIGIN__='http://localhost:${PORT}';</script><script src="/__ai-overlay.js" defer></script>`;
+      const inject = `<script>window.__DEMO_RUN_ID__=${JSON.stringify(runId)};window.__DASHBOARD_ORIGIN__='http://localhost:${PORT}';window.__AI_EDIT_CONFIG__=${JSON.stringify(getAiEditPublicConfig())};</script><script src="/__ai-overlay.js" defer></script>`;
       html = html.includes('</body>') ? html.replace('</body>', inject + '\n</body>') : html + inject;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(html);
@@ -2805,6 +3173,73 @@ app.post('/api/demo-apps/:runId/rename', (req, res) => {
   }
 });
 
+app.post('/api/demo-apps/:runId/clone', async (req, res) => {
+  let allocated = null;
+  try {
+    const sourceRunId = String(req.params.runId || '').trim();
+    if (!sourceRunId) return res.status(400).json({ error: 'runId required' });
+    const sourceRunDir = getRunDir(sourceRunId);
+    const sourceApp = path.join(sourceRunDir, 'scratch-app', 'index.html');
+    if (!fs.existsSync(sourceApp)) return res.status(404).json({ error: 'Demo app not found for runId' });
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const companyName = normalizeCloneCompanyName(body.companyName);
+    const website = normalizeCloneWebsite(body.website);
+    if (companyName.length > 120) {
+      return res.status(400).json({ error: 'companyName must be 120 chars or fewer' });
+    }
+    if (website) {
+      try {
+        const parsed = new URL(website);
+        if (!/^https?:$/i.test(parsed.protocol)) {
+          return res.status(400).json({ error: 'website must be an http(s) URL' });
+        }
+      } catch (_) {
+        return res.status(400).json({ error: 'website must be a valid URL' });
+      }
+    }
+
+    allocated = allocateDashboardRunDir();
+    fs.cpSync(sourceRunDir, allocated.runDir, { recursive: true, force: true });
+    touchClonedRunIdentity(allocated.runDir, allocated.runId, sourceRunId);
+
+    if (companyName || website) {
+      const { runBrandClone } = require('../scratch/scratch/brand-clone');
+      await runBrandClone({
+        runDir: allocated.runDir,
+        companyName: companyName || undefined,
+        website: website || undefined,
+        sourceRunId,
+      });
+    }
+
+    const namesMap = readDemoAppNames();
+    const sourceDisplayName = resolveDemoDisplayName(sourceRunId, namesMap);
+    const cloneDisplayName = companyName || `${sourceDisplayName} (Clone)`;
+    if (cloneDisplayName && cloneDisplayName !== allocated.runId) {
+      namesMap[allocated.runId] = cloneDisplayName;
+      writeDemoAppNames(namesMap);
+    }
+
+    invalidateRunsCache();
+    invalidateDemoAppsCache();
+    res.json({
+      ok: true,
+      runId: allocated.runId,
+      displayName: resolveDemoDisplayName(allocated.runId, namesMap),
+    });
+  } catch (err) {
+    if (allocated && allocated.runDir) {
+      try {
+        fs.rmSync(allocated.runDir, { recursive: true, force: true });
+      } catch (_) {
+        // best-effort cleanup on failed clone
+      }
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/demo-apps/launch', async (req, res) => {
   try {
     const { runId } = req.body;
@@ -2829,6 +3264,239 @@ app.post('/api/demo-apps/:runId/stop', async (req, res) => {
 
 const CSS_KEYWORDS = /\b(font|color|background|border|radius|padding|margin|size|spacing|shadow|opacity|weight|button|icon|badge|card|text|heading|label|link|hover|gradient|gap|flex|align|justify|width|height|display|transition|animation|cursor|outline|ring|accent|teal|dark|light|bright|bold|italic|rounded|pill|style)\b/i;
 const STRUCTURAL_KEYWORDS = /\b(add|remove|delete|insert|create|new step|new screen|move|reorder|rename|duplicate|hide|show step)\b/i;
+
+function readEnvInt(name, fallback, opts = {}) {
+  const raw = process.env[name];
+  const n = Number.parseInt(String(raw || ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  let out = n;
+  if (Number.isFinite(opts.min)) out = Math.max(opts.min, out);
+  if (Number.isFinite(opts.max)) out = Math.min(opts.max, out);
+  return out;
+}
+
+function readEnvBool(name, fallback) {
+  const raw = String(process.env[name] || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return fallback;
+}
+
+function readEnvString(name, fallback) {
+  const raw = String(process.env[name] || '').trim();
+  return raw || fallback;
+}
+
+function getAiEditRuntimeConfig() {
+  const fullMaxTokens = readEnvInt(
+    'DASHBOARD_AI_EDIT_MAX_TOKENS_FULL',
+    readEnvInt('DASHBOARD_AI_EDIT_FULL_MAX_TOKENS', 20000, { min: 512, max: 64000 }),
+    { min: 512, max: 64000 }
+  );
+  return {
+    models: {
+      css: readEnvString('DASHBOARD_AI_EDIT_MODEL_CSS', 'claude-haiku-4-5-20251001'),
+      elementCss: readEnvString('DASHBOARD_AI_EDIT_MODEL_ELEMENT_CSS', 'claude-haiku-4-5-20251001'),
+      element: readEnvString('DASHBOARD_AI_EDIT_MODEL_ELEMENT', 'claude-haiku-4-5-20251001'),
+      step: readEnvString('DASHBOARD_AI_EDIT_MODEL_STEP', 'claude-haiku-4-5-20251001'),
+      full: readEnvString('DASHBOARD_AI_EDIT_MODEL_FULL', 'claude-opus-4-6'),
+    },
+    maxTokens: {
+      css: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_CSS', 4000, { min: 256, max: 64000 }),
+      elementCss: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_ELEMENT_CSS', 6000, { min: 256, max: 64000 }),
+      element: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_ELEMENT', 4000, { min: 256, max: 64000 }),
+      step: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_STEP', 8000, { min: 256, max: 64000 }),
+      full: fullMaxTokens,
+    },
+    pickedHtmlMaxChars: readEnvInt('DASHBOARD_AI_EDIT_PICKED_HTML_MAX_CHARS', 2000, { min: 200, max: 30000 }),
+    selectedHtmlMaxChars: readEnvInt('DASHBOARD_AI_EDIT_SELECTED_HTML_MAX_CHARS', 1200, { min: 200, max: 30000 }),
+    conversation: {
+      maxTurns: readEnvInt('DASHBOARD_AI_EDIT_CONVERSATION_MAX_TURNS', 12, { min: 1, max: 80 }),
+      maxCharsPerTurn: readEnvInt('DASHBOARD_AI_EDIT_CONVERSATION_MAX_CHARS_PER_TURN', 2000, { min: 100, max: 20000 }),
+      maxTotalChars: readEnvInt('DASHBOARD_AI_EDIT_CONVERSATION_MAX_TOTAL_CHARS', 12000, { min: 500, max: 200000 }),
+    },
+    multiPass: {
+      enabled: readEnvBool('DASHBOARD_AI_EDIT_ENABLE_MULTI_PASS', false),
+      model: readEnvString('DASHBOARD_AI_EDIT_MULTI_PASS_MODEL', 'claude-haiku-4-5-20251001'),
+      maxTokens: readEnvInt('DASHBOARD_AI_EDIT_MULTI_PASS_MAX_TOKENS', 2000, { min: 256, max: 16000 }),
+    },
+  };
+}
+
+function getAiEditPublicConfig() {
+  const cfg = getAiEditRuntimeConfig();
+  return {
+    pickedHtmlMaxChars: cfg.pickedHtmlMaxChars,
+    selectedHtmlMaxChars: cfg.selectedHtmlMaxChars,
+    conversationMaxTurns: cfg.conversation.maxTurns,
+    conversationMaxCharsPerTurn: cfg.conversation.maxCharsPerTurn,
+    conversationMaxTotalChars: cfg.conversation.maxTotalChars,
+  };
+}
+
+function clampSnippet(value, maxChars) {
+  if (value == null) return '';
+  return String(value).slice(0, maxChars);
+}
+
+function parseSimpleSelector(selector) {
+  const s = String(selector || '').trim();
+  if (!s) return null;
+  if (s.startsWith('#') && s.length > 1) return { attr: 'id', value: s.slice(1) };
+  const testIdMatch = s.match(/^\[data-testid=["']([^"']+)["']\]$/);
+  if (testIdMatch) return { attr: 'data-testid', value: testIdMatch[1] };
+  return null;
+}
+
+function countExactOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let idx = 0;
+  let count = 0;
+  while (true) {
+    idx = haystack.indexOf(needle, idx);
+    if (idx === -1) break;
+    count++;
+    idx += Math.max(1, needle.length);
+  }
+  return count;
+}
+
+function buildElementContextBlock(input, maxSnippet) {
+  const out = [];
+  if (input.selectedElementParentHtml) out.push(`Selected parent HTML:\n${clampSnippet(input.selectedElementParentHtml, maxSnippet)}`);
+  if (input.selectedElementContainerHtml) out.push(`Selected container HTML:\n${clampSnippet(input.selectedElementContainerHtml, maxSnippet)}`);
+  if (input.selectedElementAttributes && typeof input.selectedElementAttributes === 'object') {
+    out.push(`Selected attributes JSON:\n${JSON.stringify(input.selectedElementAttributes, null, 2)}`);
+  }
+  if (typeof input.selectedElementTextPreview === 'string' && input.selectedElementTextPreview.trim()) {
+    out.push(`Selected text preview:\n${clampSnippet(input.selectedElementTextPreview, Math.min(maxSnippet, 1200))}`);
+  }
+  if (typeof input.domPath === 'string' && input.domPath.trim()) {
+    out.push(`DOM path:\n${clampSnippet(input.domPath, 1200)}`);
+  }
+  return out.join('\n\n');
+}
+
+function normalizeConversationHistory(history, cfg) {
+  if (!Array.isArray(history)) return [];
+  const out = [];
+  let totalChars = 0;
+  const maxTurns = cfg.conversation.maxTurns;
+  const maxPerTurn = cfg.conversation.maxCharsPerTurn;
+  const maxTotal = cfg.conversation.maxTotalChars;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const turn = history[i];
+    if (!turn || (turn.role !== 'user' && turn.role !== 'assistant')) continue;
+    const content = clampSnippet(turn.content || '', maxPerTurn).trim();
+    if (!content) continue;
+    if (totalChars + content.length > maxTotal) continue;
+    out.unshift({ role: turn.role, content });
+    totalChars += content.length;
+    if (out.length >= maxTurns) break;
+  }
+  return out;
+}
+
+function applySelectorScopedReplacement(scopeHtml, selector, updatedOuterHtml) {
+  const parsed = parseSimpleSelector(selector);
+  if (!parsed) return { html: scopeHtml, replaced: false, reason: 'unsupported-selector' };
+  const attr = parsed.attr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const value = parsed.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`<([a-zA-Z][a-zA-Z0-9:-]*)\\b([^>]*\\s${attr}=["']${value}["'][^>]*)>[\\s\\S]*?<\\/\\1>`, 'g');
+  const matches = Array.from(scopeHtml.matchAll(re));
+  if (matches.length !== 1) {
+    return { html: scopeHtml, replaced: false, reason: `selector-matches-${matches.length}` };
+  }
+  const match = matches[0];
+  const start = match.index;
+  const end = start + match[0].length;
+  return {
+    html: scopeHtml.slice(0, start) + updatedOuterHtml + scopeHtml.slice(end),
+    replaced: true,
+  };
+}
+
+function replaceSelectedElementDeterministically(fullHtml, input, updatedOuterHtml) {
+  const selectedElementHtml = String(input.selectedElementHtml || '');
+  const selectedElementSelector = String(input.selectedElementSelector || '');
+  const currentStepId = String(input.currentStepId || '').trim();
+  const selectedElementContainerHtml = String(input.selectedElementContainerHtml || '');
+
+  let scopeStart = 0;
+  let scopeEnd = fullHtml.length;
+  let scopeHtml = fullHtml;
+
+  if (currentStepId) {
+    const stepHtml = extractStepHtml(fullHtml, currentStepId);
+    if (stepHtml) {
+      const idx = fullHtml.indexOf(stepHtml);
+      if (idx !== -1) {
+        scopeStart = idx;
+        scopeEnd = idx + stepHtml.length;
+        scopeHtml = stepHtml;
+      }
+    }
+  } else if (selectedElementContainerHtml && fullHtml.includes(selectedElementContainerHtml)) {
+    const idx = fullHtml.indexOf(selectedElementContainerHtml);
+    scopeStart = idx;
+    scopeEnd = idx + selectedElementContainerHtml.length;
+    scopeHtml = selectedElementContainerHtml;
+  }
+
+  let replaced = false;
+  let nextScopeHtml = scopeHtml;
+  let reason = 'no-replacement-strategy';
+
+  if (selectedElementSelector) {
+    const selectorResult = applySelectorScopedReplacement(scopeHtml, selectedElementSelector, updatedOuterHtml);
+    if (selectorResult.replaced) {
+      replaced = true;
+      nextScopeHtml = selectorResult.html;
+    } else {
+      reason = selectorResult.reason || reason;
+    }
+  }
+
+  if (!replaced && selectedElementHtml) {
+    const count = countExactOccurrences(scopeHtml, selectedElementHtml);
+    if (count === 1) {
+      nextScopeHtml = scopeHtml.replace(selectedElementHtml, updatedOuterHtml);
+      replaced = true;
+    } else {
+      reason = `selected-html-matches-${count}`;
+    }
+  }
+
+  if (!replaced) return { html: fullHtml, valid: false, reason };
+  if (scopeStart === 0 && scopeEnd === fullHtml.length) return { html: nextScopeHtml, valid: true };
+  return {
+    html: fullHtml.slice(0, scopeStart) + nextScopeHtml + fullHtml.slice(scopeEnd),
+    valid: true,
+  };
+}
+
+function validateAiEditHtml(nextHtml, prevHtml, mode, currentStepId) {
+  if (typeof nextHtml !== 'string' || !nextHtml.trim()) {
+    return { ok: false, reason: 'empty-html' };
+  }
+  const prevTestIds = (prevHtml.match(/data-testid="/g) || []).length;
+  const nextTestIds = (nextHtml.match(/data-testid="/g) || []).length;
+  if (nextTestIds === 0) return { ok: false, reason: 'missing-data-testid' };
+  if (nextHtml.length < Math.min(1000, prevHtml.length * 0.4)) {
+    return { ok: false, reason: 'html-too-small' };
+  }
+  if (/goToStep\s*=/.test(prevHtml) && !/goToStep\s*=/.test(nextHtml)) {
+    return { ok: false, reason: 'missing-goToStep-definition' };
+  }
+  if (mode !== 'full' && nextTestIds < Math.max(1, Math.floor(prevTestIds * 0.5))) {
+    return { ok: false, reason: 'excessive-testid-loss' };
+  }
+  if (currentStepId && !nextHtml.includes(`data-testid="step-${currentStepId}"`) && mode === 'step') {
+    return { ok: false, reason: `missing-step-${currentStepId}` };
+  }
+  return { ok: true };
+}
 
 /** Extract all <style>…</style> blocks from HTML. Returns { css, ranges } */
 function extractStyleBlocks(html) {
@@ -2986,7 +3654,18 @@ function spliceStepHtml(fullHtml, stepId, newStepHtml) {
 app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
   try {
     const { runId } = req.params;
-    const { message, selectedElementHtml, selectedElementSelector, conversationHistory, currentStepId } = req.body;
+    const {
+      message,
+      selectedElementHtml,
+      selectedElementSelector,
+      selectedElementParentHtml,
+      selectedElementContainerHtml,
+      selectedElementAttributes,
+      selectedElementTextPreview,
+      domPath,
+      conversationHistory,
+      currentStepId,
+    } = req.body || {};
     const appHtmlPath = path.join(DEMOS_DIR, runId, 'scratch-app/index.html');
     if (!fs.existsSync(appHtmlPath)) return res.status(404).json({ error: 'App HTML not found' });
 
@@ -2999,6 +3678,32 @@ app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const mode = detectEditMode(message, selectedElementHtml);
+    const cfg = getAiEditRuntimeConfig();
+    const modeModel = {
+      css: cfg.models.css,
+      'element-css': cfg.models.elementCss,
+      element: cfg.models.element,
+      step: cfg.models.step,
+      full: cfg.models.full,
+    };
+    const modeMaxTokens = {
+      css: cfg.maxTokens.css,
+      'element-css': cfg.maxTokens.elementCss,
+      element: cfg.maxTokens.element,
+      step: cfg.maxTokens.step,
+      full: cfg.maxTokens.full,
+    };
+    const snippetCap = cfg.selectedHtmlMaxChars;
+    const contextBlock = buildElementContextBlock(
+      {
+        selectedElementParentHtml,
+        selectedElementContainerHtml,
+        selectedElementAttributes,
+        selectedElementTextPreview,
+        domPath,
+      },
+      snippetCap
+    );
 
     let systemPrompt, userContent, maxTokens, responseHandler;
 
@@ -3008,7 +3713,7 @@ app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
 Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
 Respond with ONLY the raw updated CSS content — no <style> tags, no HTML, no explanation.`;
       userContent = `Request: ${message}\n\nCurrent CSS:\n${allCss}`;
-      maxTokens = 4000;
+      maxTokens = modeMaxTokens.css;
       responseHandler = (text) => {
         const newHtml = spliceCSS(currentHtml, styleBlocks, text.trim());
         return { newHtml, valid: true };
@@ -3027,13 +3732,14 @@ Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
 Respond with ONLY the complete updated CSS — no <style> tags, no HTML, no explanation.
 Include ALL the original CSS rules plus your changes (do not drop unrelated rules).`;
       userContent = [
-        `Selected element: ${selectedElementHtml.slice(0, 500)}`,
+        `Selected element: ${clampSnippet(selectedElementHtml, snippetCap)}`,
         selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        contextBlock || '',
         `Request: ${message}`,
         `\nRelevant CSS:\n${relevantCss}`,
         `\nFull CSS (for reference — return the full updated version):\n${allCss}`,
       ].filter(Boolean).join('\n\n');
-      maxTokens = 6000;
+      maxTokens = modeMaxTokens['element-css'];
       responseHandler = (text) => {
         const newHtml = spliceCSS(currentHtml, styleBlocks, text.trim());
         return { newHtml, valid: true };
@@ -3050,19 +3756,26 @@ Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
 Respond with ONLY the updated outerHTML of the element — no surrounding tags, no explanation.
 Preserve all data-testid attributes and event handlers (onclick etc).`;
       userContent = [
-        `Element to edit:\n${selectedElementHtml}`,
+        `Element to edit:\n${clampSnippet(selectedElementHtml, snippetCap)}`,
         selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        contextBlock || '',
         `Request: ${message}`,
         `\nRelevant CSS for context:\n${relevantCss}`,
       ].filter(Boolean).join('\n\n');
-      maxTokens = 4000;
+      maxTokens = modeMaxTokens.element;
       responseHandler = (text) => {
         const updated = text.trim();
-        // Replace the element in the full HTML by its outerHTML
-        const escaped = selectedElementHtml.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const newHtml = currentHtml.replace(new RegExp(escaped.slice(0, 200)), updated);
-        const valid = newHtml !== currentHtml;
-        return { newHtml: valid ? newHtml : currentHtml, valid };
+        const result = replaceSelectedElementDeterministically(currentHtml, {
+          selectedElementHtml,
+          selectedElementSelector,
+          selectedElementContainerHtml,
+          currentStepId,
+        }, updated);
+        return {
+          newHtml: result.valid ? result.html : currentHtml,
+          valid: !!result.valid,
+          reason: result.reason || null,
+        };
       };
 
     } else if (currentStepId) {
@@ -3077,13 +3790,14 @@ Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
 Respond with ONLY the updated outer HTML of the step div — preserve its data-testid, class="step", and all data-testid attributes on child elements.
 Do not include <html>, <body>, <style>, or <script> tags. No explanation.`;
       userContent = [
-        selectedElementHtml ? `Selected element:\n${selectedElementHtml.slice(0, 800)}` : '',
+        selectedElementHtml ? `Selected element:\n${clampSnippet(selectedElementHtml, snippetCap)}` : '',
         selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        contextBlock || '',
         `Request: ${message}`,
         `\nCurrent step HTML (step id="${currentStepId}"):\n${stepHtml}`,
         `\nCSS rules for this step:\n${filteredCss}`,
       ].filter(Boolean).join('\n\n');
-      maxTokens = 8000;
+      maxTokens = modeMaxTokens.step;
       responseHandler = (text) => {
         const updated = text.trim();
         const { html: newHtml, valid } = spliceStepHtml(currentHtml, currentStepId, updated);
@@ -3098,13 +3812,13 @@ Respond with ONLY the complete updated HTML — no explanation, no markdown fenc
 Design system: background #0d1117, accent #00A67E (teal), text #ffffff.
 Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigation.`;
       userContent = [
-        selectedElementHtml ? `Selected element:\n${selectedElementHtml.slice(0, 1000)}` : '',
+        selectedElementHtml ? `Selected element:\n${clampSnippet(selectedElementHtml, snippetCap)}` : '',
         selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+        contextBlock || '',
         `Request: ${message}`,
         `\nCurrent HTML:\n${currentHtml}`,
       ].filter(Boolean).join('\n\n');
-      // Large single-file demos need headroom; prefer step-scoped AI edit when possible.
-      maxTokens = parseInt(process.env.DASHBOARD_AI_EDIT_FULL_MAX_TOKENS || '20000', 10);
+      maxTokens = modeMaxTokens.full;
       responseHandler = (text) => {
         const newHtml = text.trim();
         const valid = newHtml.includes('<html') || newHtml.includes('<!DOCTYPE') || newHtml.includes('<body');
@@ -3113,18 +3827,37 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
     }
 
     // Build message list (lightweight history only)
-    const messages = [];
-    if (Array.isArray(conversationHistory)) {
-      for (const turn of conversationHistory) {
-        if (turn.role && typeof turn.content === 'string' && turn.content.length < 500) {
-          messages.push(turn);
-        }
+    const messages = normalizeConversationHistory(conversationHistory, cfg);
+
+    let multiPassPlan = null;
+    const shouldMultiPass = cfg.multiPass.enabled && (mode === 'element' || mode === 'step' || mode === 'full');
+    if (shouldMultiPass) {
+      const planner = await client.messages.create({
+        model: cfg.multiPass.model,
+        max_tokens: cfg.multiPass.maxTokens,
+        system: 'You are planning an HTML/CSS edit. Return concise JSON with keys: changePlan (array of short steps), risks (array), preserve (array). Return JSON only.',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              `Mode: ${mode}`,
+              `Request: ${message}`,
+              selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+              currentStepId ? `Step: ${currentStepId}` : '',
+            ].filter(Boolean).join('\n'),
+          },
+        ],
+      });
+      multiPassPlan = planner && planner.content && planner.content[0] && planner.content[0].text
+        ? String(planner.content[0].text).trim()
+        : null;
+      if (multiPassPlan) {
+        userContent = `${userContent}\n\nPre-plan (follow strictly):\n${multiPassPlan}`;
       }
     }
     messages.push({ role: 'user', content: userContent });
 
-    // Haiku for css/element/step modes (small context, fast) — Opus only for full-file rewrite
-    const model = (mode === 'full' && !currentStepId) ? 'claude-opus-4-6' : 'claude-haiku-4-5-20251001';
+    const model = modeModel[mode] || cfg.models.full;
     console.log(`[AI Edit] mode=${mode} model=${model} tokens≈${Math.round(userContent.length / 4)} run=${runId}`);
 
     const response = await client.messages.create({
@@ -3139,17 +3872,36 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
       return res.status(500).json({ error: `Response was truncated (hit max_tokens=${maxTokens}). File not modified. Try a more specific request or use element-pick to scope the change.` });
     }
 
-    const { newHtml, valid } = responseHandler(response.content[0].text);
+    const handled = responseHandler(response.content[0].text);
+    const newHtml = handled.newHtml;
+    const valid = !!handled.valid;
 
     if (!valid) {
-      return res.status(500).json({ error: 'AI response could not be applied cleanly', mode, preview: response.content[0].text.slice(0, 300) });
+      return res.status(500).json({
+        error: 'AI response could not be applied cleanly',
+        mode,
+        reason: handled.reason || null,
+        preview: response.content[0].text.slice(0, 300),
+      });
+    }
+
+    const validation = validateAiEditHtml(newHtml, currentHtml, mode, currentStepId);
+    if (!validation.ok) {
+      return res.status(500).json({
+        error: `AI edit validation failed: ${validation.reason}`,
+        mode,
+      });
     }
 
     // Backup before overwriting; invalidate cache so next request re-parses
     fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
     fs.writeFileSync(appHtmlPath, newHtml, 'utf8');
     _appCache.delete(runId);
-    res.json({ ok: true, reply: `Done (${mode} mode) — changes written.` });
+    res.json({
+      ok: true,
+      reply: `Done (${mode} mode) — changes written.`,
+      assistantMessage: `Applied ${mode} edit${multiPassPlan ? ' with multi-pass planning' : ''}.`,
+    });
   } catch (err) {
     console.error('[AI Edit]', err);
     res.status(500).json({ error: err.message });
@@ -3242,7 +3994,25 @@ app.get('/api/runs/:runId/timeline-data', (req, res) => {
           // Last step — try to get total duration from the recording file
           videoEnd = null;
         }
-        timingMap[cur.id] = { videoStart, videoEnd };
+        if (!cur.id) continue;
+        if (!timingMap[cur.id]) {
+          timingMap[cur.id] = { videoStart, videoEnd };
+        } else {
+          // Some recordings contain duplicate timing rows for a step ID (e.g. multi-row
+          // Playwright scripts). Timeline editor should use the full visible envelope.
+          const prev = timingMap[cur.id];
+          const nextStart = Number.isFinite(videoStart) ? videoStart : prev.videoStart;
+          const mergedStart = Number.isFinite(prev.videoStart)
+            ? Math.min(prev.videoStart, nextStart)
+            : nextStart;
+          let mergedEnd = prev.videoEnd;
+          if (Number.isFinite(videoEnd)) {
+            mergedEnd = Number.isFinite(prev.videoEnd)
+              ? Math.max(prev.videoEnd, videoEnd)
+              : videoEnd;
+          }
+          timingMap[cur.id] = { videoStart: mergedStart, videoEnd: mergedEnd };
+        }
       }
     }
 
@@ -3536,7 +4306,7 @@ app.get('/demo-app-preview/:runId', (req, res) => {
   const runId = req.params.runId;
   // Inject the variables ai-overlay.js expects, then load the script
   html = html.replace('</body>',
-    `<script>window.__DEMO_RUN_ID__ = ${JSON.stringify(runId)}; window.__DASHBOARD_ORIGIN__ = 'http://localhost:${PORT}';</script>\n` +
+    `<script>window.__DEMO_RUN_ID__ = ${JSON.stringify(runId)}; window.__DASHBOARD_ORIGIN__ = 'http://localhost:${PORT}'; window.__AI_EDIT_CONFIG__ = ${JSON.stringify(getAiEditPublicConfig())};</script>\n` +
     `<script src="/static/ai-overlay.js"></script>\n</body>`);
   res.setHeader('Content-Type', 'text/html');
   res.send(html);

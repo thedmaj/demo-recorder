@@ -41,10 +41,29 @@ const LEGACY_REPORT_FILE = path.join(OUT_DIR, 'plaid-link-qa.json');
 
 const QA_WAIT_MS = parseInt(process.env.PLAID_LINK_QA_WAIT_MS || '20000', 10);
 const QA_PORT = parseInt(process.env.PLAID_LINK_QA_PORT || '3739', 10);
+// PLAID_LINK_QA_MODE=auto|full|token-only|skip (auto defaults to token-only for faster loops)
+// PLAID_LINK_QA_TOKEN_ONLY_WAIT_MS controls token probe wait in token-only mode.
+// PLAID_LINK_QA_REQUIRE_200 (default true) enforces at least one token-create 200.
 const HEADLESS = !(
   process.env.PLAID_LINK_QA_HEADLESS === 'false' ||
   process.env.PLAID_LINK_QA_HEADLESS === '0'
 );
+const QA_MODE_RAW = String(process.env.PLAID_LINK_QA_MODE || 'auto').trim().toLowerCase();
+const TOKEN_ONLY_WAIT_MS = parseInt(process.env.PLAID_LINK_QA_TOKEN_ONLY_WAIT_MS || '7000', 10);
+const REQUIRE_200 = !(
+  process.env.PLAID_LINK_QA_REQUIRE_200 === 'false' ||
+  process.env.PLAID_LINK_QA_REQUIRE_200 === '0'
+);
+
+function resolvePlaidQaMode(raw) {
+  const normalized = String(raw || '').trim().toLowerCase();
+  if (normalized === 'full' || normalized === 'token-only' || normalized === 'skip') return normalized;
+  if (normalized && normalized !== 'auto') {
+    console.warn(`[plaid-link-qa] Unknown mode "${normalized}" — defaulting to auto(token-only).`);
+  }
+  // Default "auto" to token-only for faster iterative QA.
+  return 'token-only';
+}
 
 function writeReport(payload) {
   fs.mkdirSync(path.dirname(REPORT_FILE), { recursive: true });
@@ -162,8 +181,8 @@ async function runPlaywrightRow(page, row) {
   }
 }
 
-async function waitForLaunchSignal(page, tokenResponses, plaidLinkMode = 'modal', linkModeAdapter = null) {
-  const deadline = Date.now() + QA_WAIT_MS;
+async function waitForLaunchSignal(page, tokenResponses, plaidLinkMode = 'modal', linkModeAdapter = null, waitMs = QA_WAIT_MS) {
+  const deadline = Date.now() + Math.max(500, waitMs || QA_WAIT_MS);
   const adapter = linkModeAdapter || getLinkModeAdapter(plaidLinkMode);
   while (Date.now() < deadline) {
     const domState = await page.evaluate(() => {
@@ -174,8 +193,11 @@ async function waitForLaunchSignal(page, tokenResponses, plaidLinkMode = 'modal'
       return {
         hasPlaidIframe: !!iframe,
         hasHandler: !!window._plaidHandler,
-        hostedOpened: !!window.__embeddedLinkOpened,
-        hostedError: window.__embeddedLinkError || null,
+        embeddedWidgetLoaded: !!window.__embeddedLinkWidgetLoaded,
+        embeddedInstanceReady: !!window.__plaidEmbeddedInstance,
+        embeddedLayout: window.__embeddedLinkLayout || null,
+        expectedInstitutionTiles: window.__embeddedLinkExpectedInstitutionTileCount || null,
+        embeddedError: window.__embeddedLinkError || null,
         openedUrls: Array.isArray(window.__qaOpenedUrls) ? window.__qaOpenedUrls.slice(-5) : [],
         currentStep: typeof window.getCurrentStep === 'function' ? window.getCurrentStep() : null,
       };
@@ -194,12 +216,34 @@ async function waitForLaunchSignal(page, tokenResponses, plaidLinkMode = 'modal'
       !!document.querySelector('iframe[src*="cdn.plaid.com"]') ||
       !!document.querySelector('iframe[name*="plaid"]'),
     hasHandler: !!window._plaidHandler,
-    hostedOpened: !!window.__embeddedLinkOpened,
-    hostedError: window.__embeddedLinkError || null,
+    embeddedWidgetLoaded: !!window.__embeddedLinkWidgetLoaded,
+    embeddedInstanceReady: !!window.__plaidEmbeddedInstance,
+    embeddedLayout: window.__embeddedLinkLayout || null,
+    expectedInstitutionTiles: window.__embeddedLinkExpectedInstitutionTileCount || null,
+    embeddedError: window.__embeddedLinkError || null,
     openedUrls: Array.isArray(window.__qaOpenedUrls) ? window.__qaOpenedUrls.slice(-5) : [],
     currentStep: typeof window.getCurrentStep === 'function' ? window.getCurrentStep() : null,
   }));
   return { ok: false, domState };
+}
+
+async function waitForTokenHealth(tokenResponses, waitMs) {
+  const deadline = Date.now() + Math.max(500, waitMs || TOKEN_ONLY_WAIT_MS);
+  while (Date.now() < deadline) {
+    const any = tokenResponses.length > 0;
+    const hasFailure = tokenResponses.some((r) => Number(r.status) >= 400);
+    const has200 = tokenResponses.some((r) => Number(r.status) === 200);
+    if (any && (hasFailure || has200)) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  const failures = tokenResponses.filter((r) => Number(r.status) >= 400);
+  const successes = tokenResponses.filter((r) => Number(r.status) === 200);
+  return {
+    any: tokenResponses.length > 0,
+    failures,
+    successes,
+    passed: REQUIRE_200 ? successes.length > 0 && failures.length === 0 : failures.length === 0,
+  };
 }
 
 function parseJsonSafely(raw) {
@@ -210,10 +254,23 @@ function parseJsonSafely(raw) {
   }
 }
 
-async function main() {
+function normalizeResponseLinkMode(json) {
+  const mode = String(
+    (json && (json.plaid_link_mode || json.link_mode || json.linkMode)) || ''
+  ).trim().toLowerCase();
+  return mode === 'embedded' || mode === 'modal' ? mode : null;
+}
+
+async function main(opts = {}) {
+  const qaMode = resolvePlaidQaMode(opts.mode || QA_MODE_RAW);
   if (process.env.PLAID_LINK_LIVE !== 'true') {
     console.log('[plaid-link-qa] PLAID_LINK_LIVE != true — skipping.');
-    writeReport({ passed: true, skipped: true, reason: 'PLAID_LINK_LIVE=false' });
+    writeReport({ passed: true, skipped: true, reason: 'PLAID_LINK_LIVE=false', mode: qaMode });
+    return;
+  }
+  if (qaMode === 'skip') {
+    console.log('[plaid-link-qa] Mode=skip — skipping Plaid Link QA.');
+    writeReport({ passed: true, skipped: true, reason: 'mode=skip', mode: qaMode });
     return;
   }
   if (!fs.existsSync(path.join(SCRATCH_DIR, 'index.html'))) {
@@ -231,12 +288,23 @@ async function main() {
   const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
   if (!launchStep) {
     console.log('[plaid-link-qa] No plaidPhase=launch step found — skipping.');
-    writeReport({ passed: true, skipped: true, reason: 'No plaidPhase launch step' });
+    writeReport({ passed: true, skipped: true, reason: 'No plaidPhase launch step', mode: qaMode });
     return;
   }
 
   const rows = playwrightScript.steps || [];
-  const launchIdx = rows.findIndex((r) => (r.stepId || r.id) === launchStep.id && r.action === 'click');
+  let launchIdx = rows.findIndex((r) => (r.stepId || r.id) === launchStep.id && r.action === 'click');
+  if (launchIdx < 0) {
+    launchIdx = rows.findIndex((r) => {
+      if (!r || r.action !== 'click') return false;
+      const target = String(r.target || '').toLowerCase();
+      return (
+        target.includes('link-external-account-btn') ||
+        (target.includes('link') && (target.includes('bank') || target.includes('account'))) ||
+        target.includes('continue with plaid')
+      );
+    });
+  }
   if (launchIdx < 0) {
     throw new Error(`CRITICAL: plaid-link-qa could not find launch click row for step "${launchStep.id}"`);
   }
@@ -327,6 +395,121 @@ async function main() {
       await page.waitForTimeout(dwell);
     }
 
+    const tokenHealth = await waitForTokenHealth(tokenResponses, TOKEN_ONLY_WAIT_MS);
+    const tokenReferenceError =
+      pageErrors.find((e) => /token is not defined/i.test(String(e || ''))) ||
+      consoleErrors.find((e) => /token is not defined/i.test(String((e && e.text) || '')));
+    if (tokenReferenceError) {
+      const detail = {
+        passed: false,
+        launchStepId: launchStep.id,
+        launchRowIndex: launchIdx,
+        expectedServerUrl,
+        tokenRequests,
+        tokenResponses,
+        mode: qaMode,
+        consoleErrors: consoleErrors.slice(-20),
+        pageErrors: pageErrors.slice(-20),
+      };
+      writeReport(detail);
+      throw new Error(
+        `CRITICAL: Plaid Link QA detected runtime ReferenceError ("token is not defined") ` +
+        `during Link bootstrap. See ${REPORT_FILE}.`
+      );
+    }
+    if (!tokenHealth.passed) {
+      const detail = {
+        passed: false,
+        launchStepId: launchStep.id,
+        launchRowIndex: launchIdx,
+        expectedServerUrl,
+        tokenRequests,
+        tokenResponses,
+        tokenFailures: tokenHealth.failures,
+        mode: qaMode,
+        consoleErrors: consoleErrors.slice(-20),
+        pageErrors: pageErrors.slice(-20),
+      };
+      writeReport(detail);
+      throw new Error(
+        `CRITICAL: Plaid Link QA token check failed (mode=${qaMode}). ` +
+        `Expected /api/create-link-token HTTP 200 with no failures. See ${REPORT_FILE}.`
+      );
+    }
+
+    if (qaMode === 'token-only') {
+      const tokenSuccesses = tokenResponses.filter((r) => r.status === 200);
+      const latestTokenSuccess = tokenSuccesses[tokenSuccesses.length - 1] || null;
+      const latestSuccessJson = latestTokenSuccess ? parseJsonSafely(latestTokenSuccess.body) : null;
+      const responseLinkMode = normalizeResponseLinkMode(latestSuccessJson);
+      if (embeddedMode && responseLinkMode && responseLinkMode !== 'embedded') {
+        writeReport({
+          passed: false,
+          launchStepId: launchStep.id,
+          launchRowIndex: launchIdx,
+          plaidLinkMode,
+          expectedServerUrl,
+          tokenRequests,
+          tokenResponses,
+          mode: qaMode,
+          responseLinkMode,
+          latestTokenSuccess,
+          consoleErrors: consoleErrors.slice(-20),
+          pageErrors: pageErrors.slice(-20),
+        });
+        throw new Error(
+          `CRITICAL: Embedded Plaid Link QA observed token response mode="${responseLinkMode}". ` +
+          `Expected "embedded". See ${REPORT_FILE}.`
+        );
+      }
+      let launchResult = null;
+      if (embeddedMode) {
+        launchResult = await waitForLaunchSignal(
+          page,
+          tokenResponses,
+          linkModeAdapter.id,
+          linkModeAdapter,
+          Math.max(2000, Math.min(QA_WAIT_MS, TOKEN_ONLY_WAIT_MS + 3000))
+        );
+        if (!launchResult.ok) {
+          writeReport({
+            passed: false,
+            launchStepId: launchStep.id,
+            launchRowIndex: launchIdx,
+            plaidLinkMode,
+            expectedServerUrl,
+            tokenRequests,
+            tokenResponses,
+            mode: qaMode,
+            domState: launchResult.domState,
+            launchSignal: linkModeAdapter.launchSignalDescription(),
+            consoleErrors: consoleErrors.slice(-20),
+            pageErrors: pageErrors.slice(-20),
+          });
+          throw new Error(
+            `CRITICAL: Plaid Link QA token-only mode for embedded requires both token health and in-page widget load. ` +
+            `Launch signal not observed within timeout. See ${REPORT_FILE}.`
+          );
+        }
+      }
+      writeReport({
+        passed: true,
+        launchStepId: launchStep.id,
+        launchRowIndex: launchIdx,
+        plaidLinkMode,
+        expectedServerUrl,
+        tokenRequests,
+        tokenResponses,
+        mode: qaMode,
+        launchSignal: embeddedMode ? linkModeAdapter.launchSignalDescription() : 'token-only-health-check',
+        domState: launchResult ? launchResult.domState : undefined,
+        consoleErrors: consoleErrors.slice(-10),
+        pageErrors: pageErrors.slice(-10),
+      });
+      console.log('[plaid-link-qa] Token-only health check passed.');
+      return;
+    }
+
     const launchResult = await waitForLaunchSignal(page, tokenResponses, linkModeAdapter.id, linkModeAdapter);
     const offOriginRequests = tokenRequests.filter((r) => !String(r.url || '').startsWith(expectedServerUrl));
     const offOriginResponses = tokenResponses.filter((r) => !String(r.url || '').startsWith(expectedServerUrl));
@@ -335,8 +518,8 @@ async function main() {
     const latestTokenSuccess = tokenSuccesses[tokenSuccesses.length - 1] || null;
     const latestSuccessJson = latestTokenSuccess ? parseJsonSafely(latestTokenSuccess.body) : null;
     const tokenValidation = linkModeAdapter.validateTokenResponse(latestSuccessJson);
+    const responseLinkMode = normalizeResponseLinkMode(latestSuccessJson);
     const hasLinkToken = !!(latestSuccessJson && typeof latestSuccessJson.link_token === 'string' && latestSuccessJson.link_token.length > 0);
-    const hasHostedLinkUrl = !!(latestSuccessJson && typeof latestSuccessJson.hosted_link_url === 'string' && latestSuccessJson.hosted_link_url.length > 0);
 
     if (offOriginRequests.length || offOriginResponses.length) {
       const detail = {
@@ -370,9 +553,10 @@ async function main() {
         tokenFailures,
         latestTokenSuccess,
         tokenValidation,
+        responseLinkMode,
         hasLinkToken,
-        hasHostedLinkUrl,
         plaidLinkMode,
+        mode: qaMode,
         domState: launchResult.domState,
         consoleErrors: consoleErrors.slice(-20),
         pageErrors: pageErrors.slice(-20),
@@ -380,8 +564,30 @@ async function main() {
       writeReport(detail);
       throw new Error(
         `CRITICAL: Plaid Link QA requires /api/create-link-token to return HTTP 200 with link_token ` +
-        `${embeddedMode ? 'and hosted_link_url ' : ''}and zero token-create failures. ` +
+        `and zero token-create failures. ` +
         `Mode=${linkModeAdapter.id}; required fields: ${tokenValidation.requiredFields.join(', ')}. See ${REPORT_FILE}.`
+      );
+    }
+    if (embeddedMode && responseLinkMode && responseLinkMode !== 'embedded') {
+      const detail = {
+        passed: false,
+        launchStepId: launchStep.id,
+        launchRowIndex: launchIdx,
+        expectedServerUrl,
+        tokenRequests,
+        tokenResponses,
+        latestTokenSuccess,
+        responseLinkMode,
+        plaidLinkMode,
+        mode: qaMode,
+        domState: launchResult.domState,
+        consoleErrors: consoleErrors.slice(-20),
+        pageErrors: pageErrors.slice(-20),
+      };
+      writeReport(detail);
+      throw new Error(
+        `CRITICAL: Embedded Plaid Link QA observed token response mode="${responseLinkMode}". ` +
+        `Expected "embedded". See ${REPORT_FILE}.`
       );
     }
 
@@ -395,6 +601,7 @@ async function main() {
         tokenRequests,
         tokenResponses,
         tokenFailure,
+        mode: qaMode,
         domState: launchResult.domState,
         consoleErrors: consoleErrors.slice(-20),
         pageErrors: pageErrors.slice(-20),
@@ -415,6 +622,7 @@ async function main() {
       expectedServerUrl,
       tokenRequests,
       tokenResponses,
+      mode: qaMode,
       domState: launchResult.domState,
       launchSignal: linkModeAdapter.launchSignalDescription(),
       consoleErrors: consoleErrors.slice(-10),

@@ -12,9 +12,10 @@ function detectModeFromText(text) {
   if (!t) return 'modal';
   const embeddedHints = [
     /\bembedded\s+link\b/,
-    /\bhosted\s+link\b/,
+    /\bplaid\s+in\s*bed\b/,
     /\bembedded[-\s]?clients?\b/,
     /\bpay by bank\b.*\bembedded\b/,
+    /\bembedded\s+institution\s+search\b/,
   ];
   return embeddedHints.some((re) => re.test(t)) ? 'embedded' : 'modal';
 }

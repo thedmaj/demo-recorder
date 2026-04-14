@@ -1051,6 +1051,11 @@
             ${renderCheckbox('MANUAL_RECORD', cfg, 'Use manual Playwright recording instead of automated')}
             ${renderCheckbox('FIGMA_REVIEW', cfg, 'Enable Figma design review stage')}
             ${renderNumberField('MAX_REFINEMENT_ITERATIONS', cfg, 'Max QA refinement loops (1–5)', 1, 5)}
+            ${renderSelect('BUILD_FIX_MODE', cfg, 'QA refinement routing mode', [
+              { value: 'auto', label: 'auto (recommended)' },
+              { value: 'fullbuild', label: 'fullbuild' },
+              { value: 'touchup', label: 'touchup' },
+            ])}
           </div>
 
           <div class="card">
@@ -1060,6 +1065,9 @@
               { value: '60', label: '60 fps' },
             ])}
             ${renderNumberField('QA_PASS_THRESHOLD', cfg, 'Minimum QA score to pass (0–100)', 0, 100)}
+            ${renderCheckbox('RECORD_TRANSITION_SAFE_TIMING', cfg, 'Mark step boundaries after goToStep settles to reduce transition bleed')}
+            ${renderNumberField('STEP_TRANSITION_SETTLE_MS', cfg, 'Delay after goToStep before boundary mark (100–2000ms)', 100, 2000)}
+            ${renderNumberField('POST_LINK_STEP_BOUNDARY_GUARD_MS', cfg, 'Extra delay before first post-Link boundary mark (0–3000ms)', 0, 3000)}
           </div>
 
           <div class="card">
@@ -1233,7 +1241,14 @@
 
       el.innerHTML = `
         <div class="files-layout">
-          <div class="files-list">${listHtml || '<div class="empty-state">No files found</div>'}</div>
+          <div class="files-list">
+            <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+              <a class="btn btn-sm btn-primary" href="/api/runs/${encodeURIComponent(runIdAtStart)}/download-app-package">
+                Download
+              </a>
+            </div>
+            ${listHtml || '<div class="empty-state">No files found</div>'}
+          </div>
           <div class="files-preview" id="files-preview"><div class="empty-state">Select a file to preview</div></div>
         </div>`;
 
@@ -4551,6 +4566,88 @@
     }
   }
 
+  function ensureDemoCloneModal() {
+    let modal = document.getElementById('demo-app-clone-modal');
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'demo-app-clone-modal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:5000;align-items:center;justify-content:center';
+    modal.innerHTML = `
+      <div data-clone-modal-backdrop style="position:absolute;inset:0;background:rgba(0,0,0,.55)"></div>
+      <div style="position:relative;width:min(560px,92vw);background:#111827;border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:18px 18px 16px;box-shadow:0 24px 64px rgba(0,0,0,.45)">
+        <h3 style="margin:0 0 8px;font-size:16px;color:#fff">Clone Demo App</h3>
+        <p style="margin:0 0 14px;font-size:12px;color:rgba(255,255,255,.65)">Optionally rebrand the clone. Leave fields empty to clone as-is.</p>
+        <label style="display:block;font-size:12px;color:rgba(255,255,255,.8);margin-bottom:6px">New company name (optional)</label>
+        <input data-clone-company type="text" maxlength="120" placeholder="e.g. US Bank" style="width:100%;padding:9px 10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#fff;font-size:13px;outline:none;margin-bottom:12px">
+        <label style="display:block;font-size:12px;color:rgba(255,255,255,.8);margin-bottom:6px">Website URL (optional)</label>
+        <input data-clone-website type="text" placeholder="e.g. https://www.usbank.com" style="width:100%;padding:9px 10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.16);border-radius:6px;color:#fff;font-size:13px;outline:none">
+        <p style="margin:10px 0 0;font-size:11px;color:rgba(255,255,255,.45)">If provided, Dashboard will run a one-off brand-clone update (logo/colors + Link client_name).</p>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+          <button data-clone-cancel type="button" style="padding:7px 11px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:6px;color:rgba(255,255,255,.8);font-size:12px;cursor:pointer">Cancel</button>
+          <button data-clone-asis type="button" style="padding:7px 11px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:6px;color:rgba(255,255,255,.9);font-size:12px;cursor:pointer">Clone As-Is</button>
+          <button data-clone-rebrand type="button" style="padding:7px 11px;background:#00A67E;border:none;border-radius:6px;color:#fff;font-size:12px;cursor:pointer">Clone + Rebrand</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  function openDemoCloneModal(defaultCompanyName = '') {
+    const modal = ensureDemoCloneModal();
+    const companyInput = modal.querySelector('[data-clone-company]');
+    const websiteInput = modal.querySelector('[data-clone-website]');
+    const cancelBtn = modal.querySelector('[data-clone-cancel]');
+    const asIsBtn = modal.querySelector('[data-clone-asis]');
+    const rebrandBtn = modal.querySelector('[data-clone-rebrand]');
+    const backdrop = modal.querySelector('[data-clone-modal-backdrop]');
+    if (!companyInput || !websiteInput || !cancelBtn || !asIsBtn || !rebrandBtn || !backdrop) {
+      return Promise.resolve(null);
+    }
+
+    companyInput.value = defaultCompanyName || '';
+    websiteInput.value = '';
+    modal.style.display = 'flex';
+
+    return new Promise((resolve) => {
+      const close = (result) => {
+        modal.style.display = 'none';
+        cancelBtn.removeEventListener('click', onCancel);
+        asIsBtn.removeEventListener('click', onAsIs);
+        rebrandBtn.removeEventListener('click', onRebrand);
+        backdrop.removeEventListener('click', onCancel);
+        companyInput.removeEventListener('keydown', onKeyDown);
+        websiteInput.removeEventListener('keydown', onKeyDown);
+        resolve(result);
+      };
+
+      const payload = () => ({
+        companyName: companyInput.value.trim(),
+        website: websiteInput.value.trim(),
+      });
+      const onCancel = () => close(null);
+      const onAsIs = () => close({ mode: 'asis', ...payload() });
+      const onRebrand = () => close({ mode: 'rebrand', ...payload() });
+      const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          onRebrand();
+        }
+      };
+
+      cancelBtn.addEventListener('click', onCancel);
+      asIsBtn.addEventListener('click', onAsIs);
+      rebrandBtn.addEventListener('click', onRebrand);
+      backdrop.addEventListener('click', onCancel);
+      companyInput.addEventListener('keydown', onKeyDown);
+      websiteInput.addEventListener('keydown', onKeyDown);
+      setTimeout(() => companyInput.focus(), 0);
+    });
+  }
+
   function renderDemoApps(apps) {
     const el = document.getElementById('demo-apps-content');
     if (!el) return;
@@ -4591,6 +4688,7 @@
           <div class="demo-app-name-row" style="display:flex;align-items:center;gap:8px;min-width:0">
             <div class="demo-app-display-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(app.displayName || app.runId)}</div>
             <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Rename</button>
+            <button class="demo-app-clone-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Clone</button>
           </div>
           <div class="demo-app-rename-row" style="display:none;align-items:center;gap:6px;margin-top:6px">
             <input class="demo-app-rename-input" type="text" maxlength="120" value="${esc(app.displayName || app.runId)}" style="flex:1;min-width:0;padding:5px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.16);border-radius:5px;color:#fff;font-size:12px">
@@ -4607,6 +4705,11 @@
           }
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
+          <a class="btn btn-sm btn-secondary"
+             href="/api/runs/${encodeURIComponent(app.runId)}/download-app-package"
+             style="text-decoration:none;padding:5px 10px">
+             Download
+          </a>
           ${app.running
             ? `<button class="demo-app-open-btn" data-url="${esc(app.url)}" style="padding:5px 12px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">Open ↗</button>
                <button class="demo-app-stop-btn" data-run="${esc(app.runId)}" style="padding:5px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer">Stop</button>`
@@ -4724,6 +4827,36 @@
           }
         });
       }
+    });
+
+    // Clone controls
+    list.querySelectorAll('.demo-app-clone-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const runId = btn.dataset.run;
+        const card = btn.closest('[data-run-id]');
+        const currentName = card
+          ? (card.querySelector('.demo-app-display-name')?.textContent || runId || '')
+          : (runId || '');
+        if (!runId) return;
+
+        const modalResult = await openDemoCloneModal(currentName);
+        if (!modalResult) return;
+
+        const payload = {};
+        if (modalResult.mode === 'rebrand') {
+          if (modalResult.companyName) payload.companyName = modalResult.companyName;
+          if (modalResult.website) payload.website = modalResult.website;
+        }
+        setBtnLoading(btn, true, 'Cloning…');
+        try {
+          const result = await apiPost(`/api/demo-apps/${encodeURIComponent(runId)}/clone`, payload);
+          showToast(`Cloned to ${result.displayName || result.runId}`, 'success');
+          setTimeout(() => loadDemoApps(true), 120);
+        } catch (err) {
+          showToast(`Clone failed: ${err.message}`, 'error');
+          setBtnLoading(btn, false);
+        }
+      });
     });
   }
 

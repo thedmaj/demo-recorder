@@ -185,8 +185,12 @@ function validateNarrationSync(runDir, opts = {}) {
       const start = toFinite(s.compStartMs);
       const end = toFinite(s.compEndMs);
       if (start == null || end == null) return false;
-      // Half-open interval avoids false cross-owner at exact boundary transitions.
-      return clipStartMs >= start && clipStartMs < end;
+      // Apply the same boundary tolerance used by inOwnWindow so that clips placed
+      // within the tolerance window of their own step don't also fire cross-screen-owner
+      // against the preceding step's half-open interval. Without this, a clip at
+      // (windowStartMs - 80ms) passes inOwnWindow (within 120ms tolerance) but is
+      // simultaneously assigned to the prior step — producing contradictory violations.
+      return clipStartMs >= (start - boundaryToleranceMs) && clipStartMs < (end + boundaryToleranceMs);
     });
     if (owner && owner.stepId && owner.stepId !== stepId) {
       pushViolation({

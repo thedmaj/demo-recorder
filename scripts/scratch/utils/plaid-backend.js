@@ -171,8 +171,8 @@ function resolvePromptDerivedClientName(opts = {}) {
   const projectRoot = path.resolve(__dirname, '../../..');
   const runDir = firstNonEmpty(opts.runDir, process.env.PIPELINE_RUN_DIR) || null;
   const candidates = [
-    runDir ? path.join(runDir, 'ingested-inputs.json') : null,
     runDir ? path.join(runDir, 'pipeline-run-context.json') : null,
+    runDir ? path.join(runDir, 'ingested-inputs.json') : null,
     path.join(projectRoot, 'inputs', 'prompt.txt'),
   ].filter(Boolean);
 
@@ -300,11 +300,10 @@ const CREATE_LINK_TOKEN_WRAPPER_KEYS = new Set([
   'run_dir',
   'linkMode',
   'link_mode',
-  'hosted_link',
 ]);
 
 function resolveLinkMode(opts = {}) {
-  return resolveMode({ explicitMode: opts.linkMode || opts.link_mode, promptText: opts.hosted_link ? 'hosted link' : '' });
+  return resolveMode({ explicitMode: opts.linkMode || opts.link_mode, promptText: '' });
 }
 
 async function createLinkToken(opts = {}) {
@@ -349,7 +348,7 @@ async function createLinkToken(opts = {}) {
 
   const modeBody = linkModeAdapter.prepareCreateLinkTokenBody(body);
   const bodyForCreate = { ...modeBody };
-  if (linkMode === 'embedded') console.log('[plaid-backend] Link mode: embedded (hosted_link enabled)');
+  if (linkMode === 'embedded') console.log('[plaid-backend] Link mode: embedded (in-page widget)');
   else console.log('[plaid-backend] Link mode: modal');
 
   for (const [key, val] of Object.entries(opts)) {
@@ -686,7 +685,6 @@ async function createConsumerReportLinkToken(flat = {}) {
     productFamily: flat.productFamily ?? flat.product_family ?? null,
     credentialScope: flat.credentialScope ?? flat.credential_scope ?? null,
     linkMode: flat.linkMode ?? flat.link_mode ?? null,
-    hosted_link: flat.hosted_link && typeof flat.hosted_link === 'object' ? flat.hosted_link : undefined,
     consumer_report_permissible_purpose: flat.consumer_report_permissible_purpose,
     cra_options: flat.cra_options,
     plaidCheckUserId: plaidUserId || undefined,

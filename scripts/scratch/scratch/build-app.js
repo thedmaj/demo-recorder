@@ -15,6 +15,9 @@
  *
  * Environment:
  *   ANTHROPIC_API_KEY   — required
+ *   BUILD_REFINE_STEP_IDS — optional comma/whitespace-separated step ids; narrows QA
+ *                           report + screenshot frames loaded for refinement so the
+ *                           model focuses on those steps only (full HTML still emitted).
  */
 
 require('dotenv').config({ override: true });
@@ -93,6 +96,8 @@ const LEGACY_BUILD_QA_DIAG_FILE = path.join(OUT_DIR, 'build-qa-diagnostics.json'
 const API_PANEL_QA_FILE = path.join(RUN_LAYOUT.buildDir, 'api-panel-qa.json');
 const BUILD_LAYER_REPORT_FILE = path.join(RUN_LAYOUT.buildDir, 'build-layer-report.json');
 const BUILD_METADATA_FILE = path.join(RUN_LAYOUT.buildDir, 'build-metadata.json');
+const CONSISTENCY_MANIFEST_FILE = path.join(RUN_LAYOUT.buildDir, 'consistency-manifest.json');
+const CONSISTENCY_LINT_FILE = path.join(RUN_LAYOUT.buildDir, 'consistency-lint.json');
 const RENDERJSON_EXPAND_LEVEL_DEFAULT = 999;
 // Heroicons outline "link" (24 viewBox); explicit px size + layout CSS so flex parents cannot blow it up.
 const STOCK_LINK_BUTTON_ICON_SVG =
@@ -253,6 +258,123 @@ function buildScopedHumanFeedback(raw, currentRunId, demoStepIds) {
 
 function isNonEmptyObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
+}
+
+function formatCurrencyMaybe(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const abs = Math.abs(value);
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: Number.isInteger(abs) ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(abs);
+  return value < 0 ? `-$${formatted}` : `$${formatted}`;
+}
+
+function buildConsistencyManifest(demoScript) {
+  const personaName = String(demoScript?.persona?.name || '').trim();
+  const requiredLiterals = new Set();
+  const amountChecks = [];
+
+  if (personaName) requiredLiterals.add(personaName);
+
+  for (const step of demoScript?.steps || []) {
+    const visualState = String(step?.visualState || '');
+    const visualAmounts = visualState.match(/\$[0-9][0-9,]*(?:\.[0-9]{2})?/g) || [];
+    visualAmounts.forEach((s) => requiredLiterals.add(s));
+
+    const response = step?.apiResponse?.response;
+    if (!response || typeof response !== 'object') continue;
+
+    const stack = [{ value: response, path: 'response' }];
+    while (stack.length > 0) {
+      const item = stack.pop();
+      if (!item) continue;
+      const value = item.value;
+      if (Array.isArray(value)) {
+        value.forEach((entry, idx) => stack.push({ value: entry, path: `${item.path}[${idx}]` }));
+        continue;
+      }
+      if (value && typeof value === 'object') {
+        for (const [k, v] of Object.entries(value)) {
+          stack.push({ value: v, path: `${item.path}.${k}` });
+        }
+        continue;
+      }
+      if (typeof value === 'number') {
+        const pathLower = item.path.toLowerCase();
+        if (!/(amount|balance|income|credit|apr|fee|total|monthly|annual|outflow|inflow|net|line)/.test(pathLower)) {
+          continue;
+        }
+        const currency = formatCurrencyMaybe(value);
+        amountChecks.push({
+          stepId: step?.id || null,
+          path: item.path,
+          value,
+          expectedLiterals: [currency, String(value)].filter(Boolean),
+        });
+      }
+    }
+  }
+
+  const trimmedAmounts = amountChecks.slice(0, 80);
+  return {
+    generatedAt: new Date().toISOString(),
+    personaName: personaName || null,
+    requiredLiterals: Array.from(requiredLiterals).slice(0, 120),
+    amountChecks: trimmedAmounts,
+  };
+}
+
+function runConsistencyLint(html, manifest) {
+  const text = String(html || '');
+  const misses = [];
+  const warnings = [];
+
+  if (manifest.personaName && !text.includes(manifest.personaName)) {
+    misses.push({
+      severity: 'critical',
+      category: 'persona-name-missing',
+      message: `Persona name "${manifest.personaName}" was not found in generated HTML.`,
+    });
+  }
+
+  for (const literal of manifest.requiredLiterals || []) {
+    if (!literal || literal.length < 2) continue;
+    if (!text.includes(literal)) {
+      warnings.push({
+        severity: 'warning',
+        category: 'literal-missing',
+        literal,
+        message: `Expected literal "${literal}" not found in HTML.`,
+      });
+    }
+  }
+
+  for (const check of manifest.amountChecks || []) {
+    const expected = (check.expectedLiterals || []).filter(Boolean);
+    if (expected.length === 0) continue;
+    if (!expected.some((lit) => text.includes(lit))) {
+      warnings.push({
+        severity: 'warning',
+        category: 'api-amount-missing',
+        stepId: check.stepId || null,
+        path: check.path,
+        expectedLiterals: expected,
+        message: `No rendered literal matched API scalar at ${check.path} (${expected.join(' or ')}).`,
+      });
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    passed: misses.length === 0,
+    misses,
+    warnings,
+    summary: {
+      criticalCount: misses.length,
+      warningCount: warnings.length,
+    },
+  };
 }
 
 function buildAskBillApiSampleQuestion(step, productName, productFamily) {
@@ -421,6 +543,21 @@ function loadBrand(demoScript) {
 
   try {
     const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    // Defensive fallback: never render Brandfetch /theme/light/ assets on light host shells.
+    const mode = String(profile.mode || '').toLowerCase();
+    if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
+    const logo = profile.logo;
+    const imageUrl = String(logo.imageUrl || '');
+    if (mode === 'light' && /\/theme\/light\//i.test(imageUrl)) {
+      if (logo.darkImageUrl && /^https?:\/\//i.test(String(logo.darkImageUrl))) {
+        logo.imageUrl = logo.darkImageUrl;
+      } else {
+        logo.shellBg = 'rgba(15,23,42,0.78)';
+        logo.shellBorder = 'rgba(15,23,42,0.45)';
+      }
+      profile.logo = logo;
+      console.warn('[Build] Contrast safety: adjusted brand logo presentation for light host mode.');
+    }
     console.log(`[Build] Brand profile loaded: ${path.relative(PROJECT_ROOT, profilePath)} (${profile.name}, mode: ${profile.mode})`);
     return profile;
   } catch (err) {
@@ -430,6 +567,14 @@ function loadBrand(demoScript) {
 }
 
 // ── CLI arg parsing ───────────────────────────────────────────────────────────
+
+/** @returns {Set<string>|null} */
+function parseBuildRefineStepIdScope() {
+  const raw = String(process.env.BUILD_REFINE_STEP_IDS || '').trim();
+  if (!raw) return null;
+  const ids = raw.split(/[, \n\t]+/).map((s) => s.trim()).filter(Boolean);
+  return ids.length ? new Set(ids) : null;
+}
 
 function parseArgs() {
   const qaArg    = process.argv.find(a => a.startsWith('--qa='));
@@ -456,7 +601,14 @@ function promptIndicatesMobileVisual(promptText, demoScript) {
       .toLowerCase()
     : '';
   const haystack = `${prompt}\n${product}\n${stepText}`;
-  return /\bmobile\b|\bphone-first\b|\bphone first\b|\bmobile[-\s]?simulated\b|\b390\s*[x×]\s*844\b|\bmobile demo\b/.test(haystack);
+  if (/\bdesktop[-\s]?only\b|\bno mobile\b|\bdo not use mobile\b|\bwithout mobile\b/.test(haystack)) {
+    return false;
+  }
+  return (
+    /\bmobile build\b|\bmobile demo build\b|\bmobile visual build\b/.test(haystack) ||
+    /\bmobile[-\s]?simulated build\b|\buse (?:the )?mobile app framework\b/.test(haystack) ||
+    /\bviewmode\s*:\s*mobile(?:-auto|-simulated)?\b/.test(haystack)
+  );
 }
 
 /**
@@ -492,8 +644,16 @@ function normalizeLaunchPlaywrightRow(playwrightScript, demoScript) {
   if (!launch) return;
   const row = rows.find((r) => (r.stepId || r.id) === launch.id);
   if (!row) return;
-  row.action = 'click';
-  row.target = '[data-testid="link-external-account-btn"]';
+  const embeddedMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ||
+    /plaid-embedded-link-container/i.test(String(launch?.interaction?.target || ''));
+  if (embeddedMode) {
+    // Embedded should auto-mount from container activation; no launch CTA required.
+    row.action = 'goToStep';
+    row.target = launch.id;
+  } else {
+    row.action = 'click';
+    row.target = '[data-testid="link-external-account-btn"]';
+  }
   if (!row.waitMs || row.waitMs < 120000) row.waitMs = 120000;
 }
 
@@ -516,7 +676,11 @@ function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
   if (!PLAID_LINK_LIVE) return { html, injected: false };
   const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
   if (!launch) return { html, injected: false };
-  if (html.includes('data-testid="link-external-account-btn"')) {
+  const launchStepRe = new RegExp(
+    `<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?data-testid=["']link-external-account-btn["']`,
+    'i'
+  );
+  if (launchStepRe.test(html)) {
     return { html, injected: false };
   }
   const stepDivRe = new RegExp(
@@ -530,6 +694,73 @@ function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
     return `${pre}${tagOpen} data-testid="link-external-account-btn">`;
   });
   return { html: patched, injected: patched !== html };
+}
+
+function ensureEmbeddedContainerInLaunchStep(html, demoScript, linkModeAdapter) {
+  if (!PLAID_LINK_LIVE || !linkModeAdapter || linkModeAdapter.id !== 'embedded') {
+    return { html, injected: false };
+  }
+  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  if (!launch) return { html, injected: false };
+  const hasContainerInLaunch = new RegExp(
+    `<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?data-testid=["']plaid-embedded-link-container["']`,
+    'i'
+  ).test(html);
+  if (hasContainerInLaunch) return { html, injected: false };
+
+  const launchStepCloseRe = new RegExp(`(<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?)(</div>)`, 'i');
+  const fallbackContainer =
+    `\n      <div data-testid="plaid-embedded-link-container" aria-label="Plaid Embedded Link Container"` +
+    ` style="width:100%;max-width:560px;min-height:500px;margin:16px auto 0;border:1px solid rgba(0,0,0,0.08);border-radius:12px;overflow:hidden;background:#ffffff;"></div>\n`;
+
+  const patched = html.replace(launchStepCloseRe, (_m, pre, close) => {
+    if (pre.includes('data-testid="plaid-embedded-link-container"')) return `${pre}${close}`;
+    return `${pre}${fallbackContainer}${close}`;
+  });
+  return { html: patched, injected: patched !== html };
+}
+
+/**
+ * Embedded-only sanitizer:
+ * - keep canonical launch selector on plaidPhase:"launch" step only
+ * - rewrite non-launch duplicates to non-canonical selector to prevent QA drift
+ */
+function sanitizeEmbeddedLaunchSelectorsInHtml(html, demoScript, linkModeAdapter) {
+  if (!PLAID_LINK_LIVE || !linkModeAdapter || linkModeAdapter.id !== 'embedded') {
+    return { html, changed: false, demotedCount: 0 };
+  }
+  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  if (!launch?.id) return { html, changed: false, demotedCount: 0 };
+
+  const stepChunkRe = /(<div[^>]+data-testid="step-([^"]+)"[^>]*>)([\s\S]*?)(?=<div[^>]+data-testid="step-[^"]+"|<\/body>)/gi;
+  let changed = false;
+  let demotedCount = 0;
+  let launchHasCanonical = false;
+
+  const next = html.replace(stepChunkRe, (_m, openTag, stepId, body) => {
+    if (stepId === launch.id) {
+      if (/data-testid=["']link-external-account-btn["']/i.test(body)) launchHasCanonical = true;
+      return `${openTag}${body}`;
+    }
+    const patchedBody = body.replace(/data-testid=["']link-external-account-btn["']/gi, () => {
+      demotedCount += 1;
+      changed = true;
+      return 'data-testid="link-external-account-btn-nonlaunch"';
+    });
+    return `${openTag}${patchedBody}`;
+  });
+
+  // Ensure launch step still has canonical selector after demotion pass.
+  if (!launchHasCanonical) {
+    const launchChunkRe = new RegExp(`(<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?)data-testid=["']link-external-account-btn-nonlaunch["']`, 'i');
+    const repaired = next.replace(launchChunkRe, '$1data-testid="link-external-account-btn"');
+    if (repaired !== next) {
+      changed = true;
+      return { html: repaired, changed, demotedCount };
+    }
+  }
+
+  return { html: next, changed, demotedCount };
 }
 
 function escapeHtmlText(s) {
@@ -556,6 +787,50 @@ function deriveLaunchButtonLabel(innerHtml) {
   return text;
 }
 
+function inferEmbeddedUseCaseText(promptText = '', demoScript = null) {
+  const scriptText = demoScript ? JSON.stringify(demoScript) : '';
+  return `${promptText || ''}\n${scriptText}`.toLowerCase();
+}
+
+function inferEmbeddedLinkSizingProfile(promptText = '', demoScript = null) {
+  const text = inferEmbeddedUseCaseText(promptText, demoScript);
+  const isEcommerce =
+    /\be[-\s]?commerce\b|\bcheckout\b|\bcart\b|\bmerchant\b|\bretail\b|\border\b/.test(text);
+  const isBillPay =
+    /\bbill\s*pay\b|\bbilling\b|\binvoice\b|\boutstanding balance\b|\bpatient portal\b|\brevenue cycle\b/.test(text);
+  const isInboundFunding =
+    /\binbound\b|\baccount funding\b|\bfunding\b|\bincoming payment\b|\badd funds\b|\bwallet\b|\bdeposit\b/.test(text);
+
+  if (isEcommerce && !isBillPay && !isInboundFunding) {
+    return {
+      useCase: 'ecommerce-checkout',
+      sizeProfile: 'small',
+      targetContainerWidthPx: 440,
+      targetContainerHeightPx: 200,
+      institutionTiles: { min: 3, max: 4 },
+      expectedInstitutionTileCount: 3,
+    };
+  }
+  if (isInboundFunding && !isBillPay) {
+    return {
+      useCase: 'account-funding-inbound-payments',
+      sizeProfile: 'large',
+      targetContainerWidthPx: 700,
+      targetContainerHeightPx: 350,
+      institutionTiles: { min: 6, max: 9 },
+      expectedInstitutionTileCount: 7,
+    };
+  }
+  return {
+    useCase: isBillPay ? 'bill-pay' : 'general-embedded',
+    sizeProfile: 'medium',
+    targetContainerWidthPx: 400,
+    targetContainerHeightPx: 270,
+    institutionTiles: { min: 4, max: 6 },
+    expectedInstitutionTileCount: 5,
+  };
+}
+
 function enforceCanonicalLaunchButtonIcon(html) {
   if (!html.includes('data-testid="link-external-account-btn"')) {
     return { html, patched: false };
@@ -574,22 +849,218 @@ function enforceCanonicalLaunchButtonIcon(html) {
   return { html: next, patched };
 }
 
-function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter) {
+function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, promptText = '') {
   if (!PLAID_LINK_LIVE || !linkModeAdapter || linkModeAdapter.id !== 'embedded') return { html, injected: false };
-  if (!html.includes('data-testid="link-external-account-btn"') || !html.includes('</body>')) {
+  if (!html.includes('</body>')) {
     return { html, injected: false };
+  }
+  const sizingProfile = inferEmbeddedLinkSizingProfile(promptText, demoScript);
+  if (/Plaid\.createEmbedded\s*\(/.test(html)) {
+    if (html.includes('window.__embeddedLinkLayoutShimApplied')) return { html, injected: false };
+    const layoutShim = `<script>
+(function() {
+  if (window.__embeddedLinkLayoutShimApplied) return;
+  window.__embeddedLinkLayoutShimApplied = true;
+  window.__plaidLinkMode = 'embedded';
+  var sizingProfile = ${JSON.stringify(sizingProfile)};
+  function enforceEmbeddedContainerBounds(container) {
+    if (!container) return;
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    container.style.maxWidth = '100%';
+    container.style.contain = 'layout paint style';
+    container.style.isolation = 'isolate';
+    container.style.display = 'block';
+    container.style.width = '100%';
+    container.style.minHeight = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
+    container.style.maxWidth = String(sizingProfile.targetContainerWidthPx || 560) + 'px';
+    container.style.marginInline = '0';
+    container.style.marginLeft = '0';
+    container.style.marginRight = 'auto';
+    container.style.alignSelf = 'flex-start';
+  }
+  function tryReparentPlaidNodes(container) {
+    if (!container) return;
+    var candidates = Array.from(document.querySelectorAll('iframe[src*="plaid.com"], iframe[src*="cdn.plaid.com"], [id*="plaid-link"], [class*="plaid-link"]'));
+    for (var i = 0; i < candidates.length; i++) {
+      var node = candidates[i];
+      if (!node || node === container) continue;
+      try {
+        if (!container.contains(node)) {
+          container.appendChild(node);
+        }
+        if (node.style) {
+          node.style.position = 'absolute';
+          node.style.inset = '0';
+          node.style.width = '100%';
+          node.style.height = '100%';
+          node.style.maxWidth = '100%';
+          node.style.maxHeight = '100%';
+          node.style.border = '0';
+          node.style.zIndex = '1';
+        }
+      } catch (_) {}
+    }
+  }
+  var _embedObserver = null;
+  function syncEmbeddedLayout() {
+    var container = document.querySelector('[data-testid="plaid-embedded-link-container"]') || document.getElementById('plaid-embedded-link-container');
+    if (!container) return;
+    enforceEmbeddedContainerBounds(container);
+    tryReparentPlaidNodes(container);
+    if (!_embedObserver && typeof MutationObserver !== 'undefined') {
+      _embedObserver = new MutationObserver(function() {
+        tryReparentPlaidNodes(container);
+      });
+      _embedObserver.observe(document.body, { childList: true, subtree: true });
+    }
+    window.__embeddedLinkUseCase = sizingProfile.useCase || 'general-embedded';
+    window.__embeddedLinkSizeProfile = sizingProfile.sizeProfile || 'medium';
+    window.__embeddedLinkLayout = sizingProfile.sizeProfile || 'medium';
+    window.__embeddedLinkExpectedInstitutionTilesMin = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.min) || 4;
+    window.__embeddedLinkExpectedInstitutionTilesMax = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.max) || 6;
+    window.__embeddedLinkExpectedInstitutionTileCount = Number(sizingProfile.expectedInstitutionTileCount) || 5;
+    container.dataset.plaidEmbeddedUseCase = window.__embeddedLinkUseCase;
+    container.dataset.plaidEmbeddedSizeProfile = window.__embeddedLinkSizeProfile;
+    container.dataset.expectedInstitutionTilesMin = String(window.__embeddedLinkExpectedInstitutionTilesMin);
+    container.dataset.expectedInstitutionTilesMax = String(window.__embeddedLinkExpectedInstitutionTilesMax);
+    container.dataset.expectedInstitutionTiles = String(window.__embeddedLinkExpectedInstitutionTileCount);
+  }
+  var _origGoToStep = typeof window.goToStep === 'function' ? window.goToStep : null;
+  if (_origGoToStep) {
+    window.goToStep = function(id) {
+      var out = _origGoToStep.apply(this, arguments);
+      setTimeout(syncEmbeddedLayout, 0);
+      return out;
+    };
+  }
+  window.addEventListener('resize', function() { syncEmbeddedLayout(); });
+  setTimeout(syncEmbeddedLayout, 0);
+})();
+</script>`;
+    return { html: html.replace('</body>', `${layoutShim}\n</body>`), injected: true };
   }
   if (html.includes('window.__embeddedLinkRuntimePatched')) return { html, injected: false };
   const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
   const launchStepId = launch?.id || null;
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  const launchIdx = launchStepId ? steps.findIndex((s) => s && s.id === launchStepId) : -1;
+  const firstPostLinkStepId = launchIdx >= 0 && launchIdx < steps.length - 1 ? steps[launchIdx + 1]?.id || null : null;
   const patch = `<script>
 (function() {
   if (window.__embeddedLinkRuntimePatched) return;
   window.__embeddedLinkRuntimePatched = true;
+  var sizingProfile = ${JSON.stringify(sizingProfile)};
   window.__plaidLinkMode = 'embedded';
-  window.__embeddedLinkOpenAttempts = [];
+  window.__embeddedLinkWidgetLoaded = false;
+  window.__embeddedLinkExpectedInstitutionTileCount = null;
+  window.__embeddedLinkExpectedInstitutionTilesMin = null;
+  window.__embeddedLinkExpectedInstitutionTilesMax = null;
+  window.__embeddedLinkSizeProfile = null;
+  window.__embeddedLinkUseCase = null;
+  window.__embeddedLinkLayout = null;
   window.__embeddedLinkError = null;
-  async function launchEmbeddedLink() {
+  window.__embeddedLinkMountMode = null;
+
+  function getLaunchStepEl() {
+    if (!${JSON.stringify(launchStepId)}) return null;
+    return document.querySelector('[data-testid="step-' + ${JSON.stringify(launchStepId)} + '"]');
+  }
+
+  function enforceLaunchSelectorColocation() {
+    var launchStep = getLaunchStepEl();
+    if (!launchStep) {
+      var embeddedContainer = document.querySelector('[data-testid="plaid-embedded-link-container"], #plaid-embedded-link-container');
+      launchStep = embeddedContainer && embeddedContainer.closest ? embeddedContainer.closest('.step[data-testid]') : null;
+    }
+    if (!launchStep) return;
+    var canonicalBtns = Array.from(document.querySelectorAll('[data-testid="link-external-account-btn"]'));
+    for (var i = 0; i < canonicalBtns.length; i++) {
+      var btn = canonicalBtns[i];
+      if (!btn) continue;
+      if (!launchStep.contains(btn)) {
+        btn.setAttribute('data-testid', 'link-external-account-btn-nonlaunch');
+      }
+    }
+    var launchCanonical = launchStep.querySelector('[data-testid="link-external-account-btn"]');
+    if (launchCanonical && !launchCanonical.querySelector('svg')) {
+      launchCanonical.insertAdjacentHTML(
+        'afterbegin',
+        '<svg class="stock-link-icon" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true" style="width:20px;height:20px;min-width:20px;min-height:20px;flex-shrink:0;display:block;box-sizing:content-box"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.242a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>'
+      );
+    }
+  }
+
+  function ensureEmbeddedContainer() {
+    enforceLaunchSelectorColocation();
+    var launchStep = getLaunchStepEl();
+    if (!launchStep) return null;
+    var container = launchStep.querySelector('[data-testid="plaid-embedded-link-container"]');
+    if (!container) {
+      container = document.createElement('div');
+      container.setAttribute('data-testid', 'plaid-embedded-link-container');
+      container.setAttribute('aria-label', 'Plaid Embedded Link Container');
+      container.style.width = '100%';
+      container.style.minHeight = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
+      container.style.maxWidth = String(sizingProfile.targetContainerWidthPx || 560) + 'px';
+      container.style.marginTop = '16px';
+      container.style.border = '1px solid rgba(0,0,0,0.08)';
+      container.style.borderRadius = '12px';
+      container.style.overflow = 'hidden';
+      container.style.background = '#ffffff';
+      var launchBtn = launchStep.querySelector('[data-testid="link-external-account-btn"]');
+      if (launchBtn && launchBtn.parentNode) launchBtn.parentNode.insertBefore(container, launchBtn.nextSibling);
+      else launchStep.appendChild(container);
+    }
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    container.style.display = 'block';
+    container.style.height = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
+    container.style.maxWidth = '100%';
+    container.style.contain = 'layout paint style';
+    container.style.isolation = 'isolate';
+    container.style.minHeight = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
+    container.style.maxWidth = String(sizingProfile.targetContainerWidthPx || 560) + 'px';
+    container.style.marginInline = '0';
+    container.style.marginLeft = '0';
+    container.style.marginRight = 'auto';
+    container.style.alignSelf = 'flex-start';
+    window.__embeddedLinkUseCase = sizingProfile.useCase || 'general-embedded';
+    window.__embeddedLinkSizeProfile = sizingProfile.sizeProfile || 'medium';
+    window.__embeddedLinkLayout = sizingProfile.sizeProfile || 'medium';
+    window.__embeddedLinkExpectedInstitutionTilesMin = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.min) || 4;
+    window.__embeddedLinkExpectedInstitutionTilesMax = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.max) || 6;
+    window.__embeddedLinkExpectedInstitutionTileCount = Number(sizingProfile.expectedInstitutionTileCount) || 5;
+    container.dataset.plaidEmbeddedUseCase = window.__embeddedLinkUseCase;
+    container.dataset.plaidEmbeddedSizeProfile = window.__embeddedLinkSizeProfile;
+    container.dataset.plaidEmbeddedLayout = window.__embeddedLinkLayout;
+    container.dataset.expectedInstitutionTilesMin = String(window.__embeddedLinkExpectedInstitutionTilesMin);
+    container.dataset.expectedInstitutionTilesMax = String(window.__embeddedLinkExpectedInstitutionTilesMax);
+    container.dataset.expectedInstitutionTiles = String(window.__embeddedLinkExpectedInstitutionTileCount);
+    return container;
+  }
+
+  async function mountEmbeddedLink() {
+    var container = ensureEmbeddedContainer();
+    if (!container) return;
+    if (window.__plaidEmbeddedInstance) return;
+    var enforcePlaidFrameFill = function() {
+      try {
+        var frames = container.querySelectorAll('iframe, [id*="plaid-link"], [class*="plaid-link"]');
+        for (var fi = 0; fi < frames.length; fi++) {
+          var frame = frames[fi];
+          if (!frame || !frame.style) continue;
+          frame.style.position = 'absolute';
+          frame.style.inset = '0';
+          frame.style.width = '100%';
+          frame.style.height = '100%';
+          frame.style.maxWidth = '100%';
+          frame.style.maxHeight = '100%';
+          frame.style.border = '0';
+          frame.style.zIndex = '1';
+        }
+      } catch (_) {}
+    };
     var payload = { linkMode: 'embedded', link_mode: 'embedded' };
     try {
       var res = await fetch('/api/create-link-token', {
@@ -603,24 +1074,83 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter) {
       window.__embeddedLinkLastTokenResponse = { status: res.status, body: data };
       if (!res.ok) throw new Error((data && (data.error || data.error_message || data.display_message)) || ('HTTP ' + res.status));
       if (!data.link_token) throw new Error('Embedded Link token response missing link_token');
-      if (!data.hosted_link_url) throw new Error('Embedded Link token response missing hosted_link_url');
-      var opened = window.open(data.hosted_link_url, '_blank', 'noopener,noreferrer');
-      window.__embeddedLinkOpenAttempts.push({ url: data.hosted_link_url, at: Date.now(), opened: !!opened });
-      if (!opened) throw new Error('Popup blocked while opening hosted_link_url');
-      window.__embeddedLinkOpened = true;
-      ${launchStepId ? `if (typeof window.goToStep === 'function') window.goToStep('${launchStepId}');` : ''}
+      if (!window.Plaid) throw new Error('Plaid SDK is unavailable');
+      var onSuccess = function(public_token, metadata) {
+        try {
+          window._plaidPublicToken = public_token || '';
+          window._plaidInstitutionName = metadata && metadata.institution ? metadata.institution.name : (window._plaidInstitutionName || '');
+          window._plaidAccountName = metadata && metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].name : (window._plaidAccountName || '');
+          window._plaidAccountMask = metadata && metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].mask : (window._plaidAccountMask || '');
+          window._plaidLinkComplete = true;
+          ${firstPostLinkStepId ? `if (typeof window.goToStep === 'function') window.goToStep(${JSON.stringify(firstPostLinkStepId)});` : ''}
+        } catch (_) {}
+      };
+      var onExit = function(err) {
+        if (err) window.__embeddedLinkError = String(err.message || err);
+      };
+      var onEvent = function(name, meta) {
+        if (typeof window.addLinkEvent === 'function') {
+          try { window.addLinkEvent(name, meta); } catch (_) {}
+        }
+      };
+      if (typeof window.Plaid.createEmbedded === 'function') {
+        window.__plaidEmbeddedInstance = window.Plaid.createEmbedded({
+          token: data.link_token,
+          onSuccess: onSuccess,
+          onExit: onExit,
+          onEvent: onEvent,
+          onLoad: function() { window.__embeddedLinkWidgetLoaded = true; }
+        }, container);
+        window.__embeddedLinkWidgetLoaded = true;
+        window.__embeddedLinkMountMode = 'createEmbedded';
+        setTimeout(enforcePlaidFrameFill, 0);
+        setTimeout(enforcePlaidFrameFill, 200);
+        setTimeout(enforcePlaidFrameFill, 600);
+      } else if (typeof window.Plaid.create === 'function') {
+        // Fallback for older SDK snapshots while preserving in-page auto-launch behavior.
+        window._plaidHandler = window.Plaid.create({
+          token: data.link_token,
+          onSuccess: onSuccess,
+          onExit: onExit,
+          onEvent: onEvent,
+        });
+        if (window._plaidHandler && typeof window._plaidHandler.open === 'function') window._plaidHandler.open();
+        window.__embeddedLinkWidgetLoaded = true;
+        window.__embeddedLinkMountMode = 'modal-fallback';
+      } else {
+        throw new Error('Plaid SDK does not support createEmbedded or create');
+      }
     } catch (err) {
       window.__embeddedLinkError = String((err && err.message) || err || 'embedded-link-launch-failed');
       console.error('Embedded Link launch failed:', window.__embeddedLinkError);
     }
   }
+
+  function maybeMountForActiveStep() {
+    if (!${JSON.stringify(launchStepId)} || typeof window.getCurrentStep !== 'function') return;
+    enforceLaunchSelectorColocation();
+    var active = window.getCurrentStep();
+    if (active === ('step-' + ${JSON.stringify(launchStepId)})) mountEmbeddedLink();
+  }
+
+  var _origGoToStep = typeof window.goToStep === 'function' ? window.goToStep : null;
+  if (_origGoToStep) {
+    window.goToStep = function(id) {
+      var out = _origGoToStep.apply(this, arguments);
+      setTimeout(maybeMountForActiveStep, 0);
+      return out;
+    };
+  }
+
   document.addEventListener('click', function(e) {
     var btn = e.target && e.target.closest ? e.target.closest('[data-testid="link-external-account-btn"]') : null;
     if (!btn) return;
-    e.preventDefault();
-    e.stopPropagation();
-    launchEmbeddedLink();
+    // Embedded mode auto-loads in-page; button remains as fallback trigger.
+    enforceLaunchSelectorColocation();
+    setTimeout(mountEmbeddedLink, 0);
   }, true);
+  enforceLaunchSelectorColocation();
+  setTimeout(maybeMountForActiveStep, 0);
 })();
 </script>`;
   return { html: html.replace('</body>', `${patch}\n</body>`), injected: true };
@@ -1042,15 +1572,12 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
     return r != null && typeof r === 'object' && !Array.isArray(r) && Object.keys(r).length > 0;
   });
   if (stepsNeedingJsonRail.length > 0) {
-    const needTriplet = (name) =>
-      html.includes(`data-testid="${name}"`) || html.includes(`data-testid='${name}'`);
-    if (!needTriplet('api-json-panel-show')) {
-      layer1Issues.push('API JSON rail contract: missing data-testid="api-json-panel-show" (see templates/slide-template/pipeline-slide-shell.html)');
-    }
-    if (!needTriplet('api-json-panel-hide')) {
-      layer1Issues.push('API JSON rail contract: missing data-testid="api-json-panel-hide"');
-    }
-    if (!needTriplet('api-panel-toggle')) {
+    const needToggle = () =>
+      html.includes('data-testid="api-panel-toggle"') ||
+      html.includes("data-testid='api-panel-toggle'") ||
+      html.includes('class="api-panel-edge-toggle"') ||
+      html.includes("class='api-panel-edge-toggle'");
+    if (!needToggle()) {
       layer1Issues.push('API JSON rail contract: missing data-testid="api-panel-toggle"');
     }
     if (!html.includes('id="api-response-content"') && !html.includes("id='api-response-content'")) {
@@ -1064,7 +1591,8 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
     }
   }
   if (!pwRows.length) layer2Issues.push('Playwright script contains zero steps');
-  if (PLAID_LINK_LIVE && !html.includes('data-testid="link-external-account-btn"')) {
+  const isEmbeddedMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
+  if (PLAID_LINK_LIVE && !isEmbeddedMode && !html.includes('data-testid="link-external-account-btn"')) {
     layer2Issues.push('Missing canonical Plaid launch CTA data-testid="link-external-account-btn"');
   }
 
@@ -1179,6 +1707,7 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       layeredBuildPlan: refinementOpts.layeredBuildPlan || null,
       mobileVisualEnabled: !!refinementOpts.mobileVisualEnabled,
       buildViewMode: refinementOpts.buildViewMode || 'desktop',
+      buildMode: refinementOpts.buildMode || 'app',
       promptText: refinementOpts.promptText || '',
       brandSiteReferenceBase64: brandSiteReferenceBase64 || undefined,
     }
@@ -1222,15 +1751,30 @@ async function main(opts = {}) {
   const parsedArgs = parseArgs();
   const { qaReportPath: cliQaPath } = parsedArgs;
   const qaReportPath = opts.qaReportFile || cliQaPath;
+  const requestedFixMode = String(opts.fixMode || 'fullbuild').toLowerCase().trim();
+  const fixMode = requestedFixMode === 'touchup' ? 'touchup' : 'fullbuild';
+  const requestedBuildMode = String(opts.buildMode || process.env.BUILD_MODE || 'app').toLowerCase().trim();
+  const buildMode = requestedBuildMode === 'slides' ? 'slides' : 'app';
+  const touchupStepId = typeof opts.touchupStepId === 'string' && opts.touchupStepId.trim()
+    ? opts.touchupStepId.trim()
+    : null;
+  const fixModeReasons = Array.isArray(opts.fixModeReasonCodes) ? opts.fixModeReasonCodes : [];
+  const skipArchitectureBrief = fixMode === 'touchup' && (process.env.BUILD_TOUCHUP_SKIP_BRIEF || 'true') !== 'false';
+  console.log(
+    `[Build] Fix mode: ${fixMode}` +
+    (fixMode === 'touchup' && touchupStepId ? ` (step=${touchupStepId})` : '') +
+    (fixModeReasons.length ? ` [reasons=${fixModeReasons.join(',')}]` : '')
+  );
+  console.log(`[Build] Build mode: ${buildMode}`);
   const layeredBuildEnabled = opts.layeredBuildEnabled != null
     ? !!opts.layeredBuildEnabled
     : (parsedArgs.layeredBuildEnabled || LAYERED_BUILD_ENABLED);
-  const explicitMobileVisualEnabled = !!(
+  const explicitMobileVisualRequested = !!(
     opts.mobileVisualEnabled === true ||
     parsedArgs.mobileVisualEnabled ||
     MOBILE_VISUAL_ENABLED
   );
-  const buildViewMode = (opts.buildViewMode || parsedArgs.buildViewMode || BUILD_VIEW_MODE || 'desktop').toLowerCase();
+  const configuredBuildViewMode = (opts.buildViewMode || parsedArgs.buildViewMode || BUILD_VIEW_MODE || 'desktop').toLowerCase();
 
   // Validate inputs
   if (!fs.existsSync(SCRIPT_FILE)) {
@@ -1259,7 +1803,16 @@ async function main(opts = {}) {
   const activeRunId = runManifest?.runId || RUN_LAYOUT.runId;
   const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
   const inferredMobileVisualEnabled = promptIndicatesMobileVisual(promptText, demoScript);
-  const mobileVisualEnabled = explicitMobileVisualEnabled || inferredMobileVisualEnabled;
+  const mobileVisualForce = process.env.MOBILE_VISUAL_FORCE === 'true' || process.env.MOBILE_VISUAL_FORCE === '1';
+  const mobileVisualEnabled =
+    inferredMobileVisualEnabled || (explicitMobileVisualRequested && mobileVisualForce);
+  const buildViewMode = mobileVisualEnabled ? configuredBuildViewMode : 'desktop';
+  if (explicitMobileVisualRequested && !inferredMobileVisualEnabled && !mobileVisualForce) {
+    console.warn(
+      '[Build] Ignoring mobile visual request without explicit mobile-build prompt intent. ' +
+      'Set MOBILE_VISUAL_FORCE=true to override.'
+    );
+  }
   console.log(`[Build] Loaded demo-script.json: ${demoScript.steps.length} steps for "${demoScript.product}"`);
   console.log(`[Build] Layered build: ${layeredBuildEnabled ? 'ENABLED' : 'disabled'}`);
   console.log(
@@ -1386,6 +1939,41 @@ async function main(opts = {}) {
         qaReport = JSON.parse(fs.readFileSync(resolvedQaPath, 'utf8'));
         console.log(`[Build] Loaded QA report: ${resolvedQaPath} (score: ${qaReport.overallScore}/100)`);
 
+        const refineStepScope = parseBuildRefineStepIdScope();
+        if (refineStepScope && qaReport) {
+          const origIssues = Array.isArray(qaReport.stepsWithIssues) ? qaReport.stepsWithIssues : [];
+          const origSteps = Array.isArray(qaReport.steps) ? qaReport.steps : [];
+          if (origIssues.length > 0) {
+            const nextIssues = origIssues.filter((s) => s && refineStepScope.has(String(s.stepId)));
+            if (nextIssues.length === 0) {
+              console.warn(
+                '[Build] BUILD_REFINE_STEP_IDS matched no stepsWithIssues — check ids; using full QA context.'
+              );
+            } else {
+              qaReport = {
+                ...qaReport,
+                stepsWithIssues: nextIssues,
+                steps: origSteps.filter((s) => s && refineStepScope.has(String(s.stepId))),
+              };
+              console.log(
+                `[Build] BUILD_REFINE_STEP_IDS: narrowed refinement context to ${nextIssues.length} failing step(s)`
+              );
+            }
+          } else if (origSteps.length > 0) {
+            const nextSteps = origSteps.filter((s) => s && refineStepScope.has(String(s.stepId)));
+            if (nextSteps.length > 0) {
+              qaReport = { ...qaReport, steps: nextSteps };
+              console.log(
+                `[Build] BUILD_REFINE_STEP_IDS: narrowed qa.steps to ${nextSteps.length} row(s) (report had empty stepsWithIssues)`
+              );
+            } else {
+              console.warn(
+                '[Build] BUILD_REFINE_STEP_IDS matched no qa.steps — check ids; using full QA context.'
+              );
+            }
+          }
+        }
+
         // Load QA frame images for steps that failed — visual context for the build agent.
         // Without frames, the agent is fixing visual problems from a text description alone.
         const framesDirPrimary = path.join(RUN_LAYOUT.qaDir, 'frames');
@@ -1427,6 +2015,25 @@ async function main(opts = {}) {
     } else {
       console.warn(`[Build] Warning: QA report not found at ${resolvedQaPath}`);
     }
+  }
+
+  if (fixMode === 'touchup' && qaReport && touchupStepId) {
+    const originalIssueCount = Array.isArray(qaReport.stepsWithIssues) ? qaReport.stepsWithIssues.length : 0;
+    const originalStepCount = Array.isArray(qaReport.steps) ? qaReport.steps.length : 0;
+    qaReport = {
+      ...qaReport,
+      stepsWithIssues: Array.isArray(qaReport.stepsWithIssues)
+        ? qaReport.stepsWithIssues.filter((s) => s?.stepId === touchupStepId)
+        : [],
+      steps: Array.isArray(qaReport.steps)
+        ? qaReport.steps.filter((s) => s?.stepId === touchupStepId)
+        : [],
+    };
+    qaFrames = qaFrames.filter((f) => f.stepId === touchupStepId);
+    console.log(
+      `[Build] Touchup scope: narrowed QA context to step "${touchupStepId}" ` +
+      `(issues ${originalIssueCount}->${qaReport.stepsWithIssues.length}, steps ${originalStepCount}->${qaReport.steps.length}, frames=${qaFrames.length})`
+    );
   }
 
   // ── Load human reviewer feedback (optional) ──────────────────────────────
@@ -1492,12 +2099,20 @@ async function main(opts = {}) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   // ── Call 1: Architecture brief ────────────────────────────────────────────
-  const architectureBrief = await getArchitectureBrief(client, demoScript, {
-      // Token budget: raise via smaller skill zip or future BUILD_SKILL_BRIEF_MAX_CHARS if prompts hit limits.
-      plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
-    plaidLinkMode,
-    embeddedLinkSkillBrief: embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text.slice(0, 6000) : '',
-  });
+  let architectureBrief = '';
+  if (skipArchitectureBrief) {
+    architectureBrief =
+      'TOUCHUP MODE: Preserve existing app structure, DOM contract, and test IDs. ' +
+      'Apply minimal, localized fixes for the scoped QA issues only.';
+    console.log('[Build] Touchup mode: skipping architecture brief call.');
+  } else {
+    architectureBrief = await getArchitectureBrief(client, demoScript, {
+        // Token budget: raise via smaller skill zip or future BUILD_SKILL_BRIEF_MAX_CHARS if prompts hit limits.
+        plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
+      plaidLinkMode,
+      embeddedLinkSkillBrief: embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text.slice(0, 6000) : '',
+    });
+  }
 
   // ── Call 1b: Optional layered framework contract ──────────────────────────
   let layeredBuildPlan = null;
@@ -1530,6 +2145,9 @@ async function main(opts = {}) {
       layeredBuildPlan,
       mobileVisualEnabled,
       buildViewMode,
+      fixMode,
+      touchupStepId,
+      buildMode,
     });
 
   // ── Parse response ────────────────────────────────────────────────────────
@@ -1708,13 +2326,30 @@ async function main(opts = {}) {
     ) {
       domErrors.push('Global api-response-content not found in generated HTML.');
     }
-    if (
-      html.includes('data-testid="api-panel-toggle"') ||
-      html.includes("data-testid='api-panel-toggle'") ||
-      html.includes('id="api-panel-toggle"') ||
-      html.includes("id='api-panel-toggle'")
-    ) {
-      console.log('[Build] Found legacy API JSON toggle control — will disable to keep JSON always visible when panel is shown');
+    // Deterministic panel chrome merge: enforce a single edge toggle icon control.
+    if (hasPanel) {
+      html = html.replace(
+        /<button[^>]*(?:id|data-testid)\s*=\s*["']api-json-panel-(?:show|hide)["'][^>]*>[\s\S]*?<\/button>/gi,
+        ''
+      );
+      const hasToggle = /data-testid=["']api-panel-toggle["']|id=["']api-panel-toggle["']/i.test(html);
+      if (!hasToggle) {
+        const toggleMarkup =
+          '<button type="button" id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle" aria-label="Expand API JSON panel" aria-expanded="false"><span class="api-panel-toggle-icon" aria-hidden="true"></span></button>';
+        let merged = false;
+        html = html.replace(
+          /(<div[^>]*\bid\s*=\s*["']api-response-panel["'][^>]*>)/i,
+          (m) => {
+            merged = true;
+            return `${m}${toggleMarkup}`;
+          }
+        );
+        if (merged) {
+          console.log('[Build] Enforced canonical API panel edge toggle via template merge');
+        } else {
+          domErrors.push('Failed to inject canonical API panel edge toggle into #api-response-panel.');
+        }
+      }
     }
 
     // Enforce one canonical raw JSON rail. Any extra inline JSON panel containers in step
@@ -1890,20 +2525,36 @@ async function main(opts = {}) {
 
   // 5b. Live Plaid launch CTA must always exist for plaid-link-qa selector contract.
   if (PLAID_LINK_LIVE) {
-    const ctaPatch = ensureCanonicalLaunchCtaInHtml(html, demoScript);
-    html = ctaPatch.html;
-    if (ctaPatch.injected) {
-      console.log('[Build] Injected canonical launch CTA data-testid="link-external-account-btn"');
+    const isEmbeddedMode = !!(linkModeAdapter && linkModeAdapter.id === 'embedded');
+    if (!isEmbeddedMode) {
+      const ctaPatch = ensureCanonicalLaunchCtaInHtml(html, demoScript);
+      html = ctaPatch.html;
+      if (ctaPatch.injected) {
+        console.log('[Build] Injected canonical launch CTA data-testid="link-external-account-btn"');
+      }
+      const launchIconPatch = enforceCanonicalLaunchButtonIcon(html);
+      html = launchIconPatch.html;
+      if (launchIconPatch.patched) {
+        console.log('[Build] Normalized launch CTA to stock link icon + clean label');
+      }
+    } else {
+      const embeddedLaunchSanitizer = sanitizeEmbeddedLaunchSelectorsInHtml(html, demoScript, linkModeAdapter);
+      html = embeddedLaunchSanitizer.html;
+      if (embeddedLaunchSanitizer.changed) {
+        console.log(
+          `[Build] Embedded-only launch selector sanitizer demoted ${embeddedLaunchSanitizer.demotedCount} non-launch canonical selector(s)`
+        );
+      }
     }
-    const launchIconPatch = enforceCanonicalLaunchButtonIcon(html);
-    html = launchIconPatch.html;
-    if (launchIconPatch.patched) {
-      console.log('[Build] Normalized launch CTA to stock link icon + clean label');
+    const embeddedContainerPatch = ensureEmbeddedContainerInLaunchStep(html, demoScript, linkModeAdapter);
+    html = embeddedContainerPatch.html;
+    if (embeddedContainerPatch.injected) {
+      console.log('[Build] Injected embedded container into launch step for embedded mode');
     }
-    if (!html.includes('data-testid="link-external-account-btn"')) {
+    if (!isEmbeddedMode && !html.includes('data-testid="link-external-account-btn"')) {
       domErrors.push('Missing canonical launch CTA target: data-testid="link-external-account-btn".');
     }
-    const embeddedPatch = injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter);
+    const embeddedPatch = injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, promptText);
     html = embeddedPatch.html;
     if (embeddedPatch.injected) {
       console.log('[Build] Injected embedded-Link runtime launch handler');
@@ -2011,48 +2662,93 @@ async function main(opts = {}) {
     collapsedByDefault: true,
     jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
     autoResize: true,
-    minWidthPx: 360,
-    maxWidthViewportRatio: 0.52
+    minWidthPx: 420,
+    maxWidthViewportRatio: 0.62
   }, window.__API_PANEL_CONFIG || {});
   if (typeof window.__apiPanelUserOpen !== 'boolean') {
     window.__apiPanelUserOpen = !window.__API_PANEL_CONFIG.collapsedByDefault;
   }
+  function ensureEdgeToggleStyles() {
+    if (document.getElementById('api-panel-edge-toggle-style')) return;
+    var st = document.createElement('style');
+    st.id = 'api-panel-edge-toggle-style';
+    st.textContent =
+      '.api-panel-edge-toggle{position:absolute;left:-20px;top:50%;transform:translateY(-50%);width:20px;height:64px;border-radius:10px 0 0 10px;border:1px solid rgba(0,166,126,0.55);border-right:none;background:rgba(0,166,126,0.22);color:#9cf8df;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.28);z-index:6;}' +
+      '.api-panel-edge-toggle:hover{background:rgba(0,166,126,0.30);color:#c6ffef;}' +
+      '.api-panel-toggle-icon{width:8px;height:8px;border-top:2px solid currentColor;border-right:2px solid currentColor;transform:rotate(-135deg);display:block;}' +
+      '.api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}' +
+      '#api-response-panel.api-panel-collapsed{width:22px !important;min-width:22px !important;max-width:22px !important;}' +
+      '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}' +
+      '#api-response-panel{overflow:visible;}';
+    document.head.appendChild(st);
+  }
+  ensureEdgeToggleStyles();
 
   function ensurePanelToggle(panel) {
     if (!panel) return null;
-    var header = panel.querySelector('.side-panel-header');
-    if (!header) return null;
-    var btn = panel.querySelector('#api-panel-toggle, [data-testid="api-panel-toggle"]');
+    var candidates = Array.from(panel.querySelectorAll('button, [role="button"]')).filter(function(el) {
+      if (!el) return false;
+      if (el.id === 'api-panel-toggle' || el.getAttribute('data-testid') === 'api-panel-toggle') return true;
+      var txt = String(el.textContent || '').trim().toLowerCase();
+      return txt === 'show json' || txt === 'hide json';
+    });
+    var btn = candidates[0] || null;
+    if (candidates.length > 1) {
+      for (var i = 1; i < candidates.length; i += 1) {
+        try { candidates[i].remove(); } catch (_) {}
+      }
+    }
     if (!btn) {
       btn = document.createElement('button');
       btn.id = 'api-panel-toggle';
       btn.setAttribute('data-testid', 'api-panel-toggle');
+      btn.className = 'api-panel-edge-toggle';
       btn.type = 'button';
-      btn.style.cssText = 'margin-left:auto;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.2);border-radius:8px;padding:4px 8px;font-size:11px;cursor:pointer;';
+      btn.innerHTML = '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
       btn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
         window.toggleApiPanel();
       });
-      header.appendChild(btn);
+      panel.appendChild(btn);
     }
-    btn.textContent = window.__apiPanelUserOpen ? 'Hide JSON' : 'Show JSON';
+    if (btn.id !== 'api-panel-toggle') btn.id = 'api-panel-toggle';
+    if (btn.getAttribute('data-testid') !== 'api-panel-toggle') btn.setAttribute('data-testid', 'api-panel-toggle');
+    if (!String(btn.className || '').includes('api-panel-edge-toggle')) btn.classList.add('api-panel-edge-toggle');
+    if (!btn.querySelector('.api-panel-toggle-icon')) {
+      btn.innerHTML = '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
+    }
+    btn.setAttribute('aria-expanded', window.__apiPanelUserOpen ? 'true' : 'false');
+    btn.setAttribute(
+      'aria-label',
+      window.__apiPanelUserOpen ? 'Collapse API JSON panel' : 'Expand API JSON panel'
+    );
+    if (window.__apiPanelUserOpen) btn.classList.add('is-open');
+    else btn.classList.remove('is-open');
     return btn;
   }
 
   function applyPanelSize(panel, content) {
     if (!panel || !content || !window.__API_PANEL_CONFIG.autoResize || !window.__apiPanelUserOpen) return;
     var cfg = window.__API_PANEL_CONFIG;
-    var maxPx = Math.floor(window.innerWidth * Number(cfg.maxWidthViewportRatio || 0.52));
-    var minPx = Number(cfg.minWidthPx || 360);
-    var target = Math.min(maxPx, Math.max(minPx, Math.ceil((content.scrollWidth || minPx) + 64)));
+    var maxPx = Math.floor(window.innerWidth * Number(cfg.maxWidthViewportRatio || 0.62));
+    var minPx = Number(cfg.minWidthPx || 420);
+    var target = Math.min(maxPx, Math.max(minPx, Math.ceil((content.scrollWidth || minPx) + 80)));
     panel.style.width = target + 'px';
     panel.style.maxWidth = 'calc(100vw - 32px)';
+    panel.style.overflow = 'hidden';
+    content.style.maxWidth = '100%';
+    content.style.overflowX = 'auto';
+    content.style.overflowY = 'auto';
+    content.style.wordBreak = 'break-word';
   }
 
   function renderApiJson(target, data) {
     if (!target) return;
     target.innerHTML = '';
+    target.style.maxWidth = '100%';
+    target.style.overflowX = 'auto';
+    target.style.overflowY = 'auto';
     try {
       if (window.renderjson && typeof window.renderjson === 'function') {
         if (typeof window.renderjson.set_show_to_level === 'function') window.renderjson.set_show_to_level(window.__API_PANEL_CONFIG.jsonExpandLevel);
@@ -2078,8 +2774,13 @@ async function main(opts = {}) {
     if (open) {
       panel.style.removeProperty('display');
       panel.style.display = 'flex';
+      panel.classList.remove('api-panel-collapsed');
+      panel.classList.add('api-panel-open');
     } else {
-      panel.style.setProperty('display', 'none', 'important');
+      panel.style.removeProperty('display');
+      panel.style.display = 'flex';
+      panel.classList.add('api-panel-collapsed');
+      panel.classList.remove('api-panel-open');
     }
     ensurePanelToggle(panel);
   }
@@ -2121,9 +2822,13 @@ async function main(opts = {}) {
       if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
       window.__lastApiJsonData = data;
       if (content) renderApiJson(content, data);
-      setPanelVisibility(panel, window.__apiPanelUserOpen);
+      // Insight steps must show an expanded JSON rail for build-qa / vision QA (not the 22px collapsed strip).
+      window.__apiPanelUserOpen = true;
+      setPanelVisibility(panel, true);
     } else {
-      setPanelVisibility(panel, false);
+      panel.style.setProperty('display', 'none', 'important');
+      panel.classList.remove('api-panel-collapsed');
+      panel.classList.remove('api-panel-open');
     }
   };
 
@@ -2146,8 +2851,8 @@ async function main(opts = {}) {
     collapsedByDefault: true,
     jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
     autoResize: true,
-    minWidthPx: 360,
-    maxWidthViewportRatio: 0.52
+    minWidthPx: 420,
+    maxWidthViewportRatio: 0.62
   }, window.__API_PANEL_CONFIG || {});
 })();
 </script>`;
@@ -2464,7 +3169,7 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     );
     html = html.replace(
       /window\._plaidHandler\s*=\s*Plaid\.create\(\{/,
-      `if (!data || !data.link_token) {
+      `if (((typeof token !== 'undefined') ? !token : true) && (typeof data === 'undefined' || !data || !data.link_token)) {
       console.error('Failed to create link token: missing link_token in response', data);
       return;
     }
@@ -2477,6 +3182,30 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
 
   // Host Plaid launch CTA: enforce modest inline icon sizing whenever the canonical button exists.
   html = injectPlaidLaunchCtaLayoutStyles(html);
+
+  // ── Consistency manifest + lint (Phase 2) ─────────────────────────────────
+  // Single source of truth stays in demo-script.json. This lint is intentionally
+  // conservative: persona name absence is critical; literal/API misses are warnings
+  // unless strict mode is enabled.
+  const consistencyManifest = buildConsistencyManifest(demoScript);
+  fs.writeFileSync(CONSISTENCY_MANIFEST_FILE, JSON.stringify(consistencyManifest, null, 2), 'utf8');
+  const consistencyLint = runConsistencyLint(html, consistencyManifest);
+  fs.writeFileSync(CONSISTENCY_LINT_FILE, JSON.stringify(consistencyLint, null, 2), 'utf8');
+  if (consistencyLint.summary.warningCount > 0) {
+    console.warn(
+      `[Build] Consistency lint: ${consistencyLint.summary.warningCount} warning(s), ` +
+      `${consistencyLint.summary.criticalCount} critical`
+    );
+  } else {
+    console.log('[Build] Consistency lint: no warnings.');
+  }
+  if (consistencyLint.summary.criticalCount > 0) {
+    console.error('[Build] Consistency lint found critical issues.');
+    const strict = process.env.BUILD_CONSISTENCY_LINT_STRICT === '1' || process.env.BUILD_CONSISTENCY_LINT_STRICT === 'true';
+    if (strict) {
+      process.exit(1);
+    }
+  }
 
   // ── Write outputs ──────────────────────────────────────────────────────────
   fs.writeFileSync(HTML_OUT, html, 'utf8');
