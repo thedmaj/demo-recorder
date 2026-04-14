@@ -90,7 +90,7 @@ OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-Create 3 Plaid-branded API insight slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+Create 3 Plaid-branded API insight slides using `templates/slide-template/slide.css` + `PIPELINE_SLIDE_SHELL_RULES.md`:
 1) Identity Match (`POST /identity/match`) — match status, confidence, key matched attributes
 2) Auth (`POST /auth/get`) — account/routing availability, account subtype, mask
 3) Signal (`POST /signal/evaluate`) — risk score, recommendation, top risk drivers

@@ -939,7 +939,7 @@ app.get('/api/runs/:runId', (req, res) => {
     // Slide template newer than built app → suggest re-running from build (matches orchestrator guidance)
     try {
       const slideTemplateDir = path.join(PROJECT_ROOT, 'templates/slide-template');
-      const candidateFiles = ['base.html', 'slide.css', 'SLIDE_RULES.md', 'components.html'];
+      const candidateFiles = ['base.html', 'slide.css', 'PIPELINE_SLIDE_SHELL_RULES.md', 'SLIDE_RULES.archive.md', 'components.html'];
       let maxTemplateMtimeMs = 0;
       for (const f of candidateFiles) {
         const fp = path.join(slideTemplateDir, f);

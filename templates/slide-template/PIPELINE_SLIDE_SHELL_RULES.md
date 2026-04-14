@@ -2,11 +2,11 @@
 
 ## What this is
 
-`pipeline-slide-shell.html` is the **canonical HTML reference** for Plaid-only **slide** steps (`sceneType: slide`, `.slide-root`) and the **global API JSON rail** (`#api-response-panel`). It complements prose rules in `SLIDE_RULES.md` with **copy-pasteable structure** so builds are layout-consistent.
+`pipeline-slide-shell.html` is the **canonical HTML reference** for Plaid-only **slide** steps (`sceneType: slide`, `.slide-root`) and the **global API JSON rail** (`#api-response-panel`). This document carries **both** prose constraints and **copy-pasteable merge** guidance so builds stay layout-consistent.
 
-**Design lineage:** Layout and density from production **2026-03-23-layer-v2**-family demos (including the “TD final” layered build) and subsequent **Auth / Identity / Signal** slide flows — dense multi-panel grids, optional Plaid wordmark in the header, footer strip (`plaid.com`), glass side JSON. This is **Plaid-only** deck polish; do **not** reuse bank/host branding or colors (see **Agent constraints** in `SLIDE_RULES.md`). Mobile shell provenance: `templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`.
+**Design lineage:** Layout and density from production **2026-03-23-layer-v2**-family demos (including the “TD final” layered build) and subsequent **Auth / Identity / Signal** slide flows — dense multi-panel grids, optional Plaid wordmark in the header, footer strip (`plaid.com`), glass side JSON. This is **Plaid-only** deck polish; do **not** reuse bank/host branding or colors (see **Agent constraints** below). Mobile shell provenance: `templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`.
 
-**Hard boundary:** Shell patterns (`.slide-root` regions, slide header/body/footer, slide panels/callouts) belong **only** inside `sceneType: "slide"` steps. Do **not** paste slide shell fragments into host or insight steps, and do **not** paste host app banners/cards/nav into `.slide-root`. Shared global JSON rail only: `#api-response-panel` per `SLIDE_RULES.md`.
+**Hard boundary:** Shell patterns (`.slide-root` regions, slide header/body/footer, slide panels/callouts) belong **only** inside `sceneType: "slide"` steps. Do **not** paste slide shell fragments into host or insight steps, and do **not** paste host app banners/cards/nav into `.slide-root`. Shared global JSON rail only: `#api-response-panel` per the slide + API panel contracts in this file.
 
 ## Files
 
@@ -14,7 +14,7 @@
 |------|------|
 | `pipeline-slide-shell.html` | Full HTML reference (open beside `slide.css` for local preview). |
 | `slide.css` | Scoped slide + side-panel styles — embed **verbatim** in generated `<style>` (do not leak `html`/`body` slide theme to host steps). |
-| `SLIDE_RULES.md` | Product, scene metadata, API storytelling, value-summary constraints. |
+| `SLIDE_RULES.archive.md` | Historical prose rules (not loaded by the build; reference only). |
 | `components.html` | Optional fragment snippets (header / hero / panel / callout / footer). |
 
 ## Merge into `scratch-app/index.html`

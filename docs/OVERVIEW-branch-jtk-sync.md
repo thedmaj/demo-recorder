@@ -62,7 +62,7 @@ Context sizing and staleness ideas are reflected in **`docs/context-engineering-
 |------|--------|
 | **`manual-record.js`** | Align Plaid proxy with passthrough `create-link-token` body. |
 | **`record-local.js`** | CRA defaults and Plaid timing/frames (see §1). |
-| **Templates** | `templates/slide-template/*` — slide rules and starter HTML/CSS. |
+| **Templates** | `templates/slide-template/*` — slide shell HTML/CSS + `PIPELINE_SLIDE_SHELL_RULES.md` (+ optional `SLIDE_RULES.archive.md`). |
 | **`package-lock.json`** | Dependency lockfile updates aligned with `package.json`. |
 
 ---

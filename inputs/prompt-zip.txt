@@ -93,7 +93,7 @@ OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-3 Plaid-branded slides required, using `templates/slide-template/slide.css` and `SLIDE_RULES.md` look/feel:
+3 Plaid-branded slides required, using `templates/slide-template/slide.css` and `PIPELINE_SLIDE_SHELL_RULES.md` look/feel:
 1) CRA lifecycle setup slide (consumer-permissioned setup + async report-ready concept)
 2) Base Report attributes slide (balances, ownership, inflows/outflows, transactions, days available, primary account indicators)
 3) Income Insights attributes slide (categorized income streams, historical average monthly income, forecasted average monthly income, predicted next payment date when present)

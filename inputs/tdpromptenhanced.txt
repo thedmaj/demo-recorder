@@ -105,7 +105,7 @@ The pipeline extracts this block from `prompt.txt` (or the active prompt file th
 ### Goals
 
 1. **Exec / story slides** — Plaid-only styling, no raw JSON; 3–6 short bullets; use `templates/slide-template/` structure (`.slide-root`, `.slide-header`, `.slide-body`, `.slide-hero`, `.slide-panels`, optional `.slide-callout`).
-2. **Technical companion slides** — For the three API milestones (Identity Match, Auth, Signal), generate **slide steps** (or slide scenes) that **do** include a **JSON preview rail** so PowerPoint exports match what SEs show live. These slides are **Plaid-only** (no TD chrome), same dark navy + teal as `SLIDE_RULES.md` / `CLAUDE.md`.
+2. **Technical companion slides** — For the three API milestones (Identity Match, Auth, Signal), generate **slide steps** (or slide scenes) that **do** include a **JSON preview rail** so PowerPoint exports match what SEs show live. These slides are **Plaid-only** (no TD chrome), same dark navy + teal as `PIPELINE_SLIDE_SHELL_RULES.md` / `CLAUDE.md`.
 
 ### Technical slide layout (required when JSON is shown)
 

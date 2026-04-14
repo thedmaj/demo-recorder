@@ -141,7 +141,7 @@ OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-Create 5 Plaid-branded slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+Create 5 Plaid-branded slides using `templates/slide-template/slide.css` + `PIPELINE_SLIDE_SHELL_RULES.md`:
 1) Link launch integrity and callback slide (`/link/token/create` + events)
 2) Identity Match slide (`/identity/match`) for patient/account-holder confidence
 3) Auth slide (`/auth/get`) showing ACH rails validation

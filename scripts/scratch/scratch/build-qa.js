@@ -1678,7 +1678,7 @@ function buildStepAssertions(step, state, demoScript) {
       category: 'slide-template-misuse',
       severity: 'critical',
       issue: 'Slide root uses fixed pixel sizing (inline width/height).',
-      suggestion: 'Use responsive .slide-root sizing from SLIDE_RULES; avoid fixed px width/height.',
+      suggestion: 'Use responsive .slide-root sizing per PIPELINE_SLIDE_SHELL_RULES.md; avoid fixed px width/height.',
     });
   }
   if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {

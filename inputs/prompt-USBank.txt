@@ -137,7 +137,7 @@ OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-Create 4 Plaid-branded slides using `templates/slide-template/slide.css` + `SLIDE_RULES.md`:
+Create 4 Plaid-branded slides using `templates/slide-template/slide.css` + `PIPELINE_SLIDE_SHELL_RULES.md`:
 1) Link token + launch integrity slide (`/link/token/create`, callback events)
 2) Identity Match slide (`/identity/match`) with side-by-side business-name and owner-name match scoring
 3) Auth slide (`/auth/get`) focused on funding account validation

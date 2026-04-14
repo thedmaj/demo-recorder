@@ -1,5 +1,7 @@
 # Slide Template Rules (Plaid-only)
 
+> **Archived** — Former `SLIDE_RULES.md`. The pipeline loads **`PIPELINE_SLIDE_SHELL_RULES.md`** + `slide.css` + `pipeline-slide-shell.html` only. Keep this file for human reference or diffing; do not wire new tooling to it.
+
 ## Canonical HTML shell (required reference)
 - Use **`pipeline-slide-shell.html`** as the structural source of truth for slide steps (`.slide-root` regions) **and** the global `#api-response-panel` chrome (single edge toggle icon `api-panel-toggle`).
 - Merge / adaptation rules live in **`PIPELINE_SLIDE_SHELL_RULES.md`**.

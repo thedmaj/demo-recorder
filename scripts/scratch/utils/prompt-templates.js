@@ -831,7 +831,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch) {
       `Set sceneType for every step and keep it consistent with structure:\n` +
       `- host: customer-branded host UI step\n` +
       `- link: the single Plaid Link launch step (must also have plaidPhase:"launch")\n` +
-      `- insight: Plaid insight step using global api-response-panel (NOT .slide-root)\n` +
+      `- insight: Plaid insight step using global api-response-panel; optional deck-style layout may use .slide-root shell (see build prompt) but never host UI\n` +
       `- slide: template-driven slide step that uses .slide-root\n` +
       `Do not label insight steps as slide unless they intentionally render .slide-root.\n\n` +
       `HOST VS SLIDE — ZERO COMPONENT CROSS-REUSE (CRITICAL):\n` +
@@ -1111,10 +1111,10 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     (slideTemplateCss
       ? `SLIDE TEMPLATE CSS (scoped — embed verbatim in <style>):\n${slideTemplateCss}\n\n` +
         `SLIDE VS HOST APP (critical):\n` +
-        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\` / slide steps. Do not embed slide deck shell (\`.slide-root\`, slide header/body/footer, \`.slide-panel\` / hero / callout patterns from pipeline-slide-shell) inside host, link, or insight steps. Restate ideas in the correct surface’s own layout system. Shared exception: the single global \`#api-response-panel\` per DOM contract only.\n` +
-        `- The slide CSS above applies ONLY inside a step div that contains \`.slide-root\` (optional slide-type steps).\n` +
+        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\`. Do not put host/link flows inside slide shells. **Plaid insight** steps may reuse the **pipeline slide shell regions** (\`.slide-root\`, \`.slide-header\`, \`.slide-body\`, \`.slide-footer\` from pipeline-slide-shell.html) for deck-style API reveals—especially Plaid Signal / ACH return risk (\`/signal/evaluate\`): use a scoped modifier on \`.slide-root\` (e.g. \`slide-root--signal-insight\`) and reserve ~520px right padding on \`.slide-body\` for the global JSON rail. Give header/footer testids a **step-unique suffix** (e.g. \`-signal-risk\`) so they never duplicate \`value-summary-slide\` testids. Raw JSON only in \`#api-response-panel\`.\n` +
+        `- The slide CSS above applies ONLY inside a step div that contains \`.slide-root\` (marketing \`sceneType:slide\` steps **or** Plaid insight steps that adopt the shell).\n` +
         `- Do NOT restyle \`html\` or \`body\` using slide tokens. The HOST BANK UI (nav, cards, TD/chrome, consumer screens, Plaid Link host page) MUST follow the HOST APP DESIGN SYSTEM block only.\n` +
-        `- Full-viewport Plaid *insight* steps (*-insight, API reveal) are NOT slides unless the step explicitly uses \`.slide-root\`. Use insight layout + global api-response-panel per DOM contract — not slide template chrome.\n` +
+        `- Full-viewport Plaid insight steps: use **either** legacy \`insight-screen\` + \`insight-content\` **or** the slide shell pattern above for Signal-style evaluations; never host chrome. \`sceneType\` in demo-script stays \`insight\` when using the shell for API steps.\n` +
         `- Slides exist only to explain behind-the-scenes API/data; they are Plaid-styled; the rest of the app is customer-branded.\n` +
         `- For API endpoint storytelling slides/insights, keep one raw JSON mechanism only: global \`#api-response-panel\`. Never render duplicate inline raw JSON containers in \`.slide-root\`.\n` +
         `- JSON panel eligibility is endpoint-driven: only steps with explicit \`apiResponse.endpoint\` may use/show JSON panel behavior.\n` +
@@ -1125,7 +1125,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `- Use the presentation slide template/rules for JSON panel visual styling; do not invent ad-hoc JSON panel styles.\n` +
         `- Slide content must summarize only high-signal attributes (3-6 bullets) that support the story decision; raw payload remains in global panel.\n` +
         `- API request/response shown in panel must match the slide's claim and endpoint context (no mismatched endpoint narrative).\n` +
-        `- **Slide surface:** keep \`.slide-root\` **responsive** per SLIDE_RULES (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n\n`
+        `- **Slide surface:** keep \`.slide-root\` **responsive** per PIPELINE_SLIDE_SHELL_RULES / slide template contract (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n\n`
       : '') +
     (slideTemplateShellHtml
       ? `CANONICAL SLIDE + API PANEL HTML SHELL (structure reference from pipeline-slide-shell.html — merge patterns into index.html; adapt copy per demo-script; omit preview-only script blocks if present):\n` +

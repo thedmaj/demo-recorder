@@ -23,23 +23,10 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 
 ---
 
-## Plaid Design System (use these in ALL generated HTML)
-- Background: `#0d1117` (dark navy) or `linear-gradient(135deg, #0d1117, #0a2540)`
-- Accent / CTA: `#00A67E` (Plaid teal)
-- Text primary: `#ffffff`
-- Text secondary: `rgba(255,255,255,0.65)`
-- Text tertiary: `rgba(255,255,255,0.35)`
-- Accent border: `rgba(0,166,126,0.45)`
-- Accent bg tint: `rgba(0,166,126,0.12)`
-- Error/risk: `#f87171`
-- Font: `system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif`
-- Effects: `backdrop-filter: blur(8px)` for overlay panels
-- Viewport: Always design for `1440×900` (Playwright recording resolution)
-
 ### Host app background interpretation (UX rule)
 - For **host/customer-branded app screens** (non-Plaid modal content), default the primary page background to white or another light neutral when compatible with brand colors.
 - Keep brand identity through accent colors, typography, nav treatment, and CTA styles while maintaining accessible contrast.
-- Keep Plaid-dark surfaces for Plaid-specific contexts (for example `.slide-root` explanatory slides and dedicated Plaid insight scenes), not as the default host canvas.
+- Keep Plaid-dark surfaces for Plaid-specific contexts (for example dedicated Plaid insight scenes), not as the default host canvas.
 
 ---
 
@@ -190,7 +177,7 @@ When `plaidLinkMode` is `embedded`, treat sizing and messaging as a hard contrac
 - For CRA stories, `"/link/token/create"` products should include `cra_base_report` and `cra_income_insights` when income insights are part of the flow.
 - CRA retrieval remains asynchronous: show a report-ready lifecycle beat before insight retrieval.
 - Plaid Passport may be present via enabled templates for stronger identity verification; treat Passport as optional per account configuration, but never omit the core CRA Link/consent experience.
-- Any CRA "setup" or "data returned / report returned" explanatory scene should use a Plaid-branded slide step (`.slide-root`) instead of customer-branded host chrome.
+- Any CRA "setup" or "data returned / report returned" explanatory scene should use Plaid-branded insight-style presentation (not customer-branded host chrome).
 
 ### Layer Mobile Eligibility Helper Rule (Global)
 
@@ -208,13 +195,6 @@ When the build injects the Layer mobile mock template (`LAYER_MOCK_TEMPLATE.md` 
 - **Canonical skeleton:** [`templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`](templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html) — the build prompt embeds this file; match its DOM patterns, mobile-shell sizing/fill rules, global helper, host visual placeholder, and bottom-sheet Layer phases unless `demo-script.json` explicitly requires extra steps (without dropping routing or testid contracts).
 - **Plaid logo in Layer modals:** `./plaid-logo-horizontal-black-white-background.png` only; **no** duplicate “PLAID” label next to the image.
 - Full rule text: [`templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md`](templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md) (see **HARD CONTRACT**).
-
-### Mobile Demo Slide View Rule (Global)
-
-- For mobile demos, slide-like steps must present in desktop mode automatically.
-- Slide-like means any step with `sceneType: "slide"`, a `.slide-root` subtree, or step IDs containing `slide`.
-- Do not render slide-like steps inside the mobile simulator pane/shell.
-- No manual view toggle is required or shown in mobile demos; runtime should switch presentation mode by active step.
 
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
@@ -411,47 +391,6 @@ npm run demo -- --to=build-qa
 `build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same Claude vision QA as post-record QA against `demo-script.json` `visualState` — output `qa-report-build.json` in the run dir. Optional: `BUILD_QA_STRICT=1` to exit non-zero if the score is below `QA_PASS_THRESHOLD`.
 
 Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
-
----
-## Slide Template and Storyboard Slides
-
-### Slide template (PowerPoint supplement)
-Slides are generated from a reusable Plaid-only template so the styling stays consistent across pipeline runs and presentations. **Slides are only for behind-the-scenes API/data explanation** (optional `.slide-root` steps). The **host bank UI** uses Brandfetch-driven `brand/<slug>.json`, not slide chrome. Full-viewport **Plaid insight** steps use the insight + `#api-response-panel` contract unless they explicitly use `.slide-root`.
-
-**Non-negotiable:** No cross-reuse of UI **components** between surfaces — do not put host app chrome (nav, banners, account cards, dashboard modules) inside slide steps, and do not put slide deck fragments (`.slide-root` / slide header–body–footer shell) inside host or insight steps. The global `#api-response-panel` is the only intentional shared control between insight/slide and the rest of the app.
-
-- Template folder: `templates/slide-template/`
-  - `pipeline-slide-shell.html` — **canonical** slide + API JSON panel HTML reference (layer-v2 / TD-final lineage)
-  - `PIPELINE_SLIDE_SHELL_RULES.md` — merge rules for the shell (Show/Hide/toggle + renderjson)
-  - `base.html` — minimal slide surface sketch (superseded for full structure by `pipeline-slide-shell.html`)
-  - `slide.css` — Plaid-only tokens + typography + panel patterns
-  - `SLIDE_RULES.md` — non-negotiable generation rules for the agent
-
-### How the build uses the template
-During the `build` stage, the app-generation prompt includes:
-- `SLIDE_RULES.md`
-- `slide.css`
-- `pipeline-slide-shell.html` (stripped of standalone preview-only script)
-
-This is wired via:
-- `scripts/scratch/scratch/build-app.js` (loads template files from disk)
-- `scripts/scratch/utils/prompt-templates.js` (injects the template content into the system prompt)
-
-### Storyboard: adding “Slide” steps with optional Glean messaging
-In the dashboard storyboard “Add New Step” modal:
-- Choose `Scene type = Slide`
-- Optionally enable `Research messaging (Glean)`
-
-When enabled, the UI sends `useGleanResearch: true` to:
-- `POST /api/runs/:runId/generate-step`
-
-The server calls `gleanChat(...)` before Claude Haiku generates the slide step JSON, using the user’s slide description as the query context.
-
-### Prompt convention for slide output
-`inputs/prompt.txt` contains a dedicated block:
-- `[[SLIDE_OUTPUT_BEGIN]] ... [[SLIDE_OUTPUT_END]]`
-
-The script-generation prompt extracts this block and exposes it to Claude as `SLIDE OUTPUT REQUIREMENTS` so slide-generation intent stays explicit across runs.
 
 ## Output Versioning
 Every pipeline run writes to `out/demos/{YYYY-MM-DD}-{product-slug}-v{N}/`.

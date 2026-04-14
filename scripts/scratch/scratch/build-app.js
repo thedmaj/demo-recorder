@@ -1620,7 +1620,6 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   console.log('[Build] Progress: ');
 
   const designPlugin = loadDesignPlugin();
-  const slideRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/SLIDE_RULES.md');
   const slideCssPath = path.join(PROJECT_ROOT, 'templates/slide-template/slide.css');
   const slideShellPath = path.join(PROJECT_ROOT, 'templates/slide-template/pipeline-slide-shell.html');
   const slideShellRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md');
@@ -1635,10 +1634,8 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   let layerMockTemplate = '';
   let layerMobileSkeletonHtml = '';
   try {
-    if (fs.existsSync(slideRulesPath)) slideTemplateRules = fs.readFileSync(slideRulesPath, 'utf8');
     if (fs.existsSync(slideShellRulesPath)) {
-      slideTemplateRules +=
-        `\n\n---\n\n## Pipeline slide shell (HTML merge)\n\n` + fs.readFileSync(slideShellRulesPath, 'utf8');
+      slideTemplateRules = fs.readFileSync(slideShellRulesPath, 'utf8');
     }
     if (fs.existsSync(slideCssPath)) slideTemplateCss = fs.readFileSync(slideCssPath, 'utf8');
     if (fs.existsSync(slideShellPath)) {
@@ -1742,6 +1739,80 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   console.log(`[Build] Generation complete (${fullText.length} chars)`);
 
   return fullText;
+}
+
+/**
+ * Nudge generated slide steps toward `pipeline-slide-shell.html` + `slide.css`:
+ * header endpoint row, callout flex alignment, panel min-width, scoped endpoint CSS.
+ * Endpoint text is inferred from existing `POST /…` labels already present in the HTML
+ * (same strings the insight steps use), so marketing copy on the slide is unchanged.
+ */
+function ensurePipelineSlideShellConformance(html) {
+  if (!html.includes('slide-root')) return html;
+  let out = html;
+
+  if (!out.includes('.slide-header-endpoint{')) {
+    const pillRuleRe = /(\.slide-header-pill\{[^}]+\})/;
+    if (pillRuleRe.test(out)) {
+      out = out.replace(
+        pillRuleRe,
+        '$1.slide-header-endpoint{font-size:13px;font-family:"SF Mono","Fira Code",Consolas,monospace;color:var(--slide-text-tertiary)}'
+      );
+      console.log('[Build] Slide shell: added .slide-header-endpoint to scoped slide CSS');
+    }
+  }
+
+  const calloutShortRe =
+    /\.slide-callout\{background:rgba\(255,255,255,0\.05\);border:1px solid rgba\(0,166,126,0\.28\);border-radius:14px;padding:18px 20px\}/;
+  if (calloutShortRe.test(out) && !/\.slide-callout\{[^}]*align-self/.test(out)) {
+    out = out.replace(
+      calloutShortRe,
+      '.slide-callout{align-self:flex-end;background:rgba(255,255,255,0.05);border:1px solid rgba(0,166,126,0.28);border-radius:14px;padding:18px 20px;min-width:360px}'
+    );
+    console.log('[Build] Slide shell: normalized .slide-callout rule to template');
+  }
+
+  out = out.replace(/\.slide-panel\{([^}]*min-width:)240px([^}]*)\}/, (_, a, b) => `${a}360px${b}`);
+
+  const escapeHtmlText = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+  function inferPostEndpointLineFromHtml(src) {
+    const re = /POST\s\/[a-z0-9_/]+/gi;
+    const seen = new Set();
+    const ordered = [];
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      const norm = m[0].replace(/\s+/g, ' ');
+      const key = norm.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ordered.push(norm);
+    }
+    return ordered.join('  ·  ').slice(0, 240);
+  }
+
+  out = out.replace(
+    /(<div class="slide-header-pill"[^>]*>[\s\S]*?<\/div>)(\s*)(<\/div>\s*<\/header>)/g,
+    (full, pillClose, gap, headerTail) => {
+      if (full.includes('slide-header-endpoint')) return full;
+      const line = inferPostEndpointLineFromHtml(out);
+      const inner = line
+        ? `<div class="slide-header-endpoint" data-testid="slide-endpoint">${escapeHtmlText(line)}</div>`
+        : '<div class="slide-header-endpoint" data-testid="slide-endpoint"></div>';
+      return `${pillClose}${gap}${inner}${gap}${headerTail}`;
+    }
+  );
+
+  out = out.replace(
+    /(<aside class="slide-callout"[^>]*?)\s+style="[^"]*\balign-self\s*:\s*[^;"]+[^"]*"/gi,
+    '$1'
+  );
+
+  return out;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -2467,6 +2538,7 @@ async function main(opts = {}) {
 </style>`;
     html = html.replace('</head>', `${responsiveOverride}\n</head>`);
   }
+  html = ensurePipelineSlideShellConformance(html);
   const valueSummaryBlock = html.match(
     /<div[^>]*data-testid=["']step-value-summary-slide["'][^>]*>[\s\S]*?(?=<!--[\s\S]*SIDE PANELS[\s\S]*-->|<div[^>]*id=["']link-events-panel["'][^>]*>|<div[^>]*data-testid=["']step-[^"']+["'][^>]*>|<\/body>)/i
   );
