@@ -157,11 +157,204 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (res.status === 410) {
+      // Dashboard writes are disabled — this endpoint now lives in the CLI.
+      // Auto-copy the suggested command and surface a toast.
+      let payload = null;
+      try { payload = await res.json(); } catch (_) { /* ignore */ }
+      const cmd = (payload && payload.cliCommand) || 'npm run pipe';
+      copyCliCommand(cmd, { title: 'Dashboard is read-only' });
+      const err = new Error(`Run from the CLI: ${cmd}`);
+      err.cliGated = true;
+      err.cliCommand = cmd;
+      throw err;
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);
       throw new Error(text || res.statusText);
     }
     return res.json();
+  }
+
+  // ── CLI command helpers (dashboard writes gated → CLI) ───────────────────────
+  //
+  // The server defaults DASHBOARD_WRITE=false. All pipeline run / resume /
+  // kill / continue actions now live in `npm run pipe`. Instead of firing the
+  // action from the browser, we copy the exact CLI invocation to the user's
+  // clipboard so they can paste it into their Cursor / iTerm session.
+
+  async function copyCliCommand(cmd, opts = {}) {
+    const title = opts.title || 'Copied CLI command';
+    let copied = false;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(cmd);
+        copied = true;
+      }
+    } catch (_) { /* fall through to manual */ }
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = cmd;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select(); document.execCommand('copy');
+        document.body.removeChild(ta);
+        copied = true;
+      } catch (_) { /* ignore */ }
+    }
+    const prefix = copied ? '✓ ' : '';
+    showToast(
+      `${prefix}${title}: ${cmd}`,
+      'info',
+      {
+        duration: 7000,
+        action: 'Open terminal',
+        onClick: () => {
+          try { window.open('vscode://' + encodeURI('workbench.action.terminal.focus'), '_blank'); }
+          catch (_) { /* no-op */ }
+        },
+      },
+    );
+  }
+
+  /** Build a `npm run pipe -- …` command from a legacy runPipeline() payload. */
+  function buildPipeCliCommand(payload = {}) {
+    const b = payload || {};
+    const parts = ['npm', 'run', 'pipe', '--'];
+    if (b.resumeRunId) {
+      parts.push('resume', String(b.resumeRunId));
+      if (b.fromStage) parts.push(`--from=${b.fromStage}`);
+      if (b.toStage)   parts.push(`--to=${b.toStage}`);
+      if (b.overrideWithSlides && b.withSlides === true)  parts.push('--with-slides');
+      if (b.overrideWithSlides && b.withSlides === false) parts.push('--app-only');
+    } else if (b.createNewRun) {
+      parts.push('new');
+      if (b.withSlides === true)  parts.push('--with-slides');
+      if (b.withSlides === false) parts.push('--app-only');
+      if (b.toStage) parts.push(`--to=${b.toStage}`);
+      if (b.researchMode) parts.push(`--research=${b.researchMode}`);
+    } else {
+      parts.push('status');
+    }
+    if (Number(b.qaThreshold) > 0) parts.push(`--qa-threshold=${Math.floor(Number(b.qaThreshold))}`);
+    if (Number(b.maxRefinementIterations) > 0) parts.push(`--max-refinement-iterations=${Math.floor(Number(b.maxRefinementIterations))}`);
+    if (b.buildFixMode) parts.push(`--build-fix-mode=${String(b.buildFixMode).toLowerCase()}`);
+    if (b.noTouchup) parts.push('--no-touchup');
+    return parts.join(' ');
+  }
+
+  // Cached writesEnabled + one-shot probe. Header badge refreshes this.
+  let __writesEnabled = null;
+  async function probeWritesEnabled() {
+    try {
+      const res = await fetch('/api/pipeline/status');
+      const json = await res.json();
+      __writesEnabled = !!json.writesEnabled;
+      return json;
+    } catch (_) {
+      __writesEnabled = null;
+      return null;
+    }
+  }
+  function dashboardWritesEnabled() { return __writesEnabled === true; }
+  window.__dashboardWrites = {
+    isEnabled: dashboardWritesEnabled,
+    refresh: probeWritesEnabled,
+  };
+
+  // ── Header CLI status badge ──────────────────────────────────────────────────
+  //
+  // Reflects the currently active (CLI-spawned) orchestrator via polling
+  // /api/pipeline/status + /api/runs/:runId/stage-state. Also shows the
+  // read-only indicator when DASHBOARD_WRITE is disabled.
+
+  function initCliStatusBadge() {
+    const header = document.getElementById('header');
+    if (!header || document.getElementById('cli-status-badge')) return;
+    const badge = document.createElement('div');
+    badge.id = 'cli-status-badge';
+    badge.style.cssText = [
+      'display:none',
+      'align-items:center',
+      'gap:6px',
+      'padding:3px 10px',
+      'margin-right:8px',
+      'font-size:12px',
+      'font-weight:500',
+      'border-radius:999px',
+      'background:rgba(0,0,0,0.08)',
+      'border:1px solid rgba(0,0,0,0.12)',
+      'color:#333',
+      'cursor:pointer',
+      'user-select:none',
+    ].join(';');
+    badge.title = 'Pipeline is CLI-driven — click to copy command';
+    const spacer = header.querySelector('.header-spacer');
+    if (spacer) header.insertBefore(badge, spacer);
+    else header.appendChild(badge);
+
+    badge.addEventListener('click', () => {
+      const cmd = badge.dataset.cliCommand || 'npm run pipe';
+      copyCliCommand(cmd, { title: 'CLI command' });
+    });
+
+    async function tick() {
+      try {
+        const status = await probeWritesEnabled();
+        if (!status) { badge.style.display = 'none'; return; }
+        const writesOff = status.writesEnabled === false;
+        if (status.source === 'cli' && status.runId) {
+          let stageSummary = '';
+          try {
+            const res = await fetch(`/api/runs/${encodeURIComponent(status.runId)}/stage-state`);
+            if (res.ok) {
+              const s = await res.json();
+              const { completed, total, failed } = s.counts || {};
+              stageSummary = `${completed ?? 0}/${total ?? 0}` +
+                (failed ? ` · ${failed} failed` : '') +
+                (s.runningStage ? ` · ${s.runningStage}` : '');
+            }
+          } catch (_) { /* ignore */ }
+          const cont = status.awaitingContinue ? ' ⚑' : '';
+          badge.innerHTML = `<span style="color:#0a8">●</span> CLI · ${esc(status.runId)} ${esc(stageSummary)}${cont}`;
+          badge.dataset.cliCommand = status.awaitingContinue
+            ? `npm run pipe -- continue ${status.runId}`
+            : `npm run pipe -- status ${status.runId}`;
+          badge.style.display = 'inline-flex';
+        } else if (writesOff) {
+          badge.innerHTML = `<span style="color:#999">◌</span> CLI mode · <span style="opacity:.7">npm run pipe</span>`;
+          badge.dataset.cliCommand = 'npm run pipe';
+          badge.style.display = 'inline-flex';
+        } else {
+          badge.style.display = 'none';
+        }
+        // Re-label Pipeline tab action buttons in read-only mode so the user
+        // sees that clicks now copy a CLI command rather than start a process.
+        if (writesOff) applyReadOnlyButtonLabels();
+      } catch (_) { /* ignore */ }
+    }
+    tick();
+    setInterval(tick, 3000);
+  }
+
+  function applyReadOnlyButtonLabels() {
+    const mappings = [
+      ['run-btn',                    '▶ Copy Run CLI'],
+      ['run-from-btn',               '▶ Copy Resume CLI'],
+      ['run-refinement-pipeline-btn','✦ Copy Refinement CLI'],
+      ['resync-audio-btn',           '⟳ Copy Resync CLI'],
+      ['kill-btn',                   '■ Copy Stop CLI'],
+      ['pipeline-continue-btn',      '▶ Copy Continue CLI'],
+    ];
+    for (const [id, label] of mappings) {
+      const btn = document.getElementById(id);
+      if (!btn || btn.dataset.roLabeled === '1') continue;
+      if (!btn._originalLabel) btn._originalLabel = btn.textContent;
+      btn.textContent = label;
+      btn.title = (btn.title ? btn.title + '\n' : '') + 'Dashboard is read-only — click to copy the CLI command';
+      btn.dataset.roLabeled = '1';
+    }
   }
 
   /**
@@ -178,11 +371,33 @@
     if (configTa) configTa.value = ta.value;
   }
 
-  async function runPipeline(opts = {}) {
-    await ensurePipelinePromptSaved().catch(err => {
-      throw new Error(err.message || String(err));
-    });
+  // ── Build mode (App-only vs App + Slides) ────────────────────────────────────
+  // Single source of truth for the dashboard-wide default. Persisted in
+  // localStorage so each user/browser has their own preference; quick actions
+  // and the Run Pipeline modal both read from this.
+  const WITH_SLIDES_DEFAULT_KEY = 'dashboard.withSlidesDefault';
+  function getDashboardWithSlidesDefault() {
+    try {
+      const raw = window.localStorage.getItem(WITH_SLIDES_DEFAULT_KEY);
+      if (raw == null) return false;
+      return raw === 'true' || raw === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+  function setDashboardWithSlidesDefault(value) {
+    try {
+      window.localStorage.setItem(WITH_SLIDES_DEFAULT_KEY, value ? 'true' : 'false');
+    } catch (_) {}
+  }
+  // Expose for use elsewhere in this file (modal, badges, debug console).
+  window.__dashboardBuildMode = {
+    get: getDashboardWithSlidesDefault,
+    set: setDashboardWithSlidesDefault,
+    storageKey: WITH_SLIDES_DEFAULT_KEY,
+  };
 
+  async function runPipeline(opts = {}) {
     const applyUiToStage = !!opts.applyUiToStage;
     const payload = { ...opts };
     delete payload.applyUiToStage;
@@ -192,8 +407,32 @@
       if (toSel && toSel.value) payload.toStage = toSel.value;
     }
 
+    // Inject withSlides if the caller did not specify one explicitly.
+    // Resume actions (those passing resumeRunId) let the server inherit from
+    // the run-manifest unless the caller also sets overrideWithSlides=true,
+    // so we only need to provide a default for new runs.
+    if (typeof payload.withSlides !== 'boolean') {
+      payload.withSlides = getDashboardWithSlidesDefault();
+    }
+
     const rm = document.getElementById('research-mode-select')?.value;
     if (rm) payload.researchMode = rm;
+
+    // CLI-first path: when the server has writes disabled, skip the fetch
+    // round-trip and hand the user a ready-to-paste command. Still persist
+    // the prompt editor content so the CLI picks up the latest text.
+    // We resolve (do not throw) so pre-existing `.catch(showToast.error)`
+    // call sites don't double-toast — the info toast copy is enough.
+    if (__writesEnabled === false) {
+      await ensurePipelinePromptSaved().catch(() => { /* non-fatal */ });
+      const cmd = buildPipeCliCommand(payload);
+      await copyCliCommand(cmd, { title: 'Run from CLI' });
+      return { cliGated: true, cliCommand: cmd };
+    }
+
+    await ensurePipelinePromptSaved().catch(err => {
+      throw new Error(err.message || String(err));
+    });
     const res = await fetch('/api/pipeline/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -204,10 +443,13 @@
         'A pipeline run is already in progress.\n\nForce-stop it and start this run instead?'
       );
       if (!confirmed) throw new Error('Cancelled — pipeline already running');
-      // Retry with force flag
+      // Retry with force flag (preserve the same withSlides decision)
       const payload2 = { ...payload, force: true };
       const rm2 = document.getElementById('research-mode-select')?.value;
       if (rm2) payload2.researchMode = rm2;
+      if (typeof payload2.withSlides !== 'boolean') {
+        payload2.withSlides = getDashboardWithSlidesDefault();
+      }
       const res2 = await fetch('/api/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -307,6 +549,9 @@
 
     // Load runs (non-blocking — page chrome is already visible)
     loadRuns();
+
+    // Pipeline CLI status badge (reflects CLI-spawned builds + read-only mode)
+    initCliStatusBadge();
 
     // FS watch and log SSE (don't depend on currentRunId)
     connectFSWatch();
@@ -504,6 +749,17 @@
     const badgeClass = isLive ? 'live' : isComplete ? 'complete' : 'partial';
     const badgeText = isLive ? 'Live' : isComplete ? 'Complete' : 'Partial';
 
+    // Build mode badge — shows whether this run was produced as app-only or
+    // app+slides. Sourced from run-manifest.buildMode (legacy runs without the
+    // field render no badge to avoid showing misleading info).
+    let buildModeBadgeHtml = '';
+    if (r.buildMode === 'app-only' || r.buildMode === 'app+slides') {
+      const modeClass = r.buildMode === 'app+slides' ? 'with-slides' : 'app-only';
+      const modeText = r.buildMode === 'app+slides' ? 'App + Slides' : 'App-only';
+      const titleText = r.buildModeSource ? `Build mode: ${modeText} (source: ${r.buildModeSource})` : `Build mode: ${modeText}`;
+      buildModeBadgeHtml = `<span class="build-card-badge build-mode ${modeClass}" title="${esc(titleText)}">${esc(modeText)}</span>`;
+    }
+
     // Progress bar (one pip per pipeline stage)
     const completedSet = new Set(r.completedStages || []);
     const pipsHtml = STAGES.map(s => {
@@ -527,7 +783,10 @@
       <div class="build-card ${isActive ? 'active' : ''} ${isLive ? 'live' : ''}" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">
         <div class="build-card-header">
           <span class="build-card-id">${esc(displayName)}</span>
-          <span class="build-card-badge ${badgeClass}">${badgeText}</span>
+          <span class="build-card-badges">
+            ${buildModeBadgeHtml}
+            <span class="build-card-badge ${badgeClass}">${badgeText}</span>
+          </span>
         </div>
         ${displayName !== runId ? `<div class="build-card-meta" style="margin-top:-2px;margin-bottom:4px">Run ID: ${esc(runId)}</div>` : ''}
         ${metaText ? `<div class="build-card-meta">${esc(metaText)}</div>` : ''}
@@ -1554,7 +1813,7 @@
         });
       }
 
-      const cardsHtml = script.steps.map(step => {
+      const cardBlocks = script.steps.map(step => {
         const sid = step.id;
         originalNarrations[sid] = step.narration || '';
         const frames  = frameMap[sid]  || {};
@@ -1571,6 +1830,9 @@
         const durationS = step.durationMs ? (step.durationMs / 1000).toFixed(1) : '–';
         const midFrameUrl = frames.mid
           ? '/api/runs/' + currentRunId + '/frames/' + encodeURIComponent(frames.mid)
+          : null;
+        const libraryThumbUrl = step.slideLibraryRef && step.slideLibraryRef.slideId
+          ? ('/api/slide-library/slides/' + encodeURIComponent(step.slideLibraryRef.slideId) + '/html')
           : null;
         const frameSourceLabel = midFrameUrl
           ? (framesSource === 'build-frames' ? 'Build preview' : 'QA frame')
@@ -1694,6 +1956,9 @@
               ${midFrameUrl
                 ? `<img src="${midFrameUrl}" alt="${esc(sid)}" onerror="this.style.display='none'">
                    <span class="frame-source-badge">${esc(frameSourceLabel)}</span>`
+                : libraryThumbUrl
+                  ? `<iframe class="thumb-library-frame" src="${libraryThumbUrl}" title="Library slide preview" loading="lazy"></iframe>
+                     <span class="frame-source-badge">Library</span>`
                 : isPlaidLinkStep
                   ? `<div class="thumb-placeholder thumb-plaid-link">
                        <div class="plaid-link-icon">
@@ -1769,6 +2034,22 @@
 
             </div>
           </div>`;
+      });
+      const cardsHtml = cardBlocks.map((cardHtml, idx) => {
+        const currentStep = script.steps[idx];
+        const nextStep = script.steps[idx + 1];
+        if (!currentStep) return cardHtml;
+        const insertAfterId = esc(currentStep.id || '');
+        const betweenLabel = nextStep
+          ? `Insert between ${esc(currentStep.id)} and ${esc(nextStep.id)}`
+          : `Insert after ${esc(currentStep.id)}`;
+        const gapHtml = `
+          <div class="sb-insert-gap" data-insert-after-id="${insertAfterId}">
+            <button type="button" class="sb-insert-library-btn" data-insert-after-id="${insertAfterId}" title="${betweenLabel}">
+              <span aria-hidden="true">+</span>
+            </button>
+          </div>`;
+        return cardHtml + gapHtml;
       }).join('');
 
       // ── Feedback header card ──
@@ -2748,6 +3029,154 @@
         }
       });
 
+      // ── Slide library modal (insert existing reusable slide) ────────────────
+      document.getElementById('slide-library-modal')?.remove();
+      const slideLibraryModal = document.createElement('div');
+      slideLibraryModal.id = 'slide-library-modal';
+      slideLibraryModal.className = 'add-step-modal';
+      slideLibraryModal.style.display = 'none';
+      slideLibraryModal.innerHTML = `
+        <div class="add-step-backdrop"></div>
+        <div class="add-step-panel slide-library-panel">
+          <div class="add-step-header">
+            <span class="add-step-title">Insert from Slide Library</span>
+            <button id="slide-library-close-btn" class="btn btn-sm" style="background:transparent;border:none;color:rgba(255,255,255,0.5);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
+          </div>
+          <div class="add-step-field">
+            <label class="config-label">Insert after</label>
+            <div id="slide-library-insert-target" class="slide-library-target"></div>
+          </div>
+          <div class="add-step-field">
+            <label class="config-label">Quick search</label>
+            <input id="slide-library-search" class="config-input" style="width:100%" placeholder="Search by name, source run, step, or tag">
+          </div>
+          <div id="slide-library-list" class="slide-library-list"></div>
+          <div class="add-step-actions">
+            <button id="slide-library-insert-btn" class="btn btn-primary" disabled>Insert selected slide</button>
+            <button id="slide-library-cancel-btn" class="btn btn-secondary">Cancel</button>
+          </div>
+        </div>`;
+      document.body.appendChild(slideLibraryModal);
+
+      let _slideLibraryInsertAfterId = '';
+      let _slideLibrarySelectedId = '';
+      let _slideLibrarySearchTimer = null;
+      let _slideLibraryEntries = [];
+
+      function renderSlideLibraryList(entries) {
+        const listEl = document.getElementById('slide-library-list');
+        if (!listEl) return;
+        if (!entries.length) {
+          listEl.innerHTML = '<div class="slide-library-empty">No slides found. Submit one from the running demo app AI chat first.</div>';
+          return;
+        }
+        listEl.innerHTML = entries.map((entry) => {
+          const selected = _slideLibrarySelectedId === entry.id;
+          const when = entry.createdAt ? new Date(entry.createdAt).toLocaleString() : 'Unknown date';
+          const tags = Array.isArray(entry.tags) && entry.tags.length
+            ? `<div class="slide-library-item-tags">${entry.tags.slice(0, 4).map(t => `<span class="slide-library-tag">${esc(t)}</span>`).join('')}</div>`
+            : '';
+          return `
+            <button type="button" class="slide-library-item ${selected ? 'is-selected' : ''}" data-slide-id="${esc(entry.id)}">
+              <div class="slide-library-item-title">${esc(entry.name || entry.id)}</div>
+              <div class="slide-library-item-meta">${esc(entry.sceneType || 'slide')} · ${esc(entry.sourceRunId || 'unknown run')} · ${esc(entry.sourceStepId || 'unknown step')}</div>
+              <div class="slide-library-item-meta">${esc(when)}</div>
+              ${tags}
+            </button>`;
+        }).join('');
+      }
+
+      function syncSlideLibrarySelection() {
+        const insertBtn = document.getElementById('slide-library-insert-btn');
+        if (insertBtn) insertBtn.disabled = !_slideLibrarySelectedId;
+        const targetEl = document.getElementById('slide-library-insert-target');
+        if (targetEl) targetEl.textContent = _slideLibraryInsertAfterId
+          ? _slideLibraryInsertAfterId
+          : 'End of sequence';
+      }
+
+      async function loadSlideLibraryList(query) {
+        const q = String(query || '').trim();
+        const suffix = q ? ('?q=' + encodeURIComponent(q)) : '';
+        const result = await api('/api/slide-library' + suffix);
+        _slideLibraryEntries = Array.isArray(result.slides) ? result.slides : [];
+        if (!_slideLibraryEntries.some(entry => entry.id === _slideLibrarySelectedId)) {
+          _slideLibrarySelectedId = '';
+        }
+        renderSlideLibraryList(_slideLibraryEntries);
+        syncSlideLibrarySelection();
+      }
+
+      async function openSlideLibraryModal(insertAfterId) {
+        _slideLibraryInsertAfterId = String(insertAfterId || '').trim();
+        _slideLibrarySelectedId = '';
+        const searchEl = document.getElementById('slide-library-search');
+        if (searchEl) searchEl.value = '';
+        slideLibraryModal.style.display = 'flex';
+        syncSlideLibrarySelection();
+        try {
+          await loadSlideLibraryList('');
+          searchEl?.focus();
+        } catch (e) {
+          showToast('Failed to load slide library: ' + e.message, 'error');
+        }
+      }
+
+      function closeSlideLibraryModal() {
+        slideLibraryModal.style.display = 'none';
+      }
+
+      document.getElementById('slide-library-close-btn')?.addEventListener('click', closeSlideLibraryModal);
+      document.getElementById('slide-library-cancel-btn')?.addEventListener('click', closeSlideLibraryModal);
+      slideLibraryModal.querySelector('.add-step-backdrop')?.addEventListener('click', closeSlideLibraryModal);
+
+      document.getElementById('slide-library-search')?.addEventListener('input', (evt) => {
+        const value = evt.target && evt.target.value ? evt.target.value : '';
+        clearTimeout(_slideLibrarySearchTimer);
+        _slideLibrarySearchTimer = setTimeout(() => {
+          loadSlideLibraryList(value).catch((e) => {
+            showToast('Search failed: ' + e.message, 'error');
+          });
+        }, 180);
+      });
+
+      document.getElementById('slide-library-list')?.addEventListener('click', (evt) => {
+        const target = evt.target;
+        if (!(target instanceof Element)) return;
+        const btn = target.closest('.slide-library-item[data-slide-id]');
+        if (!btn) return;
+        _slideLibrarySelectedId = btn.dataset.slideId || '';
+        renderSlideLibraryList(_slideLibraryEntries);
+        syncSlideLibrarySelection();
+      });
+
+      document.getElementById('slide-library-insert-btn')?.addEventListener('click', async () => {
+        if (!_slideLibrarySelectedId) return;
+        const btn = document.getElementById('slide-library-insert-btn');
+        setBtnLoading(btn, true, 'Inserting…');
+        try {
+          const result = await apiPost('/api/runs/' + currentRunId + '/insert-library-slide', {
+            slideId: _slideLibrarySelectedId,
+            insertAfterId: _slideLibraryInsertAfterId || undefined,
+          });
+          showToast(`Inserted library slide "${result.step?.id || _slideLibrarySelectedId}"`, 'success');
+          closeSlideLibraryModal();
+          loadStoryboard();
+        } catch (e) {
+          showToast('Insert failed: ' + e.message, 'error');
+        } finally {
+          setBtnLoading(btn, false);
+        }
+      });
+
+      el.addEventListener('click', (evt) => {
+        const target = evt.target;
+        if (!(target instanceof Element)) return;
+        const btn = target.closest('.sb-insert-library-btn[data-insert-after-id]');
+        if (!btn) return;
+        openSlideLibraryModal(btn.dataset.insertAfterId);
+      });
+
     } catch (e) {
       el.innerHTML = `<div class="empty-state error">Failed to load storyboard: ${esc(e.message)}</div>`;
     }
@@ -3209,6 +3638,7 @@
             <option value="skip">skip</option>
           </select></label>
           <label><input type="checkbox" id="no-touchup-check"> Skip touchup</label>
+          <label title="Off (default) = app-only build, no slide steps. On = include the slides build phase and final value-summary slide. Toggling here also updates your dashboard default."><input type="checkbox" id="with-slides-check"> Include slides phase</label>
           <button id="run-btn" class="btn btn-primary">Run Pipeline</button>
           <button id="run-from-btn" class="btn btn-secondary">Run from Stage</button>
           <button id="run-refinement-pipeline-btn" class="btn btn-secondary" title="Export storyboard feedback then re-run from build stage">✦ Run Refinement</button>
@@ -3262,6 +3692,17 @@
 
     // Populate stage dropdown based on current run's completed stages
     updateStageDropdown();
+
+    // Initialize the "Include slides phase" checkbox from the dashboard-wide
+    // localStorage default. Toggling it also persists the new default — that
+    // way users can flip per run, but their preference sticks for next time.
+    const withSlidesCheck = document.getElementById('with-slides-check');
+    if (withSlidesCheck) {
+      withSlidesCheck.checked = getDashboardWithSlidesDefault();
+      withSlidesCheck.addEventListener('change', () => {
+        setDashboardWithSlidesDefault(!!withSlidesCheck.checked);
+      });
+    }
 
     // Wizard stage item clicks
     el.addEventListener('click', (e) => {
@@ -3323,9 +3764,19 @@
     document.getElementById('run-btn').addEventListener('click', async () => {
       const btn = document.getElementById('run-btn');
       const noTouchup = document.getElementById('no-touchup-check').checked;
+      const withSlidesEl = document.getElementById('with-slides-check');
+      const withSlidesChoice = !!(withSlidesEl && withSlidesEl.checked);
       setBtnLoading(btn, true, 'Starting…');
       try {
-        const payload = { noTouchup, applyUiToStage: true };
+        // The checkbox is the per-run override; send overrideWithSlides=true
+        // so the server uses this value even for resumes that have a recorded
+        // build mode in their run-manifest.
+        const payload = {
+          noTouchup,
+          applyUiToStage: true,
+          withSlides: withSlidesChoice,
+          overrideWithSlides: true,
+        };
         if (currentRunId) {
           try {
             const meta = await api('/api/runs/' + currentRunId);

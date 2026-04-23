@@ -16,6 +16,9 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const INPUTS_DIR = path.join(PROJECT_ROOT, 'inputs');
 const OUT_DIR = path.join(PROJECT_ROOT, 'out');
 const DEMOS_DIR = path.join(OUT_DIR, 'demos');
+const SLIDE_LIBRARY_DIR = path.join(OUT_DIR, 'slide-library');
+const SLIDE_LIBRARY_INDEX_FILE = path.join(SLIDE_LIBRARY_DIR, 'index.json');
+const SLIDE_LIBRARY_SLIDES_DIR = path.join(SLIDE_LIBRARY_DIR, 'slides');
 const DEMO_APP_NAMES_FILE = path.join(DEMOS_DIR, '.dashboard-demo-names.json');
 const ENV_FILE = path.join(PROJECT_ROOT, '.env');
 
@@ -27,6 +30,7 @@ const {
   applyFactOperation,
   parseFactLine,
 } = require(path.join(__dirname, '../scratch/utils/markdown-knowledge.js'));
+const pipelineStageState = require(path.join(__dirname, '../scratch/utils/stage-state.js'));
 
 const PORT = process.env.PORT || 4040;
 
@@ -149,6 +153,104 @@ function getRunDir(runId) {
     throw new Error('Invalid runId: path escapes DEMOS_DIR');
   }
   return resolved;
+}
+
+function ensureSlideLibraryDirs() {
+  fs.mkdirSync(SLIDE_LIBRARY_SLIDES_DIR, { recursive: true });
+}
+
+function readSlideLibraryIndex() {
+  ensureSlideLibraryDirs();
+  const parsed = safeReadJson(SLIDE_LIBRARY_INDEX_FILE);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { version: 1, slides: [] };
+  }
+  const slides = Array.isArray(parsed.slides) ? parsed.slides : [];
+  return {
+    version: Number(parsed.version || 1),
+    slides,
+  };
+}
+
+function writeSlideLibraryIndex(index) {
+  ensureSlideLibraryDirs();
+  const tmp = SLIDE_LIBRARY_INDEX_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(index, null, 2), 'utf8');
+  fs.renameSync(tmp, SLIDE_LIBRARY_INDEX_FILE);
+}
+
+function sanitizeSlideLibraryName(input) {
+  const text = String(input || '').trim().replace(/\s+/g, ' ');
+  return text.slice(0, 120);
+}
+
+function slugifyForId(input) {
+  return String(input || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 42) || 'slide';
+}
+
+function makeUniqueLibrarySlideId(index, name) {
+  const base = slugifyForId(name);
+  const ts = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+  let candidate = `${base}-${ts}`;
+  const used = new Set((index.slides || []).map(s => String(s.id || '')));
+  let n = 1;
+  while (used.has(candidate)) {
+    n += 1;
+    candidate = `${base}-${ts}-${n}`;
+  }
+  return candidate;
+}
+
+function makeUniqueStepId(existingSteps, preferred) {
+  const used = new Set((existingSteps || []).map(s => String(s && s.id || '')));
+  let candidate = slugifyForId(preferred || 'library-slide');
+  if (!candidate) candidate = 'library-slide';
+  if (!used.has(candidate)) return candidate;
+  let n = 2;
+  while (used.has(`${candidate}-${n}`)) n += 1;
+  return `${candidate}-${n}`;
+}
+
+function buildStandaloneSlideHtml({ title, css, stepHtml }) {
+  const safeTitle = String(title || 'Slide Library Entry').replace(/[<>]/g, '');
+  const safeCss = String(css || '');
+  const safeStepHtml = String(stepHtml || '');
+  return [
+    '<!doctype html>',
+    '<html lang="en">',
+    '<head>',
+    '  <meta charset="utf-8" />',
+    '  <meta name="viewport" content="width=device-width, initial-scale=1" />',
+    `  <title>${safeTitle}</title>`,
+    '  <style>',
+    safeCss,
+    '  .step { display: block !important; min-height: 100vh; }',
+    '  </style>',
+    '</head>',
+    '<body>',
+    safeStepHtml,
+    '</body>',
+    '</html>',
+  ].join('\n');
+}
+
+function extractFirstStepIdFromHtml(html) {
+  const m = String(html || '').match(/data-testid=["']step-([^"']+)["']/i);
+  return m ? String(m[1] || '').trim() : '';
+}
+
+function extractInlineStylesFromHtml(html) {
+  const styles = [];
+  const source = String(html || '');
+  for (const m of source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) {
+    const css = String(m[1] || '').trim();
+    if (css) styles.push(css);
+  }
+  return styles;
 }
 
 /** Read UTF-8 text from end of file (avoids loading huge pipeline-console.log into memory). */
@@ -823,6 +925,13 @@ function mimeFor(filePath) {
 // ── App setup ─────────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
+app.use('/api/slide-library', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  next();
+});
 
 // Plaid Layer API (for demo-app-preview — app fetches from same origin)
 if (process.env.PLAID_LINK_LIVE === 'true') {
@@ -852,6 +961,24 @@ const RUNS_CACHE_TTL = 2000; // ms — burst-safe; invalidated by FS watch event
 
 function invalidateRunsCache() { _runsCache = null; }
 
+function readRunBuildModeInfo(runId) {
+  try {
+    const manifestPath = path.join(DEMOS_DIR, runId, 'run-manifest.json');
+    if (!fs.existsSync(manifestPath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    const buildMode = typeof parsed.buildMode === 'string' ? parsed.buildMode : null;
+    if (!buildMode) return null;
+    return {
+      buildMode,
+      buildModeSource: typeof parsed.buildModeSource === 'string' ? parsed.buildModeSource : null,
+      label: buildMode === 'app+slides' ? 'App + Slides' : 'App-only',
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
 function buildRunsList() {
   const namesMap = readDemoAppNames();
   const dirs = safeReaddir(DEMOS_DIR)
@@ -866,6 +993,7 @@ function buildRunsList() {
     const qa = getLatestQaReport(runId);
     const completedStages = getCompletedStages(runId);
     const script = getRunScriptSummary(runId);
+    const buildModeInfo = readRunBuildModeInfo(runId);
     return {
       runId,
       displayName: resolveDemoDisplayName(runId, namesMap),
@@ -873,6 +1001,9 @@ function buildRunsList() {
       qaScore: qa ? qa.overallScore : null,
       completedStages,
       script,
+      buildMode: buildModeInfo ? buildModeInfo.buildMode : null,
+      buildModeLabel: buildModeInfo ? buildModeInfo.label : null,
+      buildModeSource: buildModeInfo ? buildModeInfo.buildModeSource : null,
     };
   });
 }
@@ -887,6 +1018,118 @@ app.get('/api/runs', (req, res) => {
     res.json({ runs: annotateRunsWithLivePipeline(_runsCache) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/slide-library', (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    const index = readSlideLibraryIndex();
+    let slides = Array.isArray(index.slides) ? index.slides.slice() : [];
+    slides.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    if (q) {
+      slides = slides.filter((slide) => {
+        const haystack = [
+          slide.name,
+          slide.sourceRunId,
+          slide.sourceStepId,
+          slide.sceneType,
+          ...(Array.isArray(slide.tags) ? slide.tags : []),
+        ].map(v => String(v || '').toLowerCase()).join(' ');
+        return haystack.includes(q);
+      });
+    }
+    res.json({ slides });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/slide-library/slides/:slideId/html', (req, res) => {
+  try {
+    const slideId = String(req.params.slideId || '').trim();
+    if (!slideId) return res.status(400).send('slideId required');
+    const index = readSlideLibraryIndex();
+    const slide = (index.slides || []).find(s => s && s.id === slideId);
+    if (!slide || !slide.htmlPath) return res.status(404).send('Slide not found');
+    const htmlAbs = path.resolve(PROJECT_ROOT, slide.htmlPath);
+    if (!htmlAbs.startsWith(SLIDE_LIBRARY_DIR + path.sep) || !fs.existsSync(htmlAbs)) {
+      return res.status(404).send('Slide HTML not found');
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(fs.readFileSync(htmlAbs, 'utf8'));
+  } catch (err) {
+    res.status(500).send(err.message || 'Unknown error');
+  }
+});
+
+app.post('/api/slide-library/submit', (req, res) => {
+  try {
+    const runId = String(req.body && req.body.runId || '').trim();
+    const stepId = String(req.body && req.body.stepId || '').replace(/^step-/, '').trim();
+    const name = sanitizeSlideLibraryName(req.body && req.body.name);
+    const tags = Array.isArray(req.body && req.body.tags)
+      ? req.body.tags.map(t => String(t || '').trim()).filter(Boolean).slice(0, 12)
+      : [];
+
+    if (!runId) return res.status(400).json({ error: 'runId required' });
+    if (!stepId) return res.status(400).json({ error: 'stepId required' });
+    if (!name) return res.status(400).json({ error: 'name required' });
+
+    const runDir = getRunDir(runId);
+    const script = safeReadJson(path.join(runDir, 'demo-script.json'));
+    if (!script || !Array.isArray(script.steps)) {
+      return res.status(404).json({ error: 'demo-script.json not found' });
+    }
+    const sourceStep = script.steps.find(s => s && s.id === stepId);
+    if (!sourceStep) return res.status(404).json({ error: `step "${stepId}" not found in demo-script.json` });
+
+    const appIndex = getAppIndex(runId);
+    if (!appIndex) return res.status(404).json({ error: 'scratch-app/index.html not found' });
+    const stepHtml = appIndex.steps[stepId] || extractStepHtml(appIndex.html, stepId);
+    if (!stepHtml) return res.status(404).json({ error: `step "${stepId}" not found in app HTML` });
+    const stepCss = extractStepCss(appIndex.cssRules || [], stepHtml) || appIndex.allCss || '';
+
+    const index = readSlideLibraryIndex();
+    const slideId = makeUniqueLibrarySlideId(index, name);
+    const htmlFilename = `${slideId}.html`;
+    const htmlPath = path.join(SLIDE_LIBRARY_SLIDES_DIR, htmlFilename);
+    const standaloneHtml = buildStandaloneSlideHtml({
+      title: name,
+      css: stepCss,
+      stepHtml,
+    });
+    fs.writeFileSync(htmlPath, standaloneHtml, 'utf8');
+
+    const sceneType = sourceStep.plaidPhase === 'insight' ? 'slide' : 'demo';
+    const createdAt = new Date().toISOString();
+    const entry = {
+      id: slideId,
+      name,
+      createdAt,
+      sourceRunId: runId,
+      sourceStepId: stepId,
+      sceneType,
+      tags,
+      htmlPath: path.join('out', 'slide-library', 'slides', htmlFilename),
+      sourceSnapshot: JSON.parse(JSON.stringify({
+        label: sourceStep.label || name,
+        narration: sourceStep.narration || '',
+        durationMs: Number(sourceStep.durationMs || 12000),
+        visualState: sourceStep.visualState || '',
+        plaidPhase: sourceStep.plaidPhase == null ? null : sourceStep.plaidPhase,
+        interaction: sourceStep.interaction || null,
+        apiResponse: sourceStep.apiResponse || null,
+      })),
+    };
+    index.slides = Array.isArray(index.slides) ? index.slides : [];
+    index.slides.unshift(entry);
+    writeSlideLibraryIndex(index);
+    res.json({ ok: true, slide: entry });
+  } catch (err) {
+    const msg = err && err.message;
+    if (msg && /invalid runid/i.test(msg)) return res.status(400).json({ error: msg });
+    res.status(500).json({ error: msg || 'Unknown error' });
   }
 });
 
@@ -969,10 +1212,14 @@ app.get('/api/runs/:runId', (req, res) => {
     }).filter(Boolean);
 
     const displayName = resolveDemoDisplayName(runId, readDemoAppNames());
+    const buildModeInfo = readRunBuildModeInfo(runId);
     res.json({
       runId, displayName, artifacts,
       qaScore: qa ? qa.overallScore : null, manifest,
       lastCompletedStage, resumeFromStage, completedStages, script,
+      buildMode: buildModeInfo ? buildModeInfo.buildMode : null,
+      buildModeLabel: buildModeInfo ? buildModeInfo.label : null,
+      buildModeSource: buildModeInfo ? buildModeInfo.buildModeSource : null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1053,7 +1300,7 @@ app.get('/api/runs/:runId/audio-sync-status', (req, res) => {
   }
 });
 
-app.get('/api/runs/:runId/frames', (req, res) => {
+app.get('/api/runs/:runId/frames', async (req, res) => {
   try {
     const dir = getRunDir(req.params.runId);
     // Prefer qa-frames; fall back to build-frames
@@ -1078,11 +1325,41 @@ app.get('/api/runs/:runId/frames', (req, res) => {
       }
     }
 
+    const scriptPath = path.join(dir, 'demo-script.json');
+    const script = safeReadJson(scriptPath);
+    if (script && Array.isArray(script.steps)) {
+      let generatedAny = false;
+      const libraryIndex = readSlideLibraryIndex();
+      for (const step of script.steps) {
+        if (!step || !step.id || !step.slideLibraryRef) continue;
+        const qaThumb = path.join(qaDir, `${step.id}-mid.png`);
+        const buildThumb = path.join(buildDir, `${step.id}-mid.png`);
+        if (fs.existsSync(qaThumb) || fs.existsSync(buildThumb)) continue;
+        const slideId = String(step.slideLibraryRef.slideId || '').trim();
+        const slide = (libraryIndex.slides || []).find(s => s && s.id === slideId);
+        if (!slide) continue;
+        try {
+          await generateLibraryStepThumbnailsForRun(dir, step.id, slide);
+          generatedAny = true;
+        } catch (thumbErr) {
+          console.warn(`[Frames] Could not generate library thumbnail for ${step.id}: ${thumbErr.message}`);
+        }
+      }
+      if (generatedAny) {
+        qaFiles = safeReaddir(qaDir).filter(f => /\.png$/i.test(f)).sort();
+      }
+    }
+
     let files  = qaFiles;
     let source = 'qa-frames';
     if (files.length === 0) {
       files  = safeReaddir(buildDir).filter(f => /\.png$/i.test(f)).sort();
       source = 'build-frames';
+    } else {
+      // When QA frames are present, still include build-frame fallbacks for any newly
+      // inserted storyboard steps that do not yet have a QA snapshot.
+      const buildFiles = safeReaddir(buildDir).filter(f => /\.png$/i.test(f)).sort();
+      files = Array.from(new Set([...files, ...buildFiles])).sort();
     }
     res.json({ files, source });
   } catch (err) {
@@ -1548,8 +1825,8 @@ app.post('/api/runs/:runId/storyboard-live-preview', async (req, res) => {
     if (script && Array.isArray(script.steps)) {
       try { syncNarrationStoreForRun(runDir, script); } catch (_) {}
     }
-    const entry = await launchDemoAppServer(runId);
-    res.json({ ok: true, url: entry.url });
+    const url = `/demo-app-preview/${encodeURIComponent(runId)}?storyboard=1&t=${Date.now()}`;
+    res.json({ ok: true, url });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1707,7 +1984,63 @@ app.get('/api/pipeline/stages', (req, res) => {
   res.json({ stages: PIPELINE_STAGES });
 });
 
+/**
+ * Dashboard write gating.
+ *
+ * As of the pipeline CLI migration, all run/kill/stdin actions default to the
+ * CLI (`npm run pipe ...`). Setting DASHBOARD_WRITE=true re-enables the
+ * legacy in-dashboard runner for environments that still need it. When
+ * disabled we respond 410 Gone with a `cliCommand` hint the client can copy.
+ */
+const DASHBOARD_WRITE_ENABLED = String(process.env.DASHBOARD_WRITE || '').toLowerCase() === 'true';
+
+function buildPipeCliCommand(body = {}) {
+  const b = body || {};
+  const parts = ['npm', 'run', 'pipe', '--'];
+  if (b.resumeRunId) {
+    parts.push('resume', String(b.resumeRunId));
+    if (b.fromStage) parts.push(`--from=${b.fromStage}`);
+    if (b.toStage)   parts.push(`--to=${b.toStage}`);
+    if (b.overrideWithSlides && b.withSlides === true)  parts.push('--with-slides');
+    if (b.overrideWithSlides && b.withSlides === false) parts.push('--app-only');
+  } else if (b.createNewRun) {
+    parts.push('new');
+    if (b.withSlides === true)  parts.push('--with-slides');
+    if (b.withSlides === false) parts.push('--app-only');
+    if (b.toStage) parts.push(`--to=${b.toStage}`);
+    if (b.researchMode) parts.push(`--research=${b.researchMode}`);
+  } else {
+    parts.push('status');
+  }
+  if (Number(b.qaThreshold) > 0) parts.push(`--qa-threshold=${Math.floor(Number(b.qaThreshold))}`);
+  if (Number(b.maxRefinementIterations) > 0) parts.push(`--max-refinement-iterations=${Math.floor(Number(b.maxRefinementIterations))}`);
+  if (b.buildFixMode) parts.push(`--build-fix-mode=${String(b.buildFixMode).toLowerCase()}`);
+  if (b.noTouchup) parts.push('--no-touchup');
+  return parts.join(' ');
+}
+
+function respondWithCliHint(req, res, verb) {
+  const body = req.body || {};
+  let cliCommand;
+  if (verb === 'run') {
+    cliCommand = buildPipeCliCommand(body);
+  } else if (verb === 'kill') {
+    cliCommand = 'npm run pipe -- stop';
+  } else if (verb === 'continue') {
+    cliCommand = 'npm run pipe -- continue';
+  } else {
+    cliCommand = 'npm run pipe';
+  }
+  res.status(410).json({
+    error: 'Dashboard writes are disabled — run from the CLI.',
+    cliCommand,
+    docs: '.claude/skills/pipeline-cli/SKILL.md',
+    hint: 'Set DASHBOARD_WRITE=true to re-enable legacy dashboard runs.',
+  });
+}
+
 app.post('/api/pipeline/run', (req, res) => {
+  if (!DASHBOARD_WRITE_ENABLED) return respondWithCliHint(req, res, 'run');
   try {
     // If activeProcess is set but has already exited, clear the stale reference
     if (activeProcess !== null && activeProcess.exitCode !== null) {
@@ -1736,6 +2069,8 @@ app.post('/api/pipeline/run', (req, res) => {
       qaThreshold,
       maxRefinementIterations,
       buildFixMode,
+      withSlides,
+      overrideWithSlides,
     } = req.body || {};
     const args = ['scripts/scratch/orchestrator.js'];
     if (fromStage) args.push(`--from=${fromStage}`);
@@ -1756,6 +2091,7 @@ app.post('/api/pipeline/run', (req, res) => {
     // Build spawn env — all pipeline launches must be bound to an explicit run directory.
     const spawnEnv = { ...process.env };
     let targetRunId = null;
+    let inheritedBuildMode = null;
     if (resumeRunId) {
       try {
         const resumeDir = getRunDir(resumeRunId);
@@ -1764,6 +2100,7 @@ app.post('/api/pipeline/run', (req, res) => {
         }
         spawnEnv.PIPELINE_RUN_DIR = resumeDir;
         targetRunId = resumeRunId;
+        inheritedBuildMode = readRunBuildModeInfo(resumeRunId);
         broadcastLog(`[Dashboard] Resuming into run directory: ${resumeDir}`);
       } catch (e) {
         return res.status(400).json({ error: e.message });
@@ -1783,6 +2120,28 @@ app.post('/api/pipeline/run', (req, res) => {
       spawnEnv.RESEARCH_MODE = researchMode.trim().toLowerCase();
       broadcastLog(`[Dashboard] RESEARCH_MODE=${spawnEnv.RESEARCH_MODE}`);
     }
+
+    // Resolve withSlides for this spawn:
+    //   1. If resuming and the target run has a recorded buildMode, inherit it
+    //      unless the caller explicitly set overrideWithSlides=true.
+    //   2. Otherwise, honor the request body `withSlides` (default false).
+    let resolvedWithSlides;
+    let resolvedSource;
+    if (resumeRunId && inheritedBuildMode && overrideWithSlides !== true) {
+      resolvedWithSlides = inheritedBuildMode.buildMode === 'app+slides';
+      resolvedSource = 'inherited from run-manifest';
+    } else if (typeof withSlides === 'boolean') {
+      resolvedWithSlides = withSlides;
+      resolvedSource = createNewRun ? 'dashboard modal' : 'dashboard quick-action';
+    } else {
+      resolvedWithSlides = false;
+      resolvedSource = 'dashboard default (no payload)';
+    }
+    spawnEnv.PIPELINE_WITH_SLIDES = resolvedWithSlides ? 'true' : 'false';
+    spawnEnv.PIPELINE_WITH_SLIDES_SOURCE = resolvedSource;
+    broadcastLog(
+      `[Dashboard] Mode: ${resolvedWithSlides ? 'App + Slides' : 'App-only'} (source: ${resolvedSource})`
+    );
 
     logBuffer = [];
     pipelineOutRem = '';
@@ -1834,6 +2193,7 @@ app.post('/api/pipeline/run', (req, res) => {
 });
 
 app.post('/api/pipeline/kill', (req, res) => {
+  if (!DASHBOARD_WRITE_ENABLED) return respondWithCliHint(req, res, 'kill');
   try {
     if (!activeProcess) return res.status(404).json({ error: 'No active process' });
 
@@ -1856,14 +2216,50 @@ app.get('/api/pipeline/status', (req, res) => {
     activePipelineRunId = null;
   }
   const running = isPipelineChildRunning();
+
+  // Also surface CLI-spawned pipelines (started via `npm run pipe`) so the
+  // dashboard header badge reflects activity outside the dashboard child.
+  let cliActive = null;
+  try {
+    for (const name of safeReaddir(DEMOS_DIR)) {
+      const runDir = path.join(DEMOS_DIR, name);
+      try {
+        if (!fs.statSync(runDir).isDirectory()) continue;
+        const status = pipelineStageState.computeStatus(runDir);
+        if (status.activePid) { cliActive = status; break; }
+      } catch (_) { /* ignore */ }
+    }
+  } catch (_) { /* ignore */ }
+
   res.json({
-    running,
-    pid: running && activeProcess ? activeProcess.pid : null,
-    runId: running ? activePipelineRunId : null,
+    running: running || !!cliActive,
+    source: running ? 'dashboard' : (cliActive ? 'cli' : null),
+    pid: running && activeProcess ? activeProcess.pid : (cliActive ? cliActive.activePid : null),
+    runId: running ? activePipelineRunId : (cliActive ? cliActive.runId : null),
+    runningStage: cliActive ? cliActive.runningStage : null,
+    awaitingContinue: cliActive ? cliActive.awaitingContinue : false,
+    writesEnabled: DASHBOARD_WRITE_ENABLED,
   });
 });
 
+/**
+ * Read-only, Claude-consumable stage state for a run.
+ * Delegates to scripts/scratch/utils/stage-state.js (single source of truth
+ * shared with `npm run pipe -- status --json`).
+ */
+app.get('/api/runs/:runId/stage-state', (req, res) => {
+  try {
+    const runDir = getRunDir(req.params.runId);
+    if (!fs.existsSync(runDir)) return res.status(404).json({ error: 'Run not found' });
+    const status = pipelineStageState.computeStatus(runDir);
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/pipeline/stdin', (req, res) => {
+  if (!DASHBOARD_WRITE_ENABLED) return respondWithCliHint(req, res, 'continue');
   if (!activeProcess || !activeProcess.stdin) {
     return res.status(404).json({ error: 'No active process or stdin not available' });
   }
@@ -2231,6 +2627,100 @@ app.post('/api/runs/:runId/insert-step', (req, res) => {
     res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/runs/:runId/insert-library-slide
+// body: { slideId, insertAfterId?, narration?, durationMs? }
+app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    const slideId = String(req.body && req.body.slideId || '').trim();
+    const insertAfterId = String(req.body && req.body.insertAfterId || '').trim() || undefined;
+    const narrationRaw = req.body && typeof req.body.narration === 'string' ? req.body.narration.trim() : '';
+    const durationRaw = Number(req.body && req.body.durationMs);
+
+    if (!slideId) return res.status(400).json({ error: 'slideId required' });
+    const index = readSlideLibraryIndex();
+    const slide = (index.slides || []).find(s => s && s.id === slideId);
+    if (!slide) return res.status(404).json({ error: `Slide "${slideId}" not found` });
+
+    const dir = getRunDir(runId);
+    const scriptPath = path.join(dir, 'demo-script.json');
+    const script = safeReadJson(scriptPath);
+    if (!script || !Array.isArray(script.steps)) return res.status(404).json({ error: 'demo-script.json not found' });
+    const steps = script.steps;
+
+    const snap = slide.sourceSnapshot && typeof slide.sourceSnapshot === 'object'
+      ? slide.sourceSnapshot
+      : {};
+    const fallbackNarration = `TODO: Add narration for imported library slide "${slide.name}".`;
+    const fallbackDuration = Number(snap.durationMs || 12000);
+    const narration = narrationRaw || fallbackNarration;
+    const durationMs = Number.isFinite(durationRaw) && durationRaw > 0
+      ? Math.round(durationRaw)
+      : fallbackDuration;
+    const requiresEdit = !narrationRaw || !Number.isFinite(durationRaw) || durationRaw <= 0;
+
+    const preferredId = `library-${slide.name || slide.id}`;
+    const nextStepId = makeUniqueStepId(steps, preferredId);
+    const label = String(snap.label || slide.name || 'Library Slide').trim().slice(0, 120) || 'Library Slide';
+    const sceneType = slide.sceneType === 'demo' ? 'demo' : 'slide';
+
+    const nextStep = {
+      id: nextStepId,
+      label,
+      narration,
+      durationMs,
+      visualState: snap.visualState || `Imported from slide library: ${slide.name}`,
+      plaidPhase: snap.plaidPhase === undefined ? null : snap.plaidPhase,
+      sceneType,
+      slideLibraryRef: {
+        slideId: slide.id,
+        name: slide.name,
+        htmlPath: slide.htmlPath,
+        sourceRunId: slide.sourceRunId,
+        sourceStepId: slide.sourceStepId,
+      },
+      requiresEdit,
+    };
+
+    if (snap.interaction && typeof snap.interaction === 'object') {
+      nextStep.interaction = snap.interaction;
+    }
+    if (snap.apiResponse && typeof snap.apiResponse === 'object') {
+      nextStep.apiResponse = snap.apiResponse;
+    }
+
+    let insertIdx = steps.length;
+    if (insertAfterId) {
+      const idx = steps.findIndex(s => s && s.id === insertAfterId);
+      if (idx >= 0) insertIdx = idx + 1;
+    }
+    steps.splice(insertIdx, 0, nextStep);
+    script.steps = steps;
+
+    const tmp = scriptPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
+    fs.renameSync(tmp, scriptPath);
+
+    let thumbnailResult = { written: [] };
+    try {
+      thumbnailResult = await generateLibraryStepThumbnailsForRun(dir, nextStepId, slide);
+    } catch (thumbErr) {
+      console.warn(`[SlideLibrary] Thumbnail generation failed for ${runId}/${nextStepId}: ${thumbErr.message}`);
+    }
+    res.json({
+      ok: true,
+      step: nextStep,
+      insertedAt: insertIdx,
+      totalSteps: steps.length,
+      thumbnailsWritten: thumbnailResult.written || [],
+    });
+  } catch (err) {
+    const msg = err && err.message;
+    if (msg && /invalid runid/i.test(msg)) return res.status(400).json({ error: msg });
+    res.status(500).json({ error: msg || 'Unknown error' });
   }
 });
 
@@ -3300,7 +3790,7 @@ function getAiEditRuntimeConfig() {
       elementCss: readEnvString('DASHBOARD_AI_EDIT_MODEL_ELEMENT_CSS', 'claude-haiku-4-5-20251001'),
       element: readEnvString('DASHBOARD_AI_EDIT_MODEL_ELEMENT', 'claude-haiku-4-5-20251001'),
       step: readEnvString('DASHBOARD_AI_EDIT_MODEL_STEP', 'claude-haiku-4-5-20251001'),
-      full: readEnvString('DASHBOARD_AI_EDIT_MODEL_FULL', 'claude-opus-4-6'),
+      full: readEnvString('DASHBOARD_AI_EDIT_MODEL_FULL', 'claude-opus-4-7'),
     },
     maxTokens: {
       css: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_CSS', 4000, { min: 256, max: 64000 }),
@@ -3340,14 +3830,47 @@ function clampSnippet(value, maxChars) {
   return String(value).slice(0, maxChars);
 }
 
+/**
+ * Parse a subset of CSS selectors into an { attr, value, tag? } tuple the
+ * deterministic replacer can anchor on. The frontend picker emits any of:
+ *   #foo
+ *   [data-testid="foo"]
+ *   tag#foo                 (e.g. div#foo)
+ *   tag[data-testid="foo"]  (e.g. button[data-testid="foo"])
+ *   tag.class1.class2       (fallback when no id/testid — needs class anchor)
+ * and we prefer the strongest attribute available. Returns null when nothing
+ * distinctive can be extracted.
+ */
 function parseSimpleSelector(selector) {
   const s = String(selector || '').trim();
   if (!s) return null;
-  if (s.startsWith('#') && s.length > 1) return { attr: 'id', value: s.slice(1) };
-  const testIdMatch = s.match(/^\[data-testid=["']([^"']+)["']\]$/);
-  if (testIdMatch) return { attr: 'data-testid', value: testIdMatch[1] };
+
+  // 1) Pure #id
+  let m = s.match(/^([a-zA-Z][a-zA-Z0-9:-]*)?#([A-Za-z_][\w:-]*)$/);
+  if (m) return { tag: m[1] || null, attr: 'id', value: m[2] };
+
+  // 2) Pure [attr="value"] OR tag[attr="value"]
+  m = s.match(/^([a-zA-Z][a-zA-Z0-9:-]*)?\[([A-Za-z_][\w:-]*)=["']([^"']+)["']\]$/);
+  if (m) return { tag: m[1] || null, attr: m[2], value: m[3] };
+
+  // 3) tag.class1.class2 — fall back to anchoring on the FIRST class. This is
+  //    weaker than id/testid but gives the regex a distinctive hook when the
+  //    picker couldn't find anything stronger.
+  m = s.match(/^([a-zA-Z][a-zA-Z0-9:-]*)\.([A-Za-z_][\w-]*)(?:\.[A-Za-z_][\w-]*)*$/);
+  if (m) return { tag: m[1], attr: 'class', value: m[2], matchMode: 'class-contains' };
+
+  // 4) Bare .class (no tag) — same as above, weaker still.
+  m = s.match(/^\.([A-Za-z_][\w-]*)(?:\.[A-Za-z_][\w-]*)*$/);
+  if (m) return { tag: null, attr: 'class', value: m[1], matchMode: 'class-contains' };
+
   return null;
 }
+
+/** HTML5 void elements that have no closing tag. */
+const VOID_HTML_ELEMENTS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link',
+  'meta', 'param', 'source', 'track', 'wbr',
+]);
 
 function countExactOccurrences(haystack, needle) {
   if (!needle) return 0;
@@ -3401,10 +3924,37 @@ function normalizeConversationHistory(history, cfg) {
 function applySelectorScopedReplacement(scopeHtml, selector, updatedOuterHtml) {
   const parsed = parseSimpleSelector(selector);
   if (!parsed) return { html: scopeHtml, replaced: false, reason: 'unsupported-selector' };
-  const attr = parsed.attr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const value = parsed.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`<([a-zA-Z][a-zA-Z0-9:-]*)\\b([^>]*\\s${attr}=["']${value}["'][^>]*)>[\\s\\S]*?<\\/\\1>`, 'g');
-  const matches = Array.from(scopeHtml.matchAll(re));
+
+  const attrEsc  = parsed.attr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const valueEsc = parsed.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tagPattern = parsed.tag ? parsed.tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '[a-zA-Z][a-zA-Z0-9:-]*';
+
+  // For class-based selectors the attribute value is a whitespace-separated
+  // token list, so match "contains token" (boundary-aware) rather than equality.
+  const attrValuePattern = parsed.matchMode === 'class-contains'
+    ? `["'][^"']*\\b${valueEsc}\\b[^"']*["']`
+    : `["']${valueEsc}["']`;
+
+  // Match BOTH paired elements `<tag ...>...</tag>` AND void elements
+  // `<tag ... />` or `<tag ...>`. When the tag is known and is a void element,
+  // use the void-only regex; otherwise try paired first, then void as a
+  // fallback for generic tag patterns.
+  const resolvedTag = parsed.tag ? parsed.tag.toLowerCase() : null;
+  const isVoid = resolvedTag && VOID_HTML_ELEMENTS.has(resolvedTag);
+
+  const pairedRe = new RegExp(
+    `<(${tagPattern})\\b([^>]*\\s${attrEsc}=${attrValuePattern}[^>]*)>[\\s\\S]*?<\\/\\1>`,
+    'g'
+  );
+  const voidRe = new RegExp(
+    `<(${tagPattern})\\b([^>]*\\s${attrEsc}=${attrValuePattern}[^>]*)\\/?>`,
+    'g'
+  );
+
+  let matches = [];
+  if (!isVoid) matches = Array.from(scopeHtml.matchAll(pairedRe));
+  if (matches.length === 0) matches = Array.from(scopeHtml.matchAll(voidRe));
+
   if (matches.length !== 1) {
     return { html: scopeHtml, replaced: false, reason: `selector-matches-${matches.length}` };
   }
@@ -3415,6 +3965,72 @@ function applySelectorScopedReplacement(scopeHtml, selector, updatedOuterHtml) {
     html: scopeHtml.slice(0, start) + updatedOuterHtml + scopeHtml.slice(end),
     replaced: true,
   };
+}
+
+/**
+ * Collapse HTML whitespace into a canonical form so the browser's
+ * outerHTML (which normalises whitespace and attribute quoting) can be
+ * matched against the source HTML from disk.
+ */
+function normalizeHtmlForMatch(html) {
+  if (!html) return '';
+  return String(html)
+    .replace(/\r\n/g, '\n')
+    // Collapse runs of whitespace INSIDE tags (attribute separators).
+    .replace(/<([^>]+)>/g, (_m, inner) => '<' + inner.replace(/\s+/g, ' ').trim() + '>')
+    // Collapse runs of whitespace BETWEEN tags.
+    .replace(/>\s+</g, '><')
+    // Collapse consecutive whitespace in text content.
+    .replace(/[ \t\n\r\f\v]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Find the single occurrence of `selectedElementHtml` in `scopeHtml` using
+ * a whitespace/attribute-normalised comparison, and return the byte range in
+ * the ORIGINAL scopeHtml so we can splice `updatedOuterHtml` in at that
+ * position. Returns null if there isn't exactly one normalised match.
+ */
+function findNormalizedSingleMatch(scopeHtml, selectedElementHtml) {
+  const needle = normalizeHtmlForMatch(selectedElementHtml);
+  if (!needle || needle.length < 8) return null;
+
+  // Walk every tag boundary in scopeHtml, normalise the candidate substring
+  // that starts there, and compare byte-for-byte against the normalised needle.
+  // This avoids having to re-parse the DOM on the server while still tolerating
+  // cosmetic whitespace/attribute-ordering drift.
+  const candidates = [];
+  const tagStartRe = /<[a-zA-Z]/g;
+  let m;
+  while ((m = tagStartRe.exec(scopeHtml)) !== null) {
+    // Bound the candidate length roughly at 2× the needle length so we don't
+    // explode work on huge files. Normalised length ratio is close to 1.
+    const approxLen = Math.min(scopeHtml.length - m.index, selectedElementHtml.length * 3 + 256);
+    const candidate = scopeHtml.slice(m.index, m.index + approxLen);
+    // Only keep candidates that start with the same tag name as the needle.
+    // Cheap sanity check before the expensive normalisation.
+    const needleTag = needle.match(/^<([a-zA-Z][a-zA-Z0-9:-]*)/);
+    const candTag   = candidate.match(/^<([a-zA-Z][a-zA-Z0-9:-]*)/);
+    if (!needleTag || !candTag || needleTag[1].toLowerCase() !== candTag[1].toLowerCase()) continue;
+
+    // Try to grow the candidate until its normalised form equals the needle.
+    // In practice one scan works — the candidate either matches or doesn't.
+    const normalised = normalizeHtmlForMatch(candidate);
+    if (normalised.startsWith(needle)) {
+      // Confirm by expanding to the minimum window whose normalised form
+      // equals the needle exactly.
+      for (let end = Math.min(scopeHtml.length, m.index + Math.ceil(needle.length * 0.9)); end <= m.index + approxLen; end++) {
+        const window = scopeHtml.slice(m.index, end);
+        const norm = normalizeHtmlForMatch(window);
+        if (norm === needle) {
+          candidates.push({ start: m.index, end });
+          break;
+        }
+        if (norm.length > needle.length + 8) break; // grew past the target
+      }
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function replaceSelectedElementDeterministically(fullHtml, input, updatedOuterHtml) {
@@ -3465,6 +4081,22 @@ function replaceSelectedElementDeterministically(fullHtml, input, updatedOuterHt
       replaced = true;
     } else {
       reason = `selected-html-matches-${count}`;
+    }
+  }
+
+  // Final fallback: whitespace/attribute-order normalised match. The browser's
+  // outerHTML is serialised from the DOM, which strips comments and normalises
+  // attribute quoting + whitespace — so byte-exact matches against the source
+  // HTML on disk often miss even when the element is clearly present. This
+  // finds the single occurrence by comparing normalised forms.
+  if (!replaced && selectedElementHtml) {
+    const range = findNormalizedSingleMatch(scopeHtml, selectedElementHtml);
+    if (range) {
+      nextScopeHtml = scopeHtml.slice(0, range.start) + updatedOuterHtml + scopeHtml.slice(range.end);
+      replaced = true;
+      reason = 'matched-normalised';
+    } else if (reason === 'no-replacement-strategy' || reason.startsWith('unsupported-selector')) {
+      reason = 'normalised-match-missing';
     }
   }
 
@@ -3649,6 +4281,93 @@ function spliceStepHtml(fullHtml, stepId, newStepHtml) {
   const old = extractStepHtml(fullHtml, stepId);
   if (!old) return { html: fullHtml, valid: false };
   return { html: fullHtml.replace(old, newStepHtml), valid: true };
+}
+
+function loadStandaloneLibraryStepPayload(step) {
+  const ref = step && step.slideLibraryRef && typeof step.slideLibraryRef === 'object'
+    ? step.slideLibraryRef
+    : null;
+  if (!ref || !ref.htmlPath) return null;
+  const htmlAbs = path.resolve(PROJECT_ROOT, ref.htmlPath);
+  if (!htmlAbs.startsWith(SLIDE_LIBRARY_DIR + path.sep)) return null;
+  if (!fs.existsSync(htmlAbs)) return null;
+  const sourceHtml = fs.readFileSync(htmlAbs, 'utf8');
+  const sourceStepId = String(ref.sourceStepId || '').trim() || extractFirstStepIdFromHtml(sourceHtml);
+  if (!sourceStepId) return null;
+  const extracted = extractStepHtml(sourceHtml, sourceStepId);
+  if (!extracted) return null;
+  let patched = extracted.replace(/data-testid=["']step-[^"']+["']/i, `data-testid="step-${step.id}"`);
+  if (!/\bclass=["'][^"']*\bstep\b/i.test(patched)) {
+    patched = patched.replace(/<div\b/i, '<div class="step"');
+  }
+  const styles = extractInlineStylesFromHtml(sourceHtml);
+  return {
+    stepHtml: patched,
+    styles,
+    slideId: String(ref.slideId || '').trim(),
+  };
+}
+
+function injectMissingStoryboardLibrarySteps(runDir, html, script) {
+  if (!html || !script || !Array.isArray(script.steps)) return html;
+  const missingStepHtml = [];
+  const styleBlocks = [];
+  const seenSlides = new Set();
+  for (const step of script.steps) {
+    if (!step || !step.id) continue;
+    if (!step.slideLibraryRef || typeof step.slideLibraryRef !== 'object') continue;
+    const marker = `data-testid="step-${step.id}"`;
+    if (html.includes(marker)) continue;
+    const loaded = loadStandaloneLibraryStepPayload(step);
+    if (loaded && loaded.stepHtml) {
+      missingStepHtml.push(loaded.stepHtml);
+      const slideKey = loaded.slideId || step.id;
+      if (!seenSlides.has(slideKey) && Array.isArray(loaded.styles) && loaded.styles.length) {
+        seenSlides.add(slideKey);
+        styleBlocks.push(...loaded.styles);
+      }
+    }
+  }
+  if (!missingStepHtml.length && !styleBlocks.length) return html;
+  if (styleBlocks.length) {
+    const styleTag = `<style id="storyboard-library-inline-styles">${styleBlocks.join('\n\n')}</style>`;
+    html = html.replace(/<style id="storyboard-library-inline-styles"[\s\S]*?<\/style>\s*/i, '');
+    if (html.includes('</head>')) html = html.replace('</head>', `${styleTag}\n</head>`);
+    else html = styleTag + '\n' + html;
+  }
+  if (!missingStepHtml.length) return html;
+  const block = `\n<!-- storyboard-library-inserted-steps -->\n${missingStepHtml.join('\n')}\n`;
+  if (html.includes('</body>')) return html.replace('</body>', `${block}</body>`);
+  return html + block;
+}
+
+async function generateLibraryStepThumbnailsForRun(runDir, stepId, slide) {
+  if (!runDir || !stepId || !slide || !slide.htmlPath) return { written: [] };
+  const htmlAbs = path.resolve(PROJECT_ROOT, slide.htmlPath);
+  if (!htmlAbs.startsWith(SLIDE_LIBRARY_DIR + path.sep) || !fs.existsSync(htmlAbs)) {
+    return { written: [] };
+  }
+  const html = fs.readFileSync(htmlAbs, 'utf8');
+  const { chromium } = require('playwright');
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(120);
+    const png = await page.screenshot({ fullPage: false, type: 'png' });
+
+    const targets = [
+      path.join(runDir, 'build-frames', `${stepId}-mid.png`),
+      path.join(runDir, 'qa-frames', `${stepId}-mid.png`),
+    ];
+    for (const outPath of targets) {
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, png);
+    }
+    return { written: targets };
+  } finally {
+    await browser.close();
+  }
 }
 
 app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
@@ -3877,10 +4596,24 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
     const valid = !!handled.valid;
 
     if (!valid) {
+      const reason = handled.reason || null;
+      console.warn(`[AI Edit] Could not apply response cleanly: mode=${mode} reason=${reason} run=${runId}`);
+      // Human-readable hint per known failure mode so the user can self-correct
+      // instead of just seeing a generic error.
+      const hints = {
+        'unsupported-selector':       'The selected element has no stable anchor (id/data-testid/class). Pick a parent container with a data-testid, or switch to Step mode.',
+        'selector-matches-0':         'The selector didn\'t match anything in the current HTML — the app may have been edited since you picked. Re-pick the element.',
+        'normalised-match-missing':   'The picked element couldn\'t be located in the source HTML. Re-pick a parent container with a data-testid, or switch to Step mode.',
+        'no-replacement-strategy':    'No element context was provided. Pick an element first (use the picker icon), or switch to Step mode.',
+      };
+      const hint = reason && /^selected-html-matches-\d+$/.test(reason)
+        ? `${reason.endsWith('-0') ? 'The picked element isn\'t in the HTML source (whitespace mismatch handled as fallback, but still missed).' : 'The picked HTML appears multiple times — pick a more unique parent with a data-testid.'}`
+        : (hints[reason] || null);
       return res.status(500).json({
         error: 'AI response could not be applied cleanly',
         mode,
-        reason: handled.reason || null,
+        reason,
+        hint,
         preview: response.content[0].text.slice(0, 300),
       });
     }
@@ -4304,6 +5037,12 @@ app.get('/demo-app-preview/:runId', (req, res) => {
   }
   let html = fs.readFileSync(htmlPath, 'utf8');
   const runId = req.params.runId;
+  const scriptPath = path.join(runDir, 'demo-script.json');
+  const script = fs.existsSync(scriptPath) ? safeReadJson(scriptPath) : null;
+  if (script && Array.isArray(script.steps)) {
+    html = injectMissingStoryboardLibrarySteps(runDir, html, script);
+    html = injectNarrationStoreIntoHtml(html, script.steps);
+  }
   // Inject the variables ai-overlay.js expects, then load the script
   html = html.replace('</body>',
     `<script>window.__DEMO_RUN_ID__ = ${JSON.stringify(runId)}; window.__DASHBOARD_ORIGIN__ = 'http://localhost:${PORT}'; window.__AI_EDIT_CONFIG__ = ${JSON.stringify(getAiEditPublicConfig())};</script>\n` +

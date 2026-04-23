@@ -64,6 +64,63 @@ function cliError(message) {
   console.error(`[${cliIsoTime()}] ${message}`);
 }
 
+// ── ::PIPE:: structured events (machine-parseable markers on stdout) ──────────
+//
+// Consumers (bin/pipe.js, Claude in Cursor) parse these to track stage progress
+// without scraping the free-form human log. Keys are URL-like key=value pairs;
+// quote values containing whitespace. All events include ts + runId.
+
+function cliPipeEscape(value) {
+  const s = String(value == null ? '' : value);
+  if (!/[\s"=]/.test(s)) return s;
+  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function emitPipeEvent(event, fields = {}) {
+  const parts = [`event=${cliPipeEscape(event)}`];
+  parts.push(`ts=${cliIsoTime()}`);
+  const runId = process.env.PIPELINE_RUN_ID || '';
+  if (runId) parts.push(`runId=${cliPipeEscape(runId)}`);
+  for (const [k, v] of Object.entries(fields)) {
+    if (v == null) continue;
+    parts.push(`${k}=${cliPipeEscape(v)}`);
+  }
+  // Use stdout (not stderr) so CLI log capture sees it alongside other output.
+  console.log(`::PIPE:: ${parts.join('  ')}`);
+}
+
+// ── Pipeline PID file lifecycle ──────────────────────────────────────────────
+//
+// Written on boot to {runDir}/.pipeline.pid so `pipe stop` and `pipe status`
+// can identify the active orchestrator without scanning `ps aux`. Removed on
+// clean exit; signal handlers best-effort clean up on SIGTERM/SIGINT too.
+
+let _pidFilePath = null;
+
+function writePipelinePidFile(runDir) {
+  if (!runDir) return;
+  try {
+    fs.mkdirSync(runDir, { recursive: true });
+    const pidFile = path.join(runDir, '.pipeline.pid');
+    fs.writeFileSync(pidFile, `${process.pid}\n`, 'utf8');
+    _pidFilePath = pidFile;
+  } catch (err) {
+    cliWarn(`[Orchestrator] Could not write .pipeline.pid: ${err.message}`);
+  }
+}
+
+function cleanupPipelinePidFile() {
+  if (!_pidFilePath) return;
+  try {
+    if (fs.existsSync(_pidFilePath)) fs.unlinkSync(_pidFilePath);
+  } catch (_) { /* ignore */ }
+  _pidFilePath = null;
+}
+
+process.on('exit', cleanupPipelinePidFile);
+process.on('SIGTERM', () => { cleanupPipelinePidFile(); process.exit(143); });
+process.on('SIGINT',  () => { cleanupPipelinePidFile(); process.exit(130); });
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -117,6 +174,8 @@ function parseArgs() {
   const maxRefineArg = args.find(a => a.startsWith('--max-refinement-iterations='));
   const buildFixModeArg = args.find(a => a.startsWith('--build-fix-mode='));
   const noTouchup     = args.includes('--no-touchup');
+  const withSlidesFlag = args.includes('--with-slides');
+  const appOnlyFlag    = args.includes('--app-only');
 
   const mode       = modeArg       ? modeArg.replace('--mode=', '').toLowerCase()        : null;
   const fromStage  = fromArg       ? fromArg.replace('--from=', '').toLowerCase()         : null;
@@ -130,6 +189,23 @@ function parseArgs() {
     : null;
   const buildFixMode = buildFixModeArg ? buildFixModeArg.replace('--build-fix-mode=', '').trim().toLowerCase() : null;
 
+  // --with-slides and --app-only are mutually exclusive; --app-only wins to keep
+  // accidental enabling impossible when both are present.
+  let withSlidesOverride = null;
+  let withSlidesSource = null;
+  if (appOnlyFlag) {
+    withSlidesOverride = false;
+    withSlidesSource = 'cli --app-only';
+  } else if (withSlidesFlag) {
+    withSlidesOverride = true;
+    withSlidesSource = 'cli --with-slides';
+  }
+
+  if (withSlidesOverride != null) {
+    process.env.PIPELINE_WITH_SLIDES = withSlidesOverride ? 'true' : 'false';
+    process.env.PIPELINE_WITH_SLIDES_SOURCE = withSlidesSource;
+  }
+
   return {
     mode,
     fromStage,
@@ -140,6 +216,8 @@ function parseArgs() {
     qaThreshold,
     maxRefinementIterations,
     buildFixMode,
+    withSlidesOverride,
+    withSlidesSource,
   };
 }
 
@@ -507,11 +585,18 @@ function makeTimer() {
       const ts = cliIsoTime();
       const pipelineSec = ((Date.now() - pipelineStart) / 1000).toFixed(1);
       const order = stageOrderLabel(stage);
+      const idx = STAGES.indexOf(stage);
       console.log('');
       console.log(`${'─'.repeat(60)}`);
       console.log(`[${ts}] MILESTONE: stage "${stage}" START`);
       console.log(`[${ts}]   ${order} | pipeline elapsed ${pipelineSec}s`);
       console.log(`${'─'.repeat(60)}`);
+      emitPipeEvent('stage_start', {
+        stage,
+        index: idx >= 0 ? idx + 1 : null,
+        total: STAGES.length,
+        pipelineElapsedSec: pipelineSec,
+      });
       appendPipelineLogSection(`[MILESTONE] Stage ${stage} started`, [
         `at=${ts}`,
         `stage=${stage}`,
@@ -525,6 +610,12 @@ function makeTimer() {
       const ts = cliIsoTime();
       const pipelineSec = ((Date.now() - pipelineStart) / 1000).toFixed(1);
       cliLog(`MILESTONE: stage "${stage}" DONE | stage ${elapsed}s | pipeline total ${pipelineSec}s`);
+      emitPipeEvent('stage_end', {
+        stage,
+        status: 'ok',
+        durationSec: elapsed,
+        pipelineTotalSec: pipelineSec,
+      });
       appendPipelineLogSection(`[MILESTONE] Stage ${stage} completed`, [
         `at=${ts}`,
         `stage=${stage}`,
@@ -542,37 +633,70 @@ function makeTimer() {
 // ── User prompt for continue/abort ───────────────────────────────────────────
 
 async function promptContinue(message) {
+  // Write a continue-signal request marker so `pipe status --json` can surface
+  // awaitingContinue=true and the CLI can display context. Best-effort: the
+  // orchestrator keeps running even if this write fails.
+  const runDirForSignal = (() => {
+    try { return requireRunDir(PROJECT_ROOT, 'orchestrator'); }
+    catch (_) { return null; }
+  })();
+  const requestFile = runDirForSignal ? path.join(runDirForSignal, 'continue.signal.request') : null;
+  if (requestFile) {
+    try {
+      fs.writeFileSync(requestFile, JSON.stringify({
+        at: cliIsoTime(),
+        pid: process.pid,
+        message: String(message || ''),
+      }, null, 2), 'utf8');
+    } catch (_) { /* ignore */ }
+  }
+  emitPipeEvent('prompt', {
+    kind: 'continue',
+    message: String(message || ''),
+    hint: 'npm run pipe -- continue',
+  });
+  const clearRequest = () => {
+    if (requestFile) {
+      try { if (fs.existsSync(requestFile)) fs.unlinkSync(requestFile); }
+      catch (_) { /* ignore */ }
+    }
+  };
+
   // TTY path: interactive terminal — readline works normally
   if (process.stdin.isTTY) {
     return new Promise(resolve => {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
       rl.question(`${message} Press ENTER to continue or Ctrl+C to abort. `, () => {
         rl.close();
+        clearRequest();
+        emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'tty' });
         resolve();
       });
     });
   }
 
-  // Non-TTY path (spawned by dashboard with piped stdin):
-  // Accept ENTER via the pipe (dashboard POST /api/pipeline/stdin → '\n'),
-  // OR wait for a signal file written by the dashboard at {runDir}/continue.signal.
-  const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
+  // Non-TTY path (spawned by dashboard/CLI with piped stdin):
+  // Accept ENTER via the pipe, OR wait for a signal file written by the
+  // dashboard / `pipe continue` at {runDir}/continue.signal.
+  const runDir = runDirForSignal || requireRunDir(PROJECT_ROOT, 'orchestrator');
   const signalFile = path.join(runDir, 'continue.signal');
   // Remove stale signal file from a prior run
   try { fs.unlinkSync(signalFile); } catch (_) {}
 
-  cliLog('[Orchestrator] Waiting for continue signal — click "Continue" in the dashboard or POST /api/pipeline/stdin');
+  cliLog('[Orchestrator] Waiting for continue signal — run `npm run pipe -- continue` or POST /api/pipeline/stdin');
 
   return new Promise(resolve => {
     // Option A: data arrives on piped stdin (dashboard sends '\n')
-    const onData = () => { cleanup(); resolve(); };
+    const onData = () => { cleanup(); emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'stdin' }); clearRequest(); resolve(); };
     process.stdin.once('data', onData);
 
-    // Option B: signal file is written by dashboard
+    // Option B: signal file is written by dashboard / `pipe continue`
     const poll = setInterval(() => {
       if (fs.existsSync(signalFile)) {
         try { fs.unlinkSync(signalFile); } catch (_) {}
         cleanup();
+        emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'signal_file' });
+        clearRequest();
         resolve();
       }
     }, 500);
@@ -769,6 +893,13 @@ async function runStage(stageName, fn, timer) {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     const ts = cliIsoTime();
     cliError(`[Stage: ${stageName}] ERROR after ${elapsed}s: ${err.message}`);
+    emitPipeEvent('stage_end', {
+      stage: stageName,
+      status: 'failed',
+      durationSec: elapsed,
+      message: err.message,
+      recoveryHint: `--from=${stageName}`,
+    });
     appendPipelineLogSection(`[MILESTONE] Stage ${stageName} failed`, [
       `at=${ts}`,
       `stage=${stageName}`,
@@ -1027,13 +1158,63 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
   };
 }
 
+/**
+ * Single source of truth for "does this run include slides?".
+ *
+ * Resolution order (first match wins):
+ *   1. CLI flag injection (parseArgs sets PIPELINE_WITH_SLIDES_SOURCE='cli')
+ *   2. Dashboard injection via PIPELINE_WITH_SLIDES_SOURCE='dashboard'
+ *   3. PIPELINE_WITH_SLIDES env (explicit)
+ *   4. Legacy envs (BUILD_PHASE_SEQUENCE / BUILD_PHASE_SLIDES_ENABLED) for back-compat
+ *   5. Default: app-only (no slides)
+ *
+ * Side effect: expands the resolved decision into the four legacy envs so all
+ * downstream stage code (generate-script.js, build-app.js, build-qa.js)
+ * keeps reading the existing variables without modification.
+ */
+function resolveBuildMode() {
+  const sourceTag = String(process.env.PIPELINE_WITH_SLIDES_SOURCE || '').trim().toLowerCase();
+  const explicitRaw = process.env.PIPELINE_WITH_SLIDES;
+  const hasExplicit = explicitRaw != null && String(explicitRaw).trim() !== '';
+
+  let withSlides;
+  let source;
+
+  if (hasExplicit) {
+    withSlides = parseBoolEnv(explicitRaw, false);
+    source = sourceTag || 'env';
+  } else if (process.env.BUILD_PHASE_SEQUENCE != null || process.env.BUILD_PHASE_SLIDES_ENABLED != null) {
+    const seq = String(process.env.BUILD_PHASE_SEQUENCE || '').toLowerCase();
+    const slidesFlag = parseBoolEnv(process.env.BUILD_PHASE_SLIDES_ENABLED, false);
+    withSlides = slidesFlag && /\bslides\b/.test(seq);
+    source = 'legacy-env';
+  } else {
+    withSlides = false;
+    source = 'default';
+  }
+
+  const sequence = withSlides ? 'app,slides' : 'app';
+  process.env.PIPELINE_WITH_SLIDES = withSlides ? 'true' : 'false';
+  process.env.BUILD_PHASE_SEQUENCE = sequence;
+  process.env.BUILD_PHASE_SLIDES_ENABLED = withSlides ? 'true' : 'false';
+  process.env.DEMO_MARKETING_SLIDE = withSlides ? 'true' : 'false';
+  process.env.SCRIPT_ZERO_SLIDE = withSlides ? 'false' : 'true';
+
+  return {
+    withSlides,
+    source,
+    label: withSlides ? 'App + Slides' : 'App-only',
+    sequence,
+  };
+}
+
 function resolveBuildPhaseSequence() {
-  const raw = String(process.env.BUILD_PHASE_SEQUENCE || 'app,slides')
+  const raw = String(process.env.BUILD_PHASE_SEQUENCE || 'app')
     .split(',')
     .map((v) => v.trim().toLowerCase())
     .filter(Boolean);
   const appEnabled = parseBoolEnv(process.env.BUILD_PHASE_APP_ENABLED, true);
-  const slidesEnabled = parseBoolEnv(process.env.BUILD_PHASE_SLIDES_ENABLED, true);
+  const slidesEnabled = parseBoolEnv(process.env.BUILD_PHASE_SLIDES_ENABLED, false);
   const enabledByFlag = new Set();
   if (appEnabled) enabledByFlag.add('app');
   if (slidesEnabled) enabledByFlag.add('slides');
@@ -1706,10 +1887,19 @@ async function runScratchPipeline({
           path.join(runDir, 'claim-check-flags.json'),
           JSON.stringify(claimResult, null, 2)
         );
+        // CLAIM_CHECK_STRICT=true hard-fails the pipeline when an unapproved
+        // claim slips through. Default is non-strict (warn and continue) for
+        // backwards compat, but auto-approve runs should opt in via env so
+        // bad claims don't ship silently.
+        const claimCheckStrict = parseBoolEnv(process.env.CLAIM_CHECK_STRICT, false);
+        if (claimCheckStrict) {
+          console.error('[claim-check] CLAIM_CHECK_STRICT=true — failing the pipeline due to flagged claims.');
+          throw new Error(`claim-check failed: ${claimResult.flags.length} flagged claim(s). See claim-check-flags.json.`);
+        }
         if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
           await promptContinue('[claim-check] Unapproved claims found in script.');
         } else {
-          console.warn('[claim-check] SCRATCH_AUTO_APPROVE=true — advancing with flagged claims.');
+          console.warn('[claim-check] SCRATCH_AUTO_APPROVE=true — advancing with flagged claims. Set CLAIM_CHECK_STRICT=true to hard-fail instead.');
         }
       } else {
         console.log('[claim-check] All claims match approved value propositions.');
@@ -1790,7 +1980,16 @@ async function runScratchPipeline({
     `qaThreshold=${resolvedBuildQaThreshold}, maxRefinementIterations=${resolvedBuildIterations}`
   );
 
-  const runBuildPhase = async (phaseMode) => {
+  const runBuildPhase = async (phaseMode, phaseIndex) => {
+    const remainingPhases = buildPhaseSequence.slice(phaseIndex + 1);
+    const willRunSlidesPhase = remainingPhases.includes('slides');
+    const slidePromptTier = phaseMode === 'slides'
+      ? 'full'
+      : (willRunSlidesPhase ? 'minimal' : 'full');
+    cliLog(
+      `[Orchestrator] Build phase "${phaseMode}" prompt tier: ${slidePromptTier}` +
+      (phaseMode === 'app' ? ` (slides-followup=${willRunSlidesPhase})` : '')
+    );
     const phaseQaThreshold = phaseMode === 'app'
       ? Math.max(80, Number(resolvedBuildQaThreshold || 0))
       : Number(resolvedBuildQaThreshold || 0);
@@ -1832,6 +2031,8 @@ async function runScratchPipeline({
               mobileVisualEnabled,
               buildViewMode,
               buildMode: phaseMode,
+              slidePromptTier,
+              willRunSlidesPhase,
               qaReportFile: phaseQaReportPath,
               fixMode: fixModeDecision.executedMode,
               touchupStepId: fixModeDecision.touchupStepId,
@@ -1903,8 +2104,9 @@ async function runScratchPipeline({
     }
   };
 
-  for (const phaseMode of buildPhaseSequence) {
-    await runBuildPhase(phaseMode);
+  for (let phaseIndex = 0; phaseIndex < buildPhaseSequence.length; phaseIndex++) {
+    const phaseMode = buildPhaseSequence[phaseIndex];
+    await runBuildPhase(phaseMode, phaseIndex);
   }
 
   // Plaid QA mode logging
@@ -2192,6 +2394,16 @@ async function runScratchPipeline({
 
       if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
         await promptContinue(`[QA] Best score ${bestScore}/${qaThreshold} — below threshold.`);
+      } else if (parseBoolEnv(process.env.QA_BELOW_THRESHOLD_BYPASS, false)) {
+        // Batch / bulk pipelines (e.g., running many prompts unattended) can
+        // opt in with QA_BELOW_THRESHOLD_BYPASS=true to advance with the best
+        // available recording rather than aborting. The warning and the
+        // recording-qa-warning.json file above make the sub-threshold result
+        // visible in post-run audits.
+        cliWarn(
+          `[QA] QA_BELOW_THRESHOLD_BYPASS=true — advancing to render despite ` +
+          `best score ${bestScore}/${qaThreshold}. See recording-qa-warning.json.`
+        );
       } else {
         // Auto-approve pipelines must not silently produce unusable demos.
         // All QA iterations are exhausted — halt so a human can investigate.
@@ -3113,6 +3325,34 @@ async function main() {
   // ── PIPELINE_RUN_DIR: all scripts write artifacts here instead of shared out/ ──
   process.env.PIPELINE_RUN_DIR = versionedDir;
   writeRunDirMarker(versionedDir);
+  writePipelinePidFile(versionedDir);
+
+  // Resolve the unified build mode (app-only vs app+slides) once at run start
+  // so every downstream stage and the run manifest agree on a single value.
+  // For restarts (--from), if the existing run-manifest already has buildMode
+  // and no explicit override was supplied, inherit it so refinement iterations
+  // never silently flip mode mid-run.
+  const existingManifestForMode = (() => {
+    try {
+      const f = path.join(versionedDir, 'run-manifest.json');
+      if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8'));
+    } catch (_) {}
+    return null;
+  })();
+  const explicitWithSlidesProvided =
+    process.env.PIPELINE_WITH_SLIDES != null && String(process.env.PIPELINE_WITH_SLIDES).trim() !== '';
+  if (
+    existingManifestForMode &&
+    typeof existingManifestForMode.buildMode === 'string' &&
+    !explicitWithSlidesProvided
+  ) {
+    const inheritedWithSlides = existingManifestForMode.buildMode === 'app+slides';
+    process.env.PIPELINE_WITH_SLIDES = inheritedWithSlides ? 'true' : 'false';
+    process.env.PIPELINE_WITH_SLIDES_SOURCE = 'inherited from run-manifest';
+  }
+  const buildModeInfo = resolveBuildMode();
+  cliLog(`[Orchestrator] Mode: ${buildModeInfo.label}  (source: ${buildModeInfo.source})`);
+
   const runManifest = ensureRunManifest(versionedDir, {
     runId: path.basename(versionedDir),
     mode,
@@ -3120,6 +3360,8 @@ async function main() {
     promptFingerprint,
     sourcePromptFile: path.join(INPUTS_DIR, 'prompt.txt'),
     sourcePromptHash: promptFingerprint || null,
+    buildMode: buildModeInfo.withSlides ? 'app+slides' : 'app-only',
+    buildModeSource: buildModeInfo.source,
   });
   snapshotRunInputs(versionedDir, {
     promptText: promptText || '',
@@ -3172,6 +3414,13 @@ async function main() {
     ? STAGES.slice(startIdx)
     : STAGES.slice(startIdx, endIdx + 1);
   cliLog(`[Orchestrator] Mode: ${mode.toUpperCase()} | Stages: ${stagePlan.join(' → ')}`);
+  emitPipeEvent('pipeline_start', {
+    mode,
+    buildMode: buildModeInfo.withSlides ? 'app+slides' : 'app-only',
+    stages: stagePlan.join(','),
+    fromStage: effectiveFromStage || stagePlan[0] || null,
+    toStage: endIdx == null ? null : STAGES[endIdx],
+  });
   appendPipelineLogSection('[RUN] Stage plan', [
     `mode=${mode}`,
     `fromIndex=${startIdx}`,
@@ -3217,6 +3466,11 @@ async function main() {
   console.log(`[${doneTs}] output: ${versionedDir}`);
   console.log(`[${doneTs}] ${'='.repeat(54)}`);
   console.log('');
+  emitPipeEvent('pipeline_end', {
+    status: 'ok',
+    totalSec: total,
+    outputDir: versionedDir,
+  });
   appendPipelineLogSection('[RUN] Pipeline complete', [
     `at=${doneTs}`,
     `totalSeconds=${total}`,
@@ -3226,7 +3480,9 @@ async function main() {
 
 main().catch(err => {
   cliError(`[Orchestrator] Fatal error: ${err.message}`);
+  emitPipeEvent('pipeline_end', { status: 'failed', message: err.message });
   if (err.stack) console.error(err.stack);
+  cleanupPipelinePidFile();
   process.exit(1);
 });
 
