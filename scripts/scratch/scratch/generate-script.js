@@ -35,6 +35,7 @@ const {
 } = require('../utils/plaid-skill-loader');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
 const { writePipelineRunContext, buildRunContextPayload } = require('../utils/run-context');
+const { annotateScriptWithStepKinds } = require('../utils/step-kind');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ const OUT_FILE        = path.join(OUT_DIR, 'demo-script.json');
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const MODEL          = 'claude-opus-4-6';
+const MODEL          = 'claude-opus-4-7';
 const BUDGET_TOKENS  = 8000;
 const MAX_TOKENS     = 16000;
 
@@ -392,6 +393,53 @@ function isValueSummaryStep(step) {
   return /\b(value-summary|summary-slide|plaid-outcome|final-summary)\b/.test(id);
 }
 
+function parseBoolEnv(val, fallback = false) {
+  if (val === undefined || val === null || val === '') return fallback;
+  const raw = String(val).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return fallback;
+}
+
+function resolveBuildPhaseSequenceForScript() {
+  // The orchestrator's resolveBuildMode() expands PIPELINE_WITH_SLIDES into the
+  // four legacy envs before this stage runs. Default sequence is 'app' (no
+  // slides) when nothing is set — slides are strictly opt-in.
+  const raw = String(process.env.BUILD_PHASE_SEQUENCE || 'app')
+    .split(',')
+    .map((v) => v.trim().toLowerCase())
+    .filter(Boolean);
+  const appEnabled = parseBoolEnv(process.env.BUILD_PHASE_APP_ENABLED, true);
+  const slidesEnabled = parseBoolEnv(process.env.BUILD_PHASE_SLIDES_ENABLED, false);
+  const allowed = new Set();
+  if (appEnabled) allowed.add('app');
+  if (slidesEnabled) allowed.add('slides');
+  const deduped = [];
+  for (const mode of raw) {
+    if (mode !== 'app' && mode !== 'slides') continue;
+    if (!allowed.has(mode)) continue;
+    if (!deduped.includes(mode)) deduped.push(mode);
+  }
+  if (deduped.length > 0) return deduped;
+  if (appEnabled) return ['app'];
+  if (slidesEnabled) return ['slides'];
+  return ['app'];
+}
+
+function shouldRequireFinalValueSummarySlide() {
+  // PIPELINE_WITH_SLIDES is the single source of truth (set by orchestrator's
+  // resolveBuildMode). Falls through to legacy envs only for back-compat with
+  // any external caller invoking generate-script.js standalone.
+  const explicit = process.env.PIPELINE_WITH_SLIDES;
+  if (explicit != null && String(explicit).trim() !== '') {
+    return parseBoolEnv(explicit, false);
+  }
+  if (parseBoolEnv(process.env.SCRIPT_ZERO_SLIDE, false)) return false;
+  if (parseBoolEnv(process.env.DEMO_MARKETING_SLIDE, false) === false) return false;
+  const phases = resolveBuildPhaseSequenceForScript();
+  return phases.includes('slides');
+}
+
 function ensureFinalValueSummarySlide(demoScript, productResearch) {
   if (!demoScript || !Array.isArray(demoScript.steps) || demoScript.steps.length === 0) return null;
   const topValueProps = extractTopValuePropositions(productResearch, 3);
@@ -443,11 +491,54 @@ function validateDemoScript(demoScript, opts = {}) {
   const layerUseCase = isLayerUseCase(demoScript);
   const productFamily = opts.productFamily || 'generic';
   const requireFinalValueSummarySlide = opts.requireFinalValueSummarySlide === true;
+  const pipelineAppOnlyHostUi = opts.pipelineAppOnlyHostUi === true;
 
   const idCounts = new Map();
   for (const step of steps) {
     const sceneType = normalizeSceneType(step);
     if (step.sceneType !== sceneType) step.sceneType = sceneType;
+    if (pipelineAppOnlyHostUi && (sceneType === 'insight' || sceneType === 'slide')) {
+      errors.push(
+        `Step "${step.id}" has sceneType "${sceneType}" but this is an app-only build. ` +
+          `App-only demos must use sceneType "host" or "link" only — Plaid-branded interstitials are not allowed.`
+      );
+    }
+    // App-only visualState leak check — plain-English customer UI only. Plaid
+    // API names, score breakdowns, and "Powered by Plaid" attribution belong
+    // in `narration` (voiceover), not in the on-screen UI description.
+    if (pipelineAppOnlyHostUi && sceneType === 'host' && typeof step.visualState === 'string') {
+      const vs = step.visualState;
+      const leaks = [];
+      // Plaid API product names on-screen.
+      if (/\b(identity[\s-]*match|plaid[\s-]*signal|plaid[\s-]*auth|plaid[\s-]*layer|plaid[\s-]*check|plaid[\s-]*idv|plaid[\s-]*income)\b/i.test(vs)) {
+        leaks.push('names a Plaid product on-screen');
+      }
+      // Plaid attribution / "Powered by Plaid" footers.
+      if (/(powered\s+by\s+plaid|via\s+plaid(?:'s|\s+)?[a-z]+\s+(algorithm|check|score|match)|using\s+plaid|plaid-powered)/i.test(vs)) {
+        leaks.push('contains Plaid attribution / "powered by" language');
+      }
+      // Score-grid / per-field match grids rendered on host. Covers the
+      // common on-screen formats:
+      //   "NAME 88 MATCH / ADDRESS 95 MATCH"  (field + score + label)
+      //   "NAME 88, ADDRESS 95, PHONE 95"     (field + score, comma-sep grid)
+      //   "scores.name_score 88"              (raw field name)
+      //   "is_nickname_match true"            (raw boolean field)
+      //   "ruleset.result ACCEPT"             (raw Signal outcome)
+      if (/\b(name|address|city|state|zip|phone|email)[\s:]+\d{1,3}\b/i.test(vs)
+          || /\b(match|format)\s+(flag|score)\b.*\d{1,3}/i.test(vs)
+          || /\b(risk[\s-]*score|ruleset\.?result|ACCEPT\/REVIEW|bank[_\s-]?initiated[_\s-]?return)\b/i.test(vs)
+          || /\b(customer|bank)[_\s-]initiated[_\s-]return[_\s-]risk\b/i.test(vs)
+          || /\bis_(nickname|postal_code)_match\b/i.test(vs)
+          || /\bscores\.(name|address|phone|email|legal_name|phone_number|email_address)/i.test(vs)) {
+        leaks.push('describes API score breakdowns / raw API fields as on-screen UI');
+      }
+      if (leaks.length > 0) {
+        warnings.push(
+          `Step "${step.id}" (host): visualState ${leaks.join('; ')}. In app-only mode this content belongs in \`narration\`, not in the end-user UI. ` +
+            `Rewrite visualState to describe plain customer-facing UI (e.g. "Ownership confirmed" title + verified badge + bank name + masked account + Continue) and move the Plaid / score language into the voiceover narration.`
+        );
+      }
+    }
     if (sceneType === 'link' && step.plaidPhase !== 'launch') {
       if (layerUseCase) {
         warnings.push(`Step "${step.id}" uses sceneType "link" without plaidPhase:"launch" in a Layer flow; treating as Layer-native step.`);
@@ -630,6 +721,10 @@ async function main() {
   }
 
   const productFamily = inferProductFamily({ promptText, productResearch });
+  const requireFinalValueSummarySlide = shouldRequireFinalValueSummarySlide();
+  console.log(
+    `[Script] Final marketing slide requirement: ${requireFinalValueSummarySlide ? 'ENABLED' : 'disabled'}`
+  );
   const curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
   const curatedDigest = buildCuratedDigest(curatedProductKnowledge);
   const skillBundle = getPlaidSkillBundleForFamily(productFamily, { promptText });
@@ -679,13 +774,23 @@ async function main() {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  console.log('[Script] Calling Claude (claude-opus-4-6 with extended thinking + structured output)...');
+  console.log('[Script] Calling Claude (claude-opus-4-7 with extended thinking + structured output)...');
+
+  // App-only runs: the prompt explicitly forbids insight/slide steps so the
+  // generator stays in host-app territory. The manifest is the single source
+  // of truth; we fall back to PIPELINE_WITH_SLIDES so standalone invocations
+  // (`node scripts/.../generate-script.js`) still work.
+  const pipelineAppOnlyHostUi = !requireFinalValueSummarySlide;
 
   // Build prompts from the shared template
   const { system: systemPrompt, userMessages } = buildScriptGenerationPrompt(
     ingestedInputs || { texts: [], screenshots: [], transcriptions: [] },
-    productResearchForPrompt
+    productResearchForPrompt,
+    { requireFinalValueSummarySlide, pipelineAppOnlyHostUi }
   );
+  if (pipelineAppOnlyHostUi) {
+    console.log('[Script] App-only run: script prompt forbids sceneType "insight" and "slide"');
+  }
 
   // NOTE: The Anthropic API does NOT allow combining extended thinking with
   // tool_choice: { type: 'tool' } or { type: 'any' } — these force tool use and
@@ -707,8 +812,10 @@ async function main() {
     model:      MODEL,
     max_tokens: MAX_TOKENS,
     thinking: {
-      type:          'enabled',
-      budget_tokens: BUDGET_TOKENS,
+      type: 'adaptive',
+    },
+    output_config: {
+      effort: 'high',
     },
     system:      systemPrompt,
     messages:    messagesWithToolDirective,
@@ -752,9 +859,46 @@ async function main() {
   if (canonicalLaunchId) {
     console.log(`[Script] Normalized launch interaction target for "${canonicalLaunchId}" to data-testid="link-external-account-btn".`);
   }
-  const summarySlide = ensureFinalValueSummarySlide(demoScript, productResearchForPrompt);
-  if (summarySlide) {
-    console.log(`[Script] Final value summary slide ${summarySlide.action} (${summarySlide.id}).`);
+  if (requireFinalValueSummarySlide) {
+    const summarySlide = ensureFinalValueSummarySlide(demoScript, productResearchForPrompt);
+    if (summarySlide) {
+      console.log(`[Script] Final value summary slide ${summarySlide.action} (${summarySlide.id}).`);
+    }
+  } else {
+    // Zero-slide mode: strip sceneType:"slide" steps. BUT: the LLM often
+    // mislabels API-insight steps (Plaid endpoint responses rendered with the
+    // slide shell template) as sceneType:"slide" when they should be
+    // sceneType:"insight". Before stripping, promote any slide step carrying
+    // an apiResponse.endpoint to "insight" so we don't accidentally drop the
+    // canonical API insight screens (e.g., /cra/check_report/income_insights/get
+    // required by CRA Income Insights demos).
+    let promotedCount = 0;
+    for (const step of demoScript.steps) {
+      const sceneType = String(step?.sceneType || '').toLowerCase();
+      if (sceneType !== 'slide') continue;
+      if (isValueSummaryStep(step)) continue;
+      if (step?.apiResponse?.endpoint) {
+        step.sceneType = 'insight';
+        promotedCount += 1;
+      }
+    }
+    if (promotedCount > 0) {
+      console.log(
+        `[Script] Zero-slide mode: promoted ${promotedCount} API-carrying slide step(s) to "insight" ` +
+        `to preserve Plaid endpoint coverage (e.g. CRA income_insights).`
+      );
+    }
+    const originalCount = demoScript.steps.length;
+    demoScript.steps = demoScript.steps.filter((step) => {
+      const sceneType = String(step?.sceneType || '').toLowerCase();
+      if (sceneType === 'slide') return false;
+      if (isValueSummaryStep(step)) return false;
+      return true;
+    });
+    const removedCount = Math.max(0, originalCount - demoScript.steps.length);
+    if (removedCount > 0) {
+      console.log(`[Script] Zero-slide mode removed ${removedCount} slide step(s) from demo script.`);
+    }
   }
 
   // ── Narration word count validation ───────────────────────────────────────
@@ -804,10 +948,68 @@ async function main() {
     }
   }
 
+  // Auto-repair narrations that violate the Plaid Link boundary rule BEFORE
+  // validation runs. CLAUDE.md requires the Plaid Link launch step to narrate
+  // what is visible inside the modal (institution picker / account select /
+  // success handoff), NOT the button-click that opens it. The LLM sometimes
+  // forgets and writes "Elena taps Link Bank Account. Plaid Link opens...".
+  // Rather than hard-failing and losing a ~90s research run, strip the
+  // trigger-phrase sentence and keep the rest.
+  {
+    const launch = demoScript.steps.find((s) => s && s.plaidPhase === 'launch');
+    if (launch && typeof launch.narration === 'string') {
+      const original = launch.narration;
+      const TRIGGER_PATTERNS = [
+        /\b(plaid link opens|opens plaid link|launches plaid link)[^.?!]*[.?!]?\s*/gi,
+        /\b(clicks?|taps?|presses?|selects?|hits?)\s+[^.?!]*\b(link bank|connect bank|link (?:my |her |his |your )?(?:external )?account|link (?:my |her |his |your )?bank|add (?:external )?bank|add (?:my |her |his |your )?bank|continue with bank)[^.?!]*[.?!]?\s*/gi,
+      ];
+      let rewritten = original;
+      for (const re of TRIGGER_PATTERNS) rewritten = rewritten.replace(re, '');
+      rewritten = rewritten.replace(/\s{2,}/g, ' ').trim();
+      if (rewritten && rewritten !== original && rewritten.split(/\s+/).length >= 6) {
+        launch.narration = rewritten;
+        console.warn(
+          `[Script] Auto-repaired Plaid Link boundary-rule violation on step "${launch.id}". ` +
+          `Removed trigger-action sentence(s) so narration describes modal content only.`
+        );
+      }
+    }
+  }
+
+  // App-only safety net: if the LLM still produced any Plaid-branded
+  // interstitial (sceneType: insight | slide) despite the explicit prompt,
+  // strip them BEFORE validation so a prompt-adherence glitch doesn't hard
+  // fail the whole run. The customer-facing host flow stands on its own;
+  // narration about API calls happens inline, not via dedicated Plaid-chrome
+  // screens.
+  if (pipelineAppOnlyHostUi && Array.isArray(demoScript.steps)) {
+    const dropped = [];
+    demoScript.steps = demoScript.steps.filter((s) => {
+      const t = String(s && s.sceneType || '').toLowerCase();
+      if (t === 'insight' || t === 'slide') {
+        dropped.push({ id: s && s.id, sceneType: t });
+        return false;
+      }
+      // apiResponse blocks only belong on insight/slide steps, which don't
+      // exist in app-only mode. Strip any leftovers so the build stage knows
+      // there is no JSON rail to hydrate.
+      if (s && s.apiResponse) delete s.apiResponse;
+      return true;
+    });
+    if (dropped.length > 0) {
+      console.warn(
+        `[Script] App-only safety net dropped ${dropped.length} non-host step(s): ` +
+          dropped.map((d) => `${d.id} (${d.sceneType})`).join(', ')
+      );
+      console.warn('[Script] Review the remaining host flow for narrative continuity.');
+    }
+  }
+
   const scriptValidation = validateDemoScript(demoScript, {
     plaidLinkLive: process.env.PLAID_LINK_LIVE === 'true',
     productFamily,
-    requireFinalValueSummarySlide: true,
+    requireFinalValueSummarySlide,
+    pipelineAppOnlyHostUi,
   });
   if (scriptValidation.errors.length > 0) {
     console.error('[Script] Demo script validation failed:');
@@ -822,7 +1024,11 @@ async function main() {
     }
   }
 
-  // Write to disk
+  const { counts: stepKindCounts } = annotateScriptWithStepKinds(demoScript);
+  console.log(
+    `[Script] stepKind annotated: ${stepKindCounts.app} app / ${stepKindCounts.slide} slide`
+  );
+
   fs.writeFileSync(OUT_FILE, JSON.stringify(demoScript, null, 2));
 
   try {

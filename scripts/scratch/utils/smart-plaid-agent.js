@@ -29,7 +29,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 
-const SMART_MODEL = 'claude-opus-4-6';
+const SMART_MODEL = 'claude-opus-4-7';
 const MAX_TURNS   = 20;
 
 // Knowledge base files (read at construction time)

@@ -285,6 +285,23 @@
     }
     #__ai-send-btn:hover { background: #00b88a; }
     #__ai-send-btn:disabled { background: rgba(0,166,126,0.3); cursor: not-allowed; }
+    #__ai-submit-library-btn {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 6px;
+      color: rgba(255,255,255,0.75);
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    #__ai-submit-library-btn:hover { background: rgba(255,255,255,0.11); }
+    #__ai-submit-library-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
     .__ai-pick-highlight {
       outline: 2px dashed #00A67E !important;
       outline-offset: 2px !important;
@@ -374,6 +391,9 @@
         <button id="__ai-pick-btn" title="Click an element to add as context">
           <span>⊹</span> Pick
         </button>
+        <button id="__ai-submit-library-btn" title="Save current screen as a reusable library slide">
+          Submit to slide library
+        </button>
         <button id="__ai-send-btn">Send</button>
       </div>
     </div>
@@ -385,6 +405,7 @@
   const inputEl = document.getElementById('__ai-input');
   const sendBtn = document.getElementById('__ai-send-btn');
   const pickBtn = document.getElementById('__ai-pick-btn');
+  const submitLibraryBtn = document.getElementById('__ai-submit-library-btn');
 
   // ── Backend health check ──────────────────────────────────────────────────────
   function setOfflineState(reason) {
@@ -398,6 +419,7 @@
     sendBtn.disabled = true;
     sendBtn.title = reason || 'Dashboard server not reachable';
     pickBtn.disabled = true;
+    if (submitLibraryBtn) submitLibraryBtn.disabled = true;
     // Show a banner inside the panel if already open
     const existing = document.getElementById('__ai-offline-banner');
     if (!existing) {
@@ -420,6 +442,7 @@
     sendBtn.disabled = false;
     sendBtn.title = '';
     pickBtn.disabled = false;
+    if (submitLibraryBtn) submitLibraryBtn.disabled = false;
     const banner = document.getElementById('__ai-offline-banner');
     if (banner) banner.remove();
   }
@@ -661,7 +684,11 @@
       const data = await resp.json();
 
       if (!resp.ok) {
-        addMessage('system', `Error: ${data.error || resp.statusText}`);
+        // Surface the server's reason/hint so the user knows what to try next.
+        const parts = [`Error: ${data.error || resp.statusText}`];
+        if (data.hint) parts.push(data.hint);
+        else if (data.reason) parts.push(`(reason: ${data.reason})`);
+        addMessage('system', parts.join(' — '));
         return;
       }
 
@@ -688,7 +715,55 @@
     }
   }
 
+  async function submitCurrentStepToLibrary() {
+    const activeStepId = typeof window.getCurrentStep === 'function'
+      ? String(window.getCurrentStep() || '').replace(/^step-/, '').trim()
+      : '';
+    if (!activeStepId) {
+      addMessage('system', 'Cannot submit: no active step detected.');
+      return;
+    }
+    const suggestedName = `Slide ${activeStepId}`;
+    const name = window.prompt('Slide library name', suggestedName);
+    if (name == null) return;
+    const trimmedName = String(name).trim();
+    if (!trimmedName) {
+      addMessage('system', 'Slide name is required.');
+      return;
+    }
+
+    if (submitLibraryBtn) {
+      submitLibraryBtn.disabled = true;
+      submitLibraryBtn.textContent = 'Submitting…';
+    }
+    try {
+      const resp = await fetch(`${DASHBOARD}/api/slide-library/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runId: RUN_ID,
+          stepId: activeStepId,
+          name: trimmedName,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        addMessage('system', `Slide submit failed: ${data.error || resp.statusText}`);
+        return;
+      }
+      addMessage('assistant', `Saved "${trimmedName}" to slide library.`);
+    } catch (err) {
+      addMessage('system', `Slide submit failed: ${err.message}`);
+    } finally {
+      if (submitLibraryBtn) {
+        submitLibraryBtn.disabled = false;
+        submitLibraryBtn.textContent = 'Submit to slide library';
+      }
+    }
+  }
+
   sendBtn.addEventListener('click', send);
+  submitLibraryBtn?.addEventListener('click', submitCurrentStepToLibrary);
   inputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();

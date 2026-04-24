@@ -114,4 +114,59 @@ describe('demo-script validation', () => {
     }, { requireFinalValueSummarySlide: true });
     assert.equal(passing.errors.length, 0);
   });
+
+  test('app-only host step warns when visualState names a Plaid product on-screen', () => {
+    const result = validateDemoScript({
+      steps: [
+        {
+          id: 'ownership-confirmed',
+          label: 'Ownership confirmed',
+          sceneType: 'host',
+          narration: 'BofA confirms ownership of the external account.',
+          visualState: 'BofA-branded ownership page showing Identity Match scores grid (NAME 88, ADDRESS 95, PHONE 95, EMAIL 62) with "Powered by Plaid" footer.',
+        },
+      ],
+    }, { pipelineAppOnlyHostUi: true });
+    assert.equal(result.errors.length, 0, 'soft warning only — should not block the build');
+    assert.ok(result.warnings.some((w) => /ownership-confirmed/.test(w) && /Plaid product/i.test(w)),
+      'warning should call out naming a Plaid product on-screen');
+    assert.ok(result.warnings.some((w) => /Plaid attribution/i.test(w)),
+      'warning should call out "Powered by Plaid" attribution');
+    assert.ok(result.warnings.some((w) => /API score breakdowns|raw API fields/i.test(w)),
+      'warning should flag the NAME/ADDRESS/PHONE/EMAIL score grid');
+  });
+
+  test('app-only host step with plain-English visualState → no warning', () => {
+    const result = validateDemoScript({
+      steps: [
+        {
+          id: 'ownership-confirmed',
+          label: 'Ownership confirmed',
+          sceneType: 'host',
+          narration: 'Under the hood, Identity Match confirmed ownership; here the customer sees the plain confirmation.',
+          visualState: 'Ownership confirmed page: green check, bank name + masked account, "Verified owner" pill, Continue button.',
+        },
+      ],
+    }, { pipelineAppOnlyHostUi: true });
+    assert.equal(result.errors.length, 0);
+    assert.equal(result.warnings.filter((w) => /ownership-confirmed/.test(w)).length, 0,
+      'plain host-UI visualState must not trigger the app-only leak warning');
+  });
+
+  test('app-only does not restrict narration (Plaid names allowed in voiceover)', () => {
+    const result = validateDemoScript({
+      steps: [
+        {
+          id: 'ownership-confirmed',
+          label: 'Ownership confirmed',
+          sceneType: 'host',
+          // Narration MAY name Plaid products — it's the voiceover, not the UI.
+          narration: 'Under the hood, Plaid Identity Match compared Bank of America KYC with the external bank and cleared ownership.',
+          visualState: 'Ownership confirmed page with verified badge and Continue button.',
+        },
+      ],
+    }, { pipelineAppOnlyHostUi: true });
+    assert.equal(result.errors.length, 0);
+    assert.equal(result.warnings.length, 0, 'narration fields are explicitly allowed to name Plaid products');
+  });
 });

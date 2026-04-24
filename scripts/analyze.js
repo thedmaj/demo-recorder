@@ -46,7 +46,7 @@ function extractFrames() {
 async function analyzeFrame(framePath, second) {
   const imageData = fs.readFileSync(framePath).toString('base64');
   const response = await client.messages.create({
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     max_tokens: 300,
     messages: [{
       role: 'user',

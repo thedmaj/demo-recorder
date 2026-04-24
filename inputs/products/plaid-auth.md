@@ -1,19 +1,20 @@
 ---
-product: "Plaid Auth"
-slug: "auth"
+product: Plaid Auth
+slug: auth
 api_endpoints:
   - "auth/get"
   - "/link/token/create"
   - "identity/match"
 use_cases:
-  - account-funding
-  - instant-account-verification
-  - external-account-verification
+  - "account-funding"
+  - "instant-account-verification"
+  - "external-account-verification"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-04-14T04:04:57.672Z"
+last_ai_update: "2026-04-24T19:01:28.919Z"
 needs_review: true
 approved: true
 version: 1
+last_vp_research: "2026-04-24"
 ---
 
 # Plaid Auth
@@ -134,6 +135,79 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-04-24 — Run: 2026-04-24-Bank-Of-America-Retail-Auth-Identity-Signal-Transfer-Statements-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage (10,000+ FIs) including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs legacy matching","source":"Plaid internal"}
+
+### 2026-04-19 — Run: 2026-04-19-Opening-A-New-U-Auth-Identity-Signal-Transfer-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage (10,000+ FIs) including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs legacy matching","source":"Plaid internal"}
+
+### 2026-04-19 — Run: 2026-04-19-Opening-A-Citi-Checking-Auth-Identity-Signal-Transfer-v2 (min_confidence: medium)
+**Gong — Success Stories**
+- [medium] {"useCase":"Account Funding","outcome":"65% conversion uplift and 20%+ more accounts funded at origination by replacing micro-deposits with Plaid Auth instant verification","source":"Plaid internal / Gong calls"}
+- [medium] {"useCase":"Instant Account Verification","outcome":"~23% increase in successful verifications with seamless user experience replacing micro-deposit flows","source":"Plaid internal"}
+**Gong — Customer Pain Points**
+- [medium] {"pain":"Multi-day micro-deposit onboarding loses users before they fund their first account","source":"Priority Messaging"}
+- [medium] {"pain":"Manual entry of account/routing numbers leads to mismatches and ACH returns","source":"Priority Messaging"}
+- [medium] {"pain":"Micro-deposit delays hurt conversion; users don't come back to verify","source":"Priority Messaging"}
+- [medium] {"pain":"OAuth institutions may not share all identity fields, leading to ACCESS_NOT_GRANTED if user skips permission checkbox","source":"Integration Skill"}
+**Gong — Objections & Responses**
+- [medium] Objection: We have micro-deposits → Response: We typically see around 65% uplift in conversion from micro-deposit verification. Plaid removes the 3–5 day delay and the drop-off when users don't return to verify.
+- [medium] Objection: We use another aggregator → Response: We see north of 20% conversion improvement compared against other aggregators, plus 3–4x more U.S. account coverage including long-tail fintechs.
+**Sales Collateral**
+- [medium] Plaid Auth + Identity Match — Account Funding Demo Talk Tracks (brief): Instant account verification that turns account funding into a growth engine | Link and fund in seconds, not days | Reduce reliance on micro-deposits while tightening fraud controls
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage (10,000+ FIs) including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs legacy matching","source":"Plaid internal"}
+
+### 2026-04-17 — Run: 2026-04-17-Banner-Health-Post-procedure-Follow-up-Auth-Identity-Signal-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage (10,000+ FIs) including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs legacy matching","source":"Plaid internal"}
+
+### 2026-04-17 — Run: 2026-04-17-Shell-Co-branded-Credit-Card-Auth-Signal-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link with enhanced risk attributes feeding Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+- [high] {"claim":"Signal analyzes 1,000+ risk factors and surfaces 80+ predictive insights per transaction, scored on Plaid's network","source":"Integration Skill — Signal reference"}
+
+### 2026-04-16 — Run: 2026-04-16-Opening-A-New-U-Auth-Identity-Signal-Transfer-v1 (min_confidence: medium)
+**Gong — Success Stories**
+- [medium] {"useCase":"Account Funding","outcome":"65% conversion uplift and 20%+ more accounts funded at origination by replacing micro-deposits with Plaid Auth instant verification","source":"Plaid internal / Gong calls"}
+- [medium] {"useCase":"Instant Account Verification","outcome":"~23% increase in successful verifications with seamless user experience replacing micro-deposit flows","source":"Plaid internal"}
+**Gong — Customer Pain Points**
+- [medium] {"pain":"Multi-day micro-deposit onboarding loses users before they fund their first account","source":"Priority Messaging"}
+- [medium] {"pain":"Manual entry of account/routing numbers leads to mismatches and ACH returns","source":"Priority Messaging"}
+- [medium] {"pain":"Micro-deposit delays hurt conversion; users don't come back to verify","source":"Priority Messaging"}
+- [medium] {"pain":"OAuth institutions may not share all identity fields, leading to ACCESS_NOT_GRANTED if user skips permission checkbox","source":"Integration Skill"}
+**Gong — Objections & Responses**
+- [medium] Objection: We have micro-deposits → Response: We typically see around 65% uplift in conversion from micro-deposit verification. Plaid removes the 3–5 day delay and the drop-off when users don't return to verify.
+- [medium] Objection: We use another aggregator → Response: We see north of 20% conversion improvement compared against other aggregators, plus 3–4x more U.S. account coverage including long-tail fintechs.
+**Sales Collateral**
+- [medium] Plaid Auth + Identity Match — Account Funding Demo Talk Tracks (brief): Instant account verification that turns account funding into a growth engine | Link and fund in seconds, not days | Reduce reliance on micro-deposits while tightening fraud controls
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source.","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"Coverage: 98%+ of U.S. depository accounts including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
 
 ### 2026-04-14 — Run: 2026-04-14-Demo-Auth-Identity-Signal-v1 (min_confidence: medium)
 **Gong — Success Stories**

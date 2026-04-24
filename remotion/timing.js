@@ -3,60 +3,74 @@
 
 const STEP_TIMING = [
   {
-    "id": "patient-portal-dashboard",
-    "label": "Patient Portal — Outstanding Balance",
+    "id": "bofa-dashboard",
+    "label": "BofA dashboard",
     "startFrame": 9,
-    "endFrame": 369,
-    "audioEndFrame": 313
+    "endFrame": 354,
+    "audioEndFrame": 320
   },
   {
-    "id": "payment-method-selection",
-    "label": "Payment Method — Pay by Bank",
-    "startFrame": 369,
-    "endFrame": 388,
-    "audioEndFrame": 641
+    "id": "bofa-transfers",
+    "label": "Transfers landing",
+    "startFrame": 354,
+    "endFrame": 696,
+    "audioEndFrame": 670
   },
   {
-    "id": "embedded-link-launch",
-    "label": "Connect Bank Account — Plaid Embedded Link",
-    "startFrame": 388,
-    "endFrame": 973,
-    "audioEndFrame": 675
+    "id": "bofa-link-external",
+    "label": "Link external bank (embedded Plaid)",
+    "startFrame": 696,
+    "endFrame": 1044,
+    "audioEndFrame": 1033
   },
   {
-    "id": "identity-match-slide",
-    "label": "Plaid Identity Match — Ownership Verification",
-    "startFrame": 973,
-    "endFrame": 1124,
-    "audioEndFrame": 1296
+    "id": "bofa-external-connected",
+    "label": "External account connected",
+    "startFrame": 1044,
+    "endFrame": 1428,
+    "audioEndFrame": 1398
   },
   {
-    "id": "auth-slide",
-    "label": "Plaid Auth — Verified Account & Routing Numbers",
-    "startFrame": 1124,
-    "endFrame": 1703,
-    "audioEndFrame": 1411
+    "id": "identity-match-insight",
+    "label": "Identity Match",
+    "startFrame": 1428,
+    "endFrame": 1946,
+    "audioEndFrame": 1881
   },
   {
-    "id": "signal-slide",
-    "label": "Plaid Signal — ACH Return Risk Assessment",
-    "startFrame": 1703,
-    "endFrame": 1833,
-    "audioEndFrame": 2063
+    "id": "bofa-ownership-confirmed",
+    "label": "Ownership confirmed",
+    "startFrame": 1946,
+    "endFrame": 2307,
+    "audioEndFrame": 2277
   },
   {
-    "id": "payment-confirmation",
-    "label": "Payment Confirmed",
-    "startFrame": 1833,
-    "endFrame": 2470,
-    "audioEndFrame": 2160
+    "id": "auth-insight",
+    "label": "Auth — ACH numbers",
+    "startFrame": 2307,
+    "endFrame": 2700,
+    "audioEndFrame": 2628
   },
   {
-    "id": "value-summary-slide",
-    "label": "Value Summary",
-    "startFrame": 2470,
-    "endFrame": 2836,
-    "audioEndFrame": 2806
+    "id": "bofa-amount-entry",
+    "label": "Transfer amount",
+    "startFrame": 2700,
+    "endFrame": 3046,
+    "audioEndFrame": 3016
+  },
+  {
+    "id": "signal-insight",
+    "label": "Signal — ACH return risk",
+    "startFrame": 3046,
+    "endFrame": 3250,
+    "audioEndFrame": 3450
+  },
+  {
+    "id": "bofa-transfer-approved",
+    "label": "Transfer approved",
+    "startFrame": 3250,
+    "endFrame": 3665,
+    "audioEndFrame": 3630
   }
 ];
 

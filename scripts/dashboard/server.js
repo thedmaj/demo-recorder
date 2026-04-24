@@ -10,6 +10,9 @@ const AdmZip = require('adm-zip');
 const chokidar = require('chokidar');
 const { loadTimingContract } = require('../timing-contract');
 const { processedToCompMs } = require('../sync-map-utils');
+const { deriveStepKind } = require('../scratch/utils/step-kind');
+const { readRunManifest: readRunManifestSafe, writeRunManifest: writeRunManifestSafe } = require('../scratch/utils/run-io');
+const { resolveIdentity: resolveDashIdentity } = require('../scratch/utils/identity');
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -36,11 +39,24 @@ const PORT = process.env.PORT || 4040;
 
 // ── ENV whitelist ─────────────────────────────────────────────────────────────
 const ENV_WHITELIST = new Set([
+  // Pipeline behavior (existing)
   'SCRATCH_AUTO_APPROVE', 'MANUAL_RECORD', 'FIGMA_REVIEW',
   'MAX_REFINEMENT_ITERATIONS', 'RECORDING_FPS', 'QA_PASS_THRESHOLD', 'BUILD_FIX_MODE',
   'RECORD_TRANSITION_SAFE_TIMING', 'STEP_TRANSITION_SETTLE_MS', 'POST_LINK_STEP_BOUNDARY_GUARD_MS',
-  'PLAID_ENV', 'PLAID_LINK_LIVE', 'PLAID_LINK_CUSTOMIZATION',
-  'PLAID_LAYER_TEMPLATE_ID', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_OUTPUT_FORMAT',
+  // Plaid SDK (existing)
+  'PLAID_ENV', 'PLAID_LINK_LIVE', 'PLAID_LINK_CUSTOMIZATION', 'PLAID_LAYER_TEMPLATE_ID',
+  // Voice / audio (existing)
+  'ELEVENLABS_VOICE_ID', 'ELEVENLABS_OUTPUT_FORMAT',
+  // Build strategy (2026-04 additions — replace ad-hoc .env edits)
+  'PIPELINE_WITH_SLIDES', 'BUILD_SLIDES_STRATEGY', 'RESEARCH_MODE', 'LAYERED_BUILD_ENABLED',
+  // QA & guardrails
+  'PLAID_LINK_QA_MODE', 'BUILD_QA_PLAID_MODE', 'BUILD_QA_DETERMINISTIC_GATE',
+  'CLAIM_CHECK_STRICT', 'PRODUCT_KB_MIN_CONFIDENCE',
+  // Pipeline polish toggles
+  'TOUCHUP_ENABLED', 'SKIP_BRAND_SITE_SCREENSHOT', 'AUTO_GAP_PRESERVE_MANUAL',
+  'EMBED_SYNC_AUTO_APPLY', 'AI_SUGGEST_AUTO_APPLY', 'MOBILE_VISUAL_ENABLED', 'VERBOSE',
+  // Dashboard meta
+  'DASHBOARD_WRITE',
 ]);
 
 // ── Overlay suggestion patch helper ──────────────────────────────────────────
@@ -105,7 +121,9 @@ let pipelineDiskLogStream = null;
 const PIPELINE_STAGES = [
   'research', 'ingest', 'script', 'brand-extract', 'script-critique',
   'embed-script-validate',
-  /* 'plaid-link-capture', */ 'build', 'plaid-link-qa', 'build-qa', 'record', 'qa', 'figma-review', 'post-process',
+  /* 'plaid-link-capture', */ 'build', 'plaid-link-qa', 'build-qa',
+  'post-slides', 'post-panels',
+  'record', 'qa', 'figma-review', 'post-process',
   'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa',
   'ai-suggest-overlays', 'render', 'ppt', 'touchup',
 ];
@@ -724,6 +742,40 @@ function getRunScriptSummary(runId) {
   };
 }
 
+/**
+ * Return normalized Plaid Link mode for the run. Reads `demo-script.json`
+ * first, then falls back to `pipeline-run-context.json`. Returns one of
+ * 'embedded' | 'modal' | null.
+ */
+function getRunPlaidLinkMode(runId) {
+  const dir = path.join(DEMOS_DIR, runId);
+  const raw = (() => {
+    const script = safeReadJson(path.join(dir, 'demo-script.json'));
+    if (script && typeof script === 'object' && typeof script.plaidLinkMode === 'string') return script.plaidLinkMode;
+    const ctx = safeReadJson(path.join(dir, 'pipeline-run-context.json'));
+    if (ctx && typeof ctx === 'object') {
+      if (typeof ctx.plaidLinkMode === 'string') return ctx.plaidLinkMode;
+      if (ctx.linkTokenCreate && typeof ctx.linkTokenCreate.plaidLinkMode === 'string') return ctx.linkTokenCreate.plaidLinkMode;
+    }
+    return '';
+  })();
+  const norm = String(raw || '').trim().toLowerCase();
+  if (norm === 'embedded') return 'embedded';
+  if (norm === 'modal') return 'modal';
+  return null;
+}
+
+function getRunOwnerFromManifest(runId) {
+  const dir = path.join(DEMOS_DIR, runId);
+  const manifest = safeReadJson(path.join(dir, 'run-manifest.json'));
+  if (!manifest || typeof manifest !== 'object') return null;
+  if (manifest.owner && typeof manifest.owner === 'object') {
+    const login = typeof manifest.owner.login === 'string' ? manifest.owner.login : '';
+    if (login) return { login, name: manifest.owner.name || login };
+  }
+  return null;
+}
+
 // Stage → indicator artifact (ordered by pipeline sequence; paths are under the run dir)
 const STAGE_ARTIFACTS = [
   ['research',        'research-notes.md'],
@@ -736,6 +788,8 @@ const STAGE_ARTIFACTS = [
   ['build',               'scratch-app/index.html'],
   ['plaid-link-qa',       'plaid-link-qa.json'],
   ['build-qa',            'build-qa-diagnostics.json'],
+  ['post-slides',         'post-slides-report.json'],
+  ['post-panels',         'post-panels-report.json'],
   ['record',          'recording.webm'],
   ['qa',              'qa-report-1.json'],
   ['figma-review',    'figma-review.json'],
@@ -1452,6 +1506,7 @@ async function captureRunScreenshots(runId) {
 }
 
 app.post('/api/runs/:runId/capture-build-screenshots', async (req, res) => {
+  if (guardWriteOrStage(req, res, 'build-qa')) return;
   try {
     const runId  = req.params.runId;
     getRunDir(runId); // validate
@@ -2019,15 +2074,21 @@ function buildPipeCliCommand(body = {}) {
   return parts.join(' ');
 }
 
-function respondWithCliHint(req, res, verb) {
+function respondWithCliHint(req, res, verb, opts = {}) {
   const body = req.body || {};
+  const runId = opts.runId || req.params?.runId || '';
   let cliCommand;
   if (verb === 'run') {
     cliCommand = buildPipeCliCommand(body);
   } else if (verb === 'kill') {
     cliCommand = 'npm run pipe -- stop';
   } else if (verb === 'continue') {
-    cliCommand = 'npm run pipe -- continue';
+    cliCommand = `npm run pipe -- continue${runId ? ' ' + runId : ''}`;
+  } else if (verb === 'stage' && opts.stage) {
+    const idPart = runId ? ' ' + runId : '';
+    cliCommand = `npm run pipe -- stage ${opts.stage}${idPart}`;
+  } else if (verb === 'publish') {
+    cliCommand = `npm run pipe -- publish${runId ? ' ' + runId : ' <RUN_ID>'}`;
   } else {
     cliCommand = 'npm run pipe';
   }
@@ -2037,6 +2098,45 @@ function respondWithCliHint(req, res, verb) {
     docs: '.claude/skills/pipeline-cli/SKILL.md',
     hint: 'Set DASHBOARD_WRITE=true to re-enable legacy dashboard runs.',
   });
+}
+
+/**
+ * Guard helper for dashboard endpoints that trigger LLM work or orchestrator
+ * side-effects. When DASHBOARD_WRITE is off we return 410 + CLI hint; callers
+ * return true so they can `return` early.
+ */
+function guardWriteOrStage(req, res, stage) {
+  if (DASHBOARD_WRITE_ENABLED) return false;
+  respondWithCliHint(req, res, 'stage', { stage, runId: req.params?.runId });
+  return true;
+}
+
+/**
+ * Shared helper invoked whenever a storyboard action inserts a step into
+ * `demo-script.json`. Stamps `stepKind` on the new step and, when a slide is
+ * inserted into an originally `app-only` run, flips the run manifest to
+ * `app+slides` (source = `storyboard-insert`) so downstream post-slides QA
+ * and the dashboard badge are aware.
+ */
+function stampInsertedStepKindAndMaybeUpgradeBuildMode(runDir, insertedStep) {
+  try {
+    if (!insertedStep || typeof insertedStep !== 'object') return;
+    const kind = deriveStepKind(insertedStep);
+    if (insertedStep.stepKind !== kind) insertedStep.stepKind = kind;
+    if (kind !== 'slide') return;
+    const manifest = readRunManifestSafe(runDir);
+    if (!manifest) return;
+    const current = String(manifest.buildMode || '').toLowerCase();
+    if (current === 'app+slides') return;
+    writeRunManifestSafe(runDir, {
+      ...manifest,
+      buildMode: 'app+slides',
+      buildModeSource: 'storyboard-insert',
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.warn(`[storyboard] Could not stamp stepKind / upgrade buildMode: ${e.message}`);
+  }
 }
 
 app.post('/api/pipeline/run', (req, res) => {
@@ -2332,6 +2432,7 @@ app.get('/api/fs/watch', (req, res) => {
 // ── Narration AI rewrite ─────────────────────────────────────────────────────
 
 app.post('/api/runs/:runId/narration-rewrite', async (req, res) => {
+  if (guardWriteOrStage(req, res, 'script')) return;
   try {
     const { stepId, narration, direction, label } = req.body;
     if (!narration || !direction) {
@@ -2422,6 +2523,7 @@ app.get('/api/runs/:runId/brand', (req, res) => {
 // POST /api/runs/:runId/generate-step
 // body: { sceneType: 'demo'|'slide', description, insertAfterId? }
 app.post('/api/runs/:runId/generate-step', async (req, res) => {
+  if (guardWriteOrStage(req, res, 'script')) return;
   try {
     const { sceneType, description, insertAfterId, useGleanResearch = false } = req.body;
     if (!sceneType || !description) return res.status(400).json({ error: 'sceneType and description required' });
@@ -2620,11 +2722,12 @@ app.post('/api/runs/:runId/insert-step', (req, res) => {
     }
     steps.splice(insertIdx, 0, step);
     script.steps = steps;
+    stampInsertedStepKindAndMaybeUpgradeBuildMode(dir, step);
 
     const tmp = scriptPath + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
     fs.renameSync(tmp, scriptPath);
-    res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length });
+    res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length, stepKind: step.stepKind });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2699,6 +2802,7 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
     }
     steps.splice(insertIdx, 0, nextStep);
     script.steps = steps;
+    stampInsertedStepKindAndMaybeUpgradeBuildMode(dir, nextStep);
 
     const tmp = scriptPath + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
@@ -2874,6 +2978,7 @@ app.get('/api/runs/:runId/auto-gap', (req, res) => {
 });
 
 app.post('/api/runs/:runId/auto-gap-overrides', (req, res) => {
+  if (guardWriteOrStage(req, res, 'auto-gap')) return;
   try {
     const { overrides } = req.body;
     if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
@@ -2912,6 +3017,7 @@ app.get('/api/runs/:runId/overlay-suggestions', (req, res) => {
 });
 
 app.post('/api/runs/:runId/apply-suggestion', (req, res) => {
+  if (guardWriteOrStage(req, res, 'ai-suggest-overlays')) return;
   try {
     const { stepId, suggestionIndex } = req.body || {};
     if (!stepId || typeof suggestionIndex !== 'number') {
@@ -2954,6 +3060,7 @@ app.post('/api/runs/:runId/apply-suggestion', (req, res) => {
 });
 
 app.post('/api/runs/:runId/apply-all-suggestions', (req, res) => {
+  if (guardWriteOrStage(req, res, 'ai-suggest-overlays')) return;
   try {
     const minConfidence = parseFloat(req.body?.minConfidence ?? 0.85);
 
@@ -3063,6 +3170,47 @@ function safeInputsPath(name) {
   return resolved;
 }
 
+// Build a slug → [family names] map once per server process so product KB
+// entries can advertise which product family actually loads them. Keeps the
+// Product Knowledge tab honest about dead-weight files.
+let _slugToFamiliesCache = null;
+function getSlugToFamiliesMap() {
+  if (_slugToFamiliesCache) return _slugToFamiliesCache;
+  try {
+    const { PRODUCT_FAMILIES } = require('../scratch/utils/product-profiles');
+    const map = {};
+    for (const [familyKey, profile] of Object.entries(PRODUCT_FAMILIES || {})) {
+      for (const slug of (profile.kbSlugs || [])) {
+        if (!map[slug]) map[slug] = [];
+        if (!map[slug].includes(familyKey)) map[slug].push(familyKey);
+      }
+    }
+    _slugToFamiliesCache = map;
+    return map;
+  } catch (_) {
+    _slugToFamiliesCache = {};
+    return _slugToFamiliesCache;
+  }
+}
+
+function loadedByFamiliesForProductFile(filename) {
+  // filename like "plaid-auth.md" → slug "auth". Underscore-prefixed
+  // templates intentionally return an empty array.
+  const base = String(filename || '').replace(/^products\//, '').replace(/\.md$/i, '');
+  const m = base.match(/^plaid-(.+)$/);
+  if (!m) return [];
+  const slug = m[1].toLowerCase();
+  return (getSlugToFamiliesMap()[slug] || []).slice();
+}
+
+// Files whose basename starts with `_` are treated as author templates /
+// archive notes and are hidden from the dashboard listing. This keeps the
+// Product Knowledge tab focused on files the pipeline actually consumes.
+function isDashboardHiddenMarkdown(filename) {
+  const base = String(filename || '').split('/').pop();
+  return base.startsWith('_') || base.startsWith('.');
+}
+
 function enrichValuepropListEntry(name, group, fullPath, stat) {
   const content = fs.readFileSync(fullPath, 'utf8');
   const fm = parseFrontmatter(content);
@@ -3071,6 +3219,7 @@ function enrichValuepropListEntry(name, group, fullPath, stat) {
   const { staleDays, staleByAge, staleThresholdDays } = computeStaleness(fm);
   const needsReview = fm.needs_review === 'true' ||
     (fm.last_ai_update && fm.last_human_review && fm.last_ai_update > fm.last_human_review);
+  const loadedBy = group === 'products' ? loadedByFamiliesForProductFile(name) : [];
   return {
     name,
     size: stat.size,
@@ -3084,6 +3233,7 @@ function enrichValuepropListEntry(name, group, fullPath, stat) {
     staleDays,
     staleByAge,
     staleThresholdDays,
+    loadedBy,
   };
 }
 
@@ -3099,11 +3249,11 @@ function queuePriorityScore(entry) {
 app.get('/api/valueprop/review-queue', (req, res) => {
   try {
     const entries = [];
-    for (const f of safeReaddir(INPUTS_DIR).filter(x => x.toLowerCase().endsWith('.md'))) {
+    for (const f of safeReaddir(INPUTS_DIR).filter(x => x.toLowerCase().endsWith('.md') && !isDashboardHiddenMarkdown(x))) {
       const full = path.join(INPUTS_DIR, f);
       entries.push(enrichValuepropListEntry(f, 'root', full, fs.statSync(full)));
     }
-    for (const f of safeReaddir(PRODUCTS_DIR).filter(x => x.toLowerCase().endsWith('.md'))) {
+    for (const f of safeReaddir(PRODUCTS_DIR).filter(x => x.toLowerCase().endsWith('.md') && !isDashboardHiddenMarkdown(x))) {
       const full = path.join(PRODUCTS_DIR, f);
       entries.push(enrichValuepropListEntry(`products/${f}`, 'products', full, fs.statSync(full)));
     }
@@ -3117,7 +3267,7 @@ app.get('/api/valueprop/review-queue', (req, res) => {
 app.get('/api/valueprop/list', (req, res) => {
   try {
     const rootFiles = safeReaddir(INPUTS_DIR)
-      .filter(f => f.toLowerCase().endsWith('.md'))
+      .filter(f => f.toLowerCase().endsWith('.md') && !isDashboardHiddenMarkdown(f))
       .sort()
       .map(f => {
         const full = path.join(INPUTS_DIR, f);
@@ -3125,7 +3275,7 @@ app.get('/api/valueprop/list', (req, res) => {
       });
 
     const productFiles = safeReaddir(PRODUCTS_DIR)
-      .filter(f => f.toLowerCase().endsWith('.md'))
+      .filter(f => f.toLowerCase().endsWith('.md') && !isDashboardHiddenMarkdown(f))
       .sort()
       .map(f => {
         const full = path.join(PRODUCTS_DIR, f);
@@ -3138,108 +3288,34 @@ app.get('/api/valueprop/list', (req, res) => {
   }
 });
 
+// ── DEPRECATED APPROVAL ENDPOINTS ────────────────────────────────────────
+// Fact-approval workflow (draft facts, "mark reviewed", bulk approve/reject)
+// was removed in 2026-04. Product knowledge is now edit-and-save only;
+// freshness is tracked via `last_vp_research` in the per-product MD frontmatter
+// (see scripts/scratch/utils/product-vp-freshness.js). These endpoints return
+// 410 Gone so any cached client code fails loudly rather than silently.
+function respondApprovalDeprecated(res, endpoint) {
+  return res.status(410).json({
+    error: 'Approval workflow removed — product knowledge is edit-and-save only.',
+    deprecatedEndpoint: endpoint,
+    hint: 'Use GET/PUT /api/valueprop/:name to read and save markdown directly. Freshness is tracked via `last_vp_research` in the file\'s frontmatter.',
+  });
+}
+
 app.post('/api/valueprop/review', (req, res) => {
-  try {
-    const { name, force, last_reviewed_by: reviewedBy, review_note: reviewNote } = req.body || {};
-    if (!name) return res.status(400).json({ error: 'name is required' });
-    const filePath = safeInputsPath(name);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    let content = fs.readFileSync(filePath, 'utf8');
-    const { facts } = extractFactsFromMarkdown(content);
-    const unresolvedDraftCount = countDraftFacts(facts);
-    if (!force && unresolvedDraftCount > 0) {
-      return res.status(409).json({
-        ok: false,
-        code: 'unresolved_drafts',
-        unresolvedDraftCount,
-        message: 'Clear draft facts first, or pass force: true to complete review anyway.',
-      });
-    }
-    const today = new Date().toISOString().split('T')[0];
-    content = content.replace(/^last_human_review:.*$/m, `last_human_review: "${today}"`);
-    content = content.replace(/^needs_review:.*$/m, 'needs_review: false');
-    if (reviewedBy && typeof reviewedBy === 'string') {
-      const safe = reviewedBy.replace(/["\n\r]/g, '').slice(0, 120);
-      if (/^last_reviewed_by:/m.test(content)) {
-        content = content.replace(/^last_reviewed_by:.*$/m, `last_reviewed_by: "${safe}"`);
-      } else {
-        content = content.replace(/^---\n/, `---\nlast_reviewed_by: "${safe}"\n`);
-      }
-    }
-    if (reviewNote && typeof reviewNote === 'string' && reviewNote.trim()) {
-      const note = reviewNote.trim().replace(/-->/g, '').slice(0, 500);
-      content += `\n\n<!-- human_review ${today}: ${note} -->\n`;
-    }
-    const tmp = filePath + '.tmp';
-    fs.writeFileSync(tmp, content, 'utf8');
-    fs.renameSync(tmp, filePath);
-    res.json({ ok: true, unresolvedDraftCount: 0 });
-  } catch (err) {
-    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
-  }
+  respondApprovalDeprecated(res, 'POST /api/valueprop/review');
 });
 
 app.get('/api/valueprop/:name/facts', (req, res) => {
-  try {
-    const filePath = safeInputsPath(req.params.name);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    const content = fs.readFileSync(filePath, 'utf8');
-    const { facts, bodyStartLine } = extractFactsFromMarkdown(content);
-    res.json({
-      name: req.params.name,
-      factCount: facts.length,
-      draftCount: countDraftFacts(facts),
-      bodyStartLine,
-      facts,
-    });
-  } catch (err) {
-    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
-  }
+  respondApprovalDeprecated(res, 'GET /api/valueprop/:name/facts');
 });
 
 app.patch('/api/valueprop/:name/facts/:factId', (req, res) => {
-  try {
-    const lineStart = parseFactLine(req.params.factId);
-    if (!lineStart) return res.status(400).json({ error: 'Invalid fact id (expected L<number>)' });
-    const { op, text } = req.body || {};
-    if (!op) return res.status(400).json({ error: 'op is required (approve|reject|edit)' });
-    const filePath = safeInputsPath(req.params.name);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    let content = fs.readFileSync(filePath, 'utf8');
-    content = applyFactOperation(content, { op, lineStart, text });
-    const tmp = filePath + '.tmp';
-    fs.writeFileSync(tmp, content, 'utf8');
-    fs.renameSync(tmp, filePath);
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
-  }
+  respondApprovalDeprecated(res, 'PATCH /api/valueprop/:name/facts/:factId');
 });
 
 app.post('/api/valueprop/:name/facts/bulk', (req, res) => {
-  try {
-    const actions = req.body && req.body.actions;
-    if (!Array.isArray(actions) || actions.length === 0) {
-      return res.status(400).json({ error: 'actions array required' });
-    }
-    const filePath = safeInputsPath(req.params.name);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
-    let content = fs.readFileSync(filePath, 'utf8');
-    const resolved = actions.map((a) => {
-      const lineStart = parseFactLine(a.factId);
-      return { op: a.op, lineStart, text: a.text };
-    }).filter(a => a.lineStart != null);
-    resolved.sort((a, b) => b.lineStart - a.lineStart);
-    for (const a of resolved) {
-      content = applyFactOperation(content, a);
-    }
-    const tmp = filePath + '.tmp';
-    fs.writeFileSync(tmp, content, 'utf8');
-    fs.renameSync(tmp, filePath);
-    res.json({ ok: true, applied: resolved.length });
-  } catch (err) {
-    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
-  }
+  respondApprovalDeprecated(res, 'POST /api/valueprop/:name/facts/bulk');
 });
 
 app.get('/api/valueprop/:name', (req, res) => {
@@ -3625,13 +3701,34 @@ app.get('/api/demo-apps', (req, res) => {
       _demoAppsScannedAt = now;
     }
     // Always reflect live running state (no FS needed)
-    const apps = _demoAppsRunIds.map(runId => ({
-      runId,
-      displayName: resolveDemoDisplayName(runId, namesMap),
-      running: demoAppServers.has(runId),
-      url: demoAppServers.get(runId)?.url || null,
-      port: demoAppServers.get(runId)?.port || null,
-    }));
+    const apps = _demoAppsRunIds.map(runId => {
+      const qa = getLatestQaReport(runId);
+      const buildModeInfo = readRunBuildModeInfo(runId);
+      const plaidLinkMode = getRunPlaidLinkMode(runId);
+      const owner = getRunOwnerFromManifest(runId);
+      const script = getRunScriptSummary(runId);
+      const dir = path.join(DEMOS_DIR, runId);
+      const promptExists =
+        fs.existsSync(path.join(dir, 'inputs', 'prompt.txt')) ||
+        fs.existsSync(path.join(dir, 'prompt.txt'));
+      return {
+        runId,
+        displayName: resolveDemoDisplayName(runId, namesMap),
+        running: demoAppServers.has(runId),
+        url: demoAppServers.get(runId)?.url || null,
+        port: demoAppServers.get(runId)?.port || null,
+        buildMode: buildModeInfo ? buildModeInfo.buildMode : null,
+        buildModeLabel: buildModeInfo ? buildModeInfo.label : null,
+        plaidLinkMode,
+        qaScore: qa ? qa.overallScore : null,
+        qaPassed: qa ? !!qa.passed : null,
+        owner,
+        source: 'local',
+        promptPath: promptExists ? `/api/runs/${encodeURIComponent(runId)}/prompt` : null,
+        promptViewerUrl: promptExists ? `/prompt?run=${encodeURIComponent(runId)}` : null,
+        script,
+      };
+    });
     res.json({ apps });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -3675,6 +3772,9 @@ app.post('/api/demo-apps/:runId/clone', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const companyName = normalizeCloneCompanyName(body.companyName);
     const website = normalizeCloneWebsite(body.website);
+    if ((companyName || website) && !DASHBOARD_WRITE_ENABLED) {
+      return respondWithCliHint(req, res, 'stage', { stage: 'build', runId: sourceRunId });
+    }
     if (companyName.length > 120) {
       return res.status(400).json({ error: 'companyName must be 120 chars or fewer' });
     }
@@ -4371,6 +4471,7 @@ async function generateLibraryStepThumbnailsForRun(runDir, stepId, slide) {
 }
 
 app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
+  if (guardWriteOrStage(req, res, 'build')) return;
   try {
     const { runId } = req.params;
     const {
@@ -4645,6 +4746,131 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
 
 app.get('/timeline', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'timeline.html'));
+});
+
+app.get('/prompt', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'prompt-viewer.html'));
+});
+
+function resolveArtifactDirForDashboard() {
+  return (process.env.PLAID_DEMO_APPS_DIR && process.env.PLAID_DEMO_APPS_DIR.trim())
+    || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.plaid-demo-apps');
+}
+
+function readRemotePublishedApps() {
+  const base = resolveArtifactDirForDashboard();
+  const demosRoot = path.join(base, 'demos');
+  const out = [];
+  if (!fs.existsSync(demosRoot)) return out;
+  let users;
+  try { users = fs.readdirSync(demosRoot); } catch (_) { return out; }
+  for (const userLogin of users) {
+    const userDir = path.join(demosRoot, userLogin);
+    let stat;
+    try { stat = fs.statSync(userDir); } catch (_) { continue; }
+    if (!stat.isDirectory()) continue;
+    let runs;
+    try { runs = fs.readdirSync(userDir); } catch (_) { continue; }
+    for (const runId of runs) {
+      const runPath = path.join(userDir, runId);
+      const manifestPath = path.join(runPath, 'PUBLISH_MANIFEST.json');
+      if (!fs.existsSync(manifestPath)) continue;
+      const manifest = safeReadJson(manifestPath);
+      if (!manifest) continue;
+      out.push({
+        runId,
+        displayName: manifest.runId || runId,
+        source: 'remote',
+        owner: manifest.owner || { login: userLogin, name: null },
+        buildMode: manifest.buildMode || null,
+        plaidLinkMode: manifest.plaidLinkMode || null,
+        qaScore: manifest.qaScore != null ? manifest.qaScore : null,
+        publishedAt: manifest.publishedAt || null,
+        localPath: runPath,
+      });
+    }
+  }
+  return out;
+}
+
+app.post('/api/demo-apps/:runId/publish', async (req, res) => {
+  if (guardWriteOrStage(req, res, 'publish')) return;
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'runId required' });
+    const runDir = getRunDir(runId);
+    const identity = resolveDashIdentity({ refresh: false });
+    if (!identity) return res.status(400).json({ error: 'Identity not resolved — run `pipe whoami`.' });
+    const artifactDir = resolveArtifactDirForDashboard();
+    if (!fs.existsSync(artifactDir)) {
+      return res.status(400).json({ error: `Artifact clone not found at ${artifactDir}. Run \`pipe pull\` first.` });
+    }
+    const { publishPackage } = require('../scratch/utils/run-package');
+    const destDir = path.join(artifactDir, 'demos', identity.login, runId);
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const result = publishPackage({
+      runDir,
+      destDir,
+      owner: { login: identity.login, name: identity.name || null },
+      includePrompt: !!body.includePrompt,
+      overwrite: true,
+      notes: typeof body.notes === 'string' ? body.notes : null,
+    });
+    res.json({ ok: true, destDir: result.destDir, manifest: result.manifest, files: result.files.length });
+  } catch (err) {
+    if (err && err.code === 'PUBLISH_BLOCKED_SECRET') {
+      return res.status(409).json({ error: err.message, findings: err.findings });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/remote-demo-apps', (req, res) => {
+  try {
+    res.json({ apps: readRemotePublishedApps(), artifactDir: resolveArtifactDirForDashboard() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/identity', (req, res) => {
+  try {
+    const id = resolveDashIdentity({ refresh: !!req.query.refresh });
+    if (!id) {
+      return res.json({
+        resolved: false,
+        hint: 'Run `gh auth login` or set PLAID_DEMO_USER to enable publishing.',
+      });
+    }
+    res.json({ resolved: true, login: id.login, name: id.name || null, source: id.source });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/runs/:runId/prompt', (req, res) => {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'runId required' });
+    const dir = getRunDir(runId);
+    const candidates = [
+      path.join(dir, 'inputs', 'prompt.txt'),
+      path.join(dir, 'prompt.txt'),
+    ];
+    const found = candidates.find((p) => fs.existsSync(p));
+    if (!found) return res.status(404).json({ error: 'prompt.txt not found for run' });
+    const text = fs.readFileSync(found, 'utf8');
+    const displayName = resolveDemoDisplayName(runId, readDemoAppNames());
+    res.json({
+      runId,
+      displayName,
+      text,
+      relativePath: path.relative(dir, found),
+      bytes: Buffer.byteLength(text, 'utf8'),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET /api/runs/:runId/timeline-data ────────────────────────────────────────

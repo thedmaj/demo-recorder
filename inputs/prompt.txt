@@ -1,72 +1,236 @@
 ================================================================================
-TD Bank (US) Account Funding — Ownership-Verified Instant Pay by Bank
+Bank of America Account Funding Demo — Link and Fund in Seconds, Not Days
 ================================================================================
 
-## Objective
-Create a production-grade, hyper-realistic TD funding journey where a customer links an external account, verifies ownership, enters a funding amount, and receives an instant low-risk Pay by Bank approval.
+Host: Bank of America — U.S. retail banking
+Canonical URL: https://www.bankofamerica.com
+Brand URL: https://www.bankofamerica.com
 
-Prioritize visual credibility and authentic UX over rigid storyboard literalism while preserving product truth and compliance constraints.
+User journey (one sentence):
+A Bank of America customer funds their BofA checking account from an external
+bank by connecting with Plaid (embedded Link), verifying ownership with
+Identity Match, pulling ACH rails with Auth, entering the transfer amount,
+running Signal Evaluate for return-risk, and getting instant funds approval.
 
-## Core Context
-- **Host:** TD Bank (United States) — retail banking / digital servicing
-- **Canonical URL:** https://www.td.com
-- **Brand URL:** https://www.td.com
-- **Primary product family:** `funding`
-- **Products featured:** Plaid Link, Plaid Identity Match, Plaid Auth, Plaid Signal
-- **Solutions supported:** Funding, Account Opening, Fraud & Risk Controls
-- **Primary messaging file:** `inputs/plaid-value-props.md`
-- **Research depth:** messaging
+Story arc (short prose):
+BofA wants to remove friction from account funding without taking on ACH
+return risk. Today, customers either wait days for micro-deposits or give up
+after a clunky credential hand-off. Plaid enters at the "Link external bank"
+CTA on the Transfers screen. Plaid's embedded Link gets the user to a
+connected external account in seconds. Identity Match confirms the external
+account belongs to the BofA customer of record. Auth returns ACH account and
+routing numbers. The customer enters the amount to transfer, and Signal
+Evaluate risk-scores that specific transaction. Low-risk users are approved
+instantly; funds show available same-session with no micro-deposit wait.
 
-## Non-Negotiables
-- Use live Plaid Link and real happy-path flow capture.
-- Keep product naming and semantics accurate (approved product names only).
-- Signal interpretation must remain correct: lower score = lower ACH return risk; happy path = low score + `ACCEPT`.
-- Show a clear business outcome at the end (instant, trusted funding completion).
-- Use TD-like consumer banking chrome for host steps; keep Plaid insight steps visually distinct.
-- Design for 1440x900.
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
 
-## Creative Freedom (Explicit)
-- Choose the strongest UX structure, spacing, and interaction hierarchy for realism.
-- You may merge/split host moments as needed if business logic is preserved.
-- Prefer natural product UX patterns (information architecture, progressive disclosure, meaningful affordances) over checklist-like UI.
-- Avoid generic template aesthetics; make it feel like a real TD production surface.
+Products featured (approved names only):
+Plaid Link (embedded institution search), Plaid Identity Match, Plaid Auth,
+Plaid Signal.
 
-## Scene Goals (Outcome-Based, Ordered)
-1. Establish TD funding context and user motivation to add an external account.
-2. Build trust before handoff (security + speed + clarity of next action).
-3. Show Plaid Link completion as the connection moment.
-4. Confirm ownership and account readiness using Identity Match + Auth insights.
-5. Capture funding amount and run Signal decisioning for that exact transaction.
-6. Reveal low-risk `ACCEPT` and instant funding confirmation with quantified value.
+Solutions supported (used to query Solutions Master):
+Account Funding, ACH risk management.
 
-## Persona and Required On-Screen Data
-- **Persona:** Maya Patel, TD retail customer
-- **Context:** Funding a TD checking account from an external account for an upcoming bill
-- **Must-show fields:** external account mask, funding amount, ownership status, routing/account readiness, Signal score + `ACCEPT`
+Primary product family: funding
 
-## Evidence Anchors (Externally Safe Ranges)
-- Funded account conversion lift: **+10% to +25%**
-- Time to first fund: **2x to 8x faster**
-- Funding-step drop-off reduction: **15% to 30% lower**
-- ACH risk outcome improvement: **30% to 50% fewer ACH return / unauthorized outcomes**
-- Funding cost-to-serve reduction: **10% to 20% lower**
-- Funding-related support contact reduction: **20% to 40% fewer**
+Primary messaging file for this demo (owns stats):
+inputs/plaid-value-props.md
 
-Use range-based language (“can help,” “supports,” “observed range”). Avoid deterministic guarantees.
+Research depth: gapfill
 
-## Constraints
-- Frame outputs as decision support for account funding and risk controls; do not claim guaranteed approvals.
-- Keep one coherent stats source and avoid conflicting claims.
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (CHECKLIST)
+-------------------------------------------------------------------------------
 
-## Optional Slide Supplement
-[[SLIDE_OUTPUT_BEGIN]]
-Include up to 3 Plaid insight slides aligned to API milestones:
-1) Identity Match (ownership verification)
-2) Auth (ACH rails readiness)
-3) Signal (risk decision and recommendation)
+[x] Live Plaid Link — **embedded Link** (embedded institution search),
+    single `plaidPhase: "launch"` step, mounted via `Plaid.createEmbedded` on
+    an in-page container `data-testid="plaid-embedded-link-container"`.
+[ ] Plaid Layer / OAuth / IDV — not required for this core flow
+[x] Sandbox / persona — defaults per `inputs/plaid-link-sandbox.md`
 
-Use centered framed slide content and the global API JSON side panel contract.
-[[SLIDE_OUTPUT_END]]
+**Plaid Link mode: embedded** (NOT modal). The embedded widget IS the launch
+CTA — clicking an institution tile inside the widget surfaces the Plaid Link
+modal. Do NOT render a separate "Connect external bank" / "Link external
+account" / "Launch Plaid" button. Do NOT emit
+`<button data-testid="link-external-account-btn">` anywhere on the launch step.
+
+**Embedded widget sizing (use-case driven per CLAUDE.md):** this is an
+account-funding / external-bank flow — use the **default profile
+(~430×390px)** so the Plaid institution search reads as a natural in-page
+widget on the BofA Transfers screen. Emit these runtime globals on the
+launch step so deterministic QA can verify:
+
+    window.__embeddedLinkUseCase = 'account_funding_ach';
+    window.__embeddedLinkSizeProfile = 'default';
+    window.__embeddedLinkExpectedInstitutionTileCount = 6;
+
+Pre-link trust messaging and the embedded widget MUST be shown in the SAME
+launch step (per CLAUDE.md). Do not split into separate explainer and
+embedded-launch steps.
+
+Sandbox note for the build/record stage:
+- Link token uses `"products": ["auth", "signal"]` plus identity via
+  `"required_if_supported_products": ["identity"]` (so Identity Match works
+  without blocking on institutions that don't support Identity).
+- Sandbox default user (`user_good` / `pass_good`) at First Platypus Bank
+  exposes a checking account suitable for Auth + Signal happy-path.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, NO SLIDES)
+-------------------------------------------------------------------------------
+
+| # | Beat Type | What the viewer sees | Narration focus | Reveal / CTA |
+|---|-----------|----------------------|-----------------|--------------|
+| 1 | host    | BofA dashboard with primary checking balance and primary nav (Home, Accounts, Transfers, Bill Pay, Deposits, Menu). | Set the stage — a BofA customer wants to fund their checking account from an external bank. | Click Transfers. |
+| 2 | host    | BofA Transfers landing — Internal transfer / External transfer toggle, and an "Add an external bank account" CTA card. | One tap from everyday banking into the funding flow. | Click "Add an external bank account". |
+| 3 | host    | "Link an external bank" page with brief trust copy (secure, no credentials stored) AND the embedded Plaid Link widget mounted in-page. | The customer doesn't leave BofA — Plaid's embedded widget surfaces their bank in place. | Click a suggested institution tile inside the embedded widget (simulated). |
+| 4 | link    | Plaid Link modal opens with credential entry, OTP, account selection (sandbox / simulated). | "Plaid handles the credential hand-off, tokenization, and account selection so BofA never touches the user's password." | Link onSuccess → returns to BofA. |
+| 5 | host    | BofA "External account connected" confirmation — institution name, account mask — and a subtle "verifying ownership" status. | Connection complete; now we confirm this external account belongs to the same person BofA already KYC'd. | Auto-advances to Identity Match insight. |
+| 6 | insight | Plaid-branded full-viewport Identity Match screen with global `#api-response-panel` showing `/identity/match` JSON. | Identity Match fuzzy-matches BofA's KYC record against the bank's file — nicknames and formatting handled automatically. Email mismatch surfaces in JSON but isn't a blocker. | Return to BofA. |
+| 7 | host    | Short BofA-branded "Ownership confirmed" screen — verified badge, institution + mask — then auto-advance. | Ownership established; next we pull the account and routing numbers for the ACH transfer. | Auto-advance to Auth insight. |
+| 8 | insight | Plaid-branded full-viewport Auth screen with global `#api-response-panel` showing `/auth/get` JSON (numbers.ach[]). | Auth returns the account and routing numbers so the funding leg can actually settle on the ACH network. | Return to BofA. |
+| 9 | host    | BofA "Transfer amount" entry — input in USD with validation (e.g. $500 default), BofA primary CTA "Continue". | Customer enters the amount they want to move. This is the amount Signal evaluates in a moment. | Continue. |
+| 10 | insight | Plaid-branded full-viewport Signal screen with global `#api-response-panel` showing `/signal/evaluate` JSON (low scores, `ruleset.result: ACCEPT`). | Signal risk-scores this specific debit — bank-initiated + customer-initiated return risk — so low-risk transfers are auto-approved. | Return to BofA. |
+| 11 | host    | BofA success screen — "Transfer approved — $500 will be available today" — and CTA back to Accounts. | Ownership first, rails second, amount-aware risk third — instant funding for qualified users without multi-day micro-deposits. | End on BofA-branded host outcome. |
+
+Product-specific reminders:
+- Signal: low score = low ACH return risk; happy path is ACCEPT with low
+  scores (illustrative: `customer_initiated_return_risk.score: 12`,
+  `bank_initiated_return_risk.score: 10`).
+- Identity Match: strong match on name/address/phone despite formatting
+  differences (e.g. "Michael Allen" vs "Michael A."). Show an email
+  mismatch in the JSON to illustrate nuance — the ruleset still approves.
+- Link: pre-step narration ends on the embedded widget; the Link step
+  narrates inside the modal only.
+- Every insight step id MUST contain the substring `insight`
+  (`identity-match-insight`, `auth-insight`, `signal-insight`) so
+  automated recording heuristics and humans can grep them consistently.
+
+Compliance / user data:
+BofA KYC PII is illustrative only — use a deliberate mismatch between BofA's
+record and the external bank's file on one field (email) and strong matches
+on name/address/phone to showcase fuzzy matching.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+Name / role: Michael A. Carter — Bank of America checking customer funding
+a new BofA account from an external bank.
+Company / context: Bank of America retail banking customer, Charlotte, NC.
+
+Sample on-screen fields:
+- BofA primary checking balance: $4,312.58
+- External institution (from Plaid Link metadata): First Platypus Bank
+- External account mask: ****4321
+- Transfer amount: $500.00
+- Identity Match scores (illustrative):
+    legal_name.score: 88 (Michael Allen Carter vs Michael A. Carter)
+    address.score: 95 (parsed variant of 101 S Tryon St #1200 Charlotte NC 28280)
+    phone_number.score: 95 (+17045550123 vs (704) 555-0123)
+    email_address.score: 18 (email mismatch — shown in JSON, narrated briefly)
+    is_nickname_match: true
+    is_postal_code_match: true
+- Signal (illustrative, happy path):
+    customer_initiated_return_risk.score: 12
+    bank_initiated_return_risk.score: 10
+    ruleset.result: ACCEPT
+
+No generic placeholders — use these names and values.
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Sticky global header with BofA logo (left), primary nav, and user menu with
+avatar initials "MC" (right). Primary nav: Home · Accounts · Transfers ·
+Bill Pay · Deposits · Menu. Entry into the funding flow is from
+**Transfers → "Add an external bank account"**. CTA label that opens the
+embedded Plaid widget: the widget IS the CTA on the "Link an external bank"
+page — no separate "Launch Plaid" button. BofA brand: warm reds and deep
+blues per brand/bankofamerica.json (freshly generated by `brand-extract`).
+Light backgrounds on all host screens; Plaid insight screens use dark navy
+(#0d1117) and teal accent (#00A67E).
+
+Viewport: 1440x900
+
+-------------------------------------------------------------------------------
+CRITICAL UI REQUIREMENT — PLAID INSIGHT SCREENS (PRODUCT LANGUAGE)
+-------------------------------------------------------------------------------
+
+For EVERY behind-the-scenes Plaid-branded full-viewport insight screen that
+corresponds to **POST /identity/match**, **POST /auth/get**, and **POST
+/signal/evaluate**:
+
+1. The host viewport shows Plaid insight chrome (dark navy, teal accent) and
+   does NOT embed the raw API body in the main layout.
+2. The **global** `#api-response-panel` overlay (right rail) is labeled
+   clearly (e.g. "API response") and shows the JSON for that step only when
+   that step is active.
+3. The panel is collapsible (chevron / Show / Hide) and animates in
+   (~400ms) consistently with the app.
+4. The consumer BofA UX must never show raw JSON — no `<pre>` JSON columns
+   inside host steps, no duplicate "insight-right" / "api-json-panel" /
+   "raw-json" divs inside insight step markup.
+
+Default for insight steps: the api-response-panel opens expanded on step
+load so recording frames never read as "missing JSON". BofA host steps
+always start with the panel collapsed / hidden.
+
+-------------------------------------------------------------------------------
+MANDATORY BACKEND API SEQUENCE (STORYBOARD AND NARRATION MUST MATCH THIS ORDER)
+-------------------------------------------------------------------------------
+
+After `public_token` exchange yields an `access_token` and `account_id`:
+
+1. POST /identity/match — Confirm account ownership first.
+2. POST /auth/get — Retrieve rails for ACH funding.
+3. HOST APP STEP (BofA consumer UX) — amount entry in USD.
+4. POST /signal/evaluate — ACH return risk for the specific amount.
+5. BofA consumer UX — instant approval (Signal ACCEPT).
+
+Do NOT present Auth before Identity Match in narration, `goToStep`
+ordering, or insight screen order.
+
+-------------------------------------------------------------------------------
+SIGNAL SCORE DIRECTION (OFFICIAL SEMANTICS — DO NOT INVERT)
+-------------------------------------------------------------------------------
+
+Per Plaid Signal documentation:
+- `bank_initiated_return_risk.score` and
+  `customer_initiated_return_risk.score` are on a 1–99 scale.
+- HIGHER numeric score = HIGHER ACH return risk.
+- LOWER numeric score = LOWER return risk.
+
+Happy path uses LOW risk scores (illustrative: single digits to low teens)
+with `ruleset.result: "ACCEPT"`.
+
+-------------------------------------------------------------------------------
+NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+-------------------------------------------------------------------------------
+
+This demo is APP-ONLY. Do not generate `sceneType: "slide"` steps.
+Do not add a final value-summary slide. End on a BofA host success step
+with a clear outcome ("Transfer approved — $500 will be available today").
+Value-proposition statements from solutions master / research remain in
+the narration and storyboard notes but must NOT appear as marketing
+headlines or hero banners in the BofA host UI.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+[x] One primary source for stats (inputs/plaid-value-props.md)
+[x] Product names and family match CLAUDE.md (Plaid Link, Identity Match,
+    Auth, Signal; family=funding)
+[x] Storyboard order matches intended `goToStep` flow (Identity Match →
+    Auth → amount → Signal → approval)
+[x] No slide beats included
+[x] App-only run (default — run with `npm run pipe -- new --app-only`)
+[x] Embedded Link mode documented; no `link-external-account-btn` emitted
 
 ================================================================================
 END OF SPECIFICATION

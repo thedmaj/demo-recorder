@@ -87,7 +87,8 @@ const RECORD_TRANSITION_SAFE_TIMING = !(
 const STEP_TRANSITION_SETTLE_MS = parseInt(process.env.STEP_TRANSITION_SETTLE_MS || '300', 10);
 // Extra boundary guard immediately after Plaid launch completion.
 const POST_LINK_STEP_BOUNDARY_GUARD_MS = parseInt(process.env.POST_LINK_STEP_BOUNDARY_GUARD_MS || '700', 10);
-const RECORD_POSTPROCESS_TIMEOUT_MS = parseInt(process.env.RECORD_POSTPROCESS_TIMEOUT_MS || '240000', 10);
+const RECORD_POSTPROCESS_TIMEOUT_MS = parseInt(process.env.RECORD_POSTPROCESS_TIMEOUT_MS || '360000', 10);
+const RECORD_POSTPROCESS_MAX_RETRIES = parseInt(process.env.RECORD_POSTPROCESS_MAX_RETRIES || '1', 10);
 
 // Resolved sandbox credentials (populated in main() after async Glean lookup)
 let _sandboxCredentials = null;
@@ -1294,24 +1295,37 @@ async function executePlaidLinkPhase(page, phase) {
           if (!otpDone) console.log('  [Plaid Link] No OTP screen found');
 
           // ── 2b. Saved institution selection (Remember Me returning-user) ────
-          await plaidSelectSavedInstitution(page, otpSubmittedWallMs);
+          // Tartan Bank is ALWAYS at the top of the sandbox Remember Me list and is
+          // non-OAuth — `plaidSelectSavedInstitution` clicks it directly per
+          // CLAUDE.md's "Tartan Bank at top, no scroll, no search" rule.
+          const selectedSavedInstitution = await plaidSelectSavedInstitution(page, otpSubmittedWallMs);
+          const rememberMeActive = isRememberMe || !!selectedSavedInstitution;
+          if (selectedSavedInstitution) {
+            console.log(
+              `  [Plaid Link] Remember Me detected at runtime — saved institution "${selectedSavedInstitution}" selected; skipping consent/search/credentials.`
+            );
+          }
 
           // ── 3. Consent / "Get started" screen ──────────────────────────────
-          console.log('  [Plaid Link] Handling consent screen...');
-          for (const label of ['Get started', 'I agree', 'Agree', 'Continue', 'Next']) {
-            const btn = frame.getByRole('button', { name: label, exact: false }).first();
-            if (await btn.isVisible({ timeout: 4000 }).catch(() => false)) {
-              await btn.click();
-              await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
-              console.log(`  [Plaid Link] Consent: clicked "${label}"`);
-              break;
+          // Skip consent when Remember Me flow is active — the SDK jumps directly
+          // from saved-institution selection to account selection.
+          if (!rememberMeActive) {
+            console.log('  [Plaid Link] Handling consent screen...');
+            for (const label of ['Get started', 'I agree', 'Agree', 'Continue', 'Next']) {
+              const btn = frame.getByRole('button', { name: label, exact: false }).first();
+              if (await btn.isVisible({ timeout: 4000 }).catch(() => false)) {
+                await btn.click();
+                await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
+                console.log(`  [Plaid Link] Consent: clicked "${label}"`);
+                break;
+              }
             }
           }
 
           // ── 4–7: Institution search + credentials (standard flow only) ────────
           // Remember Me flow skips these — the SDK goes directly from saved institution
           // selection to account selection without showing search or credentials screens.
-          if (!isRememberMe) {
+          if (!rememberMeActive) {
             // ── 4. Institution search ──────────────────────────────────────────
             console.log(`  [Plaid Link] Searching for institution: ${PLAID_SANDBOX_INSTITUTION}...`);
             let searchDone = false;
@@ -1449,7 +1463,7 @@ async function executePlaidLinkPhase(page, phase) {
             }
           }
 
-          } // end if (!isRememberMe) — institution search + credentials block
+          } // end if (!rememberMeActive) — institution search + credentials block
 
           // ── 9. Account selection ─────────────────────────────────────────────
           console.log('  [Plaid Link] Selecting account...');
@@ -1500,6 +1514,16 @@ async function executePlaidLinkPhase(page, phase) {
         // onSuccess also calls goToStep(firstPostLinkStep) to advance the app.
         console.log('  [Plaid Link] Waiting for _plaidLinkComplete (real onSuccess)...');
         await plaidLinkWaitSuccess(page);
+        // Defensive: if the vision-fallback path (or forced-completion path)
+        // reached Link success without firing confirm-clicked, emit a synthetic
+        // marker just before link-complete so post-process-recording.js has
+        // both anchors for Range 3 keep-range. Without this, modal flows with
+        // missing markers would be collapsed to a tiny institution-list window.
+        if (plaidLinkTimings['confirm-clicked'] == null && recordingStartMs) {
+          const nowS = (Date.now() - recordingStartMs) / 1000;
+          plaidLinkTimings['confirm-clicked'] = Math.max(0, nowS - 0.25);
+          console.log(`  [PlaidTiming] confirm-clicked (synthetic) = ${plaidLinkTimings['confirm-clicked'].toFixed(2)}s`);
+        }
         markPlaidStep('link-complete', page);
         // CRITICAL: destroy the Plaid iframe so it does not overlay post-link steps in the recording.
         // The Plaid SDK iframe persists in the DOM after onSuccess unless handler.destroy() is called.
@@ -1642,88 +1666,96 @@ async function executePlaidLinkPhase(page, phase) {
           }
         }
 
-        await plaidSelectSavedInstitution(page, cssOtpSubmittedWallMs);
+        const cssSavedInstitution = await plaidSelectSavedInstitution(page, cssOtpSubmittedWallMs);
+        const cssRememberMeActive = !!cssSavedInstitution;
+        if (cssSavedInstitution) {
+          console.log(
+            `  [Plaid Link] CSS: Remember Me detected at runtime — saved institution "${cssSavedInstitution}" selected; skipping consent/search/credentials.`
+          );
+        }
 
         // ── 3. Consent / "Get started" screen ─────────────────────────────────
-        console.log('  [Plaid Link] CSS: Handling consent screen...');
-        for (const label of ['Get started', 'I agree', 'Agree', 'Continue', 'Next']) {
-          const btn = frame.getByRole('button', { name: label, exact: false }).first();
-          if (await btn.isVisible({ timeout: 4000 }).catch(() => false)) {
-            await btn.click();
-            await page.waitForTimeout(2500);
-            console.log(`  [Plaid Link] CSS: Consent clicked "${label}"`);
-            break;
+        if (!cssRememberMeActive) {
+          console.log('  [Plaid Link] CSS: Handling consent screen...');
+          for (const label of ['Get started', 'I agree', 'Agree', 'Continue', 'Next']) {
+            const btn = frame.getByRole('button', { name: label, exact: false }).first();
+            if (await btn.isVisible({ timeout: 4000 }).catch(() => false)) {
+              await btn.click();
+              await page.waitForTimeout(2500);
+              console.log(`  [Plaid Link] CSS: Consent clicked "${label}"`);
+              break;
+            }
           }
-        }
 
-        // ── 4. Institution search ──────────────────────────────────────────────
-        console.log(`  [Plaid Link] CSS: Searching for ${PLAID_SANDBOX_INSTITUTION}...`);
-        for (const sel of ['input[placeholder*="Search" i]', 'input[placeholder*="bank" i]', 'input[type="search"]', 'input[name="search"]', 'input[role="searchbox"]', 'input[type="text"]']) {
-          const input = frame.locator(sel).first();
-          if (await input.isVisible({ timeout: sel === 'input[type="text"]' ? 8000 : 5000 }).catch(() => false)) {
-            await input.fill(PLAID_SANDBOX_INSTITUTION);
-            await page.waitForTimeout(2500);
-            break;
-          }
-        }
-
-        // ── 5. Select institution ──────────────────────────────────────────────
-        console.log('  [Plaid Link] CSS: Selecting institution...');
-        let institutionSelected = false;
-        const byText = frame.getByText(PLAID_SANDBOX_INSTITUTION, { exact: false }).first();
-        if (await byText.isVisible({ timeout: 6000 }).catch(() => false)) {
-          await byText.click();
-          await page.waitForTimeout(2500);
-          institutionSelected = true;
-        }
-        if (!institutionSelected) {
-          for (const sel of ['li[role="option"]', 'button[role="option"]', 'ul li button']) {
-            const el = frame.locator(sel).first();
-            if (await el.isVisible({ timeout: 4000 }).catch(() => false)) {
-              await el.click();
+          // ── 4. Institution search ──────────────────────────────────────────────
+          console.log(`  [Plaid Link] CSS: Searching for ${PLAID_SANDBOX_INSTITUTION}...`);
+          for (const sel of ['input[placeholder*="Search" i]', 'input[placeholder*="bank" i]', 'input[type="search"]', 'input[name="search"]', 'input[role="searchbox"]', 'input[type="text"]']) {
+            const input = frame.locator(sel).first();
+            if (await input.isVisible({ timeout: sel === 'input[type="text"]' ? 8000 : 5000 }).catch(() => false)) {
+              await input.fill(PLAID_SANDBOX_INSTITUTION);
               await page.waitForTimeout(2500);
               break;
             }
           }
-        }
 
-        // ── 6. Connection type (first option) ─────────────────────────────────
-        const connType = frame.locator('li:first-of-type button').first();
-        if (await connType.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await connType.click();
-          await page.waitForTimeout(2000);
-          console.log('  [Plaid Link] CSS: Connection type selected');
-        }
+          // ── 5. Select institution ──────────────────────────────────────────────
+          console.log('  [Plaid Link] CSS: Selecting institution...');
+          let institutionSelected = false;
+          const byText = frame.getByText(PLAID_SANDBOX_INSTITUTION, { exact: false }).first();
+          if (await byText.isVisible({ timeout: 6000 }).catch(() => false)) {
+            await byText.click();
+            await page.waitForTimeout(2500);
+            institutionSelected = true;
+          }
+          if (!institutionSelected) {
+            for (const sel of ['li[role="option"]', 'button[role="option"]', 'ul li button']) {
+              const el = frame.locator(sel).first();
+              if (await el.isVisible({ timeout: 4000 }).catch(() => false)) {
+                await el.click();
+                await page.waitForTimeout(2500);
+                break;
+              }
+            }
+          }
 
-        // ── 7. Credentials ────────────────────────────────────────────────────
-        console.log('  [Plaid Link] CSS: Entering credentials...');
-        const cssUser = _sandboxConfig?.username || PLAID_SANDBOX_USERNAME;
-        const cssPass = _sandboxConfig?.password || PLAID_SANDBOX_PASSWORD;
-        for (const sel of ['input[name="username"]', 'input[id*="username" i]', 'input[type="text"]:first-of-type']) {
-          const el = frame.locator(sel).first();
-          if (await el.isVisible({ timeout: 6000 }).catch(() => false)) {
-            await el.fill(cssUser);
-            break;
+          // ── 6. Connection type (first option) ─────────────────────────────────
+          const connType = frame.locator('li:first-of-type button').first();
+          if (await connType.isVisible({ timeout: 3000 }).catch(() => false)) {
+            await connType.click();
+            await page.waitForTimeout(2000);
+            console.log('  [Plaid Link] CSS: Connection type selected');
           }
-        }
-        await page.waitForTimeout(400);
-        for (const sel of ['input[name="password"]', 'input[type="password"]']) {
-          const el = frame.locator(sel).first();
-          if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
-            await el.fill(cssPass);
-            break;
+
+          // ── 7. Credentials ────────────────────────────────────────────────────
+          console.log('  [Plaid Link] CSS: Entering credentials...');
+          const cssUser = _sandboxConfig?.username || PLAID_SANDBOX_USERNAME;
+          const cssPass = _sandboxConfig?.password || PLAID_SANDBOX_PASSWORD;
+          for (const sel of ['input[name="username"]', 'input[id*="username" i]', 'input[type="text"]:first-of-type']) {
+            const el = frame.locator(sel).first();
+            if (await el.isVisible({ timeout: 6000 }).catch(() => false)) {
+              await el.fill(cssUser);
+              break;
+            }
           }
-        }
-        await page.waitForTimeout(400);
-        for (const sel of ['button[type="submit"]', 'button:has-text("Submit")', 'button:has-text("Log in")', 'button:has-text("Sign in")']) {
-          const btn = frame.locator(sel).first();
-          if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
-            await btn.click();
-            await page.waitForTimeout(5000);
-            console.log('  [Plaid Link] CSS: Credentials submitted');
-            break;
+          await page.waitForTimeout(400);
+          for (const sel of ['input[name="password"]', 'input[type="password"]']) {
+            const el = frame.locator(sel).first();
+            if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
+              await el.fill(cssPass);
+              break;
+            }
           }
-        }
+          await page.waitForTimeout(400);
+          for (const sel of ['button[type="submit"]', 'button:has-text("Submit")', 'button:has-text("Log in")', 'button:has-text("Sign in")']) {
+            const btn = frame.locator(sel).first();
+            if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+              await btn.click();
+              await page.waitForTimeout(5000);
+              console.log('  [Plaid Link] CSS: Credentials submitted');
+              break;
+            }
+          }
+        } // end if (!cssRememberMeActive) — CSS-path institution search + credentials block
 
         // ── 8. Account selection ──────────────────────────────────────────────
         console.log('  [Plaid Link] CSS: Selecting account...');
@@ -1799,6 +1831,37 @@ function findLatestWebm(dir) {
 
 function writeStepTiming(totalMs) {
   const fps = TARGET_FPS;
+
+  // Defense in depth: if two consecutive markStep() calls emitted the same
+  // step id (e.g., playwright-script had a duplicate row, or the recorder
+  // re-entered the Plaid launch phase after an iframe destroy), merge the
+  // adjacent windows so step-timing.json contains one window per step.
+  // Without this, voiceover.js generates a duplicate clip per step id and the
+  // final video plays the same narration twice — observed on Banner run where
+  // plaid-link-launch duplicated ~41s of content at the ~42s mark.
+  if (stepTimings.length > 1) {
+    const mergedTimings = [];
+    const mergedIds = [];
+    for (const entry of stepTimings) {
+      const prev = mergedTimings[mergedTimings.length - 1];
+      if (prev && prev.id === entry.id) {
+        // Absorb this marker into the prior window; keep the earlier startMs.
+        mergedIds.push(entry.id);
+        continue;
+      }
+      mergedTimings.push(entry);
+    }
+    if (mergedIds.length > 0) {
+      console.warn(
+        `[Record] Merged ${mergedIds.length} duplicate step-timing marker(s) ` +
+        `for step id(s): ${Array.from(new Set(mergedIds)).join(', ')}. ` +
+        `(Upstream playwright-script likely had duplicate entries.)`
+      );
+      stepTimings.length = 0;
+      stepTimings.push(...mergedTimings);
+    }
+  }
+
   // Compute per-step durations and frame numbers
   for (let i = 0; i < stepTimings.length; i++) {
     const next = stepTimings[i + 1];
@@ -1854,30 +1917,73 @@ function postProcessRecording(rawPath, outPath) {
 
   console.log(`[Record] Post-processing: re-encoding at ${TARGET_FPS}fps with quality boost...`);
   const tmpOut = outPath + '.tmp.webm';
+  const timeoutMs = Math.max(30000, RECORD_POSTPROCESS_TIMEOUT_MS);
 
-  try {
-    // Use simple frame duplication (fps filter) instead of motion interpolation.
-    // minterpolate is orders of magnitude slower and not worth the quality gain for demo videos.
-    execSync(
-      `ffmpeg -i "${rawPath}" ` +
-      `-vf fps=${TARGET_FPS} ` +
-      `-c:v libvpx-vp9 -crf 18 -b:v 0 -cpu-used 4 ` +
-      `-y "${tmpOut}"`,
-      { stdio: 'pipe', timeout: Math.max(30000, RECORD_POSTPROCESS_TIMEOUT_MS) }
-    );
+  // Primary attempt uses high-quality VP9 (crf 18). On timeout we fall back to
+  // a faster VP9 preset (crf 24, cpu-used 6) and record the error to disk so
+  // post-hoc audits can see the ETIMEDOUT without tailing pipeline logs.
+  const attempts = [
+    {
+      label: 'primary (crf 18, cpu-used 4)',
+      cmd:
+        `ffmpeg -i "${rawPath}" ` +
+        `-vf fps=${TARGET_FPS} ` +
+        `-c:v libvpx-vp9 -crf 18 -b:v 0 -cpu-used 4 ` +
+        `-y "${tmpOut}"`,
+    },
+    {
+      label: 'fallback (crf 24, cpu-used 6)',
+      cmd:
+        `ffmpeg -i "${rawPath}" ` +
+        `-vf fps=${TARGET_FPS} ` +
+        `-c:v libvpx-vp9 -crf 24 -b:v 0 -cpu-used 6 ` +
+        `-y "${tmpOut}"`,
+    },
+  ];
 
-    if (fs.existsSync(tmpOut)) {
-      fs.renameSync(tmpOut, outPath);
-      const rawSize = Math.round(fs.statSync(rawPath).size / 1024);
-      const outSize = Math.round(fs.statSync(outPath).size / 1024);
-      console.log(`[Record] Post-processing complete: ${rawSize}KB → ${outSize}KB at ${TARGET_FPS}fps`);
-      return true;
+  const maxAttempts = Math.min(attempts.length, 1 + Math.max(0, RECORD_POSTPROCESS_MAX_RETRIES));
+  const errors = [];
+  for (let i = 0; i < maxAttempts; i++) {
+    const attempt = attempts[i];
+    try {
+      if (i > 0) {
+        console.log(`[Record] Post-processing: retrying with ${attempt.label}...`);
+      }
+      execSync(attempt.cmd, { stdio: 'pipe', timeout: timeoutMs });
+
+      if (fs.existsSync(tmpOut)) {
+        fs.renameSync(tmpOut, outPath);
+        const rawSize = Math.round(fs.statSync(rawPath).size / 1024);
+        const outSize = Math.round(fs.statSync(outPath).size / 1024);
+        console.log(`[Record] Post-processing complete: ${rawSize}KB → ${outSize}KB at ${TARGET_FPS}fps (${attempt.label})`);
+        return true;
+      }
+    } catch (err) {
+      errors.push(`${attempt.label}: ${err.code || err.message}`);
+      console.warn(`[Record] Post-processing attempt ${i + 1}/${maxAttempts} failed: ${err.message}`);
+      try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
     }
-  } catch (err) {
-    console.warn(`[Record] Post-processing failed (using raw recording): ${err.message}`);
-    // Clean up partial output
-    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
   }
+
+  console.warn(`[Record] Post-processing failed after ${maxAttempts} attempt(s) — using raw recording.`);
+  // Persist the error trail so downstream QA can surface it without tailing logs.
+  try {
+    const outDir = path.dirname(outPath);
+    const errReport = {
+      status: 'fallback-to-raw',
+      raw: rawPath,
+      target: outPath,
+      attempts: maxAttempts,
+      errors,
+      timeoutMs,
+      at: new Date().toISOString(),
+    };
+    fs.writeFileSync(
+      path.join(outDir, 'record-postprocess-error.json'),
+      JSON.stringify(errReport, null, 2),
+      'utf8'
+    );
+  } catch (_) {}
   return false;
 }
 
@@ -2531,9 +2637,23 @@ async function main(opts = {}) {
           if (closed) console.log('  [Plaid Link] Ensured Plaid modal closed after launch phase.');
         }
 
-        // Add any additional wait from the step entry
-        if (stepEntry.waitMs) {
-          await page.waitForTimeout(Math.min(stepEntry.waitMs, 5000));
+        // Add a short tail wait so the Plaid modal fade-out doesn't bleed into
+        // the next step's step-timing window. We intentionally DO NOT honor the
+        // stepEntry.waitMs (often 120s safety budget) here: at this point
+        // plaidLinkWaitSuccess has already confirmed onSuccess fired and the
+        // app advanced (usually to the first post-link step via
+        // goToStep inside onSuccess). Blocking for the full step wait would
+        // keep the step-timing window for plaid-link-launch open for 5+ more
+        // seconds while the screen already shows the next step's content —
+        // that misattribution is what desynchronizes narration from visuals
+        // (observed: ~5s of Plaid Link narration playing over the
+        // identity-match-pass screen). Keep the wait minimal and deterministic.
+        const PLAID_LAUNCH_TAIL_SETTLE_MS = Math.max(
+          0,
+          parseInt(process.env.PLAID_LAUNCH_TAIL_SETTLE_MS || '400', 10) || 400
+        );
+        if (PLAID_LAUNCH_TAIL_SETTLE_MS > 0) {
+          await page.waitForTimeout(PLAID_LAUNCH_TAIL_SETTLE_MS);
         }
 
         continue; // Skip the normal action execution for this step

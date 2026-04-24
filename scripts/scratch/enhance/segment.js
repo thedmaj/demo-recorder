@@ -5,7 +5,7 @@
  *
  * Reads:  out/video-analysis.json (required)
  *         out/product-research.json (optional)
- * Calls:  claude-opus-4-6 with extended thinking (budget_tokens: 8000)
+ * Calls:  claude-opus-4-7 with extended thinking (budget_tokens: 8000)
  * Writes: out/step-timing.json
  *
  * Fallback: if transcript has no word timestamps, distributes frames evenly
@@ -143,10 +143,10 @@ async function segmentWithClaude(videoAnalysis, productResearch) {
     `  ]\n` +
     `}`;
 
-  console.log('[segment] Calling claude-opus-4-6 with extended thinking...');
+  console.log('[segment] Calling claude-opus-4-7 with extended thinking...');
 
   const response = await client.messages.create({
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     max_tokens: 16000,
     thinking: {
       type: 'enabled',

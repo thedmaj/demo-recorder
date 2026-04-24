@@ -1,4 +1,6 @@
 .env
+.env.local
+.env.*.local
 node_modules/
 out/
 public/*.mp4
@@ -9,3 +11,14 @@ EXIT*
 .claude/scheduled_tasks.lock
 credentials/
 brand/*.json
+
+# Local-only artifacts (generated, personal, or temporary)
+.venv/
+.venv-*/
+graphify-out/
+scripts/graphify-out/
+inputs/*.bak.*
+inputs/* copy.*
+
+# Safe-to-commit: inputs/_archive/ (intentional archive of retired monoliths)
+# — no .gitignore entry is needed since it's a tracked directory.

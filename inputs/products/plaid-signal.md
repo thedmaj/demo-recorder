@@ -1,24 +1,25 @@
 ---
-product: "Plaid Signal"
-slug: "signal"
+product: Plaid Signal
+slug: signal
 api_endpoints:
   - "signal/evaluate"
   - "signal/decision/report"
 use_cases:
-  - account-funding
-  - ach-risk-assessment
-  - instant-funding-decisioning
+  - "account-funding"
+  - "ach-risk-assessment"
+  - "instant-funding-decisioning"
 last_human_review: "2026-03-12"
 last_ai_update: "2026-03-12T00:00:00Z"
 needs_review: false
 approved: true
 version: 1
+last_vp_research: "2026-04-24"
 ---
 
 # Plaid Signal
 
 ## Overview
-Plaid Signal evaluates ACH return risk in real time using over 1,000 behavioral and identity signals — including balance, account tenure, NSF history, and Plaid network behavior. It returns a risk score (0–99) and actionable risk attributes so you can offer instant funding for low-risk users and step up high-risk transactions before releasing funds.
+Plaid Signal evaluates ACH return risk in real time across over 80 actionable risk insights — including balance, account tenure, NSF history, and Plaid network behavior. It returns a risk score (0–99, higher = higher return risk) and actionable risk attributes so you can offer instant funding for low-risk users and step up high-risk transactions before releasing funds.
 
 ## Where It Fits
 Feature Signal in demos where the persona needs to make a funding or ACH transfer decision: neobanks, investment platforms, or any fintech releasing funds from an external bank account. Pair with Auth + Identity Match in a complete account-funding flow.
@@ -41,8 +42,8 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 
 | Metric | Value | Source | Confidence | Last Verified |
 |--------|-------|--------|------------|---------------|
-| Risk factors used | 1,000+ | Plaid docs | high | 2026-03-12 |
-| Risk attributes returned | 80+ | Plaid docs | high | 2026-03-12 |
+| Actionable risk insights | 80+ | Plaid docs | high | 2026-04-18 |
+| Risk attributes returned | 80+ | Plaid docs | high | 2026-04-18 |
 | ACH return loss reduction | 40%+ | Gong calls | high | 2026-03-12 |
 | Robinhood: additional deposits annually | $100M+ | Plaid case study | high | 2026-03-12 |
 | Robinhood: instant funding increase | ~1.5% | Plaid case study | high | 2026-03-12 |
@@ -70,7 +71,7 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
      HUMAN-OWNED — AI must not modify approved blocks. -->
 
 ### Signal step
-> "Signal evaluates ACH return risk in real time—bank-initiated returns like NSF and closed accounts, and customer-initiated returns like unauthorized disputes. It uses 1,000+ risk factors and 80+ attributes. You get ACCEPT, REVIEW, or REROUTE recommendations." (35 words)
+> "Signal evaluates ACH return risk in real time—bank-initiated returns like NSF and closed accounts, and customer-initiated returns like unauthorized disputes. It uses 80 actionable risk insights. You get ACCEPT, REVIEW, or REROUTE recommendations." (33 words)
 
 ### Demo Closing (combined Auth + Signal)
 > "Auth gives you verified account numbers instantly, Identity Match confirms ownership for more good users, and Signal assesses return risk—all using the power of Plaid's network. Link and fund in seconds instead of days." (35 words)
@@ -81,9 +82,11 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 
 - API endpoint: `signal/evaluate`
 - Report endpoint: `signal/decision/report`
-- Score range: **0–99** (higher score = lower return risk)
-- Realistic demo values: **82–97** (never use 100 — too perfect)
+- Score range: **0–99** (**higher score = HIGHER return risk**; matches CLAUDE.md)
+- Realistic demo values for ACCEPT path: **5–20** (low risk → ACCEPT)
+- Do NOT use scores 82–97 for ACCEPT — those are high-risk and should be REVIEW/REROUTE
 - Do NOT use "Trust Index" — this is NOT a Plaid product name
+- Do NOT use "1,000+ risk factors" — approved language is "80 actionable risk insights"
 - Recommended verdicts: ACCEPT, REVIEW, REJECT, REROUTE
 - Return types covered: NSF, closed account, unauthorized (R10), administrative
 
@@ -91,7 +94,7 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 <!-- ⚠️ HUMAN-OWNED -->
 
 - Network-level signals: behavior across Plaid's 8,000+ FI connections, not just the user's account in isolation
-- 1,000+ risk factors vs basic balance-check alternatives
+- 80 actionable risk insights vs basic balance-check alternatives
 - No-code threshold tuning via the Plaid Dashboard — risk team can adjust without engineering
 - Covers both bank-initiated (NSF, closed account) and customer-initiated (unauthorized) return types
 
@@ -101,7 +104,7 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 | Objection | Response | Source | Status |
 |-----------|----------|--------|--------|
 | "We just do a balance check" | "Balance tells you funds exist at initiation. Signal tells you the probability of a return across the entire settlement window — NSF, closed account, and unauthorized disputes." | Gong | ✅ Approved |
-| "We can build this in-house" | "Signal uses 1,000+ behavioral and identity signals from Plaid's network of 8,000+ FIs. No in-house model can replicate that network data." | Gong | ✅ Approved |
+| "We can build this in-house" | "Signal uses 80 actionable risk insights from Plaid's network of 8,000+ FIs. No in-house model can replicate that network data." | Gong | ✅ Approved |
 
 ## AI Research Notes
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
@@ -114,3 +117,4 @@ Initial content migrated from monolithic value-props file. All proof points and 
 ## Change Log
 
 - 2026-03-12: File created from inputs/plaid-value-props.md [human]
+- 2026-04-18: Corrected semantics to match CLAUDE.md (higher score = HIGHER return risk, ACCEPT demo values 5-20) and replaced unapproved "1,000+ risk factors" with approved "80 actionable risk insights" throughout [pipeline-audit]

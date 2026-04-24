@@ -1,5 +1,5 @@
 ---
-product: "Plaid Check Base Report"
+product: Plaid Check Base Report
 slug: "cra-base-report"
 api_endpoints:
   - "/user/create"
@@ -7,14 +7,15 @@ api_endpoints:
   - "/cra/check_report/create"
   - "/cra/check_report/base_report/get"
 use_cases:
-  - credit-underwriting
-  - cash-flow-underwriting
-  - account-stability-review
+  - "credit-underwriting"
+  - "cash-flow-underwriting"
+  - "account-stability-review"
 last_human_review: "2026-03-26"
 last_ai_update: "2026-04-13T05:01:48.560Z"
 needs_review: true
 approved: true
 version: 1
+last_vp_research: "2026-04-24"
 ---
 
 # Plaid Check Base Report

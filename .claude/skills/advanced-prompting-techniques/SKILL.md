@@ -14,7 +14,7 @@ This eliminates brittle regex-on-fenced-code-blocks extraction.
 
 ```javascript
 const response = await client.messages.create({
-  model: 'claude-opus-4-6',
+  model: 'claude-opus-4-7',
   max_tokens: 16000,
   thinking: { type: 'enabled', budget_tokens: 8000 },
   system: systemPrompt,
@@ -71,7 +71,7 @@ if (response.stop_reason === 'tool_use') {
 
 ```javascript
 const response = await client.messages.create({
-  model: 'claude-opus-4-6',
+  model: 'claude-opus-4-7',
   max_tokens: 16000,
   thinking: { type: 'enabled', budget_tokens: 8000 },
   tools: [STRUCTURED_OUTPUT_TOOL],
@@ -158,8 +158,8 @@ while (true) {
 
 | Stage | Model | Reasoning |
 |---|---|---|
-| generate-script.js | claude-opus-4-6 + thinking 8k | Complex multi-step planning |
-| research.js | claude-opus-4-6 | Tool-use loop, quality over speed |
+| generate-script.js | claude-opus-4-7 + thinking 8k | Complex multi-step planning |
+| research.js | claude-opus-4-7 | Tool-use loop, quality over speed |
 | qa-review.js | claude-haiku-4-5-20251001 | Fast, high-volume QA scoring |
 | plaid-browser-agent.js | claude-haiku-4-5-20251001 | Vision, latency-sensitive |
 | orchestrator critique | claude-haiku-4-5-20251001 | Value-prop claim check, fast |

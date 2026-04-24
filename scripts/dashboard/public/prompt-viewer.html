@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prompt — Plaid Demo Pipeline</title>
+  <style>
+    :root {
+      --bg: #0b1117;
+      --bg-elev: #111822;
+      --text: #e5eaf0;
+      --dim: #9aa4b2;
+      --accent: #00A67E;
+      --border: rgba(255,255,255,0.1);
+      --mono: "SF Mono","Fira Code",Consolas,monospace;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: rgba(11,17,23,0.88);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    header .meta { color: var(--dim); font-size: 12px; }
+    header .spacer { flex: 1 1 auto; }
+    header button, header a.btn {
+      appearance: none;
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+    }
+    header button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    header button:hover { background: rgba(255,255,255,0.1); }
+    header button.primary:hover { filter: brightness(1.08); }
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+    #view, #raw {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 28px 32px;
+      overflow-wrap: break-word;
+    }
+    #raw {
+      display: none;
+      white-space: pre-wrap;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text);
+    }
+    #view h1 { font-size: 26px; margin-top: 0; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    #view h2 { font-size: 20px; margin-top: 28px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    #view h3 { font-size: 16px; margin-top: 20px; }
+    #view p { margin: 12px 0; }
+    #view ul, #view ol { margin: 10px 0; padding-left: 26px; }
+    #view li { margin: 4px 0; }
+    #view blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 14px;
+      color: var(--dim);
+      margin: 14px 0;
+      background: rgba(0,166,126,0.05);
+    }
+    #view code {
+      background: rgba(255,255,255,0.08);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+    #view pre {
+      background: #0f151d;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      overflow-x: auto;
+    }
+    #view pre code { background: transparent; padding: 0; font-size: 13px; }
+    #view a { color: var(--accent); }
+    .error {
+      background: #3b1f1f;
+      color: #fca5a5;
+      padding: 14px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+    .toast {
+      position: fixed;
+      top: 74px;
+      right: 24px;
+      background: var(--accent);
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity .18s ease, transform .18s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 id="title">Prompt</h1>
+    <span class="meta" id="subtitle"></span>
+    <span class="spacer"></span>
+    <button id="toggle-view" type="button">Show raw</button>
+    <button id="copy-btn" class="primary" type="button">Copy to clipboard</button>
+  </header>
+
+  <main>
+    <div id="error" class="error" style="display:none"></div>
+    <div id="view"></div>
+    <pre id="raw"></pre>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      const qs = new URLSearchParams(window.location.search);
+      const runId = qs.get('run') || qs.get('runId') || '';
+      const titleEl = document.getElementById('title');
+      const subtitleEl = document.getElementById('subtitle');
+      const viewEl = document.getElementById('view');
+      const rawEl = document.getElementById('raw');
+      const errEl = document.getElementById('error');
+      const copyBtn = document.getElementById('copy-btn');
+      const toggleBtn = document.getElementById('toggle-view');
+      const toast = document.getElementById('toast');
+
+      let rawText = '';
+      let showingRaw = false;
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
+      }
+
+      // Minimal markdown renderer — intentionally small, covers what prompt.txt
+      // files typically use: headings, lists, code blocks, inline code, bold,
+      // italic, blockquotes, links, horizontal rules.
+      function renderMarkdown(md) {
+        const src = String(md || '').replace(/\r\n/g, '\n');
+        const lines = src.split('\n');
+        const out = [];
+        let i = 0;
+        let inList = null; // 'ul' | 'ol'
+        const closeList = () => { if (inList) { out.push('</' + inList + '>'); inList = null; } };
+        const renderInline = (s) => {
+          let t = escapeHtml(s);
+          t = t.replace(/`([^`]+)`/g, (_, c) => '<code>' + escapeHtml(c) + '</code>');
+          t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+          t = t.replace(/(^|\W)\*([^*]+)\*(?=\W|$)/g, '$1<em>$2</em>');
+          t = t.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+          return t;
+        };
+        while (i < lines.length) {
+          const line = lines[i];
+          const fence = line.match(/^```(\w*)\s*$/);
+          if (fence) {
+            closeList();
+            const lang = fence[1] || '';
+            const buf = [];
+            i++;
+            while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i++; }
+            i++; // skip closing fence
+            out.push('<pre><code' + (lang ? ' class="lang-' + escapeHtml(lang) + '"' : '') + '>' + escapeHtml(buf.join('\n')) + '</code></pre>');
+            continue;
+          }
+          const h = line.match(/^(#{1,6})\s+(.*)$/);
+          if (h) {
+            closeList();
+            const level = h[1].length;
+            out.push('<h' + level + '>' + renderInline(h[2]) + '</h' + level + '>');
+            i++;
+            continue;
+          }
+          if (/^---+\s*$/.test(line)) {
+            closeList();
+            out.push('<hr>');
+            i++;
+            continue;
+          }
+          const bq = line.match(/^>\s?(.*)$/);
+          if (bq) {
+            closeList();
+            out.push('<blockquote>' + renderInline(bq[1]) + '</blockquote>');
+            i++;
+            continue;
+          }
+          const ul = line.match(/^\s*[-*]\s+(.*)$/);
+          const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+          if (ul) {
+            if (inList !== 'ul') { closeList(); out.push('<ul>'); inList = 'ul'; }
+            out.push('<li>' + renderInline(ul[1]) + '</li>');
+            i++;
+            continue;
+          }
+          if (ol) {
+            if (inList !== 'ol') { closeList(); out.push('<ol>'); inList = 'ol'; }
+            out.push('<li>' + renderInline(ol[1]) + '</li>');
+            i++;
+            continue;
+          }
+          if (!line.trim()) {
+            closeList();
+            out.push('');
+            i++;
+            continue;
+          }
+          closeList();
+          // Collect paragraph lines
+          const para = [line];
+          i++;
+          while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|>\s|---|```|\s*[-*]\s|\s*\d+\.\s)/.test(lines[i])) {
+            para.push(lines[i]);
+            i++;
+          }
+          out.push('<p>' + renderInline(para.join(' ')) + '</p>');
+        }
+        closeList();
+        return out.join('\n');
+      }
+
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 1600);
+      }
+
+      function showError(msg) {
+        errEl.textContent = msg;
+        errEl.style.display = 'block';
+        viewEl.style.display = 'none';
+      }
+
+      async function load() {
+        if (!runId) {
+          showError('No run specified. Visit this page with ?run=<RUN_ID>.');
+          return;
+        }
+        try {
+          const resp = await fetch('/api/runs/' + encodeURIComponent(runId) + '/prompt', { cache: 'no-store' });
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({ error: resp.statusText }));
+            showError(body.error || ('Failed to load prompt (' + resp.status + ')'));
+            return;
+          }
+          const data = await resp.json();
+          rawText = data.text || '';
+          titleEl.textContent = 'Prompt — ' + (data.displayName || data.runId || 'run');
+          const bytesKb = data.bytes ? (data.bytes / 1024).toFixed(1) : '0';
+          subtitleEl.textContent = (data.relativePath || 'prompt.txt') + ' · ' + bytesKb + ' KB';
+          document.title = 'Prompt — ' + (data.displayName || data.runId || runId);
+          viewEl.innerHTML = renderMarkdown(rawText);
+          rawEl.textContent = rawText;
+        } catch (e) {
+          showError('Network error: ' + e.message);
+        }
+      }
+
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(rawText);
+          showToast('Copied to clipboard');
+        } catch (e) {
+          // Fallback: legacy execCommand
+          const ta = document.createElement('textarea');
+          ta.value = rawText;
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); showToast('Copied to clipboard'); }
+          catch (_) { showToast('Copy failed — select text manually'); }
+          ta.remove();
+        }
+      });
+
+      toggleBtn.addEventListener('click', () => {
+        showingRaw = !showingRaw;
+        viewEl.style.display = showingRaw ? 'none' : '';
+        rawEl.style.display = showingRaw ? 'block' : 'none';
+        toggleBtn.textContent = showingRaw ? 'Show rendered' : 'Show raw';
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>

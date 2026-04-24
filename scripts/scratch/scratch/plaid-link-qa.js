@@ -306,6 +306,22 @@ async function main(opts = {}) {
     });
   }
   if (launchIdx < 0) {
+    if (embeddedMode) {
+      // In embedded mode the "launch" is clicking an institution tile inside
+      // the Plaid widget iframe; there is no page-level button click row to
+      // find. Skip the remainder of this stage — build-qa still exercises the
+      // embedded widget loading / token-create happy path.
+      console.log(
+        `[plaid-link-qa] Embedded Link mode — no page-level launch click row for "${launchStep.id}". Skipping (expected for embedded).`
+      );
+      writeReport({
+        passed: true,
+        skipped: true,
+        reason: 'Embedded Link mode — launch is in-widget; nothing to click at the page level.',
+        mode: qaMode,
+      });
+      return;
+    }
     throw new Error(`CRITICAL: plaid-link-qa could not find launch click row for step "${launchStep.id}"`);
   }
 

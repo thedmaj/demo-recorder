@@ -94,6 +94,7 @@ function buildRunContextPayload(opts, digestOptions = {}) {
         }
       : null,
     promptSnippet: (promptText || '').slice(0, 500),
+    linkTokenCreate: productResearch && productResearch.linkTokenCreate ? productResearch.linkTokenCreate : null,
   };
 }
 

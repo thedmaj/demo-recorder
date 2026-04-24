@@ -1,0 +1,153 @@
+
+
+
+================================================================================
+PLAID DEMO PIPELINE — PROMPT TEMPLATE (APP + NARRATIVE ONLY, NO SLIDES)
+================================================================================
+
+PURPOSE
+-------
+Fill in the «placeholders» below with **product story, persona, and beats**.
+This template is for **demo-app-only** runs: host/link/insight scenes with
+voiceover narrative, and **no slide scenes**.
+
+The pipeline still loads technical rules automatically from:
+
+  - `CLAUDE.md`
+  - `skills/plaid-integration.skill`
+  - `skills/plaid-link-prelink-ui-skill.md`
+  - `inputs/plaid-link-sandbox.md`
+  - `inputs/products/plaid-*.md`
+
+Copy the completed spec to `inputs/prompt.txt` (or replace that file with this).
+
+HOW TO RUN (APP-ONLY / NO-SLIDE)
+--------------------------------
+1. Save this as `inputs/prompt.txt`
+2. Run the full pipeline:
+
+   ```bash
+   npm run demo
+   ```
+
+   App-only is the pipeline default — no env flags required.
+
+3. From the dashboard, leave the "Include slides phase" checkbox in the Run
+   Pipeline card unchecked. The dashboard default is also app-only.
+
+4. Optional: add `Brand URL: https://...` near the top for `brand-extract`.
+
+NOTES
+-----
+- App-only is the default everywhere. To opt into slides, use
+  `npm run demo:with-slides` (or `npm run demo -- --with-slides`) on the CLI,
+  or check the dashboard "Include slides phase" checkbox.
+- The single canonical switch is `PIPELINE_WITH_SLIDES=true|false`. Legacy envs
+  (`SCRIPT_ZERO_SLIDE`, `DEMO_MARKETING_SLIDE`, `BUILD_PHASE_SEQUENCE`,
+  `BUILD_PHASE_SLIDES_ENABLED`) still work but are no longer required.
+- Keep storyboard beats as host/link/insight only (no slide beats).
+
+RESEARCH DEPTH (optional — drives `RESEARCH_MODE` if env not set)
+----------------------------------------------------------------
+Add one line anywhere in the prompt:
+
+  Research depth: `full` | `gapfill` | `messaging` | `skip`
+
+================================================================================
+«DEMO TITLE» — «ONE-LINE VALUE PROPOSITION»
+================================================================================
+
+Host: «HOST_APP_NAME» — «industry / segment»
+Canonical URL: «https://...»
+Brand URL (optional): «https://...»
+
+User journey (one sentence):
+«PRIMARY_USER_JOURNEY_IN_ONE_SENTENCE»
+
+Story arc (short prose):
+«Problem -> how Plaid enters -> frictionless steps -> quantified reveal -> outcome / CTA»
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+Products featured (approved names only):
+«e.g. Plaid Link, Plaid Layer, Plaid Identity Verification (IDV), Plaid Auth, Plaid Signal»
+
+Solutions supported (used to query Solutions Master):
+«e.g. Account Opening, Funding, Consumer Report Underwriting»
+
+Primary product family (pick one):
+«funding | cra_base_report | income_insights | other»
+
+Primary messaging file for this demo (pick one to own stats):
+«inputs/plaid-value-props.md OR inputs/products/plaid-....md»
+
+Research depth:
+«full | gapfill | messaging | skip — omit = gapfill default»
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (CHECKLIST)
+-------------------------------------------------------------------------------
+
+[ ] Live Plaid Link (single `plaidPhase: "launch"` step)
+[ ] Plaid Layer / OAuth / IDV noted if applicable
+[ ] Sandbox / persona selected (or defaults from `inputs/plaid-link-sandbox.md`)
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, NO SLIDES)
+-------------------------------------------------------------------------------
+
+List screens in order. For each: intent, narration angle (not full VO), and reveal.
+Use only host/link/insight scenes.
+
+| # | Beat Type | What the viewer sees | Narration focus | Reveal / CTA |
+|---|-----------|----------------------|-----------------|--------------|
+| 1 | «host/link/insight» | «...» | «...» | «...» |
+| 2 | «...» | «...» | «...» | «...» |
+
+Product-specific reminders (delete if N/A):
+- Signal: low score = low ACH return risk; happy path ACCEPT with low scores.
+- CRA: real Link; async report-ready beat if applicable.
+- Link: pre-step narration ends on the button; Link step narrates inside modal only.
+
+Compliance / user data:
+«e.g. CRA permissible purpose, user/create before report — or N/A»
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+Name / role: «...»
+Company / context: «...»
+Sample on-screen fields: «amounts, scores, labels — no generic placeholders»
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+«Nav, entry screen, CTA label that opens Link / Layer / IDV. 2-4 sentences.»
+
+Viewport: 1440x900
+
+-------------------------------------------------------------------------------
+NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+-------------------------------------------------------------------------------
+
+This demo is APP-ONLY. Do not generate `sceneType: "slide"` steps.
+Do not add a final value-summary slide.
+End on a host or insight outcome step with clear CTA/result.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+[ ] One primary source for stats (value-props OR product KB, not duplicated)
+[ ] Product names and family match `CLAUDE.md`
+[ ] Storyboard order matches intended `goToStep` flow
+[ ] No slide beats included
+[ ] App-only env flags used in run command above
+
+================================================================================
+END OF TEMPLATE — In `prompt.txt`, you may end with: END OF SPECIFICATION
+================================================================================

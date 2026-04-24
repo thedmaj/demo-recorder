@@ -35,7 +35,7 @@ const COMPOSITION_FILES = {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const TOUCHUP_MODEL      = 'claude-opus-4-6';
+const TOUCHUP_MODEL      = 'claude-opus-4-7';
 const TOUCHUP_MAX_TOKENS = 8192;
 
 // ── CLI arg parsing ───────────────────────────────────────────────────────────

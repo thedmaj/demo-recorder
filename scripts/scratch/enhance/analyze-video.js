@@ -9,7 +9,7 @@
  *
  * Frame analysis:
  *   - Extract 1 frame/sec (jpg) with ffmpeg
- *   - Batch-analyze frames in groups of 10 with Claude claude-opus-4-6 vision
+ *   - Batch-analyze frames in groups of 10 with Claude claude-opus-4-7 vision
  *
  * Writes: out/video-analysis.json
  *
@@ -153,7 +153,7 @@ async function analyzeFrameBatch(framePaths, startIndex) {
   });
 
   const response = await client.messages.create({
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     max_tokens: 1024,
     messages: [{ role: 'user', content: contentBlocks }],
   });

@@ -124,6 +124,25 @@ if (Array.isArray(timingRaw)) {
 const T = {};  // shorthand: T['step-name'] = recordingOffsetS
 for (const t of timings) T[t.step] = t.recordingOffsetS;
 
+// ── Detect Plaid Link mode from demo-script.json (authoritative) ─────────────
+// Don't infer mode from missing step-timing keys — returning-user modal flows
+// skip phone/OTP entirely (and vision fallbacks may not emit confirm-clicked),
+// which previously caused post-process to misclassify modal demos as embedded
+// and hard-cut the entire Plaid Link modal recording.
+let plaidLinkMode = null;
+try {
+  const scriptPath = path.join(path.dirname(TIMING_PATH), 'demo-script.json');
+  if (fs.existsSync(scriptPath)) {
+    const script = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+    plaidLinkMode = (script.plaidLinkMode || '').toLowerCase() || null;
+    if (plaidLinkMode) {
+      console.log(`[PostProcess] plaidLinkMode (from demo-script.json): ${plaidLinkMode}`);
+    }
+  }
+} catch (err) {
+  console.warn(`[PostProcess] Could not read plaidLinkMode from demo-script.json: ${err.message}`);
+}
+
 // ── Step-timing key schema validation ─────────────────────────────────────────
 //
 // These keys are written by record-local.js's recordStep() calls. If a key is
@@ -208,17 +227,23 @@ function addKeep(start, end, label) {
 // Shows: app loading, phone screen (pre-filled), Continue clicked.
 // End: a half-second after phone-submitted so the click lands visually.
 //
-// Embedded Link fallback: when there is no phone screen (phone-submitted=null),
-// the app still has content before the institution list (patient portal,
-// payment method selection, etc.). Keep from 0 → institution-list-shown so
-// those screens are preserved and not cut along with the Plaid loading gap.
+// No-phone fallback: when phone-submitted is missing, phone/OTP were either
+// never shown (embedded Link, returning-user modal flow, or vision-fallback
+// recording where markers didn't fire) — keep from 0 → institution-list-shown
+// so host-app screens (patient portal, payment method selection, etc.) are
+// preserved and not cut along with the Plaid loading gap.
 if (T['phone-submitted'] != null) {
   addKeep(0, T['phone-submitted'] + PHONE_TAIL, 'app + phone screen');
 } else if (T['institution-list-shown'] != null && T['institution-list-shown'] > 0.5) {
-  // Embedded / no-phone flow: keep everything before the Plaid widget loads.
-  // This captures host-app screens (portal, payment method selection, etc.).
-  addKeep(0, T['institution-list-shown'], 'app screens (pre-embedded-link)');
-  console.log(`  [PostProcess] Embedded mode: keeping pre-link app screens [0 → ${T['institution-list-shown'].toFixed(3)}s]`);
+  const label = plaidLinkMode === 'embedded'
+    ? 'app screens (pre-embedded-link)'
+    : 'app screens (pre-link, no phone marker)';
+  addKeep(0, T['institution-list-shown'], label);
+  if (plaidLinkMode === 'embedded') {
+    console.log(`  [PostProcess] Embedded mode: keeping pre-link app screens [0 → ${T['institution-list-shown'].toFixed(3)}s]`);
+  } else {
+    console.log(`  [PostProcess] No phone marker (mode=${plaidLinkMode || 'unknown'}): keeping pre-link app screens [0 → ${T['institution-list-shown'].toFixed(3)}s]`);
+  }
 }
 
 // ── Range 2a: OTP screen appearing (brief) ───────────────────────────────────
@@ -263,33 +288,81 @@ if (T['otp-screen'] != null) {
 //     The cut between them removes the dwell/transition between bank-selected and account.
 {
   const listStart   = T['institution-list-shown'];
-  const confirmEnd  = T['confirm-clicked'] != null ? T['confirm-clicked'] + 0.5 : null;
+
+  // Detect SYNTHETIC confirm-clicked markers. record-local.js emits a defensive
+  // synthetic confirm-clicked ≈ link-complete - 0.25s when the vision-fallback
+  // or forced-completion path never fired a real button-based confirm-clicked.
+  // Real confirm-clicked → link-complete transitions take 5–15s (account-select
+  // screen + post-confirm waiting), so a gap < 1s is a strong signal that the
+  // marker is synthetic. Treat those like "no confirm-clicked" and fall back to
+  // link-complete as the Range 3 end anchor so credentials/account-selection
+  // screens get meaningful screen time.
+  const confirmRaw = T['confirm-clicked'];
+  const linkRaw    = T['link-complete'];
+  const isSyntheticConfirm = confirmRaw != null && linkRaw != null
+    && linkRaw - confirmRaw >= 0 && linkRaw - confirmRaw < 1.0;
+
+  let confirmEnd;
+  let confirmEndSource;
+  if (confirmRaw != null && !isSyntheticConfirm) {
+    confirmEnd       = confirmRaw + 0.5;
+    confirmEndSource = 'confirm-clicked';
+  } else if (linkRaw != null && listStart != null && linkRaw > listStart) {
+    // Use link-complete as the end anchor. Back off slightly so the success
+    // frame itself stays in Range 4 (which starts at link-complete).
+    confirmEnd       = Math.max(listStart + 0.5, linkRaw - 0.5);
+    confirmEndSource = 'link-complete-fallback';
+    if (isSyntheticConfirm) {
+      console.log(`  [PostProcess] confirm-clicked looks synthetic (Δlink=${(linkRaw - confirmRaw).toFixed(3)}s) — using link-complete fallback (mode=${plaidLinkMode || 'unknown'})`);
+    } else {
+      console.log(`  [PostProcess] confirm-clicked missing — using link-complete fallback as Range 3 end anchor (mode=${plaidLinkMode || 'unknown'})`);
+    }
+  } else {
+    confirmEnd       = null;
+    confirmEndSource = null;
+  }
 
   if (listStart != null && confirmEnd != null) {
     const LEAD_IN   = 0.2;  // lead-in before list-shown
     const TAIL      = 0.5;  // tail after confirm-clicked (already in confirmEnd)
     const rawDur    = confirmEnd - (listStart - LEAD_IN);
 
-    if (rawDur <= MAX_INST_S + 0.05) {
+    // Effective cap: when we're using link-complete as the fallback anchor for
+    // the end of Range 3, we're bounding the ENTIRE modal flow (list →
+    // credentials → account-select → confirm), not just the list+confirm
+    // sub-sections. Use a larger cap so credentials and account-selection
+    // screens get meaningful screen time in the processed video. Without this,
+    // modal flows with missing markers collapse to ~5s of institution-list
+    // only, hiding the actual Plaid Link interaction.
+    const effectiveCap = (confirmEndSource === 'link-complete-fallback' && plaidLinkMode !== 'embedded')
+      ? Math.max(MAX_INST_S * 2.4, 12.0)  // ~12s modal-flow budget
+      : MAX_INST_S;
+
+    if (rawDur <= effectiveCap + 0.05) {
       // Already within budget — single range
-      addKeep(listStart - LEAD_IN, confirmEnd, 'institution → confirm');
+      addKeep(listStart - LEAD_IN, confirmEnd, confirmEndSource === 'link-complete-fallback'
+        ? 'modal flow (list → pre-success)'
+        : 'institution → confirm');
     } else {
-      // Split to fit within MAX_INST_S:
-      //   LIST_PART_S    = 40% of budget (min MIN_PLAID_SCREEN_S) — list + bank click visible
+      // Split to fit within effectiveCap:
+      //   LIST_PART_S    = 40% of budget (min MIN_PLAID_SCREEN_S) — list + bank click / credentials
       //   CONFIRM_PART_S = remaining budget (min MIN_PLAID_SCREEN_S) — account + confirm click
-      // With MAX_INST_S=5.0: budget=4.3s → LIST=max(2.0,1.72)=2.0s, CONFIRM=2.3s ✓
-      const budget         = MAX_INST_S - LEAD_IN - TAIL;  // content seconds available
+      // With effectiveCap=5.0: budget=4.3s → LIST=max(2.0,1.72)=2.0s, CONFIRM=2.3s
+      // With effectiveCap=12.0 (modal fallback): budget=11.3s → LIST=4.5s, CONFIRM=6.8s
+      const budget         = effectiveCap - LEAD_IN - TAIL;  // content seconds available
       const MIN_PART_S     = MIN_PLAID_SCREEN_MS / 1000;
       const LIST_PART_S    = Math.max(MIN_PART_S, budget * 0.40);
       const CONFIRM_PART_S = Math.max(MIN_PART_S, budget - LIST_PART_S);
 
-      addKeep(listStart - LEAD_IN, listStart + LIST_PART_S,          'institution list (capped)');
-      addKeep(confirmEnd - TAIL - CONFIRM_PART_S, confirmEnd,         'account → confirm (capped)');
-      console.log(`  [PostProcess] Institution section capped: ${rawDur.toFixed(2)}s → ${MAX_INST_S}s (split at list+${LIST_PART_S.toFixed(1)}s / confirm-${CONFIRM_PART_S.toFixed(1)}s)`);
+      const headLabel = confirmEndSource === 'link-complete-fallback' ? 'modal: list + credentials' : 'institution list (capped)';
+      const tailLabel = confirmEndSource === 'link-complete-fallback' ? 'modal: account + confirm' : 'account → confirm (capped)';
+      addKeep(listStart - LEAD_IN, listStart + LIST_PART_S, headLabel);
+      addKeep(confirmEnd - TAIL - CONFIRM_PART_S, confirmEnd, tailLabel);
+      console.log(`  [PostProcess] Plaid modal section capped: ${rawDur.toFixed(2)}s → ${effectiveCap.toFixed(1)}s (split head+${LIST_PART_S.toFixed(1)}s / tail-${CONFIRM_PART_S.toFixed(1)}s, anchor=${confirmEndSource})`);
     }
   } else if (listStart != null) {
-    // No confirm timestamp — just keep 4s of the list
-    addKeep(listStart - 0.2, listStart + MAX_INST_S - 0.2, 'institution list (no confirm)');
+    // No confirm and no link-complete — just keep a minimal window of the list
+    addKeep(listStart - 0.2, listStart + MAX_INST_S - 0.2, 'institution list (no confirm, no link-complete)');
   }
 }
 

@@ -1272,6 +1272,31 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   transition: border-left-color 0.12s, opacity 0.15s, transform 0.1s;
   cursor: default;
 }
+.sb-insert-gap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: -4px 0 8px;
+}
+.sb-insert-library-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 166, 126, 0.45);
+  background: rgba(0, 166, 126, 0.14);
+  color: #00A67E;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, transform 0.12s;
+}
+.sb-insert-library-btn:hover {
+  background: rgba(0, 166, 126, 0.26);
+  transform: scale(1.06);
+}
 .step-card.dragging {
   opacity: 0.4;
   transform: scale(0.98);
@@ -1374,6 +1399,16 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   object-fit: cover;
   display: block;
   transition: opacity 0.12s;
+}
+
+.thumb-library-frame {
+  border: 0;
+  width: 200%;
+  height: 200%;
+  transform: scale(0.5);
+  transform-origin: top left;
+  pointer-events: none;
+  background: #fff;
 }
 
 .step-thumb:hover img { opacity: 0.85; }
@@ -2485,6 +2520,157 @@ pre.json-preview {
   background: rgba(250, 204, 21, 0.15);
   color: #facc15;
 }
+.vp-loaded-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+  margin-left: 6px;
+}
+.vp-loaded-badge--active {
+  background: rgba(0, 166, 126, 0.18);
+  color: #00A67E;
+  border: 1px solid rgba(0, 166, 126, 0.35);
+}
+.vp-loaded-badge--idle {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.4);
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+}
+.vp-research-date {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(96, 165, 250, 0.12);
+  color: #60a5fa;
+}
+.vp-research-date code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 10px;
+  background: transparent;
+  color: inherit;
+}
+
+/* ── Config tab fields + hover tooltips ──────────────────────────────────── */
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.config-field:last-child { border-bottom: none; }
+.config-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.config-field--checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: #00A67E;
+  cursor: pointer;
+}
+.config-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.85);
+  font-family: "SF Mono", "Fira Code", Consolas, monospace;
+}
+.config-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  outline: none;
+  width: 100%;
+  max-width: 440px;
+  box-sizing: border-box;
+}
+.config-input:focus {
+  border-color: #00A67E;
+  background: rgba(0, 166, 126, 0.08);
+}
+.config-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Hint icon — "?" glyph that reveals a tooltip on hover or focus. */
+.config-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  cursor: help;
+  position: relative;
+  flex-shrink: 0;
+  user-select: none;
+  outline: none;
+  transition: color .12s ease, border-color .12s ease, background .12s ease;
+}
+.config-hint:hover,
+.config-hint:focus {
+  color: #fff;
+  border-color: #00A67E;
+  background: rgba(0, 166, 126, 0.15);
+}
+.config-hint::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 22px;
+  top: 50%;
+  transform: translateY(-50%) translateX(4px);
+  background: #111827;
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(0, 166, 126, 0.45);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: normal;
+  text-transform: none;
+  width: max-content;
+  max-width: 340px;
+  white-space: normal;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .12s ease, transform .12s ease;
+  font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+.config-hint:hover::after,
+.config-hint:focus::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+/* Flip tooltip to the left when the field is near the right edge. */
+.config-field:nth-child(even) .config-hint::after,
+.config-field:last-child .config-hint::after {
+  /* Still defaults to right-of-icon; last-child check is optional. */
+}
+.save-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
 
 .md-h1 { font-size: 22px; font-weight: 700; color: #fff; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); }
 .md-h2 { font-size: 18px; font-weight: 600; color: #fff; margin: 24px 0 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -3159,6 +3345,75 @@ pre.json-preview {
   color: rgba(255,255,255,0.4);
   text-align: right;
 }
+.slide-library-panel {
+  width: 620px;
+}
+.slide-library-target {
+  font-size: 12px;
+  color: rgba(255,255,255,0.74);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.slide-library-list {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.03);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.slide-library-empty {
+  font-size: 12px;
+  color: rgba(255,255,255,0.52);
+  text-align: center;
+  padding: 18px 10px;
+}
+.slide-library-item {
+  width: 100%;
+  text-align: left;
+  border-radius: 7px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.03);
+  color: #fff;
+  padding: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.slide-library-item:hover {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.2);
+}
+.slide-library-item.is-selected {
+  border-color: rgba(0,166,126,0.7);
+  background: rgba(0,166,126,0.14);
+}
+.slide-library-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.slide-library-item-meta {
+  font-size: 11px;
+  color: rgba(255,255,255,0.56);
+}
+.slide-library-item-tags {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.slide-library-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.72);
+}
 
 /* =============================================================================
    Phase 1 — Build Selector Button + Panel
@@ -3324,6 +3579,19 @@ pre.json-preview {
 .build-card-badge.partial {
   background: rgba(255,255,255,0.08);
   color: rgba(255,255,255,0.5);
+}
+.build-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.build-card-badge.build-mode.app-only {
+  background: rgba(56,189,248,0.18);
+  color: #38bdf8;
+}
+.build-card-badge.build-mode.with-slides {
+  background: rgba(167,139,250,0.20);
+  color: #a78bfa;
 }
 .build-card-meta {
   font-size: 11px;

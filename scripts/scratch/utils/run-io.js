@@ -92,6 +92,16 @@ function ensureRunManifest(runDir, seed = {}) {
   const layout = ensureRunLayout(runDir);
   const existing = readRunManifest(runDir) || {};
   const now = new Date().toISOString();
+  // Resolve the current machine's identity lazily so existing tests that don't
+  // have `gh` installed don't fail. Never overwrite an existing owner once set.
+  let owner = existing.owner || seed.owner || null;
+  if (!owner) {
+    try {
+      const { resolveIdentity } = require('./identity');
+      const id = resolveIdentity();
+      if (id && id.login) owner = { login: id.login, name: id.name || null };
+    } catch (_) {}
+  }
   const manifest = {
     schemaVersion: 1,
     runId: existing.runId || seed.runId || layout.runId,
@@ -103,6 +113,14 @@ function ensureRunManifest(runDir, seed = {}) {
     promptFingerprint: seed.promptFingerprint || existing.promptFingerprint || null,
     sourcePromptFile: seed.sourcePromptFile || existing.sourcePromptFile || null,
     sourcePromptHash: seed.sourcePromptHash || existing.sourcePromptHash || null,
+    // Authoritative build mode for this run (used by dashboard badges, restart
+    // mode inheritance, and any consumer that needs to know whether slides are
+    // part of the artifact set). Always one of: 'app-only' | 'app+slides'.
+    buildMode: seed.buildMode || existing.buildMode || null,
+    buildModeSource: seed.buildModeSource || existing.buildModeSource || null,
+    // Per-user ownership for centralized distribution (set from `gh api user`
+    // or `PLAID_DEMO_USER` on first run). Preserved across resumes.
+    owner,
     notes: seed.notes || existing.notes || null,
   };
   fs.writeFileSync(layout.manifestPath, JSON.stringify(manifest, null, 2), 'utf8');

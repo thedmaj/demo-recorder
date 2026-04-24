@@ -279,6 +279,150 @@ describe('prompt-templates', () => {
       'Script prompt should enforce final-step value-summary placement');
   });
 
+  test('buildScriptGenerationPrompt() forbids insight/slide scenes when pipelineAppOnlyHostUi', () => {
+    const result = templates.buildScriptGenerationPrompt(
+      { texts: [{ filename: 'prompt.txt', content: 'Account funding for BofA' }], screenshots: [], transcriptions: [] },
+      { synthesizedInsights: '', internalKnowledge: [], apiSpec: {} },
+      { requireFinalValueSummarySlide: false, pipelineAppOnlyHostUi: true }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(
+      /APP-ONLY MODE.*HARD CONSTRAINT/i.test(fullText),
+      'Script prompt should include the app-only step-type constraint block'
+    );
+    assert.ok(/Forbidden.*sceneType.*insight.*slide/is.test(fullText) || /insight`.*`slide/.test(fullText),
+      'App-only script prompt must forbid insight and slide sceneTypes');
+    assert.ok(/Do NOT.*apiResponse/i.test(fullText) || /DO NOT emit.*apiResponse/i.test(fullText),
+      'App-only script prompt must forbid apiResponse blocks');
+  });
+
+  test('buildAppGenerationPrompt() includes host banner recommendation when brand.hostBanner is present', () => {
+    const result = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Simple single-page demo app',
+      null,
+      {
+        brand: {
+          name: 'Bank of America',
+          slug: 'bankofamerica',
+          mode: 'light',
+          colors: {
+            bgPrimary: '#ffffff', accentCta: '#e31837', textPrimary: '#012169',
+            textSecondary: '#666', textTertiary: '#999',
+            accentBorder: '#e31837', accentBgTint: 'rgba(227,24,55,0.08)',
+            error: '#e31837', success: '#0a7d5c',
+            navBg: '#012169', navAccentStripe: '#e31837',
+          },
+          typography: { fontHeading: 'Arial', fontBody: 'Arial', fontMono: 'monospace', scaleH1: '32px/700', scaleH2: '24px/600', scaleH3: '18px/600', scaleBody: '15px/400', headingLetterSpacing: '-0.02em', headingLineHeight: '1.2', bodyLineHeight: '1.6' },
+          motion: { stepTransition: '', cardEntrance: '', buttonHover: '', modalScale: '', loadingIndicatorColor: '' },
+          atmosphere: { overlayBackdropFilter: '', cardBorderRadius: '8px', cardBoxShadow: '0 2px 8px rgba(0,0,0,0.08)', maxContentWidth: '1440px' },
+          sidePanels: { bg: '#111', accentColor: '#e31837', jsonKeyColor: '#9cdcfe', jsonStringColor: '#ce9178', jsonNumberColor: '#b5cea8' },
+          logo: { imageUrl: 'https://cdn.brandfetch.io/ABC/theme/dark/logo.svg' },
+          hostBanner: {
+            bg: '#012169',
+            logoTone: 'light',
+            toneSource: 'brandfetch-theme-dark',
+            accentStripe: '#e31837',
+            contrastRatio: 15.2,
+            reason: 'navBg is dark; logo is light — good contrast',
+            recommendation: 'Use a banner background of `#012169`.',
+            fallback: false,
+          },
+        },
+      }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(/HOST BANNER \/ NAV BACKGROUND/.test(fullText), 'Prompt should include host banner guardrail block');
+    assert.ok(fullText.includes('bg:              #012169'), 'Banner bg should be passed through');
+    assert.ok(fullText.includes('logo tone:       light'), 'Logo tone should be passed through');
+    assert.ok(/Do NOT place the logo/i.test(fullText), 'Guardrail rule should be included');
+  });
+
+  test('buildAppArchitectureBriefPrompt() adds app-only host UI constraint when pipelineAppOnlyHostUi', () => {
+    const result = templates.buildAppArchitectureBriefPrompt(MINIMAL_DEMO_SCRIPT, {
+      pipelineAppOnlyHostUi: true,
+    });
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(fullText.includes('APP-ONLY HOST UI CONSTRAINT'), 'Expected app-only architecture constraint block');
+    assert.ok(fullText.includes('realistic logged-in product UI'), 'Expected realistic product UI guidance');
+  });
+
+  test('buildAppFrameworkPlanPrompt() adds layer-3 app-only copy policy when pipelineAppOnlyHostUi', () => {
+    const result = templates.buildAppFrameworkPlanPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Brief text here.',
+      { pipelineAppOnlyHostUi: true, mobileVisualEnabled: false, buildViewMode: 'desktop' }
+    );
+    const fullText = result.system + JSON.stringify(result.userMessages);
+    assert.ok(
+      /App-only host policy.*value proposition/i.test(fullText),
+      'Expected framework plan to forbid VP polish in host layer-3 checks'
+    );
+  });
+
+  test('buildAppGenerationPrompt() omits Solutions Master VP lines and differentiators when pipelineAppOnlyHostUi', () => {
+    const vp1 = 'UNIQUE_VP_STATEMENT_ALPHA_7f3a';
+    const vp2 = 'UNIQUE_VP_STATEMENT_BETA_9c21';
+    const diffBlock = 'UNIQUE_DIFFERENTIATORS_MARKER_d4e8';
+    const withFlag = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Architecture brief.',
+      null,
+      {
+        pipelineAppOnlyHostUi: true,
+        solutionsMasterContext: {
+          requestedSolutionNames: ['Auth'],
+          valuePropositionStatements: [vp1, vp2],
+          apiNames: ['/accounts/get'],
+        },
+        curatedDigest: {
+          knowledgeFiles: [
+            {
+              source: 'inputs/products/test.md',
+              overview: 'Overview text',
+              differentiators: diffBlock,
+            },
+          ],
+        },
+      }
+    );
+    const appOnlyText = withFlag.system + JSON.stringify(withFlag.userMessages);
+    assert.ok(!appOnlyText.includes(vp1), 'App-only prompt must not echo Solutions Master VP line 1');
+    assert.ok(!appOnlyText.includes(vp2), 'App-only prompt must not echo Solutions Master VP line 2');
+    assert.ok(!appOnlyText.includes(diffBlock), 'App-only prompt must omit curated differentiators block');
+    assert.ok(
+      appOnlyText.includes('APP-ONLY HOST ARTIFACT POLICY'),
+      'App-only prompt should include artifact policy in system contract'
+    );
+    assert.ok(
+      appOnlyText.includes('omitted from this build prompt'),
+      'Solutions Master block should explain VP omission'
+    );
+    assert.ok(
+      appOnlyText.includes('API / solution scope'),
+      'Solutions Master user follow-up should scope to API alignment only'
+    );
+
+    const withoutFlag = templates.buildAppGenerationPrompt(
+      MINIMAL_DEMO_SCRIPT,
+      'Architecture brief.',
+      null,
+      {
+        pipelineAppOnlyHostUi: false,
+        solutionsMasterContext: {
+          valuePropositionStatements: [vp1],
+          apiNames: ['/accounts/get'],
+        },
+        curatedDigest: {
+          knowledgeFiles: [{ source: 'x.md', overview: 'o', differentiators: diffBlock }],
+        },
+      }
+    );
+    const defaultText = withoutFlag.system + JSON.stringify(withoutFlag.userMessages);
+    assert.ok(defaultText.includes(vp1), 'Non-app-only prompt should still list VP statements');
+    assert.ok(defaultText.includes(diffBlock), 'Non-app-only prompt should include differentiators');
+  });
+
   test('buildAppGenerationPrompt() requires a visible host logo shell container', () => {
     const result = templates.buildAppGenerationPrompt(
       MINIMAL_DEMO_SCRIPT,
@@ -312,6 +456,66 @@ describe('prompt-templates', () => {
     const fullText = result.system + JSON.stringify(result.userMessages);
     assert.ok(fullText.includes(expectedState),
       'Prompt should include the expected state description');
+  });
+
+  test('buildSlideInsertionPrompt() produces a focused per-slide prompt without the full slide template trio when host already has slides', () => {
+    const result = templates.buildSlideInsertionPrompt({
+      step: {
+        id: 'value-summary-slide',
+        label: 'Value Summary',
+        narration: 'Here is what just happened.',
+        sceneType: 'slide',
+      },
+      brand: { name: 'TestBank' },
+      slideTemplateCss: 'SENTINEL_CSS_MARKER_Abc123',
+      slideTemplateRules: 'SENTINEL_RULES_MARKER_Abc123',
+      slideTemplateShellHtml: '<div>SENTINEL_SHELL_MARKER_Abc123</div>',
+      hostHasExistingSlide: true,
+      valuePropositionStatements: ['VP_ALPHA_4829'],
+      narration: 'Here is what just happened.',
+    });
+    const full = result.system + JSON.stringify(result.userMessages);
+    assert.ok(
+      full.includes('data-testid="step-value-summary-slide"'),
+      'Prompt should lock the target step id into the wrapper selector'
+    );
+    assert.ok(full.includes('VP_ALPHA_4829'), 'Approved VPs should be included');
+    assert.ok(!full.includes('SENTINEL_CSS_MARKER_Abc123'), 'Full slide.css must not leak when host already has slides');
+    assert.ok(!full.includes('SENTINEL_RULES_MARKER_Abc123'), 'Full slide rules must not leak when host already has slides');
+    assert.ok(!full.includes('SENTINEL_SHELL_MARKER_Abc123'), 'Full slide shell must not leak when host already has slides');
+    assert.ok(
+      /do\s*not[\s\S]*markdown code fences/i.test(full),
+      'Prompt should forbid fenced output'
+    );
+  });
+
+  test('buildSlideInsertionPrompt() includes template rules when the host has no existing slides', () => {
+    const result = templates.buildSlideInsertionPrompt({
+      step: { id: 'summary', sceneType: 'slide' },
+      brand: { name: 'Acme' },
+      slideTemplateRules: 'TEMPLATE_RULES_MARKER_xyz789',
+      slideTemplateShellHtml: '<div>SHELL_MARKER_xyz789</div>',
+      hostHasExistingSlide: false,
+    });
+    const full = result.system + JSON.stringify(result.userMessages);
+    assert.ok(full.includes('TEMPLATE_RULES_MARKER_xyz789'), 'Rules should be included for fresh slide insertion');
+  });
+
+  test('buildPanelPayloadPrompt() asks for a single fenced JSON block', () => {
+    const result = templates.buildPanelPayloadPrompt({
+      step: {
+        id: 'signal',
+        apiResponse: { endpoint: 'POST /signal/evaluate', response: { only: 1 } },
+      },
+      existingPayload: '{"only":1}',
+      narrationHint: 'Signal recommends ACCEPT',
+    });
+    const full = result.system + JSON.stringify(result.userMessages);
+    assert.ok(/single json object/i.test(full) || /fenced json/i.test(full) || /one\s*`{3}json/i.test(full),
+      'Prompt should require a single json output');
+    assert.ok(full.includes('POST /signal/evaluate'), 'Endpoint should appear');
+    assert.ok(full.includes('Signal recommends ACCEPT'), 'Narrative hint should appear');
+    assert.ok(/\{\\?"only\\?":1\}/.test(full), 'Existing payload should be included for improvement');
   });
 
   test('buildQAReviewPrompt() requests categories in JSON output', () => {

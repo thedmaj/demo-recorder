@@ -15,6 +15,7 @@
 require('dotenv').config({ override: true });
 const fs   = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execSync } = require('child_process');
 const { processedToCompMs, loadSyncMap } = require('./sync-map-utils');
 
@@ -302,6 +303,45 @@ const REVEAL_INJECT_RE = /(\.\s+|\s—\s+)(ACCEPT|approved?|verified|authorized|
  */
 function normalizeNarration(text, stepId = '') {
   let normalized = text;
+
+  // 0. Pre-tokenization fixes that would otherwise produce deterministic TTS
+  //    stutters/freezes (empirically observed in the 2026-04-18 audit):
+  //      - Unicode middot clusters ("···0211") confuse ElevenLabs → silence.
+  //      - Dotted abbreviations ("U.S.") insert pauses after each period.
+  //      - Number-plus tokens ("1,000+", "80+") are read unevenly.
+  //      - Bare 4-digit masks ("0211") are read as years; spell them out.
+  //      - Dollar amounts with cents ("$206.67") freeze mid-prosody.
+
+  // Middot ellipses / triple middot separators used for account masks
+  normalized = normalized.replace(/[·•\u00B7\u2027\u2022]{2,}\s*/g, ' ending ');
+
+  // "U.S." → "US" (prevents per-period pauses; single short word)
+  normalized = normalized.replace(/\bU\.S\.(?!\w)/g, 'US');
+  // "U.S.A." → "USA"
+  normalized = normalized.replace(/\bU\.S\.A\.(?!\w)/g, 'USA');
+
+  // Number-plus tokens: "1,000+" → "more than 1,000", "80+" → "more than 80"
+  normalized = normalized.replace(/\b(\d{1,3}(?:,\d{3})+|\d+)\+/g, 'more than $1');
+
+  // Dollar amounts with cents → spoken form. E.g. "$2,480.00" → "2,480 dollars".
+  //                                             "$206.67"  → "206 dollars and 67 cents".
+  normalized = normalized.replace(
+    /\$(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{2}))?/g,
+    (_, dollars, cents) => {
+      if (!cents || cents === '00') return `${dollars} dollars`;
+      // Drop leading zero on cents for natural reading (07 → 7)
+      const spokenCents = cents.replace(/^0/, '');
+      return `${dollars} dollars and ${spokenCents} cents`;
+    }
+  );
+
+  // Bare 4-digit account masks (e.g. "0211", "4821") → spell digit-by-digit.
+  // Only when clearly a mask: preceded by "ending", "account", "mask", "·", or
+  // following "number". Avoid hitting years/amounts.
+  normalized = normalized.replace(
+    /\b(ending|account|mask|number)\b\s+(\d{4})\b/gi,
+    (_, prefix, digits) => `${prefix} ${digits.split('').join(' ')}`
+  );
 
   // 1. Expand acronyms: word-boundary match to avoid partial replacements
   for (const [acronym, expansion] of Object.entries(ACRONYM_MAP)) {
@@ -604,14 +644,37 @@ async function main() {
     }
 
     const audioFile = path.join(AUDIO_DIR, `vo_${step.id}.mp3`);
-
-    // Skip regeneration if already exists (speeds up re-runs)
-    if (fs.existsSync(audioFile)) {
+    // Sidecar fingerprint (content-addressable cache): invalidates the cached
+    // audio whenever the normalized narration text (or voice + model id) changes.
+    // Without this, edits to demo-script.json narrations would silently reuse
+    // the previous take — producing stale audio with the wrong words.
+    const audioFingerprintFile = audioFile + '.fingerprint.json';
+    const normalizedScript = normalizeNarration(script, step.id);
+    const fingerprint = {
+      voiceId: VOICE_ID,
+      modelId: MODEL_ID,
+      outputFormat: OUTPUT_FORMAT,
+      narrationHash: crypto.createHash('sha256').update(normalizedScript).digest('hex'),
+    };
+    let cacheValid = false;
+    if (fs.existsSync(audioFile) && fs.existsSync(audioFingerprintFile)) {
+      try {
+        const prev = JSON.parse(fs.readFileSync(audioFingerprintFile, 'utf8'));
+        cacheValid =
+          prev.voiceId === fingerprint.voiceId &&
+          prev.modelId === fingerprint.modelId &&
+          prev.outputFormat === fingerprint.outputFormat &&
+          prev.narrationHash === fingerprint.narrationHash;
+      } catch (_) { cacheValid = false; }
+    }
+    if (cacheValid) {
       console.log(`  [cached] ${path.basename(audioFile)}`);
     } else {
-      // Normalize narration: expand acronyms, inject SSML breaks before reveals
-      const normalizedScript = normalizeNarration(script, step.id);
+      if (fs.existsSync(audioFile)) {
+        console.log(`  [regen] ${path.basename(audioFile)} — narration or voice changed`);
+      }
       await generateAudio(normalizedScript, audioFile);
+      fs.writeFileSync(audioFingerprintFile, JSON.stringify(fingerprint, null, 2), 'utf8');
       // Small delay to respect ElevenLabs rate limits
       await new Promise(r => setTimeout(r, 300));
     }

@@ -471,6 +471,221 @@ async function cmdStage({ positional, flags }) {
   return code === 0 ? 0 : 2;
 }
 
+// ── Command: post-panels (deterministic panel normalizer) ────────────────────
+async function cmdPostPanels({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to target — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const script = path.join(PROJECT_ROOT, 'scripts', 'scratch', 'scratch', 'post-panels.js');
+  const args = [script];
+  if (flags.steps) args.push(`--steps=${flags.steps}`);
+  if (flags['dry-run']) args.push('--dry-run');
+  if (flags['llm-fallback']) args.push('--llm-fallback');
+  console.log(c.bold(`[pipe] post-panels on ${runId}`));
+  const child = spawn('node', args, {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, PIPELINE_RUN_DIR: runDir },
+    stdio: 'inherit',
+  });
+  return new Promise((resolve) => {
+    child.on('exit', (code) => resolve(code === 0 ? 0 : 2));
+  });
+}
+
+// ── Commands: centralized demo-app distribution ─────────────────────────────
+
+const IDENTITY = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'identity.js'));
+const RUN_PACKAGE = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'run-package.js'));
+const DEFAULT_ARTIFACT_DIR = path.join(
+  process.env.HOME || process.env.USERPROFILE || '.',
+  '.plaid-demo-apps'
+);
+
+function resolveArtifactDir() {
+  return (process.env.PLAID_DEMO_APPS_DIR && process.env.PLAID_DEMO_APPS_DIR.trim())
+    || DEFAULT_ARTIFACT_DIR;
+}
+
+function resolveArtifactRepoUrl() {
+  return String(process.env.PLAID_DEMO_APPS_REPO || '').trim();
+}
+
+function runGit(args, cwd) {
+  return spawnSync('git', args, { cwd, stdio: 'inherit', env: process.env });
+}
+
+function cmdWhoami() {
+  const identity = IDENTITY.resolveIdentity({ refresh: false });
+  const artifactDir = resolveArtifactDir();
+  const artifactRepo = resolveArtifactRepoUrl();
+  if (!identity) {
+    console.log(c.yellow('No identity resolved.'));
+    console.log(`  Tried: ~/.plaid-demo-recorder/identity.json → gh api user → $PLAID_DEMO_USER`);
+    console.log(`  Next:  run ${c.cyan('gh auth login')} or set ${c.cyan('PLAID_DEMO_USER')}.`);
+    return 2;
+  }
+  console.log(c.bold('Identity'));
+  console.log(`  Login:  ${c.cyan(identity.login)}`);
+  if (identity.name) console.log(`  Name:   ${identity.name}`);
+  console.log(`  Source: ${identity.source}`);
+  console.log(`  Cache:  ${IDENTITY.CACHE_FILE}`);
+  console.log('');
+  console.log(c.bold('Artifact repository'));
+  console.log(`  URL:   ${artifactRepo || c.yellow('(unset — export PLAID_DEMO_APPS_REPO)')}`);
+  console.log(`  Clone: ${artifactDir}${fs.existsSync(artifactDir) ? '' : c.yellow(' (not cloned yet — run `pipe pull`)')}`);
+  return 0;
+}
+
+async function cmdPull() {
+  let code = 0;
+  console.log(c.bold('[pipe] pull — code repo'));
+  const codeResult = runGit(['pull', '--ff-only'], PROJECT_ROOT);
+  if (codeResult.status !== 0) {
+    console.warn(c.yellow('[pipe] code-repo pull failed (see git output above).'));
+    code = 2;
+  }
+  const artifactDir = resolveArtifactDir();
+  const artifactRepo = resolveArtifactRepoUrl();
+  console.log(c.bold('[pipe] pull — artifact repo'));
+  if (!artifactRepo) {
+    console.warn(c.yellow('  PLAID_DEMO_APPS_REPO is unset. Skipping artifact repo sync.'));
+    console.log(`  Hint: export PLAID_DEMO_APPS_REPO=git@ghe.plaid.com:plaid/plaid-demo-apps.git`);
+    return code;
+  }
+  if (!fs.existsSync(artifactDir)) {
+    console.log(`  Cloning ${artifactRepo} → ${artifactDir}`);
+    const cloneResult = runGit(['clone', artifactRepo, artifactDir]);
+    return cloneResult.status === 0 ? code : 2;
+  }
+  const pullResult = runGit(['pull', '--ff-only'], artifactDir);
+  return pullResult.status === 0 ? code : 2;
+}
+
+async function cmdPublish({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to publish — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const identity = IDENTITY.resolveIdentity({ refresh: false });
+  if (!identity) {
+    console.error(c.red('No identity resolved — run `pipe whoami` for details.'));
+    return 64;
+  }
+  const artifactDir = resolveArtifactDir();
+  const artifactRepo = resolveArtifactRepoUrl();
+  if (!fs.existsSync(artifactDir)) {
+    console.error(c.red(`Artifact clone not found at ${artifactDir}.`));
+    console.error('Run `npm run pipe -- pull` first to clone the artifact repo.');
+    return 2;
+  }
+  const destDir = path.join(artifactDir, 'demos', identity.login, runId);
+  console.log(c.bold(`[pipe] publish ${runId}`));
+  console.log(c.dim(`  owner:  @${identity.login}`));
+  console.log(c.dim(`  dest:   ${destDir}`));
+  let result;
+  try {
+    result = RUN_PACKAGE.publishPackage({
+      runDir,
+      destDir,
+      owner: { login: identity.login, name: identity.name || null },
+      includePrompt: !!flags['include-prompt'],
+      overwrite: true,
+      notes: flags.notes || null,
+    });
+  } catch (e) {
+    console.error(c.red(`[pipe] publish blocked: ${e.message}`));
+    if (e.findings && e.findings.length) {
+      for (const f of e.findings.slice(0, 5)) {
+        console.error(c.red(`  ${f.path}:${f.line}  [${f.pattern}]`));
+      }
+    }
+    return 2;
+  }
+  console.log(c.green(`[pipe] packaged ${result.files.length} file(s)`));
+
+  if (!artifactRepo) {
+    console.log(c.yellow('  PLAID_DEMO_APPS_REPO is unset — local publish only (no push).'));
+    return 0;
+  }
+  const message = flags.message
+    ? String(flags.message)
+    : `publish: ${identity.login}/${runId}`;
+
+  const addResult = runGit(['add', path.relative(artifactDir, destDir)], artifactDir);
+  if (addResult.status !== 0) {
+    console.error(c.red('[pipe] git add failed — aborting.'));
+    return 2;
+  }
+  const commitResult = runGit(['commit', '-m', message], artifactDir);
+  if (commitResult.status !== 0) {
+    console.warn(c.yellow('  Nothing new to commit (already published at this version?).'));
+  }
+  if (flags['direct-push']) {
+    const pushResult = runGit(['push', 'origin', 'HEAD:main'], artifactDir);
+    return pushResult.status === 0 ? 0 : 2;
+  }
+  const branch = `publish/${identity.login}/${runId}`;
+  runGit(['checkout', '-B', branch], artifactDir);
+  runGit(['push', '-u', 'origin', branch], artifactDir);
+  const ghResult = spawnSync(
+    process.env.GH_BIN || 'gh',
+    ['pr', 'create', '--fill', '--head', branch, '--base', 'main'],
+    { cwd: artifactDir, stdio: 'inherit', env: process.env }
+  );
+  if (ghResult.status !== 0) {
+    console.warn(c.yellow('  `gh pr create` failed. You can open the PR manually from the URL printed above.'));
+  }
+  runGit(['checkout', 'main'], artifactDir);
+  return 0;
+}
+
+async function cmdUnpublish({ positional }) {
+  const runId = positional[0];
+  if (!runId) throw new Error('RUN_ID required for unpublish.');
+  const identity = IDENTITY.resolveIdentity({ refresh: false });
+  if (!identity) {
+    console.error(c.red('No identity resolved.'));
+    return 64;
+  }
+  const artifactDir = resolveArtifactDir();
+  const relDir = path.join('demos', identity.login, runId);
+  const absDir = path.join(artifactDir, relDir);
+  if (!fs.existsSync(absDir)) {
+    console.error(c.red(`Nothing to unpublish — not found at ${absDir}`));
+    return 2;
+  }
+  fs.rmSync(absDir, { recursive: true, force: true });
+  runGit(['add', '-A', relDir], artifactDir);
+  runGit(['commit', '-m', `unpublish: ${identity.login}/${runId}`], artifactDir);
+  if (resolveArtifactRepoUrl()) {
+    const branch = `unpublish/${identity.login}/${runId}`;
+    runGit(['checkout', '-B', branch], artifactDir);
+    runGit(['push', '-u', 'origin', branch], artifactDir);
+    runGit(['checkout', 'main'], artifactDir);
+  }
+  return 0;
+}
+
+// ── Command: post-slides (per-slide agent-driven insertion) ──────────────────
+async function cmdPostSlides({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to target — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const script = path.join(PROJECT_ROOT, 'scripts', 'scratch', 'scratch', 'post-slides.js');
+  const args = [script];
+  if (flags.steps) args.push(`--steps=${flags.steps}`);
+  if (flags['max-iters']) args.push(`--max-iters=${flags['max-iters']}`);
+  if (flags['dry-run']) args.push('--dry-run');
+  console.log(c.bold(`[pipe] post-slides on ${runId}`));
+  const child = spawn('node', args, {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, PIPELINE_RUN_DIR: runDir },
+    stdio: 'inherit',
+  });
+  return new Promise((resolve) => {
+    child.on('exit', (code) => resolve(code === 0 ? 0 : 2));
+  });
+}
+
 // ── Command: open (dashboard URL) ────────────────────────────────────────────
 function cmdOpen({ positional }) {
   const runId = positional[0] || path.basename(readLatestRunDir() || '');
@@ -639,6 +854,16 @@ Usage:
                                  [--with-slides|--app-only] [--non-interactive]
 
   ${c.cyan('npm run pipe -- stage')}    STAGE [RUN_ID]    Re-run one stage
+  ${c.cyan('npm run pipe -- post-slides')}   [RUN_ID] [--steps=IDS] [--max-iters=N]
+                                 Per-slide agent-driven insertion + QA
+  ${c.cyan('npm run pipe -- post-panels')}   [RUN_ID] [--steps=IDS] [--dry-run]
+                                 Deterministic JSON side-panel normalizer
+
+  ${c.cyan('npm run pipe -- whoami')}                      Resolved GHE identity + artifact paths
+  ${c.cyan('npm run pipe -- pull')}                        git pull code repo + artifact repo
+  ${c.cyan('npm run pipe -- publish')}  [RUN_ID] [--message=...] [--include-prompt] [--direct-push]
+                                 Package + redact + push a run to plaid-demo-apps
+  ${c.cyan('npm run pipe -- unpublish')} RUN_ID            Remove a published demo
   ${c.cyan('npm run pipe -- status')}   [RUN_ID] [--json]  Run + stage state
   ${c.cyan('npm run pipe -- logs')}     [RUN_ID] [--follow]
   ${c.cyan('npm run pipe -- stop')}     [RUN_ID] [--force]
@@ -670,6 +895,12 @@ Claude integration:
       case 'new':      code = await cmdNew(parsed);     break;
       case 'resume':   code = await cmdResume(parsed);  break;
       case 'stage':    code = await cmdStage(parsed);   break;
+      case 'post-panels': code = await cmdPostPanels(parsed); break;
+      case 'post-slides': code = await cmdPostSlides(parsed); break;
+      case 'whoami':   code = cmdWhoami();               break;
+      case 'pull':     code = await cmdPull();           break;
+      case 'publish':  code = await cmdPublish(parsed);  break;
+      case 'unpublish':code = await cmdUnpublish(parsed);break;
       case 'status':   code = cmdStatus(parsed);        break;
       case 'logs':     code = await cmdLogs(parsed);    break;
       case 'list':     code = cmdList(parsed);          break;

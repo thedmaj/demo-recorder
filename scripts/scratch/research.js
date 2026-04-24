@@ -301,25 +301,26 @@ function extractJson(text) {
 // ── Build research messages from context ──────────────────────────────────────
 
 /**
- * Loads the value props file for the given product slug.
- * 1. Per-product file: inputs/products/plaid-{slug}.md
- * 2. Fallback: inputs/plaid-value-props.md (legacy monolithic file)
- * Returns the file content as a string, or null if not found.
+ * Loads the per-product knowledge markdown for the given slug (contains the
+ * `## Value Proposition Statements` section plus overview / use cases /
+ * proof points / talk tracks).
+ *
+ * Returns the full file content as a string, or null when the file does
+ * not exist. Unlike the pre-2026-04 implementation, this no longer falls
+ * back to the (now-retired) `inputs/plaid-value-props.md` monolith — if
+ * the per-product file is missing, research will run a Glean / AskBill
+ * query for the product's VPs and upsert the section back into a newly
+ * seeded per-product file at the end of the research phase.
  */
 function loadValueProps(productSlug) {
-  if (productSlug) {
-    const perProduct = path.join(INPUTS_DIR, 'products', `plaid-${productSlug}.md`);
-    if (fs.existsSync(perProduct)) {
-      console.log(`  Using per-product knowledge file: inputs/products/plaid-${productSlug}.md`);
-      return fs.readFileSync(perProduct, 'utf8').trim();
-    }
+  if (!productSlug) return null;
+  const perProduct = path.join(INPUTS_DIR, 'products', `plaid-${productSlug}.md`);
+  if (!fs.existsSync(perProduct)) {
+    console.log(`  No per-product knowledge file for slug '${productSlug}' — research will seed one.`);
+    return null;
   }
-  const vpFile = path.join(INPUTS_DIR, 'plaid-value-props.md');
-  if (fs.existsSync(vpFile)) {
-    console.log(`  Using legacy value-props file: inputs/plaid-value-props.md`);
-    return fs.readFileSync(vpFile, 'utf8').trim();
-  }
-  return null;
+  console.log(`  Using per-product knowledge file: inputs/products/plaid-${productSlug}.md`);
+  return fs.readFileSync(perProduct, 'utf8').trim();
 }
 
 // ── Confidence-gated product KB append ────────────────────────────────────────
@@ -537,13 +538,57 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
     : '';
 
   const valuePropsMd = loadValueProps(productSlug);
+  // Freshness check — when the per-product KB has a `last_vp_research` date
+  // within the last 30 days we treat its VPs as authoritative and tell the
+  // research agent NOT to re-query Glean for the same baseline messaging.
+  // Research focus shifts entirely to industry / use-case context: the
+  // customer's deal mechanics, competitive positioning, Gong color, and any
+  // customer-story nuance that changes between builds.
+  let vpFreshness = null;
+  try {
+    const { describeProductVpFreshness } = require('./utils/product-vp-freshness');
+    if (productSlug) vpFreshness = describeProductVpFreshness(productSlug);
+  } catch (_) { vpFreshness = null; }
+  const vpIsFresh = !!(vpFreshness && vpFreshness.fresh);
+  if (vpFreshness) {
+    console.log(
+      `  Product VP freshness (${productSlug}): ${vpFreshness.fresh ? 'fresh' : 'stale'}` +
+        ` [${vpFreshness.reason}${vpFreshness.ageDays != null ? `, ${Math.round(vpFreshness.ageDays)}d old` : ''}]`
+    );
+  }
   const valuePropSection = valuePropsMd
     ? `\n\n## PRIORITY MESSAGING (treat as ground truth — do not replace or contradict)\n\n` +
-      `The following value propositions, proof points, and talk tracks are pre-approved. ` +
-      `Use them verbatim or closely adapted in the synthesized output. ` +
-      `Research confirms and supplements them — it does NOT override them.\n\n` +
-      valuePropsMd + `\n\n## END PRIORITY MESSAGING\n`
-    : '';
+      `The following value propositions, proof points, and talk tracks are pre-approved ` +
+      `per-product knowledge. ` +
+      (vpIsFresh
+        ? `Their \`last_vp_research\` date is within the 30-day freshness window — ` +
+          `**do NOT** query Glean (or any other internal KB) for this product's baseline ` +
+          `value propositions, elevator pitches, or canonical proof points. Those fields ` +
+          `are already covered here. Use them verbatim or closely adapted in the synthesized output.\n\n`
+        : `Use them verbatim or closely adapted in the synthesized output. ` +
+          `Research confirms and supplements them — it does NOT override them.\n\n`) +
+      valuePropsMd + `\n\n## END PRIORITY MESSAGING\n` +
+      `\n## RESEARCH FOCUS (what Glean/AskBill calls SHOULD cover)\n` +
+      `Your research budget is for **industry and use-case context that changes per build** — ` +
+      `NOT for re-fetching baseline product value propositions. Concretely:\n` +
+      `- Customer vertical / deal mechanics (how this customer or persona uses the product).\n` +
+      `- Competitive positioning vs. named alternatives in the prompt.\n` +
+      `- Fresh Gong color: recent objections, specific customer quotes, quantified outcomes.\n` +
+      `- Use-case-specific edge cases (e.g. funding amount thresholds, industry-specific KYC nuances).\n` +
+      `- API accuracy gaps that the per-product KB file does not yet cover.\n` +
+      (vpIsFresh
+        ? `The per-product VP file is FRESH — do **not** issue Glean queries whose intent is ` +
+          `"elevator pitch", "value props for Plaid <product>", or "generic proof points". Those ` +
+          `are covered by the priority messaging above. If you have no industry/use-case gap to fill, ` +
+          `skip Glean entirely and put remaining uncertainty in gapQuestions.\n`
+        : `The per-product VP file is STALE or missing baseline VPs — you MAY run 1–2 Glean ` +
+          `queries for baseline value propositions, but results should be framed as candidates ` +
+          `for the per-product file upsert (the pipeline will store them back).\n`)
+    : `\n\n## NO PRIORITY MESSAGING FILE YET for product slug "${productSlug || '(none)'}"\n\n` +
+      `There is no \`inputs/products/plaid-${productSlug || '<slug>'}.md\` file yet. Research this ` +
+      `product's baseline value propositions, proof points, and talk tracks; the pipeline will ` +
+      `persist them to a new per-product file after the research phase so future builds skip ` +
+      `this step.\n`;
 
   if (context.type === 'prompt') {
     let systemPrompt =
@@ -585,9 +630,15 @@ function buildResearchMessages(context, productSlug, researchOpts = {}) {
       `Research Plaid products in preparation for building a demo video based on this brief:\n\n` +
       `${context.content}\n\n` +
       (valuePropsMd
-        ? `The PRIORITY MESSAGING section in your system prompt contains pre-approved value ` +
-          `propositions and talk tracks. Preserve these in the synthesized output. ` +
-          `Research should confirm API accuracy and add evidence — not replace the messaging.\n\n`
+        ? (vpIsFresh
+            ? `The PRIORITY MESSAGING section in your system prompt contains **fresh** pre-approved ` +
+              `value propositions (baseline claims, elevator pitches, canonical proof points). ` +
+              `Preserve these verbatim in the synthesized output. Your research budget is for ` +
+              `**industry / use-case / customer-specific context** — do NOT re-query Glean for baseline VPs.\n\n`
+            : `The PRIORITY MESSAGING section in your system prompt contains pre-approved value ` +
+              `propositions and talk tracks. Preserve these in the synthesized output. ` +
+              `The file is stale or missing some VPs — research may add candidates, which the ` +
+              `pipeline will persist back to the per-product file.\n\n`)
         : '');
 
     if (mode === 'full') {
@@ -734,6 +785,15 @@ function inferRequiredApiSignalsFromPrompt(promptText) {
     { aliases: ['transactions/sync', '/transactions/sync'], canonical: 'transactions/sync' },
     { aliases: ['liabilities/get', '/liabilities/get'], canonical: 'liabilities/get' },
     { aliases: ['investments/holdings/get', '/investments/holdings/get'], canonical: 'investments/holdings/get' },
+    {
+      aliases: [
+        'investments/auth/get',
+        '/investments/auth/get',
+        'investments\\auth\\get',
+        '\\investments\\auth\\get',
+      ],
+      canonical: 'investments/auth/get',
+    },
     { aliases: ['cra/check_report/base_report/get', '/cra/check_report/base_report/get'], canonical: 'cra/check_report/base_report/get' },
     { aliases: ['cra/check_report/income_insights/get', '/cra/check_report/income_insights/get'], canonical: 'cra/check_report/income_insights/get' },
   ];
@@ -777,6 +837,7 @@ function apiSignalAliases(canonical) {
     'transactions/sync': ['transactions/sync', 'transactions sync'],
     'liabilities/get': ['liabilities/get', 'liabilities get'],
     'investments/holdings/get': ['investments/holdings/get', 'holdings get', 'investment holdings'],
+    'investments/auth/get': ['investments/auth/get', '/investments/auth/get', 'investments\\auth\\get'],
     'cra/check_report/base_report/get': ['cra/check_report/base_report/get', 'base report get', 'base report'],
     'cra/check_report/income_insights/get': ['cra/check_report/income_insights/get', 'income insights get', 'income insights'],
   };
@@ -939,7 +1000,7 @@ async function runResearch(context, productSlug, researchOpts = {}) {
     }
 
     const response = await client.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       max_tokens: 4096,
       system,
       tools,
@@ -1367,6 +1428,36 @@ async function main() {
     research.productFamily = productFamily;
     research.curatedProductKnowledge = buildCuratedProductKnowledge(productFamily);
     research.curatedDigest = buildCuratedDigest(research.curatedProductKnowledge);
+
+    const { resolveLinkTokenCreateConfig } = require('./utils/link-token-create-config');
+    const requiredApiSignalsLt = inferRequiredApiSignalsFromPrompt(promptContent);
+    const linkModeHintLt = getRequiredLinkMode(promptContent);
+    try {
+      research.linkTokenCreate = await resolveLinkTokenCreateConfig({
+        promptText: promptContent,
+        requiredApiSignals: requiredApiSignalsLt,
+        productFamily,
+        linkMode: linkModeHintLt,
+      });
+      fs.writeFileSync(
+        path.join(OUT_DIR, 'link-token-create-config.json'),
+        JSON.stringify(research.linkTokenCreate, null, 2),
+        'utf8'
+      );
+      console.log(
+        `  Link token create config: products=[${(research.linkTokenCreate.products || []).join(', ')}] ` +
+        `(askBill=${research.linkTokenCreate.askBillAvailable ? 'yes' : 'no'})`
+      );
+    } catch (e) {
+      console.warn(`  Link token create config failed: ${e.message}`);
+      research.linkTokenCreate = {
+        products: ['auth', 'identity'],
+        suggestedClientRequest: { client_name: '<BrandName>', products: ['auth', 'identity'], user_id: 'demo-user-001' },
+        error: e.message,
+        resolvedAt: new Date().toISOString(),
+      };
+    }
+
     const ctxPayload = buildRunContextPayload({
       phase: 'research',
       productFamily,
@@ -1414,6 +1505,35 @@ async function main() {
     appendResearchToProductFile(productSlug, runId, research);
   } else {
     console.log('  skipResearchAgent: not appending to product KB file.');
+  }
+
+  // Upsert the per-product Value Proposition section when the file was
+  // missing or stale. This runs only if research produced valuePropositions
+  // and the baseline wasn't already fresh — we do NOT overwrite fresh VPs.
+  try {
+    const { describeProductVpFreshness, upsertValuePropositionsSection } = require('./utils/product-vp-freshness');
+    const vps = (research.synthesizedInsights && Array.isArray(research.synthesizedInsights.valuePropositions))
+      ? research.synthesizedInsights.valuePropositions.filter((v) => typeof v === 'string' && v.trim())
+      : [];
+    if (productSlug && vps.length > 0) {
+      const status = describeProductVpFreshness(productSlug);
+      if (!status.fresh) {
+        const sectionMarkdown =
+          `<!-- Auto-seeded / refreshed by research phase on ${new Date().toISOString().split('T')[0]}.\n` +
+          `     A human should review and promote into Primary Pitch / Supporting Claims. -->\n\n` +
+          `### Candidate Value Propositions (research-derived)\n` +
+          vps.slice(0, 12).map((v) => `- ${v}`).join('\n') + '\n';
+        const result = upsertValuePropositionsSection(productSlug, sectionMarkdown);
+        console.log(
+          `  Upserted ## Value Proposition Statements on ${path.relative(OUT_DIR, result.filePath) || result.filePath} ` +
+            `(${result.created ? 'created new file' : 'refreshed'}; last_vp_research=${result.dateIso})`
+        );
+      } else {
+        console.log(`  Product VP section still fresh (${status.ageDays != null ? Math.round(status.ageDays) : '?'}d) — skipping upsert.`);
+      }
+    }
+  } catch (e) {
+    console.warn(`  Could not upsert per-product VP section: ${e.message}`);
   }
 
   return research;

@@ -820,4 +820,5 @@ module.exports = {
   searchCompanyKnowledge,
   extractSolutionNamesFromPrompt,
   resolveSolutionsMasterContext,
+  tryExtractJsonBlock,
 };

@@ -10,6 +10,7 @@ const {
   normalizeGoToStepExpression,
   isSlideLikeStep,
   buildPlaidLaunchCtaIconDiagnostics,
+  waitForLoadingToClear,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/build-qa'));
 
 describe('build-qa helpers', () => {
@@ -80,5 +81,56 @@ describe('build-qa helpers', () => {
     );
     assert.equal(d.length, 1);
     assert.match(d[0].issue, /no SVG icon/i);
+  });
+
+  test('waitForLoadingToClear short-circuits when no spinner ever appears', async () => {
+    const evaluations = [];
+    const fakePage = {
+      evaluate: async () => {
+        evaluations.push('call');
+        return { spinner: false, text: null, signal: null };
+      },
+      waitForTimeout: async () => {},
+    };
+    const res = await waitForLoadingToClear(fakePage, { maxWaitMs: 500 });
+    assert.equal(res.cleared, true);
+    assert.ok(res.elapsedMs < 500, 'should return on the first poll');
+    assert.equal(evaluations.length, 1);
+  });
+
+  test('waitForLoadingToClear polls until spinner/text clears', async () => {
+    let polls = 0;
+    const fakePage = {
+      evaluate: async () => {
+        polls += 1;
+        if (polls < 3) return { spinner: true, text: null, signal: 'spinner:loader' };
+        return { spinner: false, text: null, signal: null };
+      },
+      waitForTimeout: async () => {},
+    };
+    const res = await waitForLoadingToClear(fakePage, { maxWaitMs: 5000 });
+    assert.equal(res.cleared, true);
+    assert.equal(polls, 3);
+  });
+
+  test('waitForLoadingToClear times out when spinner never clears', async () => {
+    const fakePage = {
+      evaluate: async () => ({ spinner: false, text: 'Linking account', signal: 'text:linking account' }),
+      waitForTimeout: async () => {},
+    };
+    const res = await waitForLoadingToClear(fakePage, { maxWaitMs: 200 });
+    assert.equal(res.cleared, false);
+    assert.equal(res.lastSignal, 'text:linking account');
+  });
+
+  test('waitForLoadingToClear is a no-op when maxWaitMs is 0', async () => {
+    let called = false;
+    const fakePage = {
+      evaluate: async () => { called = true; return { spinner: true, text: null, signal: 'x' }; },
+      waitForTimeout: async () => {},
+    };
+    const res = await waitForLoadingToClear(fakePage, { maxWaitMs: 0 });
+    assert.equal(res.cleared, true);
+    assert.equal(called, false, 'zero maxWaitMs must not invoke page.evaluate');
   });
 });

@@ -47,7 +47,7 @@ const FRAMES_DIR     = path.join(OUT_DIR, 'qa-frames');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const QA_MODEL          = 'claude-opus-4-6';
+const QA_MODEL          = 'claude-opus-4-7';
 const QA_MAX_TOKENS     = parseInt(process.env.QA_MAX_TOKENS || '4096', 10);
 const QA_REVIEW_CONCURRENCY = Math.max(1, parseInt(process.env.QA_REVIEW_CONCURRENCY || '3', 10));
 const QA_PASS_THRESHOLD = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);

@@ -344,10 +344,10 @@ hr { border: none; border-top: 1px solid var(--card-border); margin: 48px 0; }
       <tr><td>1</td><td><a href="#s-research">research</a></td><td><span class="model-badge m-sonnet">Sonnet 4.6</span></td><td>product-research.json</td><td><span class="badge b-req">required</span></td></tr>
       <tr><td>2</td><td><a href="#s-ingest">ingest</a></td><td><span class="model-badge m-none">CLI / Node</span></td><td>ingested-inputs.json</td><td><span class="badge b-req">required</span></td></tr>
       <tr><td>3</td><td><a href="#s-brand">brand-extract</a></td><td><span class="model-badge m-haiku">Haiku 4.5</span> <span class="model-badge m-none">Brandfetch</span></td><td>brand/&lt;slug&gt;.json</td><td><span class="badge b-req">required</span></td></tr>
-      <tr><td>4</td><td><a href="#s-script">script</a></td><td><span class="model-badge m-opus">Opus 4.6</span></td><td>demo-script.json</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>4</td><td><a href="#s-script">script</a></td><td><span class="model-badge m-opus">Opus 4.7</span></td><td>demo-script.json</td><td><span class="badge b-req">required</span></td></tr>
       <tr><td>5</td><td><a href="#s-critique">script-critique</a></td><td><span class="model-badge m-haiku">Haiku 4.5</span></td><td>critique report</td><td><span class="badge b-req">required</span></td></tr>
       <tr><td>5b</td><td><a href="#s-validate">embed-validate</a></td><td><span class="model-badge m-google">Vertex AI</span></td><td>script-validate-report.json</td><td><span class="badge b-opt">optional</span></td></tr>
-      <tr><td>6</td><td><a href="#s-build">build</a></td><td><span class="model-badge m-sonnet">Sonnet 4.6</span> <span class="model-badge m-opus">Opus 4.6</span></td><td>scratch-app/index.html</td><td><span class="badge b-req">required</span></td></tr>
+      <tr><td>6</td><td><a href="#s-build">build</a></td><td><span class="model-badge m-sonnet">Sonnet 4.6</span> <span class="model-badge m-opus">Opus 4.7</span></td><td>scratch-app/index.html</td><td><span class="badge b-req">required</span></td></tr>
       <tr><td>6b</td><td>— manual preview —</td><td><span class="model-badge m-none">Human</span></td><td>approval to record</td><td><span class="badge b-man">manual</span></td></tr>
       <tr><td>7</td><td><a href="#s-record">record</a></td><td><span class="model-badge m-pw">Playwright</span></td><td>recording.webm</td><td><span class="badge b-req">required</span></td></tr>
       <tr><td>8</td><td><a href="#s-qa">qa</a></td><td><span class="model-badge m-sonnet">Sonnet Vision</span></td><td>qa-report-N.json</td><td><span class="badge b-req">required</span></td></tr>
@@ -381,7 +381,7 @@ flowchart TD
   videos/`"]) --> R[research\nSonnet 4.6]
   R --> I[ingest\nNode]
   I --> B[brand-extract\nHaiku 4.5]
-  B --> S[script\nOpus 4.6]
+  B --> S[script\nOpus 4.7]
   S --> SC[script-critique\nHaiku 4.5]
   SC --> EV([embed-validate\nVertex AI]):::opt
   SC --> BUILD[build\nSonnet → Opus]
@@ -555,7 +555,7 @@ flowchart LR
         <div class="stage-title">
           <strong>script</strong>
           <div class="stage-meta">
-            <span class="model-badge m-opus">Opus 4.6</span>
+            <span class="model-badge m-opus">Opus 4.7</span>
             <span class="badge b-req">required</span>
           </div>
         </div>
@@ -651,7 +651,7 @@ flowchart LR
           <strong>build</strong>
           <div class="stage-meta">
             <span class="model-badge m-sonnet">Sonnet 4.6 (arch)</span>
-            <span class="model-badge m-opus">Opus 4.6 (gen)</span>
+            <span class="model-badge m-opus">Opus 4.7 (gen)</span>
             <span class="badge b-req">required</span>
           </div>
         </div>
@@ -1349,7 +1349,7 @@ flowchart TD
 
   <div class="stage-grid">
     <div class="vibe-card">
-      <h3><span class="model-badge m-opus" style="margin-right:8px">Opus 4.6</span> Script &amp; App Build</h3>
+      <h3><span class="model-badge m-opus" style="margin-right:8px">Opus 4.7</span> Script &amp; App Build</h3>
       <p>The two stages that require the most reasoning and creative output. Script generation must follow a complex narrative arc with brand voice rules. App build must produce valid DOM-contract HTML with full JS in one shot. Opus's larger context window and reasoning handle both reliably.</p>
     </div>
     <div class="vibe-card">

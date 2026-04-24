@@ -144,6 +144,8 @@ const STAGES = [
   'build',
   'plaid-link-qa',
   'build-qa',
+  'post-slides',             // Agent-driven per-slide insertion (runs only when slide-kind steps exist)
+  'post-panels',             // Deterministic JSON side-panel normalizer (idempotent)
   'record',
   'qa',
   'figma-review',
@@ -1778,8 +1780,10 @@ async function runScratchPipeline({
   });
 
   // Stage 4b: value-prop claim verification (inline — fast Haiku call)
-  // Checks that narrated claims match approved proof points in plaid-value-props.md.
-  // Flags unapproved numbers or misattributed claims before they reach the final video.
+  // Checks narrated claims against the approved claims digest from the run
+  // context and the curated per-product knowledge files in inputs/products/.
+  // Flags unapproved numbers or misattributed claims before they reach the
+  // final video.
   if (shouldRun('script-critique')) {
     await runStage('claim-check', async () => {
       const runDir     = requireRunDir(PROJECT_ROOT, 'orchestrator');
@@ -1798,7 +1802,6 @@ async function runScratchPipeline({
       const { readPipelineRunContext } = require('./utils/run-context');
       const productFamily = inferProductFamily({ promptText, demoScript: script });
       const knowledgeFiles = loadProductKnowledgeForFamily(productFamily);
-      const fallbackVpFile = path.join(INPUTS_DIR, 'plaid-value-props.md');
       let valuePropsMd = '';
       const pipelineCtx = readPipelineRunContext(runDir);
       if (pipelineCtx && pipelineCtx.approvedClaimsDigest) {
@@ -1818,9 +1821,6 @@ async function runScratchPipeline({
       if (!valuePropsMd && knowledgeFiles.length > 0) {
         valuePropsMd = knowledgeFiles.map(file => file.markdown).join('\n\n---\n\n');
         console.log(`[claim-check] Using curated product knowledge for family "${productFamily}" (${knowledgeFiles.length} file(s)).`);
-      } else if (!valuePropsMd && fs.existsSync(fallbackVpFile)) {
-        valuePropsMd = fs.readFileSync(fallbackVpFile, 'utf8');
-        console.log('[claim-check] Using legacy plaid-value-props.md fallback.');
       }
       const claimsOverridePath = path.join(INPUTS_DIR, 'claims-override.json');
       if (fs.existsSync(claimsOverridePath)) {
@@ -1840,7 +1840,7 @@ async function runScratchPipeline({
       }
 
       if (!valuePropsMd) {
-        console.log('[claim-check] No curated product knowledge, plaid-value-props.md, or claims-override.json — skipping claim verification.');
+        console.log('[claim-check] No curated product knowledge, approved-claims digest, or claims-override.json — skipping claim verification.');
         return;
       }
 
@@ -1974,7 +1974,16 @@ async function runScratchPipeline({
   const requestedBuildFixMode = String(buildFixModeOverride || process.env.BUILD_FIX_MODE || 'auto').toLowerCase();
   const plaidLinkQaMode = String(process.env.PLAID_LINK_QA_MODE || 'auto').trim().toLowerCase();
   const buildQaPlaidMode = String(process.env.BUILD_QA_PLAID_MODE || 'auto').trim().toLowerCase();
-  const buildPhaseSequence = resolveBuildPhaseSequence();
+  // When BUILD_SLIDES_STRATEGY=post-agent (default) the dedicated `post-slides`
+  // stage handles per-slide insertion, so we drop the inline `slides` build
+  // phase to free up the LLM context budget for the app phase. Users who need
+  // the legacy behavior can opt in with BUILD_SLIDES_STRATEGY=inline.
+  const slidesStrategyPre = String(process.env.BUILD_SLIDES_STRATEGY || 'post-agent').toLowerCase();
+  let buildPhaseSequence = resolveBuildPhaseSequence();
+  if (slidesStrategyPre !== 'inline' && buildPhaseSequence.includes('slides')) {
+    buildPhaseSequence = buildPhaseSequence.filter((p) => p !== 'slides');
+    cliLog('[Orchestrator] BUILD_SLIDES_STRATEGY=post-agent — dropping inline "slides" build phase in favor of post-slides stage.');
+  }
   cliLog(
     `[Orchestrator] Build phase sequence: ${buildPhaseSequence.join(' -> ')} | ` +
     `qaThreshold=${resolvedBuildQaThreshold}, maxRefinementIterations=${resolvedBuildIterations}`
@@ -2111,6 +2120,41 @@ async function runScratchPipeline({
 
   // Plaid QA mode logging
   cliLog(`[Orchestrator] Plaid QA modes — plaid-link-qa=${plaidLinkQaMode}, build-qa=${buildQaPlaidMode}`);
+
+  // ── Agent-driven per-slide insertion (post-slides) ──────────────────────
+  // Runs only when:
+  //   - BUILD_SLIDES_STRATEGY=post-agent (default), AND
+  //   - The demo-script has any step with stepKind === 'slide' that is not yet
+  //     rendered as .slide-root in scratch-app/index.html.
+  // Skipped entirely when BUILD_SLIDES_STRATEGY=inline (legacy safety net).
+  const slidesStrategy = String(process.env.BUILD_SLIDES_STRATEGY || 'post-agent').toLowerCase();
+  if (shouldRun('post-slides') && slidesStrategy !== 'inline') {
+    await runStage('post-slides', async () => {
+      try {
+        delete require.cache[require.resolve('./scratch/post-slides')];
+        const mod = require('./scratch/post-slides');
+        if (typeof mod.main === 'function') await mod.main();
+      } catch (e) {
+        cliWarn(`[Orchestrator] post-slides stage failed: ${e.message}`);
+      }
+    }, timer).catch(() => {});
+  } else if (slidesStrategy === 'inline') {
+    cliLog('[Orchestrator] BUILD_SLIDES_STRATEGY=inline — skipping post-slides (legacy in-build slide pass).');
+  }
+
+  // ── Deterministic JSON side-panel normalizer (post-panels) ──────────────
+  // Runs unconditionally (idempotent); guarantees #api-response-panel contract.
+  if (shouldRun('post-panels')) {
+    await runStage('post-panels', async () => {
+      try {
+        delete require.cache[require.resolve('./scratch/post-panels')];
+        const mod = require('./scratch/post-panels');
+        if (typeof mod.main === 'function') await mod.main();
+      } catch (e) {
+        cliWarn(`[Orchestrator] post-panels stage failed: ${e.message}`);
+      }
+    }, timer).catch(() => {});
+  }
 
   // Post-build preview: launch a local server and open the app in the browser so a human
   // can step through it with arrow keys / clicks before recording begins.

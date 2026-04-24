@@ -33,6 +33,7 @@ const {
 } = require('../utils/prompt-templates');
 const { buildLayerMockBrandTokensStyle } = require('../utils/layer-mock-brand-tokens');
 const { inferProductFamily } = require('../utils/product-profiles');
+const { inferPlaidLinkProductsFromPrompt } = require('../utils/link-token-create-config');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
 const { readPipelineRunContext } = require('../utils/run-context');
 const {
@@ -44,6 +45,7 @@ const {
 const { resolveMode, getLinkModeAdapter } = require('../utils/link-mode');
 const { askPlaidDocs } = require('../utils/mcp-clients');
 const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
+const { isSlideStep: isSlideStepShared, annotateScriptWithStepKinds } = require('../utils/step-kind');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -140,6 +142,228 @@ function injectPlaidLaunchCtaLayoutStyles(html) {
 }
 
 /**
+ * Normalize the Plaid Link launch button so the recording automation can reliably
+ * click it and see the modal appear.
+ *
+ * Problems fixed:
+ *   1) LLM sometimes generates the button with a `disabled` attribute and a
+ *      "Preparing secure link…" / "Loading…" label, intending to enable it once
+ *      `_plaidHandler` is ready. When the span that holds the label has no stable
+ *      id, the label never gets updated, the button stays visually labelled
+ *      "Preparing secure link…", and Playwright's click fires at an awkward moment
+ *      where the Plaid SDK may auto-succeed against cached state without the
+ *      modal ever becoming visible in the recording.
+ *   2) onclick handler calls `_plaidHandler.open()` unguarded — if clicked before
+ *      the handler is initialised, the click is a no-op (button-disabled check
+ *      aside).
+ *
+ * This fixup is idempotent and conservative: it only touches the canonical launch
+ * button (`data-testid="link-external-account-btn"`) and only when there is a
+ * real problem. The LLM's own JS (setLaunchReady, etc.) is left alone.
+ */
+function normalizePlaidLaunchCta(html) {
+  if (!html || !html.includes('data-testid="link-external-account-btn"')) {
+    return html;
+  }
+  let changed = false;
+  const changes = [];
+
+  // 1) Strip `disabled` (and aria-disabled) from the launch button itself so the
+  //    button is clickable from the moment it renders. The onclick handler will
+  //    wait for `_plaidHandler` before calling .open(), so this is safe.
+  const btnRe = /<button\b([^>]*\bdata-testid="link-external-account-btn"[^>]*)>/i;
+  const btnMatch = html.match(btnRe);
+  if (btnMatch) {
+    let attrs = btnMatch[1];
+    let attrsChanged = false;
+    if (/\bdisabled\b/i.test(attrs)) {
+      attrs = attrs.replace(/\s+disabled(?==|\b)(="[^"]*")?/gi, '');
+      attrsChanged = true;
+    }
+    if (/\baria-disabled\s*=\s*"(true|1)"/i.test(attrs)) {
+      attrs = attrs.replace(/\s+aria-disabled\s*=\s*"(true|1)"/gi, '');
+      attrsChanged = true;
+    }
+    if (attrsChanged) {
+      html = html.replace(btnRe, `<button${attrs}>`);
+      changed = true;
+      changes.push('removed disabled/aria-disabled from launch CTA');
+    }
+  }
+
+  // 2) Replace any loading-style label ("Preparing secure link…", "Loading…",
+  //    "Connecting…", "Initializing…") on the launch button with the stable
+  //    "Link external account" label that the narration references.
+  //    We target the first textual span (or direct text node) inside the canonical
+  //    button only to avoid touching unrelated UI.
+  const btnBlockRe = /(<button\b[^>]*\bdata-testid="link-external-account-btn"[^>]*>)([\s\S]*?)(<\/button>)/i;
+  const btnBlock = html.match(btnBlockRe);
+  if (btnBlock) {
+    const [full, open, inner, close] = btnBlock;
+    const loadingLabelRe = /(Preparing\s+secure\s+link[\u2026.]*|Loading[\u2026.]*|Connecting[\u2026.]*|Initiali[sz]ing[\u2026.]*|Please\s+wait[\u2026.]*)/i;
+    if (loadingLabelRe.test(inner)) {
+      const newInner = inner.replace(loadingLabelRe, 'Link external account');
+      html = html.replace(full, `${open}${newInner}${close}`);
+      changed = true;
+      changes.push('replaced loading label with "Link external account"');
+    }
+  }
+
+  // 3) Harden the onclick handler: wait (with a ~10s cap) for `_plaidHandler` to
+  //    be initialised before calling `.open()`. If the click lands before the
+  //    link-token fetch resolves, the original pattern
+  //    `if (window._plaidHandler) window._plaidHandler.open();` was a no-op,
+  //    which in turn led to Plaid SDK auto-completing against cached state.
+  const unguardedOnclickRe = /launchBtn\.addEventListener\(\s*['"]click['"]\s*,\s*function\s*\(\s*e\s*\)\s*\{\s*e\.preventDefault\(\)\s*;\s*if\s*\(\s*window\._plaidHandler\s*\)\s*window\._plaidHandler\.open\(\)\s*;\s*\}\s*\)\s*;?/;
+  const hardenedOnclick =
+    `launchBtn.addEventListener('click', async function(e){\n` +
+    `      e.preventDefault();\n` +
+    `      // Wait up to 10s for the Plaid handler to initialise (link-token fetch + Plaid.create)\n` +
+    `      // so that clicks landing before the handler is ready still open the modal.\n` +
+    `      for (var i = 0; i < 50 && !(window._plaidHandler && typeof window._plaidHandler.open === 'function'); i++) {\n` +
+    `        await new Promise(function(r){ setTimeout(r, 200); });\n` +
+    `      }\n` +
+    `      if (window._plaidHandler && typeof window._plaidHandler.open === 'function') {\n` +
+    `        window._plaidHandler.open();\n` +
+    `      }\n` +
+    `    });`;
+  if (unguardedOnclickRe.test(html)) {
+    html = html.replace(unguardedOnclickRe, hardenedOnclick);
+    changed = true;
+    changes.push('hardened launch onclick to await _plaidHandler');
+  }
+
+  if (changed) {
+    console.log(`[Build] Normalized Plaid Link launch CTA: ${changes.join('; ')}`);
+  }
+  return html;
+}
+
+/**
+ * Normalize the Plaid Link EMBEDDED UX so the recording and the rendered MP4
+ * match the contract in CLAUDE.md and `skills/plaid-link-embedded-link-skill.md`.
+ *
+ * Problems this fixes (seen in real runs):
+ *   1) LLM adds an additional "Link bank account" / launch button next to the
+ *      embedded widget. In embedded mode the widget IS the CTA — the modal is
+ *      surfaced by clicking an institution tile inside the widget. An extra
+ *      host-side button is redundant at best and actively confusing at worst.
+ *   2) The embedded container is sized arbitrarily (e.g. 380x420), which leaves
+ *      empty whitespace below the institution tiles. The build normalizer applies
+ *      one default footprint for every embedded demo: **430×390** (min + height).
+ *
+ * We only touch the canonical container
+ * (`data-testid="plaid-embedded-link-container"`) and only when we detect the
+ * two specific anti-patterns. The fixup is idempotent.
+ *
+ * @param {string} html          Full generated index.html
+ * @param {object} [demoScript]  Parsed demo-script.json (to read plaidLinkMode
+ *                               and any embedded size hints the LLM emitted)
+ */
+function normalizePlaidEmbeddedLinkUx(html, demoScript) {
+  if (!html) return html;
+  if (!html.includes('plaid-embedded-link-container')) return html;
+
+  // Authoritative mode check: demo-script.json wins; fall back to presence of
+  // the embedded container if no script was supplied.
+  const scriptMode = String(demoScript?.plaidLinkMode || '').toLowerCase();
+  if (scriptMode && scriptMode !== 'embedded') return html;
+
+  const changes = [];
+
+  // ── 1) Strip any launch-button (`link-external-account-btn`) and the simple
+  //       flex row that wraps it. Keep the surrounding trust copy intact.
+  const stripped = stripEmbeddedLaunchCta(html);
+  if (stripped !== html) {
+    html = stripped;
+    changes.push('removed extra launch CTA button (embedded mode uses institution-tile click instead)');
+  }
+
+  // ── 2) Harmonize container sizing — single default for all embedded use cases.
+  const profile = resolveEmbeddedLinkSizeProfile(html, demoScript);
+  const sizing = EMBEDDED_LINK_SIZE_PROFILES[profile] || EMBEDDED_LINK_SIZE_PROFILES.default;
+  const sized = applyEmbeddedContainerSizing(html, sizing);
+  if (sized !== html) {
+    html = sized;
+    changes.push(`sized container to ${sizing.width}x${sizing.height} (embedded default)`);
+  }
+
+  if (changes.length) {
+    console.log(`[Build] Normalized Plaid Embedded Link UX: ${changes.join('; ')}`);
+  }
+  return html;
+}
+
+/**
+ * Single embedded Link container size for all demos (above Plaid 350×300 / 300×350 minimums).
+ * CSS uses `min-width`/`min-height` plus explicit `height` so the iframe does not fall back to 150px.
+ */
+const EMBEDDED_LINK_SIZE_PROFILES = {
+  default: { width: 430, height: 390, label: 'default (all embedded use cases)' },
+};
+
+function resolveEmbeddedLinkSizeProfile(_html, _demoScript) {
+  // Legacy HTML may still set window.__embeddedLinkSizeProfile to small|medium|large; sizing is unified.
+  return 'default';
+}
+
+function stripEmbeddedLaunchCta(html) {
+  // Remove ANY `<button ... data-testid="link-external-account-btn" ...>...</button>`.
+  const btnRe = /<button\b[^>]*\bdata-testid="link-external-account-btn"[^>]*>[\s\S]*?<\/button>\s*/gi;
+  let out = html.replace(btnRe, '');
+  if (out === html) return html;
+
+  // If the wrapper row (e.g. `.linkcta-row`) is now empty or only has the
+  // "256-bit encryption" sibling, leave the sibling but drop the row wrapper's
+  // purpose-defined flex layout so the trust text reads naturally. We don't
+  // need to be aggressive about this — the styling will still render fine.
+  // Collapse `<div class="linkcta-row"></div>` (empty) if any remain.
+  out = out.replace(/<div\s+class="linkcta-row"\s*>\s*<\/div>\s*/gi, '');
+  return out;
+}
+
+function applyEmbeddedContainerSizing(html, sizing) {
+  const { width, height } = sizing;
+
+  // Common patterns the LLM emits for the container rule. We match the rule
+  // opening `#plaid-embedded-link-container{...}` and rewrite sizing inside it,
+  // preserving most other props (padding, radius) while stripping flex-centering
+  // and overflow:hidden variants that clip the iframe.
+  const ruleRe = /(#plaid-embedded-link-container\s*\{)([^}]*)(\})/g;
+  let changed = false;
+  const out = html.replace(ruleRe, (full, open, body, close) => {
+    changed = true;
+    // Remove any existing sizing props (min/max/width/height variants) so we
+    // don't end up with conflicting declarations.
+    const cleaned = body
+      .replace(/\bmin-width\s*:[^;]+;?/gi, '')
+      .replace(/\bmin-height\s*:[^;]+;?/gi, '')
+      .replace(/\bmax-width\s*:[^;]+;?/gi, '')
+      .replace(/\bmax-height\s*:[^;]+;?/gi, '')
+      .replace(/\bwidth\s*:[^;]+;?/gi, '')
+      .replace(/\bheight\s*:[^;]+;?/gi, '')
+      // `overflow: hidden` on this box clips the Plaid iframe when content is
+      // taller than the host min-height; drop hidden overflows on this rule only.
+      .replace(/\boverflow(?:-x|-y)?\s*:\s*hidden\s*;?/gi, '')
+      // Drop flex-centering that forces the placeholder/widget to sit in the
+      // middle with dead whitespace. The Plaid-rendered iframe sizes itself
+      // naturally inside a block container.
+      .replace(/\bdisplay\s*:\s*flex\s*;?/gi, '')
+      .replace(/\balign-items\s*:[^;]+;?/gi, '')
+      .replace(/\bjustify-content\s*:[^;]+;?/gi, '')
+      .replace(/;\s*;+/g, ';')
+      .trim();
+    // Explicit height (not only min-height): nested iframes default to 150px tall
+    // when the parent used height:auto; min-height alone does not establish a
+    // percentage basis for iframe height:100% / SDK layout.
+    const sized = `min-width:${width}px;min-height:${height}px;height:${height}px;width:100%;max-width:${width}px;`;
+    const bodyNext = (cleaned ? cleaned.replace(/;?$/, ';') : '') + sized;
+    return `${open}${bodyNext}${close}`;
+  });
+  return changed ? out : html;
+}
+
+/**
  * @param {Array<{ category?: string, severity?: string, stepId?: string }>} diagnostics
  */
 function summarizeBuildQaDiagnostics(diagnostics) {
@@ -154,10 +378,7 @@ function summarizeBuildQaDiagnostics(diagnostics) {
 }
 
 function isSlideLikeStep(step) {
-  const sceneType = String(step?.sceneType || '').toLowerCase();
-  if (sceneType) return sceneType === 'slide';
-  const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
-  return /\bslide\b/.test(haystack) && !/\binsight\b/.test(haystack);
+  return isSlideStepShared(step);
 }
 
 function isValueSummaryStep(step) {
@@ -445,13 +666,19 @@ async function hydrateApiSamplesForRelevantSlides(demoScript, productFamily) {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const ARCH_MODEL         = 'claude-opus-4-6';
+const ARCH_MODEL         = 'claude-opus-4-7';
 const ARCH_MAX_TOKENS    = 1024;
-const FRAMEWORK_MODEL    = 'claude-opus-4-6';
+const FRAMEWORK_MODEL    = 'claude-opus-4-7';
 const FRAMEWORK_MAX_TOKENS = 1800;
-const BUILD_MODEL        = 'claude-opus-4-6';
+const BUILD_MODEL        = 'claude-opus-4-7';
 const BUILD_BUDGET_TOKENS = 12000;
-const BUILD_MAX_TOKENS   = 32000;
+// Adaptive thinking consumes tokens before output; for large demos (10+ steps
+// with multiple `.slide-root` insight screens) 32K can truncate the final
+// HTML + playwright script. Override with BUILD_MAX_TOKENS_OVERRIDE to raise.
+const BUILD_MAX_TOKENS   = Math.max(
+  8000,
+  parseInt(process.env.BUILD_MAX_TOKENS_OVERRIDE || '32000', 10) || 32000
+);
 
 // ── Live Plaid Link flag ──────────────────────────────────────────────────────
 const PLAID_LINK_LIVE = process.env.PLAID_LINK_LIVE === 'true';
@@ -543,21 +770,6 @@ function loadBrand(demoScript) {
 
   try {
     const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
-    // Defensive fallback: never render Brandfetch /theme/light/ assets on light host shells.
-    const mode = String(profile.mode || '').toLowerCase();
-    if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
-    const logo = profile.logo;
-    const imageUrl = String(logo.imageUrl || '');
-    if (mode === 'light' && /\/theme\/light\//i.test(imageUrl)) {
-      if (logo.darkImageUrl && /^https?:\/\//i.test(String(logo.darkImageUrl))) {
-        logo.imageUrl = logo.darkImageUrl;
-      } else {
-        logo.shellBg = 'rgba(15,23,42,0.78)';
-        logo.shellBorder = 'rgba(15,23,42,0.45)';
-      }
-      profile.logo = logo;
-      console.warn('[Build] Contrast safety: adjusted brand logo presentation for light host mode.');
-    }
     console.log(`[Build] Brand profile loaded: ${path.relative(PROJECT_ROOT, profilePath)} (${profile.name}, mode: ${profile.mode})`);
     return profile;
   } catch (err) {
@@ -657,6 +869,78 @@ function normalizeLaunchPlaywrightRow(playwrightScript, demoScript) {
   if (!row.waitMs || row.waitMs < 120000) row.waitMs = 120000;
 }
 
+/**
+ * Deduplicate playwright rows that reference the same demo-script stepId.
+ *
+ * CLAUDE.md rule (Plaid Link section):
+ *   "NEVER split into a goToStep entry + click entry for the same launch step —
+ *    this causes duplicate markStep calls"
+ *
+ * The LLM occasionally emits two rows for the Plaid Link launch step (one
+ * `goToStep` + one `click`, or two `click`s), which causes the recorder to
+ * fire the Plaid Link flow twice, produces two step-timing windows for the
+ * same stepId, and ultimately duplicates the narration clip in the
+ * voiceover-manifest. The downstream fallout was observed on the Banner run:
+ *   - step-timing had plaid-link-launch at [2] AND [3]
+ *   - voiceover-manifest listed plaid-link-launch x2
+ *   - the rendered MP4 repeated the Plaid Link narration at the ~42s mark
+ *
+ * Preference when collapsing duplicates:
+ *   - For Plaid Link launch (row matches plaidPhase:"launch"): keep the
+ *     single `click` on [data-testid="link-external-account-btn"] (modal mode),
+ *     or the single `goToStep` (embedded mode). The `normalizeLaunchPlaywrightRow`
+ *     above has already fixed up the first row's action/target/waitMs, so we
+ *     simply keep the first and drop the rest.
+ *   - For any other duplicate stepId (shouldn't happen, but defensive):
+ *     prefer rows with action:"click" (carries user intent) over "goToStep".
+ */
+function dedupePlaywrightRowsByStepId(playwrightScript, demoScript) {
+  const rows = playwrightScript?.steps;
+  if (!Array.isArray(rows) || rows.length < 2) return;
+
+  const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  const launchId = launchStep ? launchStep.id : null;
+
+  const seenIndex = new Map();
+  const droppedIds = [];
+  const kept = [];
+  for (const row of rows) {
+    const sid = row.stepId || row.id;
+    if (!sid) {
+      // Rows without stepId are rare; keep them as-is rather than dropping.
+      kept.push(row);
+      continue;
+    }
+    if (!seenIndex.has(sid)) {
+      seenIndex.set(sid, kept.length);
+      kept.push(row);
+      continue;
+    }
+    // Duplicate encountered. For the Plaid Link launch step, always keep the
+    // first row (already normalized to click+link-external-account-btn or
+    // goToStep+container by normalizeLaunchPlaywrightRow). For other steps,
+    // prefer click actions over goToStep in the kept row.
+    droppedIds.push(sid);
+    const existingIdx = seenIndex.get(sid);
+    if (sid !== launchId) {
+      const existing = kept[existingIdx];
+      const existingIsClick = String(existing.action || '').toLowerCase() === 'click';
+      const newIsClick = String(row.action || '').toLowerCase() === 'click';
+      if (newIsClick && !existingIsClick) {
+        // Promote the click row by replacing the previously kept goToStep row.
+        kept[existingIdx] = row;
+      }
+    }
+  }
+  if (droppedIds.length === 0) return;
+  playwrightScript.steps = kept;
+  console.warn(
+    `[Build] Deduplicated ${droppedIds.length} playwright row(s) with repeated stepId(s): ` +
+    `${Array.from(new Set(droppedIds)).join(', ')}. ` +
+    `(CLAUDE.md: single playwright entry per launch step.)`
+  );
+}
+
 function normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript) {
   const rows = playwrightScript?.steps;
   if (!Array.isArray(rows) || !rows.length) return;
@@ -711,7 +995,7 @@ function ensureEmbeddedContainerInLaunchStep(html, demoScript, linkModeAdapter) 
   const launchStepCloseRe = new RegExp(`(<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?)(</div>)`, 'i');
   const fallbackContainer =
     `\n      <div data-testid="plaid-embedded-link-container" aria-label="Plaid Embedded Link Container"` +
-    ` style="width:100%;max-width:560px;min-height:500px;margin:16px auto 0;border:1px solid rgba(0,0,0,0.08);border-radius:12px;overflow:hidden;background:#ffffff;"></div>\n`;
+    ` style="width:100%;max-width:430px;min-height:390px;height:390px;margin:16px auto 0;border:1px solid rgba(0,0,0,0.08);border-radius:12px;overflow:visible;background:#ffffff;"></div>\n`;
 
   const patched = html.replace(launchStepCloseRe, (_m, pre, close) => {
     if (pre.includes('data-testid="plaid-embedded-link-container"')) return `${pre}${close}`;
@@ -792,42 +1076,22 @@ function inferEmbeddedUseCaseText(promptText = '', demoScript = null) {
   return `${promptText || ''}\n${scriptText}`.toLowerCase();
 }
 
-function inferEmbeddedLinkSizingProfile(promptText = '', demoScript = null) {
+/**
+ * Runtime shim + injected container bounds: same footprint as
+ * `resolveEmbeddedLinkSizeProfile` + `EMBEDDED_LINK_SIZE_PROFILES` so live QA
+ * matches normalized HTML.
+ */
+function resolveEmbeddedRuntimeSizingProfile(html, demoScript, promptText = '') {
+  const profile = resolveEmbeddedLinkSizeProfile(html, demoScript);
+  const sizing = EMBEDDED_LINK_SIZE_PROFILES[profile] || EMBEDDED_LINK_SIZE_PROFILES.default;
   const text = inferEmbeddedUseCaseText(promptText, demoScript);
-  const isEcommerce =
-    /\be[-\s]?commerce\b|\bcheckout\b|\bcart\b|\bmerchant\b|\bretail\b|\border\b/.test(text);
-  const isBillPay =
-    /\bbill\s*pay\b|\bbilling\b|\binvoice\b|\boutstanding balance\b|\bpatient portal\b|\brevenue cycle\b/.test(text);
   const isInboundFunding =
     /\binbound\b|\baccount funding\b|\bfunding\b|\bincoming payment\b|\badd funds\b|\bwallet\b|\bdeposit\b/.test(text);
-
-  if (isEcommerce && !isBillPay && !isInboundFunding) {
-    return {
-      useCase: 'ecommerce-checkout',
-      sizeProfile: 'small',
-      targetContainerWidthPx: 440,
-      targetContainerHeightPx: 200,
-      institutionTiles: { min: 3, max: 4 },
-      expectedInstitutionTileCount: 3,
-    };
-  }
-  if (isInboundFunding && !isBillPay) {
-    return {
-      useCase: 'account-funding-inbound-payments',
-      sizeProfile: 'large',
-      targetContainerWidthPx: 700,
-      targetContainerHeightPx: 350,
-      institutionTiles: { min: 6, max: 9 },
-      expectedInstitutionTileCount: 7,
-    };
-  }
   return {
-    useCase: isBillPay ? 'bill-pay' : 'general-embedded',
-    sizeProfile: 'medium',
-    targetContainerWidthPx: 400,
-    targetContainerHeightPx: 270,
-    institutionTiles: { min: 4, max: 6 },
-    expectedInstitutionTileCount: 5,
+    useCase: isInboundFunding ? 'account-funding' : 'general-embedded',
+    minWidthPx: sizing.width,
+    minHeightPx: sizing.height,
+    sizeProfile: profile,
   };
 }
 
@@ -849,12 +1113,90 @@ function enforceCanonicalLaunchButtonIcon(html) {
   return { html: next, patched };
 }
 
-function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, promptText = '') {
+/**
+ * When `investments` is requested, include `auth` + `identity` so Link matches typical
+ * Investments Move / held-away flows (brokerage account + identifiers + ownership signals).
+ */
+function enrichProductsForInvestmentsMode(products) {
+  if (!Array.isArray(products) || !products.length) return products;
+  const lower = products.map((p) => String(p || '').trim().toLowerCase()).filter(Boolean);
+  if (!lower.includes('investments')) return lower;
+  const out = [...lower];
+  for (const x of ['auth', 'identity']) {
+    if (!out.includes(x)) out.push(x);
+  }
+  return out;
+}
+
+/**
+ * POST /api/create-link-token JSON for the build-injected embedded-Link shim.
+ * Prefers `product-research.json` → `linkTokenCreate.suggestedClientRequest`, else infers
+ * `products` from prompt + demo-script (same heuristics as research).
+ */
+function buildEmbeddedCreateLinkTokenFetchBody(linkTokenCreate, demoScript, promptText) {
+  const personaCo = String(demoScript?.persona?.company || '').trim();
+  const scr =
+    linkTokenCreate && typeof linkTokenCreate.suggestedClientRequest === 'object'
+      ? linkTokenCreate.suggestedClientRequest
+      : null;
+
+  if (scr) {
+    const out = {};
+    const rawName = scr.client_name || scr.clientName;
+    const cn = rawName != null ? String(rawName).trim() : '';
+    if (cn && cn !== '<BrandName>') out.client_name = cn;
+    else if (personaCo) out.client_name = personaCo;
+    else if (cn) out.client_name = 'Plaid Demo';
+
+    if (Array.isArray(scr.products) && scr.products.length) {
+      const rawList = scr.products.map((p) => String(p || '').trim().toLowerCase()).filter(Boolean);
+      out.products = linkTokenCreate && linkTokenCreate.askBillOnlyInvestmentsMoveAuthGet
+        ? rawList
+        : enrichProductsForInvestmentsMode(rawList);
+    }
+    const uid = scr.user_id || scr.userId;
+    if (uid) out.user_id = String(uid);
+    if (scr.phone_number != null && scr.phone_number !== '') out.phone_number = scr.phone_number;
+    if (scr.phoneNumber != null && scr.phoneNumber !== '') out.phone_number = scr.phoneNumber;
+    if (scr.link_customization_name) out.link_customization_name = scr.link_customization_name;
+    if (scr.linkCustomizationName) out.link_customization_name = scr.linkCustomizationName;
+    if (scr.user && typeof scr.user === 'object' && !Array.isArray(scr.user)) out.user = scr.user;
+
+    if (Array.isArray(out.products) && out.products.length) {
+      if (!out.user_id) out.user_id = 'demo-user-001';
+      return out;
+    }
+  }
+
+  if (linkTokenCreate && linkTokenCreate.askBillOnlyInvestmentsMoveAuthGet) {
+    const out = { user_id: 'demo-user-001' };
+    if (personaCo) out.client_name = personaCo;
+    if (Array.isArray(linkTokenCreate.products) && linkTokenCreate.products.length) {
+      out.products = [...linkTokenCreate.products];
+    }
+    return out;
+  }
+
+  const blob = `${String(promptText || '')}\n${JSON.stringify(demoScript || {})}`;
+  let products = inferPlaidLinkProductsFromPrompt(blob);
+  if (!products.length) products = ['auth', 'identity'];
+  else products = enrichProductsForInvestmentsMode(products);
+
+  const body = {
+    user_id: 'demo-user-001',
+    products,
+  };
+  if (personaCo) body.client_name = personaCo;
+  return body;
+}
+
+function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, promptText = '', linkTokenCreate = null) {
   if (!PLAID_LINK_LIVE || !linkModeAdapter || linkModeAdapter.id !== 'embedded') return { html, injected: false };
   if (!html.includes('</body>')) {
     return { html, injected: false };
   }
-  const sizingProfile = inferEmbeddedLinkSizingProfile(promptText, demoScript);
+  const sizingProfile = resolveEmbeddedRuntimeSizingProfile(html, demoScript, promptText);
+  const embeddedLinkTokenPayload = buildEmbeddedCreateLinkTokenFetchBody(linkTokenCreate, demoScript, promptText);
   if (/Plaid\.createEmbedded\s*\(/.test(html)) {
     if (html.includes('window.__embeddedLinkLayoutShimApplied')) return { html, injected: false };
     const layoutShim = `<script>
@@ -865,66 +1207,22 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, pro
   var sizingProfile = ${JSON.stringify(sizingProfile)};
   function enforceEmbeddedContainerBounds(container) {
     if (!container) return;
-    container.style.position = 'relative';
-    container.style.overflow = 'hidden';
-    container.style.maxWidth = '100%';
-    container.style.contain = 'layout paint style';
-    container.style.isolation = 'isolate';
     container.style.display = 'block';
+    container.style.overflow = 'visible';
     container.style.width = '100%';
-    container.style.minHeight = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
-    container.style.maxWidth = String(sizingProfile.targetContainerWidthPx || 560) + 'px';
+    var _embH = String(sizingProfile.minHeightPx || 300) + 'px';
+    container.style.minHeight = _embH;
+    container.style.height = _embH;
+    container.style.minWidth = String(sizingProfile.minWidthPx || 350) + 'px';
     container.style.marginInline = '0';
     container.style.marginLeft = '0';
     container.style.marginRight = 'auto';
     container.style.alignSelf = 'flex-start';
   }
-  function tryReparentPlaidNodes(container) {
-    if (!container) return;
-    var candidates = Array.from(document.querySelectorAll('iframe[src*="plaid.com"], iframe[src*="cdn.plaid.com"], [id*="plaid-link"], [class*="plaid-link"]'));
-    for (var i = 0; i < candidates.length; i++) {
-      var node = candidates[i];
-      if (!node || node === container) continue;
-      try {
-        if (!container.contains(node)) {
-          container.appendChild(node);
-        }
-        if (node.style) {
-          node.style.position = 'absolute';
-          node.style.inset = '0';
-          node.style.width = '100%';
-          node.style.height = '100%';
-          node.style.maxWidth = '100%';
-          node.style.maxHeight = '100%';
-          node.style.border = '0';
-          node.style.zIndex = '1';
-        }
-      } catch (_) {}
-    }
-  }
-  var _embedObserver = null;
   function syncEmbeddedLayout() {
     var container = document.querySelector('[data-testid="plaid-embedded-link-container"]') || document.getElementById('plaid-embedded-link-container');
     if (!container) return;
     enforceEmbeddedContainerBounds(container);
-    tryReparentPlaidNodes(container);
-    if (!_embedObserver && typeof MutationObserver !== 'undefined') {
-      _embedObserver = new MutationObserver(function() {
-        tryReparentPlaidNodes(container);
-      });
-      _embedObserver.observe(document.body, { childList: true, subtree: true });
-    }
-    window.__embeddedLinkUseCase = sizingProfile.useCase || 'general-embedded';
-    window.__embeddedLinkSizeProfile = sizingProfile.sizeProfile || 'medium';
-    window.__embeddedLinkLayout = sizingProfile.sizeProfile || 'medium';
-    window.__embeddedLinkExpectedInstitutionTilesMin = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.min) || 4;
-    window.__embeddedLinkExpectedInstitutionTilesMax = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.max) || 6;
-    window.__embeddedLinkExpectedInstitutionTileCount = Number(sizingProfile.expectedInstitutionTileCount) || 5;
-    container.dataset.plaidEmbeddedUseCase = window.__embeddedLinkUseCase;
-    container.dataset.plaidEmbeddedSizeProfile = window.__embeddedLinkSizeProfile;
-    container.dataset.expectedInstitutionTilesMin = String(window.__embeddedLinkExpectedInstitutionTilesMin);
-    container.dataset.expectedInstitutionTilesMax = String(window.__embeddedLinkExpectedInstitutionTilesMax);
-    container.dataset.expectedInstitutionTiles = String(window.__embeddedLinkExpectedInstitutionTileCount);
   }
   var _origGoToStep = typeof window.goToStep === 'function' ? window.goToStep : null;
   if (_origGoToStep) {
@@ -953,12 +1251,6 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, pro
   var sizingProfile = ${JSON.stringify(sizingProfile)};
   window.__plaidLinkMode = 'embedded';
   window.__embeddedLinkWidgetLoaded = false;
-  window.__embeddedLinkExpectedInstitutionTileCount = null;
-  window.__embeddedLinkExpectedInstitutionTilesMin = null;
-  window.__embeddedLinkExpectedInstitutionTilesMax = null;
-  window.__embeddedLinkSizeProfile = null;
-  window.__embeddedLinkUseCase = null;
-  window.__embeddedLinkLayout = null;
   window.__embeddedLinkError = null;
   window.__embeddedLinkMountMode = null;
 
@@ -1001,42 +1293,29 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, pro
       container.setAttribute('data-testid', 'plaid-embedded-link-container');
       container.setAttribute('aria-label', 'Plaid Embedded Link Container');
       container.style.width = '100%';
-      container.style.minHeight = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
-      container.style.maxWidth = String(sizingProfile.targetContainerWidthPx || 560) + 'px';
+      container.style.overflow = 'visible';
+      var _embH2 = String(sizingProfile.minHeightPx || 300) + 'px';
+      container.style.minHeight = _embH2;
+      container.style.height = _embH2;
+      container.style.minWidth = String(sizingProfile.minWidthPx || 350) + 'px';
       container.style.marginTop = '16px';
       container.style.border = '1px solid rgba(0,0,0,0.08)';
       container.style.borderRadius = '12px';
-      container.style.overflow = 'hidden';
       container.style.background = '#ffffff';
       var launchBtn = launchStep.querySelector('[data-testid="link-external-account-btn"]');
       if (launchBtn && launchBtn.parentNode) launchBtn.parentNode.insertBefore(container, launchBtn.nextSibling);
       else launchStep.appendChild(container);
     }
-    container.style.position = 'relative';
-    container.style.overflow = 'hidden';
     container.style.display = 'block';
-    container.style.height = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
-    container.style.maxWidth = '100%';
-    container.style.contain = 'layout paint style';
-    container.style.isolation = 'isolate';
-    container.style.minHeight = String(sizingProfile.targetContainerHeightPx || 500) + 'px';
-    container.style.maxWidth = String(sizingProfile.targetContainerWidthPx || 560) + 'px';
+    container.style.overflow = 'visible';
+    var _embH3 = String(sizingProfile.minHeightPx || 300) + 'px';
+    container.style.minHeight = _embH3;
+    container.style.height = _embH3;
+    container.style.minWidth = String(sizingProfile.minWidthPx || 350) + 'px';
     container.style.marginInline = '0';
     container.style.marginLeft = '0';
     container.style.marginRight = 'auto';
     container.style.alignSelf = 'flex-start';
-    window.__embeddedLinkUseCase = sizingProfile.useCase || 'general-embedded';
-    window.__embeddedLinkSizeProfile = sizingProfile.sizeProfile || 'medium';
-    window.__embeddedLinkLayout = sizingProfile.sizeProfile || 'medium';
-    window.__embeddedLinkExpectedInstitutionTilesMin = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.min) || 4;
-    window.__embeddedLinkExpectedInstitutionTilesMax = Number(sizingProfile.institutionTiles && sizingProfile.institutionTiles.max) || 6;
-    window.__embeddedLinkExpectedInstitutionTileCount = Number(sizingProfile.expectedInstitutionTileCount) || 5;
-    container.dataset.plaidEmbeddedUseCase = window.__embeddedLinkUseCase;
-    container.dataset.plaidEmbeddedSizeProfile = window.__embeddedLinkSizeProfile;
-    container.dataset.plaidEmbeddedLayout = window.__embeddedLinkLayout;
-    container.dataset.expectedInstitutionTilesMin = String(window.__embeddedLinkExpectedInstitutionTilesMin);
-    container.dataset.expectedInstitutionTilesMax = String(window.__embeddedLinkExpectedInstitutionTilesMax);
-    container.dataset.expectedInstitutionTiles = String(window.__embeddedLinkExpectedInstitutionTileCount);
     return container;
   }
 
@@ -1044,24 +1323,7 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, pro
     var container = ensureEmbeddedContainer();
     if (!container) return;
     if (window.__plaidEmbeddedInstance) return;
-    var enforcePlaidFrameFill = function() {
-      try {
-        var frames = container.querySelectorAll('iframe, [id*="plaid-link"], [class*="plaid-link"]');
-        for (var fi = 0; fi < frames.length; fi++) {
-          var frame = frames[fi];
-          if (!frame || !frame.style) continue;
-          frame.style.position = 'absolute';
-          frame.style.inset = '0';
-          frame.style.width = '100%';
-          frame.style.height = '100%';
-          frame.style.maxWidth = '100%';
-          frame.style.maxHeight = '100%';
-          frame.style.border = '0';
-          frame.style.zIndex = '1';
-        }
-      } catch (_) {}
-    };
-    var payload = { linkMode: 'embedded', link_mode: 'embedded' };
+    var payload = ${JSON.stringify(embeddedLinkTokenPayload)};
     try {
       var res = await fetch('/api/create-link-token', {
         method: 'POST',
@@ -1103,9 +1365,6 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, pro
         }, container);
         window.__embeddedLinkWidgetLoaded = true;
         window.__embeddedLinkMountMode = 'createEmbedded';
-        setTimeout(enforcePlaidFrameFill, 0);
-        setTimeout(enforcePlaidFrameFill, 200);
-        setTimeout(enforcePlaidFrameFill, 600);
       } else if (typeof window.Plaid.create === 'function') {
         // Fallback for older SDK snapshots while preserving in-page auto-launch behavior.
         window._plaidHandler = window.Plaid.create({
@@ -1493,13 +1752,14 @@ function extractText(content) {
  * Call 1: Architecture brief (claude-sonnet-4-6, non-streaming, 1024 tokens).
  */
 async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
-  console.log('[Build] Call 1: Generating architecture brief (claude-opus-4-6)...');
+  console.log('[Build] Call 1: Generating architecture brief (claude-opus-4-7)...');
 
   const { system, userMessages } = buildAppArchitectureBriefPrompt(demoScript, {
     plaidLinkLive: PLAID_LINK_LIVE,
     plaidSkillBrief: briefOpts.plaidSkillBrief || '',
     plaidLinkMode: briefOpts.plaidLinkMode || 'modal',
     embeddedLinkSkillBrief: briefOpts.embeddedLinkSkillBrief || '',
+    pipelineAppOnlyHostUi: !!briefOpts.pipelineAppOnlyHostUi,
   });
 
   const response = await client.messages.create({
@@ -1522,6 +1782,7 @@ async function getFrameworkPlan(client, demoScript, architectureBrief, framework
   const { system, userMessages } = buildAppFrameworkPlanPrompt(demoScript, architectureBrief, {
     mobileVisualEnabled: !!frameworkOpts.mobileVisualEnabled,
     buildViewMode: frameworkOpts.buildViewMode || 'desktop',
+    pipelineAppOnlyHostUi: !!frameworkOpts.pipelineAppOnlyHostUi,
   });
   const response = await client.messages.create({
     model: FRAMEWORK_MODEL,
@@ -1612,11 +1873,11 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
 }
 
 /**
- * Call 2: Full app generation (claude-opus-4-6, streaming, extended thinking).
+ * Call 2: Full app generation (claude-opus-4-7, streaming, extended thinking).
  * Streams progress dots to stdout.
  */
 async function generateApp(client, demoScript, architectureBrief, qaReport, brand, refinementOpts = {}) {
-  console.log('[Build] Call 2: Generating full HTML app (claude-opus-4-6 streaming)...');
+  console.log('[Build] Call 2: Generating full HTML app (claude-opus-4-7 streaming)...');
   console.log('[Build] Progress: ');
 
   const designPlugin = loadDesignPlugin();
@@ -1705,8 +1966,12 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       mobileVisualEnabled: !!refinementOpts.mobileVisualEnabled,
       buildViewMode: refinementOpts.buildViewMode || 'desktop',
       buildMode: refinementOpts.buildMode || 'app',
+      slidePromptTier: refinementOpts.slidePromptTier || 'full',
+      willRunSlidesPhase: !!refinementOpts.willRunSlidesPhase,
       promptText: refinementOpts.promptText || '',
       brandSiteReferenceBase64: brandSiteReferenceBase64 || undefined,
+      linkTokenCreate: refinementOpts.linkTokenCreate || null,
+      pipelineAppOnlyHostUi: !!refinementOpts.pipelineAppOnlyHostUi,
     }
   );
 
@@ -1714,8 +1979,10 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
     model:      BUILD_MODEL,
     max_tokens: BUILD_MAX_TOKENS,
     thinking: {
-      type:          'enabled',
-      budget_tokens: BUILD_BUDGET_TOKENS,
+      type: 'adaptive',
+    },
+    output_config: {
+      effort: 'high',
     },
     system:   buildSystem,
     messages: buildMessages,
@@ -1826,6 +2093,13 @@ async function main(opts = {}) {
   const fixMode = requestedFixMode === 'touchup' ? 'touchup' : 'fullbuild';
   const requestedBuildMode = String(opts.buildMode || process.env.BUILD_MODE || 'app').toLowerCase().trim();
   const buildMode = requestedBuildMode === 'slides' ? 'slides' : 'app';
+  const requestedSlidePromptTier = String(
+    opts.slidePromptTier || process.env.SLIDE_PROMPT_TIER || ''
+  ).toLowerCase().trim();
+  const slidePromptTier = buildMode === 'slides'
+    ? 'full'
+    : (requestedSlidePromptTier === 'minimal' ? 'minimal' : 'full');
+  const willRunSlidesPhase = opts.willRunSlidesPhase === true;
   const touchupStepId = typeof opts.touchupStepId === 'string' && opts.touchupStepId.trim()
     ? opts.touchupStepId.trim()
     : null;
@@ -1837,6 +2111,10 @@ async function main(opts = {}) {
     (fixModeReasons.length ? ` [reasons=${fixModeReasons.join(',')}]` : '')
   );
   console.log(`[Build] Build mode: ${buildMode}`);
+  console.log(
+    `[Build] Slide prompt tier: ${slidePromptTier}` +
+    (buildMode === 'app' ? ` (slides-followup=${willRunSlidesPhase})` : '')
+  );
   const layeredBuildEnabled = opts.layeredBuildEnabled != null
     ? !!opts.layeredBuildEnabled
     : (parsedArgs.layeredBuildEnabled || LAYERED_BUILD_ENABLED);
@@ -1858,7 +2136,11 @@ async function main(opts = {}) {
   }
 
   const demoScript = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
-  let scriptSanitized = false;
+  const { mutated: stepKindMutated } = annotateScriptWithStepKinds(demoScript);
+  let scriptSanitized = stepKindMutated > 0;
+  if (stepKindMutated > 0) {
+    console.log(`[Build] stepKind back-filled on ${stepKindMutated} step(s)`);
+  }
   for (const step of (demoScript.steps || [])) {
     if (isValueSummaryStep(step) && step.apiResponse) {
       delete step.apiResponse;
@@ -1871,6 +2153,10 @@ async function main(opts = {}) {
     console.log('[Build] Persisted sanitized demo-script.json (value-summary apiResponse removed)');
   }
   const runManifest = readRunManifest(OUT_DIR);
+  const pipelineAppOnlyHostUi = !!(runManifest && String(runManifest.buildMode || '').toLowerCase() === 'app-only');
+  if (pipelineAppOnlyHostUi) {
+    console.log('[Build] App-only run: marketing value props + differentiators omitted from host-app build prompts');
+  }
   const activeRunId = runManifest?.runId || RUN_LAYOUT.runId;
   const promptText = fs.existsSync(PROMPT_FILE) ? fs.readFileSync(PROMPT_FILE, 'utf8') : '';
   const inferredMobileVisualEnabled = promptIndicatesMobileVisual(promptText, demoScript);
@@ -1911,11 +2197,18 @@ async function main(opts = {}) {
   const curatedDigest = buildCuratedDigest(curatedProductKnowledge);
   const pipelineRunContext = readPipelineRunContext(OUT_DIR);
   let solutionsMasterContext = null;
+  let linkTokenCreate = null;
   if (fs.existsSync(RESEARCH_FILE)) {
     try {
       const research = JSON.parse(fs.readFileSync(RESEARCH_FILE, 'utf8'));
       if (research && research.solutionsMasterContext && typeof research.solutionsMasterContext === 'object') {
         solutionsMasterContext = research.solutionsMasterContext;
+      }
+      if (research && research.linkTokenCreate && typeof research.linkTokenCreate === 'object') {
+        linkTokenCreate = research.linkTokenCreate;
+        console.log(
+          `[Build] link-token-create: products=[${(linkTokenCreate.products || []).join(', ')}]`
+        );
       }
     } catch (e) {
       console.warn(`[Build] Could not parse product-research.json for Solutions Master context: ${e.message}`);
@@ -2182,6 +2475,7 @@ async function main(opts = {}) {
         plaidSkillBrief: skillBundle.skillLoaded ? skillBundle.text.slice(0, 12000) : '',
       plaidLinkMode,
       embeddedLinkSkillBrief: embeddedLinkSkillBundle.skillLoaded ? embeddedLinkSkillBundle.text.slice(0, 6000) : '',
+      pipelineAppOnlyHostUi,
     });
   }
 
@@ -2192,6 +2486,7 @@ async function main(opts = {}) {
       mobileVisualEnabled,
       buildViewMode,
       promptText,
+      pipelineAppOnlyHostUi,
     });
   }
 
@@ -2207,6 +2502,7 @@ async function main(opts = {}) {
       curatedDigest,
       pipelineRunContext,
       solutionsMasterContext,
+      linkTokenCreate,
       buildQaDiagnosticSummary,
       plaidSkillMarkdown: skillBundle.skillLoaded ? skillBundle.text : '',
       plaidLinkUxSkillMarkdown: linkUxSkillBundle.skillLoaded ? linkUxSkillBundle.text : '',
@@ -2219,6 +2515,10 @@ async function main(opts = {}) {
       fixMode,
       touchupStepId,
       buildMode,
+      slidePromptTier,
+      willRunSlidesPhase,
+      promptText,
+      pipelineAppOnlyHostUi,
     });
 
   // ── Parse response ────────────────────────────────────────────────────────
@@ -2269,6 +2569,7 @@ async function main(opts = {}) {
   repairPlaywrightInsightNavigation(playwrightScript, demoScript);
   normalizeLaunchPlaywrightRow(playwrightScript, demoScript);
   normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript);
+  dedupePlaywrightRowsByStepId(playwrightScript, demoScript);
 
   const layerReport = validateLayerContracts({
     html,
@@ -2499,8 +2800,32 @@ async function main(opts = {}) {
 
   // 4. Step divs must NOT have inline style="display:..." — this permanently overrides
   //    .step visibility and makes the step visible on all other steps' video frames.
-  //    (Pattern matches class="step" or data-testid="step-..." with a display style)
-  const stepDisplayStyle = html.match(/data-testid="step-[^"]*"[^>]*style="[^"]*display\s*:/);
+  //    Auto-sanitize this first, then fail only if any display style remains.
+  let strippedStepDisplayStyles = 0;
+  html = html.replace(/<div\b[^>]*style="[^"]*"[^>]*>/gi, (tag) => {
+    const isStepDiv = /\bdata-testid="step-[^"]*"|\bclass="[^"]*\bstep\b[^"]*"/i.test(tag);
+    if (!isStepDiv) return tag;
+    const styleMatch = tag.match(/\bstyle="([^"]*)"/i);
+    if (!styleMatch) return tag;
+    const originalStyle = String(styleMatch[1] || '');
+    const cleanedStyle = originalStyle
+      .replace(/\bdisplay\s*:[^;"]*;?/gi, '')
+      .replace(/;;+/g, ';')
+      .replace(/^\s*;\s*|\s*;\s*$/g, '')
+      .trim();
+    if (cleanedStyle === originalStyle.trim()) return tag;
+    strippedStepDisplayStyles += 1;
+    if (!cleanedStyle) {
+      return tag.replace(/\s*\bstyle="[^"]*"/i, '');
+    }
+    return tag.replace(/\bstyle="[^"]*"/i, `style="${cleanedStyle}"`);
+  });
+  if (strippedStepDisplayStyles > 0) {
+    console.log(`[Build] Removed inline display style from ${strippedStepDisplayStyles} step div(s)`);
+  }
+  const stepDisplayStyle = html.match(
+    /<div[^>]*(?:data-testid="step-[^"]*"|class="[^"]*\bstep\b[^"]*")[^>]*style="[^"]*\bdisplay\s*:/i
+  );
   if (stepDisplayStyle) {
     domErrors.push(
       'A step div has inline style with "display:" — this overrides .step.active visibility. ' +
@@ -2626,7 +2951,7 @@ async function main(opts = {}) {
     if (!isEmbeddedMode && !html.includes('data-testid="link-external-account-btn"')) {
       domErrors.push('Missing canonical launch CTA target: data-testid="link-external-account-btn".');
     }
-    const embeddedPatch = injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, promptText);
+    const embeddedPatch = injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, promptText, linkTokenCreate);
     html = embeddedPatch.html;
     if (embeddedPatch.injected) {
       console.log('[Build] Injected embedded-Link runtime launch handler');
@@ -3202,7 +3527,24 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     console.error(`  ✓ Valid IDs from demo-script.json: ${[...demoStepIds].join(', ')}`);
     process.exit(1);
   }
-  console.log(`[Build] playwright-script step IDs: OK (${pwSteps.length} steps match demo-script)`);
+  // Duplicate-stepId guard: dedupePlaywrightRowsByStepId already collapses
+  // these, but assert here so a future regression fails loudly at build time
+  // instead of silently producing duplicated narration downstream.
+  const seenPwIds = new Set();
+  const duplicatedPwIds = [];
+  for (const s of pwSteps) {
+    const id = s.stepId || s.id;
+    if (!id) continue;
+    if (seenPwIds.has(id)) duplicatedPwIds.push(id);
+    else seenPwIds.add(id);
+  }
+  if (duplicatedPwIds.length > 0) {
+    console.error('[Build] playwright-script.json still has duplicated stepId(s) after dedupe:');
+    console.error(`  ✗ Duplicated: ${[...new Set(duplicatedPwIds)].join(', ')}`);
+    console.error('  This would duplicate the narration clip in the final video. Check dedupePlaywrightRowsByStepId.');
+    process.exit(1);
+  }
+  console.log(`[Build] playwright-script step IDs: OK (${pwSteps.length} unique steps match demo-script)`);
 
   // ── Post-process: ensure handler.destroy() is called in onSuccess ─────────
   // The Plaid iframe persists in the DOM after onSuccess unless destroy() is called,
@@ -3213,6 +3555,32 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
       'window._plaidLinkComplete = true;\n        if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }'
     );
     console.log('[Build] Injected handler.destroy() into onSuccess (Plaid modal cleanup)');
+  }
+
+  // ── Post-process: ensure onSuccess advances the host app to the first post-link step ──
+  // CLAUDE.md contract: "When onSuccess fires, the host app advances to the first
+  // post-link step". If the LLM-generated onSuccess forgets to call goToStep, the
+  // screen stays on the Plaid Link launch step while the recorder moves to the next
+  // playwright row — narration for the next step plays over the wrong visual.
+  // Detect missing advance and inject a goToStep(firstPostLinkStepId) call.
+  {
+    const launchStepForAdvance = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+    const launchIdxForAdvance = launchStepForAdvance
+      ? (demoScript.steps || []).findIndex((s) => s && s.id === launchStepForAdvance.id)
+      : -1;
+    const firstPostLinkIdForAdvance =
+      launchIdxForAdvance >= 0 && launchIdxForAdvance < (demoScript.steps || []).length - 1
+        ? (demoScript.steps[launchIdxForAdvance + 1] || {}).id || null
+        : null;
+    const hasGoToStepInOnSuccess = /_plaidLinkComplete\s*=\s*true[\s\S]{0,400}?window\.goToStep\s*\(/m.test(html);
+    if (firstPostLinkIdForAdvance && !hasGoToStepInOnSuccess) {
+      const injected = `window._plaidLinkComplete = true;\n        if (typeof window.goToStep === 'function') { try { window.goToStep(${JSON.stringify(firstPostLinkIdForAdvance)}); } catch(e) {} }`;
+      const before = html;
+      html = html.replace(/window\._plaidLinkComplete\s*=\s*true;/g, injected);
+      if (html !== before) {
+        console.log(`[Build] Injected goToStep("${firstPostLinkIdForAdvance}") into onSuccess — screen must advance off the Plaid Link step the moment onSuccess fires, otherwise the next step's narration plays over a stale visual (CLAUDE.md DOM contract).`);
+      }
+    }
   }
 
   // ── Harden Plaid Link token bootstrap error handling ───────────────────────
@@ -3254,6 +3622,16 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
 
   // Host Plaid launch CTA: enforce modest inline icon sizing whenever the canonical button exists.
   html = injectPlaidLaunchCtaLayoutStyles(html);
+
+  // Host Plaid launch CTA: normalize button state so the recording automation can
+  // reliably click it and see the modal open (strip disabled, replace loading
+  // labels, and harden the onclick to await _plaidHandler initialisation).
+  html = normalizePlaidLaunchCta(html);
+
+  // Plaid Embedded Link UX: strip any extra launch button (embedded mode
+  // surfaces the modal via institution-tile click inside the widget itself) and
+  // size the container per the use-case profile from CLAUDE.md.
+  html = normalizePlaidEmbeddedLinkUx(html, demoScript);
 
   // ── Consistency manifest + lint (Phase 2) ─────────────────────────────────
   // Single source of truth stays in demo-script.json. This lint is intentionally

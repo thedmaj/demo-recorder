@@ -7,7 +7,7 @@
  * Reads:  out/video-analysis.json (required)
  *         out/step-timing.json    (required)
  *         out/product-research.json (optional)
- * Calls:  claude-opus-4-6 (no extended thinking — creative polish pass)
+ * Calls:  claude-opus-4-7 (no extended thinking — creative polish pass)
  * Writes: out/demo-script.json
  *
  * Optional human review pause controlled by SCRATCH_AUTO_APPROVE env var.
@@ -193,7 +193,7 @@ async function main() {
   const prompt = buildPrompt(steps, transcript, productResearch);
 
   const response = await client.messages.create({
-    model: 'claude-opus-4-6',
+    model: 'claude-opus-4-7',
     max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
   });

@@ -327,8 +327,8 @@ async function normalizeToBrandProfile(rawData, companyName, slug) {
       letterSpacing: '0.1em', fontWeight: '700', fontSize: '16px', color: '#hex',
       imageUrl: 'https absolute URL for horizontal/wordmark logo <img> from raw data, or null',
       iconUrl: 'https absolute URL for square icon <img> from raw data, or null',
-      shellBg: 'rgba() or #hex background for a logo chip/container to ensure visibility on mixed backgrounds',
-      shellBorder: '#hex or rgba border color for logo chip/container',
+      shellBg: 'rgba() or #hex background for optional logo chip/container, or null',
+      shellBorder: '#hex or rgba border color for optional logo chip/container, or null',
     },
     promptInstructions: 'One paragraph describing key layout patterns, nav structure, sidebar, button styles, footer, and any distinctive brand UI patterns for an app demo.',
   };
@@ -343,7 +343,7 @@ async function normalizeToBrandProfile(rawData, companyName, slug) {
     `- googleFontsImport: include if a Google Fonts URL was found, else null\n` +
     `- promptInstructions: write a concise, specific paragraph about the brand's UI layout patterns\n` +
     `- logo.imageUrl / logo.iconUrl: when RAW BRAND DATA includes logoImageUrl or iconImageUrl, copy those exact https URLs into the profile (required for real logo rendering). If raw logos[] has src fields, prefer SVG or PNG wordmark for imageUrl.\n` +
-    `- logo.shellBg / logo.shellBorder: always provide safe-contrast logo container colors; this is required because many logos are transparent or white and disappear on light host backgrounds.\n` +
+    `- logo.shellBg / logo.shellBorder: optional. Do not force contrast overrides; keep null unless explicitly present in source styling.\n` +
     `- sidePanels: always dark bg (#111 range) regardless of brand mode; accent = brand CTA color\n` +
     `- Respond with ONLY valid JSON — no markdown fences, no explanation\n\n` +
     `TARGET SCHEMA:\n${JSON.stringify(schemaExample, null, 2)}\n\n` +
@@ -443,8 +443,6 @@ function enforceLogoContrast(profile, rawData) {
       if (!replacement) replacement = _pickBestThemeVariant(rawData, { theme: 'dark', preferIcon: false });
       if (replacement) {
         logo.darkImageUrl = replacement;
-        logo.imageUrl = replacement;
-        logo._contrastAdjusted = true;
       }
     }
     if (currentIcon && _isThemeUrl(currentIcon, 'light')) {
@@ -454,13 +452,8 @@ function enforceLogoContrast(profile, rawData) {
       if (!replacement) replacement = _pickBestThemeVariant(rawData, { theme: 'dark', preferIcon: true });
       if (replacement) {
         logo.darkIconUrl = replacement;
-        logo.iconUrl = replacement;
-        logo._contrastAdjusted = true;
       }
     }
-    // Safety net when all returned assets are light/transparent.
-    logo.shellBg = 'rgba(15,23,42,0.78)';
-    logo.shellBorder = 'rgba(15,23,42,0.45)';
   }
 }
 
@@ -629,18 +622,21 @@ async function main() {
   mergeFetchedLogoUrls(profile, rawData);
   if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
   enforceLogoContrast(profile, rawData);
-  if (profile.logo && profile.logo._contrastAdjusted) {
-    console.log('[BrandExtract] Applied contrast-safe logo adjustments for light host mode.');
-  }
-  if (!profile.logo.shellBg) {
-    profile.logo.shellBg = profile.mode === 'light'
-      ? 'rgba(15,23,42,0.06)'
-      : 'rgba(255,255,255,0.12)';
-  }
-  if (!profile.logo.shellBorder) {
-    profile.logo.shellBorder = profile.mode === 'light'
-      ? 'rgba(15,23,42,0.16)'
-      : 'rgba(255,255,255,0.24)';
+
+  // Compute host-banner recommendation so downstream build prompts can pick
+  // a background that keeps the logo visible. Safe to re-run; it is pure data
+  // and does not mutate other brand tokens.
+  try {
+    const { recommendHostBanner } = require('../utils/brand-contrast');
+    profile.hostBanner = recommendHostBanner(profile);
+    const hb = profile.hostBanner;
+    console.log(
+      `[BrandExtract] Host banner recommendation: bg=${hb.bg} logoTone=${hb.logoTone} ` +
+        `(source=${hb.toneSource}${hb.contrastRatio ? `, contrast=${hb.contrastRatio}:1` : ''})` +
+        `${hb.fallback ? ' [fallback-white]' : ''}`
+    );
+  } catch (e) {
+    console.warn(`[BrandExtract] Could not compute host-banner recommendation: ${e.message}`);
   }
 
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));

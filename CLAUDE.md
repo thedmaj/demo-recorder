@@ -148,26 +148,15 @@ a storyboard mismatch where audio precedes the visual it describes.
 - Institution: Defaults to **First Platypus Bank** / Remember Me flow (non-OAuth)
 - The "Save with Plaid" phone screen is auto-dismissed by the recording script
 
-### Embedded Link UX sizing + pre-link guardrail (REQUIRED)
+### Embedded Link UX guidance (REQUIRED)
 
-When `plaidLinkMode` is `embedded`, treat sizing and messaging as a hard contract:
+When `plaidLinkMode` is `embedded`, follow Embedded Institution Search behavior:
 
-- Pre-link trust messaging and the embedded widget must be shown in the SAME launch step
-  (`plaidPhase: "launch"`). Do not split into separate explainer and embedded-launch steps.
-- Launch step must include:
-  - `data-testid="plaid-embedded-link-container"`
-  - security + ease copy (for example encryption/trust and instant/no-manual-entry guidance)
-- Do NOT include `data-testid="link-external-account-btn"` in embedded mode.
-- Select container size by use case:
-  - **E-commerce checkout**: small profile, ~`440x200`, target `3-4` institutions visible
-  - **Bill pay**: medium profile, ~`400x270`, target `4-6` institutions visible
-  - **Account funding inbound payments**: large profile, ~`700x350`, target `6-9` institutions visible
-- Runtime metadata must be emitted for deterministic QA:
-  - `window.__embeddedLinkUseCase`
-  - `window.__embeddedLinkSizeProfile` (`small|medium|large`)
-  - `window.__embeddedLinkExpectedInstitutionTilesMin`
-  - `window.__embeddedLinkExpectedInstitutionTilesMax`
-  - `window.__embeddedLinkExpectedInstitutionTileCount`
+- Create Link token with `/link/token/create` as normal; no embedded-specific token params are required.
+- If showing "Connect Manually", configure `auth.auth_type_select_enabled` in token config.
+- Web SDK: use `Plaid.createEmbedded(...)` and mount into `data-testid="plaid-embedded-link-container"`.
+- Keep layout constraints to sizing only: minimum embedded container `350x300px` or `300x350px`.
+- Do not impose extra iframe/frame-containment constraints beyond normal embedded sizing behavior.
 
 ### CRA / Consumer Report Link Requirements (Base Report + Income Insights)
 
@@ -391,6 +380,21 @@ npm run demo -- --to=build-qa
 `build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same Claude vision QA as post-record QA against `demo-script.json` `visualState` — output `qa-report-build.json` in the run dir. Optional: `BUILD_QA_STRICT=1` to exit non-zero if the score is below `QA_PASS_THRESHOLD`.
 
 Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
+
+## Build mode (App-only vs App + Slides)
+
+The pipeline now defaults to **App-only** mode end-to-end. No slide steps are
+generated, no slide build phase runs, and no slide-scope `build-qa` pass runs.
+Slides are strictly opt-in:
+
+- **CLI**:
+  - `npm run demo` — App-only (default).
+  - `npm run demo:with-slides` (alias for `--with-slides`) — include slides phase + final value-summary slide.
+  - `npm run demo:app-only` — explicit app-only override (useful when env vars elsewhere might enable slides).
+- **Dashboard**: the **Run Pipeline** card has an "Include slides phase" checkbox. It is pre-filled from your dashboard-wide default (persisted in browser localStorage at key `dashboard.withSlidesDefault`). Toggling it both runs this build with the chosen mode and updates your default for next time.
+- **Resume / restart actions** (Re-run Build, restart from stage, dashboard quick actions) **inherit the original run's mode** from `run-manifest.json` (`buildMode: "app-only" | "app+slides"`). Use the modal checkbox + `overrideWithSlides:true` to change mode on a resumed run.
+- **Single switch** (advanced): `PIPELINE_WITH_SLIDES=true|false` is the canonical env knob. The orchestrator's `resolveBuildMode()` expands it into the legacy envs (`BUILD_PHASE_SEQUENCE`, `BUILD_PHASE_SLIDES_ENABLED`, `DEMO_MARKETING_SLIDE`, `SCRIPT_ZERO_SLIDE`) so existing scripts/CI continue to work.
+- **Run banner**: every run prints `[Orchestrator] Mode: App-only  (source: …)` (or `App + Slides`) at start so the chosen mode is visible in CLI logs and the dashboard log viewer.
 
 ## Output Versioning
 Every pipeline run writes to `out/demos/{YYYY-MM-DD}-{product-slug}-v{N}/`.

@@ -1,17 +1,18 @@
 ---
-product: "Plaid Income — Bank Income"
+product: Plaid Income — Bank Income
 slug: "bank-income"
 api_endpoints:
   - "/link/token/create"
   - "/credit/bank_income/get"
 use_cases:
-  - income-from-bank-data
-  - traditional-income-verification
+  - "income-from-bank-data"
+  - "traditional-income-verification"
 last_human_review: "2026-03-27"
 last_ai_update: "2026-03-27T00:00:00Z"
 needs_review: true
 approved: false
 version: 1
+last_vp_research: "2026-04-24"
 ---
 
 # Plaid Income — Bank Income (traditional)

@@ -37,6 +37,7 @@ const { gleanChat } = require('../utils/mcp-clients');
 const { loadTimingContract } = require('../../timing-contract');
 const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../../validate-narration-sync');
 const { requireRunDir, getRunLayout } = require('../utils/run-io');
+const { isSlideStep: isSlideStepShared } = require('../utils/step-kind');
 const {
   appendPipelineLogSection,
   appendPipelineLogJson,
@@ -114,12 +115,6 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'plaid-link-mobile-layout',
   'plaid-embedded-launch-selector-drift',
 ]);
-
-const EMBEDDED_PROFILE_RANGES = {
-  small: { widthMin: 360, widthMax: 500, heightMin: 160, heightMax: 260, tilesMin: 3, tilesMax: 4 },
-  medium: { widthMin: 360, widthMax: 460, heightMin: 240, heightMax: 340, tilesMin: 4, tilesMax: 6 },
-  large: { widthMin: 630, widthMax: 860, heightMin: 300, heightMax: 420, tilesMin: 6, tilesMax: 9 },
-};
 
 const PLAID_BTN_RE = /link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_](?:\w+[-_])?bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i;
 const RESPONSIVE_DESKTOP_VIEWPORTS = [
@@ -241,10 +236,7 @@ function computeCaptureDelays(totalMs) {
 }
 
 function isSlideLikeStep(step) {
-  const sceneType = String(step?.sceneType || '').toLowerCase();
-  if (sceneType) return sceneType === 'slide';
-  const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
-  return /\bslide\b/.test(haystack) && !/\binsight\b/.test(haystack);
+  return isSlideStepShared(step);
 }
 
 /** Static HTML: Brandfetch wordmark + icon in the same nav reads as duplicate logos (pipeline used to prompt both). */
@@ -397,7 +389,6 @@ async function evaluateStepState(page, stepId) {
       ? active.querySelector('[data-testid="plaid-embedded-link-container"], #plaid-embedded-link-container')
       : null;
     const embeddedRect = embeddedContainer ? embeddedContainer.getBoundingClientRect() : null;
-    const embeddedDataset = embeddedContainer ? embeddedContainer.dataset || {} : {};
     if (launchBtn) {
       const br = launchBtn.getBoundingClientRect();
       const svgs = launchBtn.querySelectorAll('svg');
@@ -456,26 +447,6 @@ async function evaluateStepState(page, stepId) {
       embeddedContainerExists: Boolean(embeddedContainer),
       embeddedContainerWidth: embeddedRect ? embeddedRect.width : 0,
       embeddedContainerHeight: embeddedRect ? embeddedRect.height : 0,
-      embeddedUseCase:
-        window.__embeddedLinkUseCase ||
-        embeddedDataset.plaidEmbeddedUseCase ||
-        null,
-      embeddedSizeProfile:
-        window.__embeddedLinkSizeProfile ||
-        embeddedDataset.plaidEmbeddedSizeProfile ||
-        null,
-      embeddedExpectedInstitutionTilesMin:
-        Number(window.__embeddedLinkExpectedInstitutionTilesMin) ||
-        Number(embeddedDataset.expectedInstitutionTilesMin) ||
-        null,
-      embeddedExpectedInstitutionTilesMax:
-        Number(window.__embeddedLinkExpectedInstitutionTilesMax) ||
-        Number(embeddedDataset.expectedInstitutionTilesMax) ||
-        null,
-      embeddedExpectedInstitutionTileCount:
-        Number(window.__embeddedLinkExpectedInstitutionTileCount) ||
-        Number(embeddedDataset.expectedInstitutionTiles) ||
-        null,
       plaidLaunchCtaMetrics,
       layerHelperText: (layerHelper?.textContent || '').replace(/\s+/g, ' ').trim(),
       layerHelperVisible: isVisible(layerHelper, layerHelperStyle),
@@ -538,14 +509,32 @@ async function evaluateAssetAuthenticity(page) {
       shellInlineSvg,
       shellLooksLikeTextLogo,
       nonPanelInlineSvgCount: nonPanelInlineSvgs.length,
+      // NOTE: svg.className is an SVGAnimatedString, not a string — String(...) it yields
+      // "[object SVGAnimatedString]". Use getAttribute('class') instead so the hint is a
+      // real class list (or any usable identifier).
       nonPanelInlineSvgHints: nonPanelInlineSvgs.slice(0, 8).map((svg) =>
-        String(svg.getAttribute('data-testid') || svg.getAttribute('aria-label') || svg.className || 'inline-svg').slice(0, 64)
+        String(
+          svg.getAttribute('data-testid')
+          || svg.getAttribute('aria-label')
+          || svg.getAttribute('class')
+          || svg.id
+          || 'inline-svg'
+        ).slice(0, 64)
       ),
       dataUriImageCount: dataUriImgs.length,
       syntheticIconCount: syntheticIconNodes.length,
-      syntheticIconHints: syntheticIconNodes.slice(0, 8).map((el) =>
-        String(el.getAttribute('data-testid') || el.className || el.tagName || 'icon-node').slice(0, 64)
-      ),
+      syntheticIconHints: syntheticIconNodes.slice(0, 8).map((el) => {
+        // Same SVGAnimatedString pitfall applies if el is an SVG.
+        const classAttr = typeof el.className === 'string'
+          ? el.className
+          : (el.getAttribute && el.getAttribute('class')) || '';
+        return String(
+          (el.getAttribute && el.getAttribute('data-testid'))
+          || classAttr
+          || el.tagName
+          || 'icon-node'
+        ).slice(0, 64);
+      }),
     };
   });
 }
@@ -573,7 +562,10 @@ function evaluateApiStoryAlignment(step) {
     },
     {
       key: 'baseReport',
-      storyPattern: /\bbase report|ownership|balances|inflows|outflows|days available\b/i,
+      // Removed "ownership" — it is also a core Identity Match term and was
+      // producing false positives on non-CRA demos (see audit 2026-04-18).
+      // Require an explicit CRA/base-report phrase for the story match.
+      storyPattern: /\bbase report|cra base report|consumer report|inflows|outflows|days available|net income\b/i,
       endpointPattern: /base[_\s-]?report/,
       responseHints: ['accounts', 'balances', 'ownership', 'inflows', 'outflows', 'days_available'],
       label: 'base-report context',
@@ -615,6 +607,16 @@ function evaluateApiStoryAlignment(step) {
     if (!hasAnyHint) {
       issues.push(`Response JSON missing expected fields for ${endpointCheck.label}.`);
     }
+    return issues;
+  }
+
+  // If no known Plaid endpoint matched, do NOT run the story-based fallback on
+  // host-custom aggregator endpoints (e.g., /banner/ach-plan/decision,
+  // /partner/*, /shell/*). The story regex can otherwise false-positive on
+  // overlapping vocabulary (e.g., "ownership" appearing in Identity Match
+  // narration while the endpoint is a host decision summary).
+  const PLAID_ENDPOINT = /\/(auth|identity|signal|liabilities|transactions|income|assets|transfer|link|item|processor|cra|investments|user|categories|payment|sandbox|webhook|institutions|accounts|holdings|statements|consumer_report)\b/;
+  if (endpoint && !PLAID_ENDPOINT.test(endpoint)) {
     return issues;
   }
 
@@ -901,11 +903,6 @@ async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
       hasHandler: Boolean(window._plaidHandler),
       embeddedWidgetLoaded: Boolean(window.__embeddedLinkWidgetLoaded),
       embeddedInstanceReady: Boolean(window.__plaidEmbeddedInstance),
-      embeddedLayout: window.__embeddedLinkLayout || null,
-      embeddedSizeProfile: window.__embeddedLinkSizeProfile || null,
-      embeddedExpectedInstitutionTilesMin: window.__embeddedLinkExpectedInstitutionTilesMin || null,
-      embeddedExpectedInstitutionTilesMax: window.__embeddedLinkExpectedInstitutionTilesMax || null,
-      expectedInstitutionTiles: window.__embeddedLinkExpectedInstitutionTileCount || null,
     }));
     if (plaidLinkMode === 'embedded') {
       if (!launchState.embeddedWidgetLoaded && !launchState.embeddedInstanceReady) {
@@ -915,34 +912,6 @@ async function runMobilePlaidLaunchCheck(page, demoScript, pageErrors) {
           severity: 'critical',
           issue: 'Embedded Link widget did not load in mobile-simulated view.',
           suggestion: 'Ensure embedded mode mounts Plaid.createEmbedded into the in-page container when the launch step is active.',
-        });
-      }
-      const profile = String(launchState.embeddedSizeProfile || launchState.embeddedLayout || '').toLowerCase();
-      const profileSpec = EMBEDDED_PROFILE_RANGES[profile];
-      const expected = Number(launchState.expectedInstitutionTiles);
-      const minTiles = Number(launchState.embeddedExpectedInstitutionTilesMin);
-      const maxTiles = Number(launchState.embeddedExpectedInstitutionTilesMax);
-      if (!profileSpec) {
-        diagnostics.push({
-          stepId: launchId,
-          category: 'plaid-link-mobile-layout',
-          severity: 'critical',
-          issue: `Embedded Link size profile metadata is missing (got "${profile || 'none'}").`,
-          suggestion: 'Set window.__embeddedLinkSizeProfile to small, medium, or large before mobile launch validation.',
-        });
-      } else if (
-        !(Number.isFinite(expected) && Number.isFinite(minTiles) && Number.isFinite(maxTiles)) ||
-        minTiles !== profileSpec.tilesMin ||
-        maxTiles !== profileSpec.tilesMax ||
-        expected < minTiles ||
-        expected > maxTiles
-      ) {
-        diagnostics.push({
-          stepId: launchId,
-          category: 'plaid-link-mobile-layout',
-          severity: 'critical',
-          issue: `Embedded Link tile expectation (${minTiles}-${maxTiles}, count=${expected}) is invalid for profile "${profile}".`,
-          suggestion: `Set embedded expected tiles to ${profileSpec.tilesMin}-${profileSpec.tilesMax} for ${profile} profile and keep count within range.`,
         });
       }
     } else if (!launchState.hasHandler) {
@@ -1384,90 +1353,30 @@ function buildEmbeddedLinkUxDiagnostics(step, state, demoScript) {
   const isEmbedded = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
   if (!isEmbedded) return diagnostics;
 
-  const text = String(state?.activeStepText || '').toLowerCase();
-  const hasSecurityCopy = /\bsecure|security|encrypted|encrypt|protected|trusted\b/.test(text);
-  const hasEaseCopy = /\binstant|seconds|quick|fast|no manual|without manual|easy|simple\b/.test(text);
-  const hasActionCopy = /\bconnect|link|continue|search for your bank|bank account|pay by bank\b/.test(text);
-
   if (!state?.embeddedContainerExists) {
     diagnostics.push({
       stepId: step.id,
       category: 'plaid-embedded-prelink-integrated',
       severity: 'critical',
-      issue: 'Embedded Link launch step must include the embedded container in the same active step.',
-      suggestion: 'Keep pre-link guidance and the embedded widget together in one launch step; include data-testid="plaid-embedded-link-container".',
+      issue: 'Embedded Link launch step is missing the in-page embedded container.',
+      suggestion: 'Include data-testid="plaid-embedded-link-container" in the launch step.',
     });
     return diagnostics;
   }
 
-  if (!hasSecurityCopy || !hasEaseCopy || !hasActionCopy) {
-    diagnostics.push({
-      stepId: step.id,
-      category: 'plaid-embedded-prelink-integrated',
-      severity: 'critical',
-      issue: 'Embedded launch step is missing required pre-link trust messaging (security + ease + clear next action).',
-      suggestion: 'Add concise in-step copy that states security protections, ease/speed benefits, and the immediate action to connect within the embedded widget.',
-    });
-  }
-
-  const profile = String(state?.embeddedSizeProfile || '').toLowerCase();
-  const profileSpec = EMBEDDED_PROFILE_RANGES[profile];
   const width = Number(state?.embeddedContainerWidth || 0);
   const height = Number(state?.embeddedContainerHeight || 0);
-  const tileMin = Number(state?.embeddedExpectedInstitutionTilesMin || 0);
-  const tileMax = Number(state?.embeddedExpectedInstitutionTilesMax || 0);
-  const tileCount = Number(state?.embeddedExpectedInstitutionTileCount || 0);
 
-  if (!profileSpec) {
+  // Updated embedded guidance: enforce only minimum recommended container sizing.
+  const meetsMin = (width >= 350 && height >= 300) || (width >= 300 && height >= 350);
+  if (!meetsMin) {
     diagnostics.push({
       stepId: step.id,
       category: 'plaid-embedded-size-profile',
       severity: 'critical',
-      issue: `Embedded Link size profile is missing or invalid ("${profile || 'none'}").`,
-      suggestion: 'Set embedded runtime metadata to one of: small, medium, large (window.__embeddedLinkSizeProfile and matching container data attributes).',
+      issue: `Embedded container is too small (${Math.round(width)}x${Math.round(height)}).`,
+      suggestion: 'Use a minimum embedded container size of 350x300px or 300x350px.',
     });
-    return diagnostics;
-  }
-
-  const dimOutOfRange =
-    width < profileSpec.widthMin ||
-    width > profileSpec.widthMax ||
-    height < profileSpec.heightMin ||
-    height > profileSpec.heightMax;
-  if (dimOutOfRange) {
-    diagnostics.push({
-      stepId: step.id,
-      category: 'plaid-embedded-size-profile',
-      severity: 'critical',
-      issue: `Embedded container size (${Math.round(width)}x${Math.round(height)}) does not match "${profile}" profile range.`,
-      suggestion: `Keep ${profile} profile within ${profileSpec.widthMin}-${profileSpec.widthMax}px width and ${profileSpec.heightMin}-${profileSpec.heightMax}px height.`,
-    });
-  }
-
-  const invalidTileRange = !(tileMin > 0 && tileMax >= tileMin && tileCount > 0);
-  if (invalidTileRange) {
-    diagnostics.push({
-      stepId: step.id,
-      category: 'plaid-embedded-size-profile',
-      severity: 'critical',
-      issue: 'Embedded institution tile expectations are missing or malformed.',
-      suggestion: 'Set __embeddedLinkExpectedInstitutionTilesMin/Max and __embeddedLinkExpectedInstitutionTileCount on launch step activation.',
-    });
-  } else {
-    const tileRangeMismatch =
-      tileMin !== profileSpec.tilesMin ||
-      tileMax !== profileSpec.tilesMax ||
-      tileCount < tileMin ||
-      tileCount > tileMax;
-    if (tileRangeMismatch) {
-      diagnostics.push({
-        stepId: step.id,
-        category: 'plaid-embedded-size-profile',
-        severity: 'critical',
-        issue: `Embedded tile density metadata (${tileMin}-${tileMax}, count=${tileCount}) does not match "${profile}" profile expectation (${profileSpec.tilesMin}-${profileSpec.tilesMax}).`,
-        suggestion: 'Align tile range metadata to the selected use-case profile so QA can verify institution visibility targets deterministically.',
-      });
-    }
   }
 
   return diagnostics;
@@ -1876,7 +1785,108 @@ function buildStepAssertions(step, state, demoScript) {
  * @param {number} rowIndex
  * @param {number} dwellMs
  */
-async function captureStepFrames(page, stepId, rowIndex, dwellMs) {
+/**
+ * Poll the page for transient loading / "linking account" / "continuing in
+ * Plaid Link" indicators and wait up to `maxWaitMs` for them to clear. These
+ * spinners are part of Plaid Link's account-linking handshake — they are NOT
+ * demo step content and should not end up in QA screenshots.
+ *
+ * Returns `{ cleared, elapsedMs, lastSignal }`. On timeout, returns cleared=false
+ * so callers can surface a diagnostic (but still capture whatever is on screen).
+ */
+async function waitForLoadingToClear(page, opts = {}) {
+  const maxWaitMs = Math.max(0, Number(opts.maxWaitMs) || 0);
+  if (maxWaitMs === 0) return { cleared: true, elapsedMs: 0, lastSignal: null };
+  const pollMs = 250;
+  const start = Date.now();
+
+  const check = async () => {
+    return page.evaluate(() => {
+      // Consider the ACTIVE step only; avoid false positives from hidden steps.
+      const active = document.querySelector('.step.active') || document.body;
+      if (!active) return { spinner: false, text: null };
+
+      // Loading-spinner element patterns (legitimate transient states Plaid
+      // Link triggers, or the host's own post-link handshake UI).
+      const loadingSelectors = [
+        '.spinner',
+        '.loading-spinner',
+        '.loader',
+        '[class*="spinner"]:not([class*="spinner-hidden"])',
+        '[class*="loading"]:not([class*="loaded"]):not([class*="loading-complete"])',
+        '[class*="linking"]:not([class*="linked"])',
+        '[aria-busy="true"]',
+      ];
+      let spinnerEl = null;
+      for (const sel of loadingSelectors) {
+        try {
+          const el = active.querySelector(sel);
+          if (!el) continue;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || el.offsetParent === null) continue;
+          spinnerEl = el;
+          break;
+        } catch (_) {}
+      }
+
+      // Text patterns that indicate a transient Plaid / linking handshake.
+      const visibleText = (active.innerText || '').slice(0, 2000).toLowerCase();
+      const transientPatterns = [
+        /linking\s+(your\s+)?(account|bank)/i,
+        /continuing\s+in\s+plaid\s+link/i,
+        /verifying\s+(connection|account|ownership)/i,
+        /retrieving\s+(account|transaction|your)/i,
+        /loading\s+(your\s+)?account/i,
+        /connecting\s+(to\s+)?(your\s+)?bank/i,
+        /please\s+wait/i,
+      ];
+      let textMatch = null;
+      for (const re of transientPatterns) {
+        const m = visibleText.match(re);
+        if (m) { textMatch = m[0]; break; }
+      }
+
+      return {
+        spinner: !!spinnerEl,
+        text: textMatch,
+        signal: spinnerEl ? `spinner:${spinnerEl.className || spinnerEl.tagName || 'unknown'}` : (textMatch ? `text:${textMatch}` : null),
+      };
+    });
+  };
+
+  let lastSignal = null;
+  while (Date.now() - start < maxWaitMs) {
+    let result;
+    try { result = await check(); } catch (_) { result = { spinner: false, text: null, signal: null }; }
+    if (!result.spinner && !result.text) {
+      return { cleared: true, elapsedMs: Date.now() - start, lastSignal };
+    }
+    lastSignal = result.signal;
+    await page.waitForTimeout(pollMs);
+  }
+  return { cleared: false, elapsedMs: Date.now() - start, lastSignal };
+}
+
+async function captureStepFrames(page, stepId, rowIndex, dwellMs, stabilityOpts = {}) {
+  // Wait for transient loading states BEFORE the first screenshot so vision
+  // QA never sees "Linking account…" / "Continuing in Plaid Link…" spinners
+  // as if they were real demo scenes. Opt-in per-call so existing callers
+  // keep their old behavior unless they pass maxWaitMs.
+  const spinnerMax = Math.max(0, Number(stabilityOpts.spinnerMaxWaitMs) || 0);
+  if (spinnerMax > 0) {
+    const stability = await waitForLoadingToClear(page, { maxWaitMs: spinnerMax });
+    if (!stability.cleared) {
+      console.warn(
+        `[build-qa] Step "${stepId}" still showed a loading indicator after ${stability.elapsedMs}ms ` +
+          `(signal=${stability.lastSignal || 'unknown'}); capturing anyway.`
+      );
+    } else if (stability.elapsedMs > 500) {
+      console.log(
+        `[build-qa] Step "${stepId}" — waited ${stability.elapsedMs}ms for linking/loading indicator to clear.`
+      );
+    }
+  }
+
   const { startWait, midWait, endWait } = computeCaptureDelays(dwellMs);
   const frames = [];
   const capture = async (label, waitMs) => {
@@ -2157,6 +2167,20 @@ async function main(opts = {}) {
     const row = rows[i];
     const stepId = row.stepId || row.id;
     const step = stepMap.get(stepId);
+    const nextRow = rows[i + 1] || null;
+    const nextStepId = nextRow ? (nextRow.stepId || nextRow.id) : null;
+    const boundaryClickRow =
+      !!step &&
+      row &&
+      row.action === 'click' &&
+      !PLAID_BTN_RE.test(String(row.target || '')) &&
+      nextRow &&
+      nextRow.action === 'goToStep' &&
+      typeof stepId === 'string' &&
+      typeof nextStepId === 'string' &&
+      stepId.trim() &&
+      nextStepId.trim() &&
+      stepId !== nextStepId;
     if (step && typeof stepId === 'string' && stepId.trim()) {
       try {
         const preAlign = await forceStepActive(page, stepId);
@@ -2172,7 +2196,44 @@ async function main(opts = {}) {
       } catch (_) {}
     }
     const isLaunchRow = isPlaidLaunchRow(row, launchStepId);
+    // Is this the first step AFTER the Plaid Link launch? If so, Plaid's
+    // onSuccess handshake legitimately shows a "Linking account…" spinner
+    // on the host page for a few seconds before the real post-link state
+    // renders — give capture an extended stability window.
+    const prevRowIdx = i - 1;
+    const prevRow = prevRowIdx >= 0 ? rows[prevRowIdx] : null;
+    const isFirstPostLaunchRow = !isLaunchRow && prevRow && isPlaidLaunchRow(prevRow, launchStepId);
+    // Standard stability window for every captured frame — short, harmless.
+    // Launch step (embedded mode) needs longer for the widget to finish
+    // mounting past its own "Continuing in Plaid Link…" loading state.
+    const spinnerMaxWaitMs = isLaunchRow
+      ? 6000
+      : isFirstPostLaunchRow
+        ? 8000
+        : 2000;
     let result;
+    let capturedFramesOverride = null;
+    if (boundaryClickRow) {
+      try {
+        await forceStepActive(page, stepId);
+        await page.waitForTimeout(120);
+      } catch (_) {}
+      try {
+        const preClickDwell = Math.min(Math.max(600, row.waitMs || 1200), 1500);
+        capturedFramesOverride = await captureStepFrames(page, stepId, i, preClickDwell, { spinnerMaxWaitMs });
+        console.log(
+          `[build-qa] Boundary pre-capture for step "${stepId}" before click transition to "${nextStepId}"`
+        );
+      } catch (err) {
+        diagnostics.push({
+          stepId,
+          category: 'action-failure',
+          severity: 'critical',
+          issue: `Pre-click boundary capture failed for step "${stepId}": ${err.message}`,
+          suggestion: 'Ensure the step renders stably before click so build QA can capture non-transition frames.',
+        });
+      }
+    }
     if (isLaunchRow && plaidQaMode !== 'full') {
       if (plaidQaMode === 'token-only' && !tokenOnlyProbe) {
         try {
@@ -2187,6 +2248,36 @@ async function main(opts = {}) {
             });
           } else {
             const bodyJson = parseJsonFromText(tokenOnlyProbe.result.body);
+            // The whole POINT of build-qa in token-only mode is that a VALID
+            // link_token is minted. A 200 with no token (e.g. the app-server
+            // returning `{ "link_mode": "embedded" }` but no token string) is
+            // just as broken as a 500 — fail it explicitly.
+            const rawToken =
+              bodyJson && typeof bodyJson.link_token === 'string' && bodyJson.link_token.trim();
+            if (!rawToken) {
+              diagnostics.push({
+                stepId,
+                category: 'plaid-link-token-health',
+                severity: 'critical',
+                issue: 'Token-only probe returned HTTP 200 but the response body has no non-empty `link_token` string.',
+                suggestion: 'Check app-server /api/create-link-token — it must return { link_token: "link-sandbox-..." } on success.',
+              });
+            } else {
+              // Soft-check token shape (sandbox tokens look like
+              // `link-sandbox-<uuid-ish>`) — warn only; some fixtures and
+              // mock modes ship shorter opaque tokens.
+              if (!/^link-[a-z]+-[a-z0-9-]{8,}/i.test(rawToken)) {
+                diagnostics.push({
+                  stepId,
+                  category: 'plaid-link-token-health',
+                  severity: 'warning',
+                  issue: `Token-only probe returned an unrecognized token shape (first 12 chars: "${rawToken.slice(0, 12)}").`,
+                  suggestion: 'Expected shape is `link-<env>-<id>` (e.g. link-sandbox-abc...). Verify /api/create-link-token is returning the raw Plaid response.',
+                });
+              } else {
+                console.log(`[build-qa] Token-only probe: link_token valid (len=${rawToken.length}).`);
+              }
+            }
             const responseMode = normalizeResponseLinkMode(bodyJson);
             const expectedEmbedded = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
             if (expectedEmbedded && responseMode && responseMode !== 'embedded') {
@@ -2241,7 +2332,9 @@ async function main(opts = {}) {
     }
 
     try {
-      const frames = await captureStepFrames(page, stepId, i, result.dwellMs);
+      const frames = (capturedFramesOverride && capturedFramesOverride.length > 0)
+        ? capturedFramesOverride
+        : await captureStepFrames(page, stepId, i, result.dwellMs, { spinnerMaxWaitMs });
       if (frames.length > 0) {
         const prevFrames = stepFramesById[stepId];
         // Same demo step can appear on multiple playwright rows (e.g. goToStep then click).
@@ -2515,40 +2608,56 @@ async function main(opts = {}) {
   }
 
   let narrationSyncReport = null;
-  try {
-    narrationSyncReport = validateNarrationSync(OUT_DIR);
-    writeNarrationSyncReport(OUT_DIR, narrationSyncReport);
-    const mappedCriticalCodes = new Set(['cross-screen-owner', 'clip-missing-step-window']);
-    for (const v of narrationSyncReport.violations || []) {
-      if (v.code === 'narration-screen-mismatch' || v.code === 'narration-overrun' || v.code === 'duplicate-step-window') continue;
-      const severity = String(v.code || '').startsWith('missing-')
-        ? 'warning'
-        : (mappedCriticalCodes.has(v.code) ? 'critical' : 'warning');
+  // Sync-governor depends on timing-contract.json + voiceover-manifest.json, both of
+  // which are produced by the voiceover / resync-audio stages. When build-qa runs
+  // before voiceover (the common case for a pure app-only build-walkthrough), these
+  // files don't exist yet and the governor would flood the report with missing-file
+  // warnings that are false positives. Only run the governor if the upstream files
+  // are already present (i.e. we're re-running build-qa after voiceover).
+  const timingContractPath = path.join(OUT_DIR, 'timing-contract.json');
+  const voiceoverManifestPath = path.join(OUT_DIR, 'voiceover-manifest.json');
+  const syncGovernorInputsReady =
+    fs.existsSync(timingContractPath) && fs.existsSync(voiceoverManifestPath);
+  if (!syncGovernorInputsReady) {
+    console.log(
+      '[build-qa] Skipping sync-governor — timing-contract.json / voiceover-manifest.json not yet generated (this is expected for pre-voiceover build-qa).'
+    );
+  } else {
+    try {
+      narrationSyncReport = validateNarrationSync(OUT_DIR);
+      writeNarrationSyncReport(OUT_DIR, narrationSyncReport);
+      const mappedCriticalCodes = new Set(['cross-screen-owner', 'clip-missing-step-window']);
+      for (const v of narrationSyncReport.violations || []) {
+        if (v.code === 'narration-screen-mismatch' || v.code === 'narration-overrun' || v.code === 'duplicate-step-window') continue;
+        const severity = String(v.code || '').startsWith('missing-')
+          ? 'warning'
+          : (mappedCriticalCodes.has(v.code) ? 'critical' : 'warning');
+        diagnostics.push({
+          stepId: v.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
+          category: `sync-governor-${v.code || 'unknown'}`,
+          severity,
+          issue: `[sync-governor] ${v.message}`,
+          suggestion: 'Regenerate timing-contract/voiceover-manifest and ensure sync-map remap is applied before QA.',
+        });
+      }
+      for (const w of narrationSyncReport.warnings || []) {
+        diagnostics.push({
+          stepId: w.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
+          category: `sync-governor-${w.code || 'warning'}`,
+          severity: 'warning',
+          issue: `[sync-governor] ${w.message}`,
+          suggestion: 'Review narration timing warnings and tighten lead/lag if this recurs.',
+        });
+      }
+    } catch (err) {
       diagnostics.push({
-        stepId: v.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
-        category: `sync-governor-${v.code || 'unknown'}`,
-        severity,
-        issue: `[sync-governor] ${v.message}`,
-        suggestion: 'Regenerate timing-contract/voiceover-manifest and ensure sync-map remap is applied before QA.',
-      });
-    }
-    for (const w of narrationSyncReport.warnings || []) {
-      diagnostics.push({
-        stepId: w.stepId || ((demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build'),
-        category: `sync-governor-${w.code || 'warning'}`,
+        stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
+        category: 'sync-governor-report',
         severity: 'warning',
-        issue: `[sync-governor] ${w.message}`,
-        suggestion: 'Review narration timing warnings and tighten lead/lag if this recurs.',
+        issue: `Could not generate narration sync report: ${err.message}`,
+        suggestion: 'Inspect validate-narration-sync inputs (timing-contract.json, voiceover-manifest.json).',
       });
     }
-  } catch (err) {
-    diagnostics.push({
-      stepId: (demoScript.steps && demoScript.steps[0] && demoScript.steps[0].id) || 'build',
-      category: 'sync-governor-report',
-      severity: 'warning',
-      issue: `Could not generate narration sync report: ${err.message}`,
-      suggestion: 'Inspect validate-narration-sync inputs (timing-contract.json, voiceover-manifest.json).',
-    });
   }
 
   await context.close();
@@ -2788,6 +2897,7 @@ module.exports = {
   normalizeGoToStepExpression,
   isSlideLikeStep,
   buildPlaidLaunchCtaIconDiagnostics,
+  waitForLoadingToClear,
 };
 
 if (require.main === module) {

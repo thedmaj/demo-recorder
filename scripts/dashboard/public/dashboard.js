@@ -553,6 +553,18 @@
     // Pipeline CLI status badge (reflects CLI-spawned builds + read-only mode)
     initCliStatusBadge();
 
+    // Identity for "All / Mine" demo-app filter.
+    try {
+      const resp = await fetch('/api/identity', { cache: 'no-store' });
+      if (resp.ok) {
+        const id = await resp.json();
+        if (id && id.resolved && id.login) {
+          window.__currentUserLogin = id.login;
+          window.__currentUserName = id.name || id.login;
+        }
+      }
+    } catch (_) {}
+
     // FS watch and log SSE (don't depend on currentRunId)
     connectFSWatch();
     connectLogSSE();
@@ -1047,33 +1059,45 @@
       const rqPayload = reviewQueueData.status === 'fulfilled' ? reviewQueueData.value : null;
       const kbQueue = (rqPayload && rqPayload.queue) ? rqPayload.queue : [];
       const productQ = kbQueue.filter(e => e.group === 'products');
-      const totalKbDrafts = productQ.reduce((s, e) => s + (e.draftCount || 0), 0);
-      const kbNeedsReview = productQ.filter(e => e.needsReview).length;
+      const now = Date.now();
+      const staleVpFiles = productQ.filter(e => {
+        const last = e && e.frontmatter && e.frontmatter.last_vp_research;
+        if (!last) return true;
+        const ageDays = Math.floor((now - new Date(String(last)).getTime()) / 86400000);
+        return !Number.isFinite(ageDays) || ageDays > 30 || ageDays < 0;
+      }).length;
       const kbTop = productQ.slice(0, 5);
       if (productQ.length > 0) {
         const summaryBits = [];
-        if (totalKbDrafts > 0) summaryBits.push(`<strong style="color:#fbbf24">${totalKbDrafts}</strong> draft fact(s)`);
-        if (kbNeedsReview > 0) summaryBits.push(`<strong style="color:#fbbf24">${kbNeedsReview}</strong> file(s) need review`);
-        if (summaryBits.length === 0) summaryBits.push('<span style="color:#00A67E">No open drafts in product files</span>');
+        summaryBits.push(`<strong>${productQ.length}</strong> product file(s) under <code>inputs/products/</code>`);
+        if (staleVpFiles > 0) {
+          summaryBits.push(`<strong style="color:#fbbf24">${staleVpFiles}</strong> with stale / missing <code>last_vp_research</code> (research will refresh)`);
+        } else {
+          summaryBits.push('<span style="color:#00A67E">All VP files fresh (≤30d)</span>');
+        }
         kbCardHtml = `
           <div class="card overview-product-kb-card">
-            <div class="card-title">Product knowledge &amp; fact review</div>
+            <div class="card-title">Product knowledge</div>
             <p class="run-meta" style="margin-bottom:10px">
-              Markdown under <code style="font-size:12px">inputs/products/</code> is curated into the demo pipeline. Use the <strong>Fact inbox</strong> (preview mode) to approve AI-suggested fact lines.
+              Per-product markdown under <code style="font-size:12px">inputs/products/</code> is curated into the demo pipeline. Files are edit-and-save; research automatically refreshes baseline value propositions when <code>last_vp_research</code> is older than 30 days.
             </p>
             <p class="run-meta" style="margin-bottom:12px">${summaryBits.join(' · ')}</p>
             <p style="margin-bottom:10px">
               <button type="button" class="btn btn-sm btn-primary" id="overview-kb-open-tab">Open Product knowledge tab</button>
             </p>
             ${kbTop.length ? `
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:rgba(255,255,255,0.35);margin-bottom:6px">Top of review queue</div>
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:rgba(255,255,255,0.35);margin-bottom:6px">Recent product files</div>
             <ul class="overview-kb-queue">
               ${kbTop.map(e => {
                 const short = e.name.replace(/^products\//, '');
+                const loaded = Array.isArray(e.loadedBy) && e.loadedBy.length > 0;
+                const last = e && e.frontmatter && e.frontmatter.last_vp_research;
+                const ageDays = last ? Math.floor((now - new Date(String(last)).getTime()) / 86400000) : null;
+                const stale = ageDays == null || !Number.isFinite(ageDays) || ageDays > 30 || ageDays < 0;
                 const badges = [
-                  e.needsReview ? '<span class="overview-kb-badge overview-kb-badge--warn">needs review</span>' : '',
-                  (e.draftCount || 0) > 0 ? `<span class="overview-kb-badge">${e.draftCount} draft</span>` : '',
-                ].filter(Boolean).join(' ');
+                  loaded ? `<span class="overview-kb-badge" style="background:rgba(0,166,126,0.15);color:#00A67E">${esc(e.loadedBy.join(','))}</span>` : '<span class="overview-kb-badge overview-kb-badge--warn">not wired</span>',
+                  stale ? '<span class="overview-kb-badge overview-kb-badge--warn">VPs stale</span>' : `<span class="overview-kb-badge">${ageDays}d</span>`,
+                ].join(' ');
                 return `<li><button type="button" class="overview-kb-file-btn" data-vp-name="${esc(e.name)}"><span class="overview-kb-file-label">${esc(short)}</span><span class="overview-kb-file-badges">${badges}</span></button></li>`;
               }).join('')}
             </ul>` : ''}
@@ -1081,8 +1105,8 @@
       } else {
         kbCardHtml = `
           <div class="card overview-product-kb-card">
-            <div class="card-title">Product knowledge &amp; fact review</div>
-            <p class="run-meta" style="margin-bottom:10px">No <code>*.md</code> files found in <code>inputs/products/</code>. Add product docs to drive curated facts in the pipeline.</p>
+            <div class="card-title">Product knowledge</div>
+            <p class="run-meta" style="margin-bottom:10px">No <code>*.md</code> files found in <code>inputs/products/</code>. Add product docs or let research seed them automatically when new products appear in demo builds.</p>
             <button type="button" class="btn btn-sm btn-secondary" id="overview-kb-open-tab">Open Product knowledge tab</button>
           </div>`;
       }
@@ -1096,8 +1120,8 @@
               : `<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:rgba(255,255,255,0.3)"><span>○</span> Edit Storyboard — run script stage first</div>`}
             <div style="display:flex;align-items:center;gap:8px;font-size:13px">
               <span style="color:#00A67E">✓</span>
-              <a href="#" onclick="event.preventDefault();window.switchTab&&window.switchTab('valueprop')" style="color:#00A67E">Product knowledge &amp; fact review</a>
-              <span style="color:rgba(255,255,255,0.35);font-size:11px">Fact inbox · inputs/products</span>
+              <a href="#" onclick="event.preventDefault();window.switchTab&&window.switchTab('valueprop')" style="color:#00A67E">Product knowledge</a>
+              <span style="color:rgba(255,255,255,0.35);font-size:11px">edit-and-save · inputs/products</span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;font-size:13px">
               <span style="color:#00A67E">↗</span>
@@ -1305,12 +1329,32 @@
       el.innerHTML = `
         <form id="config-form">
           <div class="card">
+            <div class="card-title">Build Strategy</div>
+            ${renderCheckbox('PIPELINE_WITH_SLIDES', cfg, 'MASTER SWITCH. When OFF (default), the pipeline runs in app-only mode — host product UI only, no Plaid-branded insight/slide interstitials. When ON, the pipeline also produces slide scenes (insights, final value-summary slide). Pairs with the --with-slides / --app-only CLI flags.')}
+            ${renderSelect('BUILD_SLIDES_STRATEGY', cfg, 'How slide scenes are produced when PIPELINE_WITH_SLIDES is on. post-agent (default) runs a dedicated per-slide insertion stage AFTER build-qa, so each slide gets focused LLM context (higher quality). inline is the legacy one-shot build where slides share the prompt with the app (cheaper, lower quality).', [
+              { value: 'post-agent', label: 'post-agent (default — per-slide insertion after app build)' },
+              { value: 'inline', label: 'inline (legacy — slides built in the same prompt as the app)' },
+            ])}
+            ${renderSelect('RESEARCH_MODE', cfg, 'Budget for the research stage. gapfill (default) only fills targeted API/messaging gaps using the per-product KB as baseline. full does broad Glean + Gong + collateral + docs research (slowest). messaging focuses on Gong color & objections. skip disables research entirely and uses only existing per-product KB files.', [
+              { value: 'gapfill', label: 'gapfill (default — targeted API / messaging gap-fill)' },
+              { value: 'full', label: 'full (broad Gong + collateral + docs research)' },
+              { value: 'messaging', label: 'messaging (Gong / objections / customer stories only)' },
+              { value: 'skip', label: 'skip (no research — rely entirely on per-product KB)' },
+            ])}
+            ${renderCheckbox('LAYERED_BUILD_ENABLED', cfg, 'Run the optional framework → data → polish layered build contract. Splits the build into three explicit LLM passes with stricter per-pass contracts. Produces higher fidelity HTML on complex demos at roughly 2x LLM cost. Off by default.')}
+          </div>
+
+          <div class="card">
             <div class="card-title">Pipeline Behavior</div>
-            ${renderCheckbox('SCRATCH_AUTO_APPROVE', cfg, 'Auto-approve all pipeline stages without human confirmation')}
-            ${renderCheckbox('MANUAL_RECORD', cfg, 'Use manual Playwright recording instead of automated')}
-            ${renderCheckbox('FIGMA_REVIEW', cfg, 'Enable Figma design review stage')}
-            ${renderNumberField('MAX_REFINEMENT_ITERATIONS', cfg, 'Max QA refinement loops (1–5)', 1, 5)}
-            ${renderSelect('BUILD_FIX_MODE', cfg, 'QA refinement routing mode', [
+            ${renderCheckbox('SCRATCH_AUTO_APPROVE', cfg, 'Skip all human-confirmation "press ENTER to continue" gates between pipeline stages. Required for CLI non-interactive runs and for the dashboard. Turn off only if you want to approve each stage manually.')}
+            ${renderCheckbox('MANUAL_RECORD', cfg, 'Use the manual-operator Playwright recording path (human drives the UI) instead of the automated step-by-step recorder. Primarily useful for demos where the automation hits a wall on a specific institution or flow.')}
+            ${renderCheckbox('FIGMA_REVIEW', cfg, 'Enable the Figma design-review stage, which posts QA screenshots to a configured Figma file for design-team comment. Requires FIGMA credentials in .env (not editable here).')}
+            ${renderCheckbox('TOUCHUP_ENABLED', cfg, 'Run the final touchup stage — a single-step LLM refinement pass targeting the lowest-scoring scene after the main build-qa / record loop. Off → the pipeline finishes at render without this extra polish pass.')}
+            ${renderCheckbox('SKIP_BRAND_SITE_SCREENSHOT', cfg, 'Skip the brand-extract viewport screenshot of the customer brand URL (Brandfetch still runs for logo + colors). Saves ~15s per run; turn on when you trust the brand JSON and do not need fresh site inspiration for the build prompt.')}
+            ${renderCheckbox('MOBILE_VISUAL_ENABLED', cfg, 'Render the host app inside a simulated mobile device shell (phone chrome). Used for Layer demos and other mobile-first flows. Only affects non-slide scenes.')}
+            ${renderCheckbox('VERBOSE', cfg, 'Emit verbose pipeline logs. Useful when debugging a stuck stage or unexpected behavior; noisy for routine runs.')}
+            ${renderNumberField('MAX_REFINEMENT_ITERATIONS', cfg, 'Max QA refinement loops after the initial build (1–5). Each iteration re-runs build-qa and, if below threshold, asks the LLM to fix flagged issues. Higher = more chances to hit the QA threshold but more cost.', 1, 5)}
+            ${renderSelect('BUILD_FIX_MODE', cfg, 'How refinement iterations route QA failures. auto (recommended) picks between fullbuild and touchup per failure type. fullbuild always regenerates the full HTML. touchup always patches only the flagged scene — cheap but can miss cross-scene issues.', [
               { value: 'auto', label: 'auto (recommended)' },
               { value: 'fullbuild', label: 'fullbuild' },
               { value: 'touchup', label: 'touchup' },
@@ -1318,26 +1362,60 @@
           </div>
 
           <div class="card">
+            <div class="card-title">QA & Guardrails</div>
+            ${renderSelect('PLAID_LINK_QA_MODE', cfg, 'Depth of the plaid-link-qa stage that verifies /link/token/create works before the full pipeline proceeds. auto picks token-only for most runs. full does an end-to-end Playwright walkthrough of the Link modal. token-only just probes the token endpoint. skip disables the stage entirely (useful for embedded Link where the launch happens inside the iframe).', [
+              { value: 'auto', label: 'auto (default — token-only for most runs)' },
+              { value: 'full', label: 'full (end-to-end Playwright walkthrough)' },
+              { value: 'token-only', label: 'token-only (probe /link/token/create only)' },
+              { value: 'skip', label: 'skip (disable the stage entirely)' },
+            ])}
+            ${renderSelect('BUILD_QA_PLAID_MODE', cfg, 'How build-qa exercises the Plaid Link iframe during the full walkthrough of all steps. Same modes as PLAID_LINK_QA_MODE. token-only is fastest and matches most dashboard workflows; full slows the run significantly.', [
+              { value: 'auto', label: 'auto' },
+              { value: 'full', label: 'full' },
+              { value: 'token-only', label: 'token-only' },
+              { value: 'skip', label: 'skip' },
+            ])}
+            ${renderCheckbox('BUILD_QA_DETERMINISTIC_GATE', cfg, 'Enable the deterministic hard-gate in build-qa. When on, the pipeline refuses to proceed to record if any required DOM contract is missing (e.g. missing step div, broken goToStep). Strongly recommended — disable only for diagnostic runs.')}
+            ${renderCheckbox('CLAIM_CHECK_STRICT', cfg, 'Hard-fail the pipeline if narration contains numeric or factual claims that are not backed by the approved-claims digest. Default is warn-and-continue. Strict mode is useful for final production runs; disruptive for iterative builds.')}
+            ${renderSelect('PRODUCT_KB_MIN_CONFIDENCE', cfg, 'Confidence threshold for AI research findings to be appended into inputs/products/*.md. medium is the default and captures most useful findings. high is stricter and only accepts findings the model labeled high-confidence.', [
+              { value: 'medium', label: 'medium (default)' },
+              { value: 'high', label: 'high (stricter)' },
+            ])}
+          </div>
+
+          <div class="card">
             <div class="card-title">Recording Quality</div>
-            ${renderSelect('RECORDING_FPS', cfg, 'Frames per second for screen recording', [
+            ${renderSelect('RECORDING_FPS', cfg, 'Frame rate used by Playwright during the record stage. 30 fps is standard and matches most viewing platforms. 60 fps produces smoother motion but doubles disk usage and makes post-processing slower.', [
               { value: '30', label: '30 fps' },
               { value: '60', label: '60 fps' },
             ])}
-            ${renderNumberField('QA_PASS_THRESHOLD', cfg, 'Minimum QA score to pass (0–100)', 0, 100)}
-            ${renderCheckbox('RECORD_TRANSITION_SAFE_TIMING', cfg, 'Mark step boundaries after goToStep settles to reduce transition bleed')}
-            ${renderNumberField('STEP_TRANSITION_SETTLE_MS', cfg, 'Delay after goToStep before boundary mark (100–2000ms)', 100, 2000)}
-            ${renderNumberField('POST_LINK_STEP_BOUNDARY_GUARD_MS', cfg, 'Extra delay before first post-Link boundary mark (0–3000ms)', 0, 3000)}
+            ${renderNumberField('QA_PASS_THRESHOLD', cfg, 'Minimum QA score (0–100) the build-qa vision review must hit for the pipeline to advance to record without another refinement loop. 80 is a good balance; drop to 70 for faster iteration, raise to 90 for production-grade polish.', 0, 100)}
+            ${renderCheckbox('RECORD_TRANSITION_SAFE_TIMING', cfg, 'Align step-boundary timing marks with when goToStep() finishes settling in the DOM (instead of when it is called). Prevents the next step from appearing briefly on the previous step\'s video frames. On by default unless you are debugging recorder timing.')}
+            ${renderNumberField('STEP_TRANSITION_SETTLE_MS', cfg, 'How long (ms) the recorder waits after goToStep() before marking the next step boundary. 400–600ms is typical. Raise when you see brief flashes of the previous step in frames; lower to speed up recordings for tight demos.', 100, 2000)}
+            ${renderNumberField('POST_LINK_STEP_BOUNDARY_GUARD_MS', cfg, 'Extra delay (ms) added before the first step boundary AFTER the Plaid Link modal closes. Gives the host app time to mount the post-Link confirmation screen. Raise if the first frame after Link looks empty; lower for snappier demos. 0–3000ms.', 0, 3000)}
+          </div>
+
+          <div class="card">
+            <div class="card-title">Audio / Sync Automation</div>
+            ${renderCheckbox('AUTO_GAP_PRESERVE_MANUAL', cfg, 'When the auto-gap stage recomputes inter-scene gaps, preserve any timeline edits you made in the Storyboard timeline editor. Off = auto-gap overwrites manual adjustments with its computed values. On = manual edits win; only auto-derived gaps get recomputed.')}
+            ${renderCheckbox('EMBED_SYNC_AUTO_APPLY', cfg, 'When the embed-sync stage detects audio/video drift above threshold, automatically apply the correction. Off = drift is reported in the storyboard and you apply it manually with the Timeline Editor. On = corrections apply silently (fewer approvals, less control).')}
+            ${renderCheckbox('AI_SUGGEST_AUTO_APPLY', cfg, 'When the ai-suggest-overlays stage recommends overlays (callouts, zoom-punches) above the confidence threshold, apply them automatically. Off = suggestions show up as pending actions in the Storyboard tab for human review.')}
           </div>
 
           <div class="card">
             <div class="card-title">Plaid SDK</div>
-            ${renderSelect('PLAID_ENV', cfg, 'Plaid API environment', [
+            ${renderSelect('PLAID_ENV', cfg, 'Plaid API environment. sandbox is the default and only safe setting for demo recordings — uses test credentials and has no real money movement. production is used only if you have a specific sanctioned live demo; do not change without coordinating with the Plaid sandbox owner.', [
               { value: 'sandbox', label: 'Sandbox' },
               { value: 'production', label: 'Production' },
             ])}
-            ${renderCheckbox('PLAID_LINK_LIVE', cfg, 'Use real Plaid Link SDK (vs. simulated UI)')}
-            ${renderTextField('PLAID_LINK_CUSTOMIZATION', cfg, 'Plaid Link customization name')}
-            ${renderTextField('PLAID_LAYER_TEMPLATE_ID', cfg, 'Plaid Layer template ID')}
+            ${renderCheckbox('PLAID_LINK_LIVE', cfg, 'Use the real Plaid Link SDK in the generated demo app (iframe + /link/token/create + OAuth flows). Off = simulated Link UI (faster, no Plaid sandbox calls, but not visually identical to the real modal). On is required for recording genuine Plaid Link demos.')}
+            ${renderTextField('PLAID_LINK_CUSTOMIZATION', cfg, 'Name of the Plaid Link customization profile to apply (brand colors, logo, etc. configured in the Plaid Dashboard). E.g. "ascend". Leave blank for the default Plaid Link look.')}
+            ${renderTextField('PLAID_LAYER_TEMPLATE_ID', cfg, 'Plaid Layer template ID (e.g. template_xxxxxxxxx) for Layer-based demos. Leave blank for non-Layer demos. Only used when the demo script includes a Layer scene.')}
+          </div>
+
+          <div class="card">
+            <div class="card-title">Dashboard (meta)</div>
+            ${renderCheckbox('DASHBOARD_WRITE', cfg, 'Re-enables the legacy in-dashboard pipeline runner buttons (Run / Kill / Continue). Default off — the dashboard is read-only and pipeline runs happen via `npm run pipe` CLI. Change takes effect after a dashboard server restart (it is read at boot time, not per request).')}
           </div>
 
           <div class="card">
@@ -1394,34 +1472,39 @@
     }
   }
 
+  // Helper: render a small "?" icon that reveals the tooltip on hover. CSS
+  // does the heavy lifting — see .config-hint-tip in dashboard.css. Both
+  // the icon and the label carry the same tooltip text so hovering either
+  // one shows the same description.
+  function renderHintIcon(tooltip) {
+    return `<span class="config-hint" data-tip="${esc(tooltip)}" tabindex="0" aria-label="More info">?</span>`;
+  }
+
   function renderCheckbox(key, cfg, tooltip) {
     const checked = cfg[key] === true || cfg[key] === 'true' ? 'checked' : '';
     return `
-      <label class="config-field" title="${esc(tooltip)}">
+      <label class="config-field config-field--checkbox">
         <input type="checkbox" name="${key}" ${checked}>
         <span class="config-label">${key}</span>
-        <span class="config-tooltip">?</span>
-        <span class="config-desc">${esc(tooltip)}</span>
+        ${renderHintIcon(tooltip)}
       </label>`;
   }
 
   function renderNumberField(key, cfg, tooltip, min, max) {
     const val = cfg[key] != null ? cfg[key] : '';
     return `
-      <div class="config-field" title="${esc(tooltip)}">
-        <label class="config-label">${key}</label>
+      <div class="config-field">
+        <label class="config-label">${key}${renderHintIcon(tooltip)}</label>
         <input type="number" name="${key}" value="${esc(String(val))}" min="${min}" max="${max}" class="config-input">
-        <span class="config-desc">${esc(tooltip)}</span>
       </div>`;
   }
 
   function renderTextField(key, cfg, tooltip) {
     const val = cfg[key] != null ? cfg[key] : '';
     return `
-      <div class="config-field" title="${esc(tooltip)}">
-        <label class="config-label">${key}</label>
+      <div class="config-field">
+        <label class="config-label">${key}${renderHintIcon(tooltip)}</label>
         <input type="text" name="${key}" value="${esc(String(val))}" class="config-input">
-        <span class="config-desc">${esc(tooltip)}</span>
       </div>`;
   }
 
@@ -1431,10 +1514,9 @@
       `<option value="${esc(o.value)}" ${val === o.value ? 'selected' : ''}>${esc(o.label)}</option>`
     ).join('');
     return `
-      <div class="config-field" title="${esc(tooltip)}">
-        <label class="config-label">${key}</label>
+      <div class="config-field">
+        <label class="config-label">${key}${renderHintIcon(tooltip)}</label>
         <select name="${key}" class="config-input">${opts}</select>
-        <span class="config-desc">${esc(tooltip)}</span>
       </div>`;
   }
 
@@ -1443,15 +1525,51 @@
     if (!form) return;
     const data = {};
     form.querySelectorAll('input, select').forEach(el => {
+      if (!el.name) return;
       if (el.type === 'checkbox') data[el.name] = el.checked;
-      else if (el.name) data[el.name] = el.value;
+      else data[el.name] = el.value;
     });
+    const saveBtn = document.getElementById('save-config-btn');
+    const originalLabel = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
     try {
       await apiPost('/api/config', data);
-      showToast('Saved — restart pipeline to apply', 'success');
+      // Round-trip verify: re-read from the server so the form reflects what
+      // was actually persisted to `.env`. Prevents "I saved but the form looks
+      // unchanged, did it stick?" confusion.
+      const fresh = await api('/api/config');
+      const freshCfg = (fresh && typeof fresh === 'object') ? (fresh.config || fresh) : {};
+      syncFormFromConfig(form, freshCfg);
+      const ts = new Date().toLocaleTimeString();
+      showToast(`Saved to .env at ${ts} — restart the pipeline to apply`, 'success');
+      const hint = document.querySelector('.save-hint');
+      if (hint) hint.textContent = `Last saved ${ts}. Restart the pipeline to apply.`;
     } catch (e) {
       showToast('Save failed: ' + e.message, 'error');
+    } finally {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalLabel || 'Save Config'; }
     }
+  }
+
+  // Rewrite form inputs to reflect the authoritative server-side config.
+  // Called after save so the user sees the same values that were persisted.
+  function syncFormFromConfig(form, cfg) {
+    if (!form || !cfg || typeof cfg !== 'object') return;
+    form.querySelectorAll('input[name], select[name]').forEach((el) => {
+      const k = el.name;
+      if (!(k in cfg)) {
+        // Key not present in .env → leave checkbox unchecked, other inputs
+        // render with their default (first option / empty string).
+        if (el.type === 'checkbox') el.checked = false;
+        return;
+      }
+      const v = cfg[k];
+      if (el.type === 'checkbox') {
+        el.checked = v === true || v === 'true';
+      } else {
+        el.value = (v == null) ? '' : String(v);
+      }
+    });
   }
 
   async function savePrompt() {
@@ -4577,22 +4695,26 @@
       const rootFiles    = files.filter(f => f.group !== 'products');
 
       function renderFileItem(f) {
-        const badge = f.needsReview
-          ? `<span class="vp-needs-review-badge" title="AI has added findings since last human review">Needs Review</span>`
+        const loadedBy = Array.isArray(f.loadedBy) ? f.loadedBy : [];
+        const loadedBadge = f.group === 'products'
+          ? (loadedBy.length > 0
+              ? `<span class="vp-loaded-badge vp-loaded-badge--active" title="This file is curated into prompts when the pipeline resolves product family: ${esc(loadedBy.join(', '))}">loaded: ${esc(loadedBy.join(', '))}</span>`
+              : `<span class="vp-loaded-badge vp-loaded-badge--idle" title="No product family in product-profiles.js references this slug — the file is present but not consumed by the pipeline">not wired</span>`)
+          : '';
+        const vpResearchDate = f.frontmatter && (f.frontmatter.last_vp_research || f.frontmatter.last_ai_update);
+        const vpResearchBadge = vpResearchDate
+          ? `<span class="vp-research-date" title="Last value-prop research run"><code>${esc(String(vpResearchDate).slice(0, 10))}</code></span>`
           : '';
         const staleB = f.staleByAge
-          ? `<span class="vp-stale-badge" title="Last human review older than ${esc(String(f.staleThresholdDays || 90))} days">Stale ${f.staleDays != null ? esc(String(f.staleDays)) + 'd' : ''}</span>`
-          : '';
-        const draftB = (f.draftCount > 0)
-          ? `<span class="vp-draft-count" title="Lines tagged as draft in Fact Inbox">${esc(String(f.draftCount))} draft</span>`
+          ? `<span class="vp-stale-badge" title="Last curated update older than ${esc(String(f.staleThresholdDays || 90))} days">Stale ${f.staleDays != null ? esc(String(f.staleDays)) + 'd' : ''}</span>`
           : '';
         const displayName = f.name.startsWith('products/') ? f.name.replace('products/', '') : f.name;
         return `
           <div class="vp-file-item" data-name="${esc(f.name)}">
             <span class="vp-file-name">${esc(displayName)}</span>
-            ${badge}
+            ${loadedBadge}
             <span class="vp-file-size">${formatBytes(f.size)}</span>
-            <div class="vp-file-badges">${staleB}${draftB}</div>
+            <div class="vp-file-badges">${vpResearchBadge}${staleB}</div>
           </div>`;
       }
 
@@ -4700,37 +4822,37 @@
 
     const fm = _vpCurrentFrontmatter || {};
     const isProductFile = (_vpCurrentFile || '').startsWith('products/');
-    const needsReview = fm.needs_review === 'true' ||
-      (fm.last_ai_update && fm.last_human_review && fm.last_ai_update > fm.last_human_review);
+    const vpResearchDate = fm.last_vp_research || null;
+    const vpFreshnessBadge = vpResearchDate
+      ? (() => {
+          try {
+            const age = Math.floor((Date.now() - new Date(String(vpResearchDate)).getTime()) / 86400000);
+            const fresh = Number.isFinite(age) && age >= 0 && age <= 30;
+            const colorBg = fresh ? 'rgba(0,166,126,0.15)' : 'rgba(248,113,113,0.18)';
+            const colorFg = fresh ? '#00A67E' : '#f87171';
+            const label = fresh ? `VPs fresh · ${age}d` : `VPs stale · ${age}d`;
+            return `<span class="vp-meta-item" style="background:${colorBg};color:${colorFg};padding:2px 8px;border-radius:999px;font-weight:600;font-size:11px">${label}</span>`;
+          } catch (_) { return ''; }
+        })()
+      : '';
 
     const metaBar = isProductFile ? `
       <div class="vp-meta-bar">
-        <span class="vp-meta-item">Last reviewed: <strong>${esc(fm.last_human_review || '—')}</strong></span>
+        <span class="vp-meta-item">last_vp_research: <strong>${esc(vpResearchDate || '—')}</strong></span>
         <span class="vp-meta-sep">·</span>
-        <span class="vp-meta-item">Last AI update: <strong>${esc((fm.last_ai_update || '—').split('T')[0])}</strong></span>
-        ${fm.last_reviewed_by ? `<span class="vp-meta-sep">·</span><span class="vp-meta-item">By: <strong>${esc(fm.last_reviewed_by)}</strong></span>` : ''}
-        ${needsReview && !editMode ? `
-          <span class="vp-meta-sep">·</span>
-          <button class="btn btn-sm vp-mark-reviewed-btn" id="vp-mark-reviewed-btn">✓ Mark as Reviewed</button>` : ''}
+        ${vpFreshnessBadge}
+        <span class="vp-meta-sep">·</span>
+        <span class="vp-meta-item">Edit and Save. Research will refresh VPs automatically when <code>last_vp_research</code> is older than 30 days.</span>
       </div>` : '';
 
     const previewBody = renderVpContent(content);
     const splitWrap = editMode
       ? `<div id="vp-content-area"><textarea id="vp-textarea" class="vp-textarea">${esc(content)}</textarea></div>`
-      : `<div id="vp-content-area"><div class="vp-split">
-          <div class="vp-split-main">${previewBody}</div>
-          <aside class="vp-fact-inbox" id="vp-fact-inbox" aria-label="Fact inbox">
-            <div class="vp-fact-inbox-title">Fact inbox</div>
-            <div class="vp-fact-inbox-loading" style="font-size:13px;color:rgba(255,255,255,0.45)">Loading…</div>
-          </aside>
-        </div></div>`;
+      : `<div id="vp-content-area">${previewBody}</div>`;
 
     area.innerHTML = `
       <div class="vp-toolbar">
-        <span class="vp-filename">
-          ${esc(_vpCurrentFile || '')}
-          ${needsReview ? '<span class="vp-needs-review-badge vp-needs-review-badge--inline">Needs Review</span>' : ''}
-        </span>
+        <span class="vp-filename">${esc(_vpCurrentFile || '')}</span>
         <div class="vp-toolbar-actions">
           <button class="btn btn-sm ${!editMode ? 'btn-primary' : 'btn-secondary'}" id="vp-preview-btn">Preview</button>
           <button class="btn btn-sm ${editMode ? 'btn-primary' : 'btn-secondary'}" id="vp-edit-btn">Edit</button>
@@ -4755,106 +4877,6 @@
     document.getElementById('vp-discard-btn')?.addEventListener('click', () => {
       renderVpEditor(_vpOriginalContent, false);
     });
-    document.getElementById('vp-mark-reviewed-btn')?.addEventListener('click', () => markVpFileReviewed(false));
-    if (!editMode) loadVpFactInbox(content);
-  }
-
-  let _vpFactFilterDraftsOnly = true;
-
-  async function loadVpFactInbox(currentMarkdown) {
-    const host = document.getElementById('vp-fact-inbox');
-    if (!host || !_vpCurrentFile) return;
-    try {
-      const r = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/facts');
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
-      const facts = data.facts || [];
-      const show = _vpFactFilterDraftsOnly ? facts.filter(f => f.draft) : facts;
-      host.innerHTML = `
-        <div class="vp-fact-inbox-title">Fact inbox (${data.draftCount || 0} draft / ${data.factCount || 0} total)</div>
-        <div class="vp-fact-filter">
-          <label><input type="checkbox" id="vp-fact-filter-drafts" ${_vpFactFilterDraftsOnly ? 'checked' : ''}/> Drafts only</label>
-          ${(data.draftCount || 0) > 0 ? `<button type="button" class="btn btn-sm btn-secondary" id="vp-fact-approve-all">Approve all drafts</button>` : ''}
-        </div>
-        <div id="vp-fact-rows"></div>`;
-      document.getElementById('vp-fact-approve-all')?.addEventListener('click', async () => {
-        const drafts = facts.filter(f => f.draft);
-        if (!drafts.length || !confirm(`Approve ${drafts.length} draft fact(s)?`)) return;
-        try {
-          const r = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/facts/bulk', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ actions: drafts.map(f => ({ factId: f.id, op: 'approve' })) }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) throw new Error(j.error || r.statusText);
-          showToast(`Approved ${j.applied || drafts.length} fact(s)`, 'success');
-          _vpPreserveSelection = _vpCurrentFile;
-          await loadValueProps();
-        } catch (e) {
-          showToast('Bulk approve failed: ' + e.message, 'error');
-        }
-      });
-      const rowsEl = document.getElementById('vp-fact-rows');
-      document.getElementById('vp-fact-filter-drafts')?.addEventListener('change', (e) => {
-        _vpFactFilterDraftsOnly = !!e.target.checked;
-        loadVpFactInbox(currentMarkdown);
-      });
-      if (show.length === 0) {
-        rowsEl.innerHTML = '<div style="font-size:13px;color:rgba(255,255,255,0.45)">No facts in this view.</div>';
-        return;
-      }
-      rowsEl.innerHTML = show.map(f => `
-        <div class="vp-fact-row ${f.draft ? 'vp-fact-row--draft' : ''}" data-fact-id="${esc(f.id)}">
-          <div class="vp-fact-meta">
-            <span class="vp-fact-pill">${esc(f.type)}</span>
-            <span class="vp-fact-pill">${esc(f.section)}</span>
-            ${f.draft ? '<span class="vp-fact-pill vp-fact-pill--draft">DRAFT</span>' : ''}
-            <span class="vp-fact-pill">L${f.lineStart}</span>
-          </div>
-          <div class="vp-fact-text">${esc(f.text)}</div>
-          <div class="vp-fact-actions">
-            ${f.draft ? `<button type="button" class="btn btn-sm btn-primary vp-fact-approve" data-id="${esc(f.id)}">Approve</button>` : ''}
-            <button type="button" class="btn btn-sm btn-secondary vp-fact-edit" data-id="${esc(f.id)}">Edit line…</button>
-            <button type="button" class="btn btn-sm btn-secondary vp-fact-reject" data-id="${esc(f.id)}">Remove line</button>
-          </div>
-        </div>`).join('');
-      rowsEl.querySelectorAll('.vp-fact-approve').forEach(btn => {
-        btn.addEventListener('click', () => vpFactPatch(btn.dataset.id, 'approve'));
-      });
-      rowsEl.querySelectorAll('.vp-fact-reject').forEach(btn => {
-        btn.addEventListener('click', () => {
-          if (confirm('Remove this line from the markdown file?')) vpFactPatch(btn.dataset.id, 'reject');
-        });
-      });
-      rowsEl.querySelectorAll('.vp-fact-edit').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const row = facts.find(x => x.id === btn.dataset.id);
-          const next = row ? prompt('Edit fact line text:', row.text) : null;
-          if (next == null) return;
-          vpFactPatch(btn.dataset.id, 'edit', next);
-        });
-      });
-    } catch (err) {
-      host.innerHTML = `<div class="vp-fact-inbox-title">Fact inbox</div><div style="color:#f87171;font-size:13px">${esc(err.message)}</div>`;
-    }
-  }
-
-  async function vpFactPatch(factId, op, text) {
-    if (!_vpCurrentFile) return;
-    try {
-      const r = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/facts/' + encodeURIComponent(factId), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ op, text }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-      showToast('Updated fact', 'success');
-      _vpPreserveSelection = _vpCurrentFile;
-      await loadValueProps();
-    } catch (e) {
-      showToast('Fact update failed: ' + e.message, 'error');
-    }
   }
 
   async function saveVpFile() {
@@ -4872,50 +4894,6 @@
       renderVpEditor(content, false);
     } catch (e) {
       showToast('Save failed: ' + e.message, 'error');
-    }
-  }
-
-  async function markVpFileReviewed(forceRetry) {
-    if (!_vpCurrentFile) return;
-    try {
-      const r = await fetch('/api/valueprop/review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: _vpCurrentFile,
-          force: !!forceRetry,
-          last_reviewed_by: 'dashboard',
-        }),
-      });
-      const payload = await r.json().catch(() => ({}));
-      if (r.status === 409 && payload.code === 'unresolved_drafts') {
-        const n = payload.unresolvedDraftCount || 0;
-        if (confirm(`There are ${n} draft fact(s) in Fact Inbox. Mark as reviewed anyway?`)) {
-          return markVpFileReviewed(true);
-        }
-        showToast('Resolve drafts in Fact Inbox first, or confirm to force complete.', 'error');
-        return;
-      }
-      if (!r.ok) throw new Error(payload.error || r.statusText);
-      const today = new Date().toISOString().split('T')[0];
-      _vpCurrentFrontmatter = {
-        ..._vpCurrentFrontmatter,
-        last_human_review: today,
-        needs_review: 'false',
-        last_reviewed_by: 'dashboard',
-      };
-      _vpOriginalContent = _vpOriginalContent
-        .replace(/^last_human_review:.*$/m, `last_human_review: "${today}"`)
-        .replace(/^needs_review:.*$/m, 'needs_review: false');
-      if (/^last_reviewed_by:/m.test(_vpOriginalContent)) {
-        _vpOriginalContent = _vpOriginalContent.replace(/^last_reviewed_by:.*$/m, 'last_reviewed_by: "dashboard"');
-      } else {
-        _vpOriginalContent = _vpOriginalContent.replace(/^---\n/, '---\nlast_reviewed_by: "dashboard"\n');
-      }
-      showToast('Marked as reviewed', 'success');
-      await loadValueProps();
-    } catch (e) {
-      showToast('Review failed: ' + e.message, 'error');
     }
   }
 
@@ -5006,12 +4984,17 @@
   async function loadDemoApps(forceRefresh = false) {
     const el = document.getElementById('demo-apps-content');
     if (!el) return;
-    // Skip re-fetch if already populated and not forced (e.g. after launch/stop)
     if (!forceRefresh && el.querySelector('#demo-apps-list')) return;
     el.innerHTML = '<div class="empty-state">Loading…</div>';
     try {
-      const data = await api('/api/demo-apps');
-      renderDemoApps(data.apps || []);
+      const [local, remote] = await Promise.all([
+        api('/api/demo-apps').catch(() => ({ apps: [] })),
+        api('/api/remote-demo-apps').catch(() => ({ apps: [] })),
+      ]);
+      const localIds = new Set((local.apps || []).map((a) => a.runId));
+      const remoteOnly = (remote.apps || []).filter((a) => !localIds.has(a.runId));
+      const merged = [...(local.apps || []), ...remoteOnly];
+      renderDemoApps(merged);
     } catch (err) {
       el.innerHTML = `<div class="empty-state">Error: ${esc(err.message)}</div>`;
     }
@@ -5099,27 +5082,149 @@
     });
   }
 
+  // Persistent client-side filter state so search / toggle survive list refreshes.
+  const _demoAppsFilter = { search: '', scope: 'all' };
+  let _demoAppsLastPayload = [];
+
+  function _qaBadgeForScore(score) {
+    if (score == null || !Number.isFinite(Number(score))) return '';
+    const n = Math.round(Number(score));
+    const band = n >= 90 ? '#00A67E' : n >= 70 ? '#f59e0b' : '#f87171';
+    return `<span title="Latest QA score" style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;background:${band}22;color:${band};border:1px solid ${band}44;flex-shrink:0">QA ${n}</span>`;
+  }
+
+  function _buildModeBadge(app) {
+    const m = app && app.buildMode;
+    if (m !== 'app-only' && m !== 'app+slides') return '';
+    const label = m === 'app+slides' ? 'App + Slides' : 'App-only';
+    const cls = m === 'app+slides' ? '#60a5fa' : 'rgba(255,255,255,0.55)';
+    return `<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;background:${cls}15;color:${cls};border:1px solid ${cls}33;flex-shrink:0">${label}</span>`;
+  }
+
+  function _displayNameWithSuffix(app) {
+    const base = app.displayName || app.runId;
+    if (app.plaidLinkMode === 'embedded') return `${base} (embed)`;
+    return base;
+  }
+
+  function _matchesSearch(app, needle) {
+    if (!needle) return true;
+    const hay = [
+      app.displayName,
+      app.runId,
+      app.plaidLinkMode,
+      app.script && app.script.product,
+      app.script && app.script.company,
+      app.script && app.script.persona,
+      app.owner && app.owner.login,
+      app.owner && app.owner.name,
+    ]
+      .filter(Boolean)
+      .map((s) => String(s).toLowerCase())
+      .join(' ');
+    return hay.includes(needle);
+  }
+
+  function _currentUserLogin() {
+    try {
+      return String(window.__currentUserLogin || '').toLowerCase();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function _matchesScope(app, scope) {
+    if (scope !== 'mine') return true;
+    const me = _currentUserLogin();
+    if (!me) return app.source === 'local';
+    if (app.source === 'local') return true;
+    return app.owner && String(app.owner.login || '').toLowerCase() === me;
+  }
+
+  function filterDemoApps(apps) {
+    const needle = _demoAppsFilter.search.trim().toLowerCase();
+    return apps.filter((app) => _matchesSearch(app, needle) && _matchesScope(app, _demoAppsFilter.scope));
+  }
+
   function renderDemoApps(apps) {
     const el = document.getElementById('demo-apps-content');
     if (!el) return;
+    _demoAppsLastPayload = Array.isArray(apps) ? apps : [];
 
-    if (!apps.length) {
-      el.innerHTML = '<div class="empty-state">No built demo apps found.<br>Run the pipeline through the <strong>build</strong> stage to create one.</div>';
+    const wrapperExists = !!document.getElementById('demo-apps-list');
+    if (!wrapperExists) {
+      el.innerHTML = `
+        <div style="padding:24px">
+          <h2 style="margin:0 0 6px;font-size:18px">Built Demo Apps</h2>
+          <p style="margin:0 0 16px;color:rgba(255,255,255,0.5);font-size:13px">
+            Launch an app to preview it with live Plaid Link and the AI edit overlay.
+          </p>
+          <div id="demo-apps-toolbar" style="display:flex;gap:10px;align-items:center;margin:0 0 14px;flex-wrap:wrap">
+            <input id="demo-apps-search" type="search" placeholder="Search demos (name, company, product)…"
+                   style="flex:1;min-width:260px;padding:7px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.16);border-radius:6px;color:#fff;font-size:13px">
+            <div id="demo-apps-scope" role="tablist" style="display:inline-flex;border:1px solid rgba(255,255,255,0.15);border-radius:6px;overflow:hidden">
+              <button data-scope="all"  type="button" class="demo-apps-scope-btn" style="padding:6px 12px;background:rgba(255,255,255,0.08);border:none;color:#fff;font-size:12px;cursor:pointer">All</button>
+              <button data-scope="mine" type="button" class="demo-apps-scope-btn" style="padding:6px 12px;background:transparent;border:none;color:rgba(255,255,255,0.65);font-size:12px;cursor:pointer">Mine</button>
+            </div>
+            <button id="demo-apps-pull-btn" type="button" style="padding:6px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:rgba(255,255,255,0.85);font-size:12px;cursor:pointer">Pull</button>
+            <span id="demo-apps-count" style="font-size:11px;color:rgba(255,255,255,0.45)"></span>
+          </div>
+          <div id="demo-apps-list" style="display:flex;flex-direction:column;gap:10px"></div>
+        </div>
+      `;
+      const searchEl = document.getElementById('demo-apps-search');
+      if (searchEl) {
+        searchEl.value = _demoAppsFilter.search;
+        let t = null;
+        searchEl.addEventListener('input', () => {
+          clearTimeout(t);
+          t = setTimeout(() => {
+            _demoAppsFilter.search = searchEl.value || '';
+            renderDemoApps(_demoAppsLastPayload);
+          }, 150);
+        });
+      }
+      document.querySelectorAll('.demo-apps-scope-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          _demoAppsFilter.scope = btn.dataset.scope || 'all';
+          document.querySelectorAll('.demo-apps-scope-btn').forEach((b) => {
+            const active = b.dataset.scope === _demoAppsFilter.scope;
+            b.style.background = active ? 'rgba(255,255,255,0.08)' : 'transparent';
+            b.style.color = active ? '#fff' : 'rgba(255,255,255,0.65)';
+          });
+          renderDemoApps(_demoAppsLastPayload);
+        });
+      });
+      const pullBtn = document.getElementById('demo-apps-pull-btn');
+      if (pullBtn) {
+        pullBtn.addEventListener('click', () => {
+          if (typeof copyCliCommand === 'function') {
+            copyCliCommand('npm run pipe -- pull', 'Pull command copied to clipboard — run it in your terminal.');
+          } else {
+            showToast && showToast('Run `npm run pipe -- pull` in your terminal.', 'info');
+          }
+        });
+      }
+    }
+
+    const filtered = filterDemoApps(apps);
+    const countEl = document.getElementById('demo-apps-count');
+    if (countEl) {
+      countEl.textContent = apps.length === filtered.length
+        ? `${apps.length} apps`
+        : `${filtered.length} / ${apps.length} apps`;
+    }
+
+    const list = document.getElementById('demo-apps-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    if (!filtered.length) {
+      list.innerHTML = '<div class="empty-state" style="padding:24px 4px;color:rgba(255,255,255,0.5);font-size:13px">No demo apps match the current filter.</div>';
       return;
     }
 
-    el.innerHTML = `
-      <div style="padding:24px">
-        <h2 style="margin:0 0 6px;font-size:18px">Built Demo Apps</h2>
-        <p style="margin:0 0 20px;color:rgba(255,255,255,0.5);font-size:13px">
-          Launch an app to preview it with live Plaid Link and the AI edit overlay.
-        </p>
-        <div id="demo-apps-list" style="display:flex;flex-direction:column;gap:10px"></div>
-      </div>
-    `;
-
-    const list = document.getElementById('demo-apps-list');
-    apps.forEach(app => {
+    filtered.forEach(app => {
       const card = document.createElement('div');
       card.dataset.runId = app.runId;
       card.dataset.displayName = app.displayName || app.runId;
@@ -5133,11 +5238,26 @@
         ? `<span style="font-size:11px;color:rgba(255,255,255,0.35);margin-left:6px">:${app.port}</span>`
         : '';
 
+      const qaBadge = _qaBadgeForScore(app.qaScore);
+      const buildBadge = _buildModeBadge(app);
+      const ownerBadge = app.owner && app.owner.login
+        ? `<span title="Owner" style="font-size:10px;color:rgba(255,255,255,0.45);padding:2px 6px;background:rgba(255,255,255,0.05);border-radius:999px;border:1px solid rgba(255,255,255,0.1);flex-shrink:0">@${esc(app.owner.login)}</span>`
+        : '';
+      const promptBtn = app.promptViewerUrl
+        ? `<a class="demo-app-prompt-btn" href="${esc(app.promptViewerUrl)}" target="_blank" rel="noopener" style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer;text-decoration:none">Prompt</a>`
+        : '';
+      const publishBtn = app.source === 'remote'
+        ? `<span style="font-size:10px;color:rgba(255,255,255,0.45);padding:4px 8px;background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.3);border-radius:5px;flex-shrink:0">Remote</span>`
+        : `<button class="demo-app-publish-btn" data-run="${esc(app.runId)}" type="button" style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer">Publish</button>`;
+
       card.innerHTML = `
         ${statusDot}
         <div style="flex:1;min-width:0">
-          <div class="demo-app-name-row" style="display:flex;align-items:center;gap:8px;min-width:0">
-            <div class="demo-app-display-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(app.displayName || app.runId)}</div>
+          <div class="demo-app-name-row" style="display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">
+            <div class="demo-app-display-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_displayNameWithSuffix(app))}</div>
+            ${qaBadge}
+            ${buildBadge}
+            ${ownerBadge}
             <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Rename</button>
             <button class="demo-app-clone-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Clone</button>
           </div>
@@ -5156,6 +5276,8 @@
           }
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
+          ${promptBtn}
+          ${publishBtn}
           <a class="btn btn-sm btn-secondary"
              href="/api/runs/${encodeURIComponent(app.runId)}/download-app-package"
              style="text-decoration:none;padding:5px 10px">
@@ -5278,6 +5400,28 @@
           }
         });
       }
+    });
+
+    // Publish controls
+    list.querySelectorAll('.demo-app-publish-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const runId = btn.dataset.run;
+        if (!runId) return;
+        setBtnLoading(btn, true, 'Publishing…');
+        try {
+          const result = await apiPost(`/api/demo-apps/${encodeURIComponent(runId)}/publish`, {});
+          if (result && result.ok) {
+            showToast(`Published ${runId}`, 'success');
+            setTimeout(() => loadDemoApps(true), 200);
+          } else {
+            showToast(`Publish returned no result`, 'error');
+            setBtnLoading(btn, false, 'Publish');
+          }
+        } catch (err) {
+          showToast(`Publish failed: ${err.message}`, 'error');
+          setBtnLoading(btn, false, 'Publish');
+        }
+      });
     });
 
     // Clone controls

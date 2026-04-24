@@ -27,7 +27,7 @@ const { spawnSync, execSync } = require('child_process');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const SYNC_MODEL        = 'claude-opus-4-6';
+const SYNC_MODEL        = 'claude-opus-4-7';
 const SYNC_MAX_TOKENS   = 1024;
 const DRIFT_FLAG_MS     = 500;   // flag if |drift| > 500ms
 const DRIFT_VISION_MS   = 1000;  // run vision if |drift| > 1s
