@@ -1,0 +1,12 @@
+# Personal-repo CODEOWNERS — references individual GHE users (not teams,
+# since teams only resolve in org-owned repos). Add collaborators here as
+# co-maintainers come on board. The branch-protection rule on `main`
+# requires "Review from Code Owners", so every PR needs an approval from
+# someone in this list before it can merge.
+#
+#   *               @dmajetic                   # default fallback
+#   /docs/**        @dmajetic                   # docs review
+#   /scripts/**     @dmajetic @<teammate-login>  # require either
+#
+
+*    @dmajetic
