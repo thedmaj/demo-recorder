@@ -56,15 +56,57 @@ function writeCachedIdentity(identity) {
   return identity;
 }
 
-function tryGhUser() {
-  const bin = process.env.GH_BIN || 'gh';
+/**
+ * Discover the GHE hostname the caller is intending to use, in priority order:
+ *   1. `PLAID_GHE_HOSTNAME` env var (explicit override)
+ *   2. `PLAID_DEMO_APPS_REPO` URL's hostname (artifact repo is GHE-hosted)
+ *   3. `git config --get remote.ghe.url` (conventional remote name)
+ *   4. `git config --get remote.origin.url` when NOT github.com
+ *   5. null → caller queries the active gh account (may be github.com)
+ */
+function detectGheHostname() {
+  const envHost = String(process.env.PLAID_GHE_HOSTNAME || '').trim();
+  if (envHost) return envHost;
+  const parseHost = (url) => {
+    const s = String(url || '').trim();
+    if (!s) return null;
+    const m = s.match(/^git@([^:]+):/) || s.match(/^ssh:\/\/git@([^/]+)\//) || s.match(/^https?:\/\/([^/]+)\//);
+    if (!m) return null;
+    const host = String(m[1] || '').trim().toLowerCase();
+    if (!host || host === 'github.com') return null;
+    return host;
+  };
+  const fromAppsRepo = parseHost(process.env.PLAID_DEMO_APPS_REPO);
+  if (fromAppsRepo) return fromAppsRepo;
   try {
-    const result = spawnSync(bin, ['api', 'user'], { encoding: 'utf8', timeout: 10000 });
+    const bin = 'git';
+    const ghe = spawnSync(bin, ['config', '--get', 'remote.ghe.url'], { encoding: 'utf8' });
+    const fromGhe = parseHost(ghe && ghe.stdout);
+    if (fromGhe) return fromGhe;
+    const origin = spawnSync(bin, ['config', '--get', 'remote.origin.url'], { encoding: 'utf8' });
+    const fromOrigin = parseHost(origin && origin.stdout);
+    if (fromOrigin) return fromOrigin;
+  } catch (_) {}
+  return null;
+}
+
+function tryGhUser(opts = {}) {
+  const bin = process.env.GH_BIN || 'gh';
+  const explicitHost = opts.hostname ? String(opts.hostname).trim() : detectGheHostname();
+  const args = ['api'];
+  if (explicitHost) args.push('--hostname', explicitHost);
+  args.push('user');
+  try {
+    const result = spawnSync(bin, args, { encoding: 'utf8', timeout: 10000 });
     if (result.status !== 0 || !result.stdout) return null;
     const json = JSON.parse(result.stdout);
     const login = typeof json.login === 'string' ? json.login.trim() : '';
     if (!login) return null;
-    return { login, name: typeof json.name === 'string' && json.name.trim() ? json.name.trim() : null };
+    return {
+      login,
+      name: typeof json.name === 'string' && json.name.trim() ? json.name.trim() : null,
+      host: explicitHost || 'github.com',
+    };
   } catch (_) {
     return null;
   }
@@ -95,16 +137,18 @@ function resolveIdentity(opts = {}) {
       return {
         login: normalizeLogin(cached.login),
         name: cached.name || null,
+        host: cached.host || null,
         resolvedAt: cached.resolvedAt || new Date().toISOString(),
         source: 'cache',
       };
     }
   }
-  const gh = tryGhUser();
+  const gh = tryGhUser({ hostname: opts.hostname });
   if (gh) {
     const identity = {
       login: normalizeLogin(gh.login),
       name: gh.name || null,
+      host: gh.host || null,
       resolvedAt: new Date().toISOString(),
       source: 'gh',
     };
@@ -139,5 +183,6 @@ module.exports = {
   readCachedIdentity,
   writeCachedIdentity,
   clearIdentity,
+  detectGheHostname,
   CACHE_FILE,
 };

@@ -514,19 +514,24 @@ function runGit(args, cwd) {
   return spawnSync('git', args, { cwd, stdio: 'inherit', env: process.env });
 }
 
-function cmdWhoami() {
-  const identity = IDENTITY.resolveIdentity({ refresh: false });
+function cmdWhoami({ flags = {} } = {}) {
+  // Honor --refresh so `pipe whoami --refresh` re-queries gh and rewrites cache.
+  const refresh = !!(flags && (flags.refresh || flags['re-resolve']));
+  const gheHost = IDENTITY.detectGheHostname ? IDENTITY.detectGheHostname() : null;
+  const identity = IDENTITY.resolveIdentity({ refresh, hostname: gheHost || undefined });
   const artifactDir = resolveArtifactDir();
   const artifactRepo = resolveArtifactRepoUrl();
   if (!identity) {
     console.log(c.yellow('No identity resolved.'));
-    console.log(`  Tried: ~/.plaid-demo-recorder/identity.json → gh api user → $PLAID_DEMO_USER`);
-    console.log(`  Next:  run ${c.cyan('gh auth login')} or set ${c.cyan('PLAID_DEMO_USER')}.`);
+    console.log(`  Tried: ~/.plaid-demo-recorder/identity.json → gh api user${gheHost ? ` (--hostname ${gheHost})` : ''} → $PLAID_DEMO_USER`);
+    console.log(`  Next:  run ${c.cyan(`gh auth login${gheHost ? ` --hostname ${gheHost}` : ''}`)} or set ${c.cyan('PLAID_DEMO_USER')}.`);
     return 2;
   }
   console.log(c.bold('Identity'));
   console.log(`  Login:  ${c.cyan(identity.login)}`);
   if (identity.name) console.log(`  Name:   ${identity.name}`);
+  if (identity.host) console.log(`  Host:   ${identity.host}`);
+  else if (gheHost)  console.log(`  Host:   ${gheHost}  ${c.dim('(detected from remote; cache predates host tracking — run `pipe whoami --refresh`)')}`);
   console.log(`  Source: ${identity.source}`);
   console.log(`  Cache:  ${IDENTITY.CACHE_FILE}`);
   console.log('');
@@ -897,7 +902,7 @@ Claude integration:
       case 'stage':    code = await cmdStage(parsed);   break;
       case 'post-panels': code = await cmdPostPanels(parsed); break;
       case 'post-slides': code = await cmdPostSlides(parsed); break;
-      case 'whoami':   code = cmdWhoami();               break;
+      case 'whoami':   code = cmdWhoami(parsed);         break;
       case 'pull':     code = await cmdPull();           break;
       case 'publish':  code = await cmdPublish(parsed);  break;
       case 'unpublish':code = await cmdUnpublish(parsed);break;
