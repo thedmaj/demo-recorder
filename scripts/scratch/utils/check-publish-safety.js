@@ -15,15 +15,25 @@
 const fs = require('fs');
 const path = require('path');
 
+// Each pattern hunts for a populated secret value. Empty assignments
+// (`KEY=` followed by a newline) and comment-only env entries should NOT
+// match. We deliberately use `[ \t]*` instead of `\s*` around the `=` so
+// the value-side cannot span newlines into a neighboring line — that bug
+// caused empty `PLAID_CLIENT_ID=` followed by `PLAID_SANDBOX_SECRET=` to
+// register as a leak.
 const SECRET_PATTERNS = [
-  { name: 'anthropic-api-key-env', re: /ANTHROPIC_API_KEY\s*=\s*\S+/g },
-  { name: 'plaid-secret-env',     re: /PLAID_SECRET\s*=\s*\S+/g },
-  { name: 'plaid-client-id-env',  re: /PLAID_CLIENT_ID\s*=\s*\S+/g },
-  { name: 'elevenlabs-key-env',   re: /ELEVENLABS_API_KEY\s*=\s*\S+/g },
+  { name: 'anthropic-api-key-env', re: /^[ \t]*ANTHROPIC_API_KEY[ \t]*=[ \t]*\S+/gm },
+  { name: 'plaid-secret-env',     re: /^[ \t]*PLAID_SECRET[ \t]*=[ \t]*\S+/gm },
+  { name: 'plaid-sandbox-env',    re: /^[ \t]*PLAID_SANDBOX_SECRET[ \t]*=[ \t]*\S+/gm },
+  { name: 'plaid-client-id-env',  re: /^[ \t]*PLAID_CLIENT_ID[ \t]*=[ \t]*\S+/gm },
+  { name: 'cra-secret-env',       re: /^[ \t]*CRA_SECRET[ \t]*=[ \t]*\S+/gm },
+  { name: 'elevenlabs-key-env',   re: /^[ \t]*ELEVENLABS_API_KEY[ \t]*=[ \t]*\S+/gm },
+  { name: 'glean-token-env',      re: /^[ \t]*GLEAN_API_TOKEN[ \t]*=[ \t]*\S+/gm },
+  { name: 'google-api-key-env',   re: /^[ \t]*GOOGLE_API_KEY[ \t]*=[ \t]*\S+/gm },
+  { name: 'brandfetch-key-env',   re: /^[ \t]*BRANDFETCH_API_KEY[ \t]*=[ \t]*\S+/gm },
   { name: 'generic-sk-token',     re: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
-  { name: 'plaid-sandbox-secret', re: /\b[a-f0-9]{30}\b.*PLAID/gi },
-  { name: 'json-client-secret',   re: /["']client_secret["']\s*:\s*["'][A-Za-z0-9_-]{12,}/g },
-  { name: 'bearer-token',         re: /Bearer\s+[A-Za-z0-9_-]{20,}/g },
+  { name: 'json-client-secret',   re: /["']client_secret["'][ \t]*:[ \t]*["'][A-Za-z0-9_-]{12,}/g },
+  { name: 'bearer-token',         re: /Bearer[ \t]+[A-Za-z0-9_-]{20,}/g },
   { name: 'aws-access-key',       re: /\bAKIA[0-9A-Z]{16}\b/g },
   { name: 'github-pat',           re: /\bgh[pous]_[A-Za-z0-9]{36,}\b/g },
 ];
