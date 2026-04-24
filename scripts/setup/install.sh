@@ -166,15 +166,48 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 heading "GitHub Enterprise authentication"
 
+# If the var isn't in the current shell env, peek at the user's rc files
+# (added there once and persisted across sessions) so first-time setup
+# from a non-sourced shell still works.
+peek_export_in_rc() {
+  local var_name="$1"
+  local file
+  for file in "${HOME}/.zshrc" "${HOME}/.bashrc" "${HOME}/.bash_profile" "${HOME}/.profile" "${HOME}/.config/fish/config.fish"; do
+    [ -f "$file" ] || continue
+    # Match: `export VAR=value` or `export VAR="value"` or fish's `set -gx VAR value`
+    local line
+    line=$(grep -E "^[[:space:]]*(export[[:space:]]+|set[[:space:]]+-gx[[:space:]]+)?${var_name}[[:space:]=]" "$file" | grep -v '^[[:space:]]*#' | tail -1 || true)
+    [ -z "$line" ] && continue
+    # Extract whatever follows the first `=` or `set -gx VAR `; strip surrounding quotes.
+    local val
+    val=$(printf '%s\n' "$line" | sed -E "s/^[^=]*=//; s/^[[:space:]]*set[[:space:]]+-gx[[:space:]]+${var_name}[[:space:]]+//; s/^[\"']//; s/[\"'][[:space:]]*\$//")
+    val=$(printf '%s' "$val" | sed -E "s/[[:space:]]+#.*\$//")
+    if [ -n "$val" ]; then
+      printf '%s' "$val"
+      return 0
+    fi
+  done
+  return 1
+}
+
 GHE_HOST="${PLAID_GHE_HOSTNAME:-}"
 if [ -z "${GHE_HOST}" ]; then
-  # Try to infer from `git remote` URL of the current repo.
-  GHE_HOST=$(git config --get remote.origin.url 2>/dev/null | sed -E 's|.*@([^:/]+).*|\1|; s|https?://([^/]+).*|\1|' | head -1)
+  GHE_HOST=$(peek_export_in_rc "PLAID_GHE_HOSTNAME" || true)
+  [ -n "${GHE_HOST}" ] && info "Picked up PLAID_GHE_HOSTNAME=${GHE_HOST} from your shell rc files."
+fi
+if [ -z "${GHE_HOST}" ]; then
+  # Try to infer from `git remote` URL of the current repo. `remote.ghe.url`
+  # takes priority since it's the conventional name we use during onboarding;
+  # `remote.origin.url` is the fallback.
+  GHE_HOST=$(git config --get remote.ghe.url 2>/dev/null | sed -E 's|.*@([^:/]+).*|\1|; s|https?://([^/]+).*|\1|' | head -1)
+  if [ -z "${GHE_HOST}" ]; then
+    GHE_HOST=$(git config --get remote.origin.url 2>/dev/null | sed -E 's|.*@([^:/]+).*|\1|; s|https?://([^/]+).*|\1|' | head -1)
+  fi
 fi
 if [ -z "${GHE_HOST}" ] || [ "${GHE_HOST}" = "github.com" ]; then
   GHE_HOST="github.com"
   info "No GHE hostname detected — defaulting to github.com."
-  info "Set PLAID_GHE_HOSTNAME=ghe.yourcompany.com in your shell before re-running to onboard against GHE."
+  info "Set PLAID_GHE_HOSTNAME=ghe.yourcompany.com in your shell or in ~/.zshrc before re-running to onboard against GHE."
 fi
 
 if gh auth status --hostname "${GHE_HOST}" >/dev/null 2>&1; then
@@ -213,11 +246,15 @@ heading "Artifact repo (published demo apps)"
 
 ARTIFACT_DIR="${PLAID_DEMO_APPS_DIR:-${HOME}/.plaid-demo-apps}"
 ARTIFACT_REPO="${PLAID_DEMO_APPS_REPO:-}"
+if [ -z "${ARTIFACT_REPO}" ]; then
+  ARTIFACT_REPO=$(peek_export_in_rc "PLAID_DEMO_APPS_REPO" || true)
+  [ -n "${ARTIFACT_REPO}" ] && info "Picked up PLAID_DEMO_APPS_REPO=${ARTIFACT_REPO} from your shell rc files."
+fi
 
 if [ -z "${ARTIFACT_REPO}" ]; then
   warn "PLAID_DEMO_APPS_REPO is unset — skipping artifact clone."
   info "Ask a maintainer for the SSH/HTTPS URL, then export it in your shell:"
-  info "  export PLAID_DEMO_APPS_REPO=git@${GHE_HOST}:<org>/plaid-demo-apps.git"
+  info "  export PLAID_DEMO_APPS_REPO=git@${GHE_HOST}:<owner>/plaid-demo-apps.git"
   info "  export PLAID_DEMO_APPS_DIR=${ARTIFACT_DIR}   # optional"
   info "Then run: npm run pipe -- pull"
 else

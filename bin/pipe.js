@@ -562,8 +562,39 @@ async function cmdPull() {
     const cloneResult = runGit(['clone', artifactRepo, artifactDir]);
     return cloneResult.status === 0 ? code : 2;
   }
+  // Artifact repo is a passive read-only clone for end-users — they only
+  // mutate it via `pipe publish` which works on feature branches. So if a
+  // squash merge upstream caused local `main` to diverge, the safe move is
+  // to reset hard to origin/main. We only do that when there are no
+  // uncommitted local changes (paranoid) and only on `main`.
+  const fetchResult = runGit(['fetch', 'origin', 'main'], artifactDir);
+  if (fetchResult.status !== 0) {
+    console.warn(c.yellow('[pipe] artifact-repo fetch failed (see git output above).'));
+    return 2;
+  }
+  // Best-effort fast-forward first.
   const pullResult = runGit(['pull', '--ff-only'], artifactDir);
-  return pullResult.status === 0 ? code : 2;
+  if (pullResult.status === 0) return code;
+  // Fast-forward refused (likely diverged after a squash merge upstream).
+  // Confirm working tree is clean, then reset to origin/main.
+  const statusOut = spawnSync('git', ['status', '--porcelain'], { cwd: artifactDir, encoding: 'utf8' });
+  const dirty = String((statusOut && statusOut.stdout) || '').trim().length > 0;
+  if (dirty) {
+    console.error(c.red(
+      '[pipe] artifact repo has local uncommitted changes — refusing to reset.\n' +
+      `       cd ${artifactDir} && git status   # inspect, then resolve manually`
+    ));
+    return 2;
+  }
+  const branchOut = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: artifactDir, encoding: 'utf8' });
+  const currentBranch = String((branchOut && branchOut.stdout) || '').trim();
+  if (currentBranch !== 'main') {
+    console.warn(c.yellow(`[pipe] artifact repo is on branch "${currentBranch}", not main — checking out main first.`));
+    runGit(['checkout', 'main'], artifactDir);
+  }
+  console.log(c.dim('[pipe] local main diverged from origin/main (likely squash merge upstream) — resetting to origin/main.'));
+  const resetResult = runGit(['reset', '--hard', 'origin/main'], artifactDir);
+  return resetResult.status === 0 ? code : 2;
 }
 
 async function cmdPublish({ positional, flags }) {
@@ -631,15 +662,69 @@ async function cmdPublish({ positional, flags }) {
   const branch = `publish/${identity.login}/${runId}`;
   runGit(['checkout', '-B', branch], artifactDir);
   runGit(['push', '-u', 'origin', branch], artifactDir);
+  const gh = process.env.GH_BIN || 'gh';
+  const ghEnv = { ...process.env };
+  // gh respects --hostname OR a GH_HOST env var; we set the env var so any
+  // sub-call (pr create, pr merge) targets the right GHE host even when we
+  // don't pass --hostname explicitly.
+  const gheHost = (IDENTITY.detectGheHostname && IDENTITY.detectGheHostname()) || identity.host || null;
+  if (gheHost) ghEnv.GH_HOST = gheHost;
   const ghResult = spawnSync(
-    process.env.GH_BIN || 'gh',
+    gh,
     ['pr', 'create', '--fill', '--head', branch, '--base', 'main'],
-    { cwd: artifactDir, stdio: 'inherit', env: process.env }
+    { cwd: artifactDir, stdio: 'inherit', env: ghEnv }
   );
   if (ghResult.status !== 0) {
     console.warn(c.yellow('  `gh pr create` failed. You can open the PR manually from the URL printed above.'));
+    runGit(['checkout', 'main'], artifactDir);
+    return 0;
   }
+  // Default: try to enable auto-merge so when CODEOWNERS approves (and any
+  // required checks pass) the PR merges itself, the branch is deleted, and
+  // local main can be fast-forwarded on the next `pipe pull`. Skip with
+  // --no-auto-merge for users who want to review the PR diff first.
+  const wantAutoMerge = !flags['no-auto-merge'];
+  if (wantAutoMerge) {
+    console.log(c.dim('[pipe] enabling auto-merge for the PR (squash, delete branch on merge)…'));
+    const merge1 = spawnSync(
+      gh,
+      ['pr', 'merge', branch, '--auto', '--squash', '--delete-branch'],
+      { cwd: artifactDir, stdio: 'inherit', env: ghEnv }
+    );
+    if (merge1.status !== 0) {
+      // --auto fails on repos that don't have auto-merge enabled, or when
+      // there are no required checks AND the PR is mergeable already; the
+      // safe second-try is an immediate squash merge. If that also fails
+      // (e.g. CODEOWNERS hasn't approved), leave the PR open and tell the
+      // user.
+      console.log(c.dim('[pipe] auto-merge unavailable — attempting an immediate squash merge.'));
+      const merge2 = spawnSync(
+        gh,
+        ['pr', 'merge', branch, '--squash', '--delete-branch'],
+        { cwd: artifactDir, stdio: 'inherit', env: ghEnv }
+      );
+      if (merge2.status !== 0) {
+        console.warn(c.yellow(
+          '  Could not auto-merge the PR (CODEOWNERS approval pending, branch protection blocking, or auto-merge disabled in repo settings).\n' +
+          '  The PR is open and waiting — merge it from the URL printed above. Run `npm run pipe -- pull` afterwards to sync your local clone.'
+        ));
+      } else {
+        console.log(c.green('[pipe] PR merged via squash. Branch deleted on remote.'));
+      }
+    } else {
+      console.log(c.green('[pipe] auto-merge enabled — PR will merge as soon as CODEOWNERS approves and any required checks pass.'));
+    }
+  } else {
+    console.log(c.dim('[pipe] --no-auto-merge: PR left open for manual review. Merge it from the URL printed above.'));
+  }
+  // Sync local main with whatever just happened (no-op if the merge hasn't
+  // fired yet; instant fast-forward if it did). Failures are non-fatal.
   runGit(['checkout', 'main'], artifactDir);
+  spawnSync('git', ['pull', '--ff-only', 'origin', 'main'], {
+    cwd: artifactDir,
+    stdio: 'inherit',
+    env: process.env,
+  });
   return 0;
 }
 
@@ -866,7 +951,7 @@ Usage:
 
   ${c.cyan('npm run pipe -- whoami')}                      Resolved GHE identity + artifact paths
   ${c.cyan('npm run pipe -- pull')}                        git pull code repo + artifact repo
-  ${c.cyan('npm run pipe -- publish')}  [RUN_ID] [--message=...] [--include-prompt] [--direct-push]
+  ${c.cyan('npm run pipe -- publish')}  [RUN_ID] [--message=...] [--include-prompt] [--direct-push] [--no-auto-merge]
                                  Package + redact + push a run to plaid-demo-apps
   ${c.cyan('npm run pipe -- unpublish')} RUN_ID            Remove a published demo
   ${c.cyan('npm run pipe -- status')}   [RUN_ID] [--json]  Run + stage state

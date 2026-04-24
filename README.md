@@ -61,8 +61,8 @@ Fill these in `.env` (the installer creates a template):
 | `PLAID_LINK_CUSTOMIZATION` | optional | Plaid Link customization name (e.g. `ascend`). |
 | `PLAID_LAYER_TEMPLATE_ID` | optional | Plaid Layer template ID for Layer demos. |
 | `GLEAN_API_TOKEN` + `GLEAN_INSTANCE_URL` | optional | Enables Glean-powered research. |
-| `PLAID_DEMO_APPS_REPO` | required for publish / pull | SSH or HTTPS URL of the artifact repo your org runs on GHE. |
-| `PLAID_GHE_HOSTNAME` | required for install | e.g. `ghe.plaid.com` — the installer uses this for `gh auth`. |
+| `PLAID_DEMO_APPS_REPO` | required for publish / pull | SSH URL of the artifact repo. Current deployment: `git@github.plaid.com:dmajetic/plaid-demo-apps.git`. |
+| `PLAID_GHE_HOSTNAME` | required for GHE auth | Current deployment: `github.plaid.com`. The installer uses this for `gh auth` and the identity resolver uses it to query the right `gh` host. |
 
 **All of these live in `.env`, which is `.gitignore`d.** The installer will never write real keys to disk from flags.
 
@@ -122,71 +122,142 @@ This packages the demo (strips your `.env`, research artifacts, and logs; runs a
 
 ---
 
-## Setting up a fresh GitHub Enterprise instance
+## GitHub Enterprise — current deployment
 
-These steps are for the **maintainer** bringing the two-repo model online for a team. They're one-time per organization.
+The Plaid Sales Engineering deployment lives on **`github.plaid.com`** under the `dmajetic` namespace (personal account, since org-level repo creation isn't currently in scope):
 
-### 1. Create two repos on your GHE host
+| Repo | Purpose | URL |
+|------|---------|-----|
+| `dmajetic/plaid-demo-recorder` | This codebase. SEs read-pull; merges via PR + Code Owners review. | <https://github.plaid.com/dmajetic/plaid-demo-recorder> |
+| `dmajetic/plaid-demo-apps` | Published demo bundles. SEs publish via PRs that auto-merge into their own `demos/<their-login>/**` namespace. | <https://github.plaid.com/dmajetic/plaid-demo-apps> |
 
-| Repo | Purpose | Write access |
-|------|---------|--------------|
-| `plaid-demo-recorder` | This codebase. | Maintainers only (via CODEOWNERS + branch protection). SEs pull. |
-| `plaid-demo-apps` | Published demo bundles. | Every SE can push into `demos/<their-login>/**`. Maintainers review cross-user changes. |
+Branch protection on both `main` branches:
 
-### 2. Wire `plaid-demo-recorder`
+- Require a pull request before merging
+- Require approvals (1)
+- **Require review from Code Owners** (gates each path by the matching CODEOWNERS line)
+- Require conversation resolution
+- Require linear history
+- Include administrators *(also binds the repo owner — no force-push escape hatch)*
+- *No "Restrict who can push" — that option only appears on org-owned repos.*
 
-On the GHE UI for `plaid-demo-recorder`:
+CODEOWNERS on `plaid-demo-apps` references individual GHE logins so every SE auto-approves PRs in their own folder; cross-user changes need a maintainer review. SE teammates are added one at a time via **Settings → Collaborators** (Read on the code repo, Write on the artifact repo) — there's no team-grant since teams don't exist outside an org namespace.
 
-- **Settings → Branches → Branch protection rule** on `main`:
-  - Require a pull request before merging.
-  - Require review from code owners.
-  - Restrict pushes to a maintainer team.
-- **Root `CODEOWNERS`** (already committed here at `.github/CODEOWNERS` once you add it):
-  ```
-  *    @<your-org>/demo-recorder-maintainers
-  ```
+### Onboard a new sales engineer
 
-Push this repo's `main` to the new GHE remote:
+Send them this block. The installer is idempotent and safe to re-run.
 
 ```bash
-git remote set-url origin git@<ghe-host>:<org>/plaid-demo-recorder.git
-git push -u origin main
+# One-time per laptop (~3 min)
+gh auth login --hostname github.plaid.com
+cat >> ~/.zshrc <<'EOF'
+export PLAID_GHE_HOSTNAME=github.plaid.com
+export PLAID_DEMO_APPS_REPO=git@github.plaid.com:dmajetic/plaid-demo-apps.git
+EOF
+source ~/.zshrc
+
+git clone git@github.plaid.com:dmajetic/plaid-demo-recorder.git
+cd plaid-demo-recorder
+bash scripts/setup/install.sh
+
+# verify
+npm run pipe -- whoami    # should print Login: <ghe-login>, Host: github.plaid.com
+npm run pipe -- pull      # syncs both repos
 ```
 
-### 3. Wire `plaid-demo-apps`
+The installer reads `PLAID_GHE_HOSTNAME` / `PLAID_DEMO_APPS_REPO` from the current shell **or** from `~/.zshrc` (and `~/.bashrc`, `~/.bash_profile`) — so even if they forget to `source` after editing rc files, it still picks them up.
 
-- Create the repo empty.
-- Add a root `README.md` and a `CODEOWNERS` file:
-  ```
-  # Fallback — maintainers own every path not otherwise claimed.
-  *                    @<your-org>/demo-maintainers
-  # Each SE owns their own namespace — no review needed for self-publishes.
-  /demos/<login>/**    @<login>
-  ```
-  Append one `/demos/<login>/**   @<login>` line per sales engineer. A small bot that rewrites this on each PR based on `pull_request.user.login` is the scalable version but not required for a pilot.
-- **Settings → Branches → Branch protection rule** on `main`:
-  - Require a pull request before merging.
-  - Require review from code owners.
-  - Do NOT restrict pushes — CODEOWNERS handles it.
+After onboarding, daily commands:
 
-### 4. Tell your team to onboard
+```bash
+npm run pipe -- pull                     # latest code + shared demos
+npm run pipe -- new --app-only           # build a demo
+npm run pipe -- publish <run-id>         # share a demo (auto-merges into your namespace)
+```
 
-Each sales engineer runs, from their laptop:
+### Maintainer playbook — adding a new SE collaborator
+
+When a new SE joins:
+
+1. **Add to code repo as Read collaborator**
+   <https://github.plaid.com/dmajetic/plaid-demo-recorder/settings/access> → Add people → role **Read**.
+2. **Add to artifact repo as Write collaborator**
+   <https://github.plaid.com/dmajetic/plaid-demo-apps/settings/access> → Add people → role **Write**.
+3. **Append a CODEOWNERS line** in `plaid-demo-apps` so they auto-approve their own folder:
+   ```
+   /demos/<their-login>/**   @<their-login>
+   ```
+   Open a PR from a feature branch (CODEOWNERS edits on `main` need a Code Owner review, which is you).
+4. **Send them the onboarding block** above. The teammate's `pipe publish` will then succeed end-to-end without needing your review (CODEOWNERS auto-approves their namespace).
+
+If you transfer either repo to an org namespace later, the only client-side change is updating each teammate's `PLAID_DEMO_APPS_REPO` env var (and the `git remote set-url` they ran during onboarding). The CODEOWNERS lines stay valid as-is once you re-target them at a team (e.g. `@<org>/demo-recorder-maintainers`).
+
+---
+
+## Setting up a fresh GHE instance from scratch (reference)
+
+If you ever bring this to a different GHE host or move to an org namespace, the steps are:
+
+### 1. Create the repos
+
+| Repo | Visibility | Settings |
+|------|-----------|----------|
+| `<owner>/plaid-demo-recorder` | Internal or Private | Push initial commit from this working copy. |
+| `<owner>/plaid-demo-apps` | Internal or Private | Initialize with the `README.md` + `CODEOWNERS` template below. |
+
+### 2. CODEOWNERS templates
+
+**`plaid-demo-recorder/.github/CODEOWNERS`** — *org-owned variant:*
+```
+*    @<org>/demo-recorder-maintainers
+```
+
+**`plaid-demo-recorder/.github/CODEOWNERS`** — *personal-repo variant (current deployment):*
+```
+*    @<owner>
+```
+
+**`plaid-demo-apps/CODEOWNERS`** — both variants share this shape; team vs. user is the only difference:
+```
+# Fallback — maintainer reviews any cross-cutting change.
+*                       @<owner-or-team>
+# Per-user namespaces. Each SE auto-approves their own folder.
+/demos/<login>/**       @<login>
+```
+
+### 3. Branch protection (both repos)
+
+`Settings → Branches → Add branch protection rule` on `main`:
+
+```
+☑ Require a pull request before merging
+   ☑ Require approvals → 1
+   ☑ Require review from Code Owners
+   ☑ Dismiss stale pull request approvals when new commits are pushed
+☑ Require conversation resolution before merging
+☑ Require linear history
+☑ Include administrators
+☐ Allow force pushes
+☐ Allow deletions
+☑ Restrict who can push to matching branches    ← only available on org-owned repos
+```
+
+The `Restrict who can push` checkbox is the **only** branch-protection difference between org-owned and personal-namespace repos. Everything else works identically.
+
+### 4. Tell engineers to onboard
 
 ```bash
 # one-time
 gh auth login --hostname <ghe-host>
 export PLAID_GHE_HOSTNAME=<ghe-host>
-export PLAID_DEMO_APPS_REPO=git@<ghe-host>:<org>/plaid-demo-apps.git
-git clone git@<ghe-host>:<org>/plaid-demo-recorder.git
+export PLAID_DEMO_APPS_REPO=git@<ghe-host>:<owner>/plaid-demo-apps.git
+git clone git@<ghe-host>:<owner>/plaid-demo-recorder.git
 cd plaid-demo-recorder
 bash scripts/setup/install.sh
 
 # verify
 npm run pipe -- whoami
 ```
-
-`whoami` prints their resolved GHE login + artifact repo paths. If that looks right, they're done — they can run `npm run pipe -- new` to build demos and `npm run pipe -- pull` / `publish` to participate in the shared library.
 
 ---
 
