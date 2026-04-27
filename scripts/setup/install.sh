@@ -324,11 +324,27 @@ heading "All set — here's how to build your first demo"
 
 cat <<EOF
 
-  ${BOLD}Quick start:${RESET}
-    1. ${CYAN}Edit inputs/prompt.txt${RESET} — describe the demo you want (persona, brand, flow).
-    2. ${CYAN}npm run pipe -- new --app-only --non-interactive${RESET}  (runs the full pipeline)
-    3. ${CYAN}npm run dashboard${RESET} — opens http://localhost:4040 for live visibility
+  ${BOLD}Recommended path — guided wizard (your first demo):${RESET}
+    1. ${CYAN}npm run quickstart${RESET}    — asks brand / persona / products / use-case;
+                              writes inputs/prompt.txt + a research task md
+    2. Open the printed ${CYAN}inputs/quickstart-research-task.md${RESET} in
+       ${CYAN}Cursor or Claude Code (Agent mode)${RESET} and say "Run this task."
+       The agent runs AskBill + Glean to enrich the prompt, then kicks off
+       the full pipeline.
+    3. ${CYAN}npm run dashboard${RESET}     — http://localhost:4040 for live visibility.
     4. ${CYAN}npm run pipe -- publish <run-id>${RESET}  (optional — share your demo)
+
+  ${BOLD}Alternative — hand-written prompt:${RESET}
+    1. ${CYAN}Edit inputs/prompt.txt${RESET} (template at inputs/prompt-template-app-only.txt).
+    2. ${CYAN}npm run pipe -- new --app-only --non-interactive${RESET}
+    3. ${CYAN}npm run dashboard${RESET}     — http://localhost:4040 for live visibility.
+
+  ${BOLD}When the pipeline pauses on a continue-gate (default behavior):${RESET}
+    The orchestrator prints a path to a task .md (prompt-fidelity, data-realism,
+    script-coherence, qa-touchup, or story-echo). Open it in your AI agent in
+    ${CYAN}Agent mode${RESET}, the agent makes targeted edits, then run:
+      ${CYAN}npm run pipe -- continue <run-id>${RESET}   — releases the orchestrator.
+    Loop max 5 iterations or until QA passes (88+). No LLM full rebuilds.
 
   ${BOLD}Monitor an in-flight run:${RESET}
     ${CYAN}npm run pipe -- status${RESET}       — snapshot of every stage

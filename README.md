@@ -8,12 +8,15 @@ This README is written for a sales engineer onboarding to the tool for the first
 
 ## What this gets you
 
+- A **guided wizard** (`npm run quickstart`) that turns a one-sentence pitch into a researched, polished demo — runs AskBill + Glean, generates the prompt, kicks off the pipeline.
+- An **agent-driven QA loop** that pauses on each quality checkpoint so an AI agent (Cursor / Claude Code) makes surgical edits between stages. No manual hand-holding for the common drift cases.
+- **Five quality gates** (story fidelity, sample-data realism, narration coherence, brand fidelity, whole-video story echo) that catch hyper-realism issues before they ship.
 - A local dashboard at <http://localhost:4040> for editing prompts, watching builds, inspecting demo apps, and managing your shared library.
 - A single CLI entry point — `npm run pipe` — for every lifecycle action (build, resume, stage retry, status, publish).
 - A centralized library of demos any teammate has published, pullable in one command.
 - An optional one-click publish of your own demo to the shared library.
 
-You do **not** need to know git internals, Node internals, or the Plaid SDK to run or publish a demo. The installer handles the plumbing.
+You do **not** need to know git internals, Node internals, or the Plaid SDK to run or publish a demo. The installer handles the plumbing, and the wizard handles the prompt authoring.
 
 ---
 
@@ -72,7 +75,40 @@ Fill these in `.env` (the installer creates a template):
 
 ## Everyday workflow
 
-### Build a demo
+### Your first demo — start here
+
+The fastest way for a new SE to ship a polished demo is the guided wizard:
+
+```bash
+npm run quickstart
+```
+
+It walks you through brand / industry / persona / products / Plaid Link mode / one-sentence pitch, then writes:
+
+- `inputs/prompt.txt` — a draft pitch filled from the app-only template
+- `inputs/quickstart-research-task.md` — an agent task that runs **AskBill + Glean** to enrich the prompt with real product VPs and Gong color before the build
+
+Open the research task in **Cursor or Claude Code (Agent mode)** and say "Run this task." The agent does the research, refines `inputs/prompt.txt`, and (optionally) kicks off the full pipeline. From there the agent-driven QA loop (below) takes over.
+
+If you already know what you want and don't need the wizard, jump to [Build a demo from a hand-written prompt](#build-a-demo-from-a-hand-written-prompt).
+
+### What you'll see when the pipeline runs
+
+Under the new default (`PIPE_AGENT_MODE=1`, set by `install.sh`), a run pauses on a **continue-gate** at each quality checkpoint so the agent can fix issues before downstream stages commit. You'll see logs like:
+
+```
+[Orchestrator] prompt-fidelity-check found 1 critical drift(s) (score 80/100). Pausing for agent fix.
+[Orchestrator]   task: out/demos/<run-id>/prompt-fidelity-task.md
+[Orchestrator]   then run: npm run pipe -- continue <run-id>
+```
+
+When that fires, open the task .md file in your AI agent (Cursor or Claude Code in Agent mode) and say "Run this task." The agent makes surgical edits — usually `Read` + `StrReplace` on `demo-script.json` or `scratch-app/index.html` — then you run `npm run pipe -- continue <run-id>` to release the orchestrator. It picks up where it left off, re-runs the gate, and either passes or pauses again. Loop max **5 iterations** or until QA threshold (88+) is hit.
+
+This applies to every gate in the table below: prompt fidelity, sample-data realism, narration coherence, brand fidelity, and whole-video story echo.
+
+### Build a demo from a hand-written prompt
+
+For repeat builds where you've already authored `inputs/prompt.txt`:
 
 1. Edit [`inputs/prompt.txt`](inputs/prompt.txt). A full example is in [`inputs/prompt-template-app-only.txt`](inputs/prompt-template-app-only.txt). The richer reference with slide support is in [`docs/prompt-examples.md`](docs/prompt-examples.md).
 2. Run:
@@ -80,7 +116,8 @@ Fill these in `.env` (the installer creates a template):
    npm run pipe -- new --app-only --non-interactive
    ```
 3. Open <http://localhost:4040> in another terminal with `npm run dashboard` for live visibility. The dashboard shows every stage, every QA score, and a per-card link to the prompt you used.
-4. When the run finishes, its demo app lives at `out/demos/<runId>/scratch-app/index.html`. The dashboard's "Demo Apps" tab can launch it in one click.
+4. Watch the terminal — when a continue-gate fires, hand off to your AI agent (see [What you'll see](#what-youll-see-when-the-pipeline-runs) above) and run `pipe continue` to release.
+5. When the run finishes, its demo app lives at `out/demos/<runId>/scratch-app/index.html`. The dashboard's "Demo Apps" tab can launch it in one click.
 
 #### Pipeline anatomy — quality gates end-to-end
 
@@ -95,8 +132,6 @@ The default pipeline runs **five quality gates** at strategic points to catch st
 | After `voiceover`, before `coverage-check` | **`story-echo-check`** | Whole-video drift — Sonnet grades whether the concatenated voiceover, end-to-end, actually answers the user's `prompt.txt` pitch. Catches things per-step QA can't see (brand never mentioned, climactic reveal missing, persona swapped midway). | `story-echo-report.json` + `story-echo-task.md` |
 
 In addition, the **agent-driven QA touchup loop** runs inside the build-qa refinement loop (default under `PIPE_AGENT_MODE=1`): on each failed iteration, the orchestrator hands the agent a per-step task .md (`qa-touchup-task.md`) and pauses for surgical edits — no LLM regen. Loop max 5 iterations or until QA passes (88+).
-
-#### Three-tier story handling
 
 #### Three-tier story handling
 
@@ -117,7 +152,7 @@ When `build-qa` flags issues, the pipeline's default refinement loop is **agent-
 1. The orchestrator generates `<run>/qa-touchup-task.md` listing the failing steps with their HTML blocks, Playwright rows, and frame paths.
 2. It pauses on a continue-gate, emits a `::PIPE::qa_touchup_task_ready` event, and prints the path.
 3. **You (or the AI agent driving the session in Claude Code / Cursor) open that file in Agent mode** — the agent makes surgical `StrReplace` edits to the failing steps only, then runs `npm run pipe -- continue <run-id>`.
-4. The orchestrator wakes up, re-runs `build-qa`, and either passes the run or loops back to step 1. **Max 3 iterations**, no LLM full-app regen at any point.
+4. The orchestrator wakes up, re-runs `build-qa`, and either passes the run or loops back to step 1. **Max 5 iterations** (default; was 3 prior to the hyper-realism upgrade), and **no LLM full-app regen at any point**.
 
 Why default to this? It's roughly **5-10× cheaper in tokens, 3-5× faster** than the legacy LLM regen path, and regressions on unrelated steps are bounded by `StrReplace` scope rather than LLM prompt discipline. To opt out (and use the legacy LLM regen of the full `index.html`), set `PIPE_AGENT_MODE=0` in `.env` or pass `--build-fix-mode=touchup` (or `=fullbuild`) on a single run.
 
@@ -222,9 +257,15 @@ After onboarding, daily commands:
 
 ```bash
 npm run pipe -- pull                     # latest code + shared demos
-npm run pipe -- new --app-only           # build a demo
+npm run quickstart                       # guided wizard for a new app-only demo
+                                         #   (asks brand/persona/products → writes prompt.txt
+                                         #    + research task; agent runs AskBill + Glean,
+                                         #    then full pipeline kicks off)
+npm run pipe -- new --app-only           # alternative: build from a hand-written prompt.txt
 npm run pipe -- publish <run-id>         # share a demo (auto-merges into your namespace)
 ```
+
+When the pipeline pauses on a continue-gate (the default under `PIPE_AGENT_MODE=1`), open the task .md it printed in **Cursor or Claude Code in Agent mode**, let the agent edit, then run `npm run pipe -- continue <run-id>` to release. See [What you'll see when the pipeline runs](#what-youll-see-when-the-pipeline-runs) for the gate flow.
 
 ### Maintainer playbook — adding a new SE collaborator
 
