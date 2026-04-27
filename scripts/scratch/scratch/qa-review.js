@@ -50,7 +50,7 @@ const FRAMES_DIR     = path.join(OUT_DIR, 'qa-frames');
 const QA_MODEL          = 'claude-opus-4-7';
 const QA_MAX_TOKENS     = parseInt(process.env.QA_MAX_TOKENS || '4096', 10);
 const QA_REVIEW_CONCURRENCY = Math.max(1, parseInt(process.env.QA_REVIEW_CONCURRENCY || '3', 10));
-const QA_PASS_THRESHOLD = parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+const QA_PASS_THRESHOLD = parseInt(process.env.QA_PASS_THRESHOLD || '88', 10);
 const PLAID_LINK_LIVE   = process.env.PLAID_LINK_LIVE === 'true' || process.env.PLAID_LINK_LIVE === '1';
 
 // In LIVE Plaid mode, the link-launch step spans the entire real Plaid auth flow

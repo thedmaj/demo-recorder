@@ -403,6 +403,68 @@ function renderBrandBlock(brand) {
       .forEach(s => lines.push(`      - ${s}.`));
   }
 
+  // Verified nav items (from brand-references library or auto-crawl).
+  // The build LLM should match these labels and order — paraphrasing
+  // results in nav bars that don't look like the real customer's app.
+  const navItems = (brand.nav && Array.isArray(brand.nav.items)) ? brand.nav.items : [];
+  if (navItems.length > 0) {
+    const labelList = navItems.map(it => it.label || '').filter(Boolean).join(' | ');
+    lines.push('');
+    lines.push(`    HOST APP NAV — VERIFIED LABELS (use these exact strings, in this order):`);
+    lines.push(`      ${labelList}`);
+    if (brand.nav._source) {
+      lines.push(`      _source: ${brand.nav._source}`);
+    }
+    lines.push(`      RULE: do NOT paraphrase nav labels. "Bill Pay" is not "Pay Bills"; "Accounts" is not "My Accounts".`);
+  }
+
+  // Verified hero copy patterns (from brand-references — auto-crawl rarely
+  // captures these reliably). The model should pick ONE pattern and use it.
+  const heroPatterns = (brand.hero && Array.isArray(brand.hero.patterns)) ? brand.hero.patterns : [];
+  if (heroPatterns.length > 0) {
+    lines.push('');
+    lines.push(`    HOST APP HERO COPY — VERIFIED PATTERNS (use one of these verbatim):`);
+    heroPatterns.slice(0, 6).forEach(p => lines.push(`      - ${p}`));
+  }
+
+  // Footer disclosures — REGULATORY text. These are facts the LLM cannot
+  // invent or paraphrase without legal risk to the customer (FDIC, Equal
+  // Housing Lender, NMLS ID).
+  const footer = brand.footer || {};
+  const disclosures = Array.isArray(footer.disclosures) ? footer.disclosures : [];
+  const hasFooter = disclosures.length > 0 || footer.copyright || footer.nmlsId;
+  if (hasFooter) {
+    lines.push('');
+    lines.push(`    HOST APP FOOTER — VERBATIM REGULATORY TEXT (must appear on at least one host screen):`);
+    disclosures.forEach(d => lines.push(`      - ${d}`));
+    if (footer.copyright) lines.push(`      - ${footer.copyright}`);
+    if (footer.nmlsId) lines.push(`      - ${footer.nmlsId}`);
+    lines.push(`      RULE: copy these strings VERBATIM. Do not rephrase, abbreviate, or "modernize".`);
+  }
+
+  // Brand motifs (visual signatures that ID the customer at a glance).
+  if (Array.isArray(brand.motifs) && brand.motifs.length > 0) {
+    lines.push('');
+    lines.push(`    HOST APP MOTIFS (specific to this brand — do not invent generic alternatives):`);
+    brand.motifs.slice(0, 8).forEach(m => lines.push(`      - ${m}`));
+  }
+
+  // Account-number masking convention.
+  if (brand.masking && brand.masking.pattern) {
+    lines.push('');
+    lines.push(`    ACCOUNT MASKING (use this convention everywhere account numbers appear):`);
+    lines.push(`      ${brand.masking.pattern}`);
+  }
+
+  // Transaction-feed examples (the build LLM mirrors these when listing
+  // transactions; this is what stops "Direct Deposit" generic strings from
+  // appearing on what should be a real bank statement feed).
+  if (Array.isArray(brand.transactionFeedExamples) && brand.transactionFeedExamples.length > 0) {
+    lines.push('');
+    lines.push(`    TRANSACTION FEED FORMAT (mimic this shape — ALL CAPS merchants, posted-date markers):`);
+    brand.transactionFeedExamples.slice(0, 4).forEach(t => lines.push(`      - ${t}`));
+  }
+
   return lines.join('\n');
 }
 
@@ -621,6 +683,74 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       ? productResearch.embeddedLinkSkillMarkdown.trim()
       : '';
 
+  // ── Three-tier story handling ─────────────────────────────────────────────
+  // Detect whether the user wrote an explicit storyboard, gave us a tailored
+  // scenario, or left the LLM to follow the canonical arc. The system prompt
+  // branches accordingly so we don't override a user's storyboard with the
+  // canonical Plaid pitch arc.
+  let storyboardTier = { tier: 'generic', signals: [], beatList: [], scenarioContext: null };
+  try {
+    const { extractPromptEntities, detectStoryboardTier } = require('./prompt-fidelity');
+    const entities = extractPromptEntities(promptText);
+    storyboardTier = detectStoryboardTier(promptText, { entities });
+  } catch (_) { /* helper optional; fall back to canonical arc */ }
+
+  let narrativeArcBlock;
+  if (storyboardTier.tier === 'verbatim' && storyboardTier.beatList.length >= 3) {
+    // Tier 1 — user wrote explicit beats. Map 1:1; do NOT reshape.
+    narrativeArcBlock =
+      `USER-PROVIDED STORYBOARD (preserve verbatim — non-negotiable):\n` +
+      `The user wrote an explicit storyboard in their prompt (signals: ${storyboardTier.signals.join(', ')}). ` +
+      `Treat each beat below as ground truth: map exactly one demo-script step per beat, in the same order. ` +
+      `Do NOT reshape into the canonical arc. Do NOT add steps the user didn't list. Do NOT remove ` +
+      `steps the user listed (unless the brief explicitly marks one as optional).\n\n` +
+      `User's beats (${storyboardTier.beatList.length} total — step count = beat count, NOT 8-14):\n` +
+      storyboardTier.beatList.map((b, i) => `  ${i + 1}. ${b}`).join('\n') +
+      `\n\n` +
+      `Quality standards still apply (active voice, banned words, persona realism, narration 20-35 words ` +
+      `per step), but step count and step ordering are dictated by the user's list above.\n\n`;
+  } else if (storyboardTier.tier === 'scenario-derived') {
+    // Tier 2 — user gave us scenario context but no beats. Build a tailored
+    // storyboard for THIS scenario; canonical arc is structural skeleton only.
+    const ctx = storyboardTier.scenarioContext || {};
+    const scenario = ctx.useCase || ctx.scenarioSentence || '(scenario context detected — see prompt body)';
+    narrativeArcBlock =
+      `SCENARIO-DERIVED STORYBOARD (build a tailored arc — DO NOT use a generic Plaid pitch):\n` +
+      `The user described a specific scenario but did NOT write explicit beats. ` +
+      `Your job: design a storyboard that demonstrates THIS scenario end-to-end, not a generic ` +
+      `Plaid product showcase. The canonical arc below is a structural skeleton only — fill it ` +
+      `with scenario-specific content.\n\n` +
+      `User's scenario (treat as the spine of the narrative):\n` +
+      `> ${scenario}\n\n` +
+      `Canonical arc structure (apply to the user's scenario):\n` +
+      `1. Problem — the friction the user described (do NOT invent a different problem)\n` +
+      `2. Solution entry — Plaid enters AT the moment the user said it should\n` +
+      `3. Frictionless experience — the specific flow the user pitched (not a generic happy path)\n` +
+      `4. Key reveal — the wow moment that resolves the user's specific friction (with a real metric)\n` +
+      `5. Outcome — the specific outcome the user described (faster, approved, verified — be concrete)\n\n` +
+      `Quality standards:\n` +
+      `- 8–14 steps, 2–3 minutes total\n` +
+      `- Narration: 20–35 words per step\n` +
+      `- Include a climactic reveal with a quantified outcome\n` +
+      `- Use realistic persona data (never generic placeholders)\n` +
+      `- No error states, declined flows, or unresolved loading spinners\n\n`;
+  } else {
+    // Tier 3 — generic fallback. Today's behavior, kept as the safety net.
+    narrativeArcBlock =
+      `Narrative arc (always follow):\n` +
+      `1. Problem — friction or compliance challenge\n` +
+      `2. Solution entry — Plaid introduced as the answer\n` +
+      `3. Frictionless experience — key flow steps\n` +
+      `4. Key reveal — the "wow moment" (score, approval, matched data)\n` +
+      `5. Outcome — faster, safer, more compliant\n\n` +
+      `Quality standards:\n` +
+      `- 8–14 steps, 2–3 minutes total\n` +
+      `- Narration: 20–35 words per step\n` +
+      `- Include a climactic reveal with a quantified outcome\n` +
+      `- Use realistic persona data (never generic placeholders)\n` +
+      `- No error states, declined flows, or unresolved loading spinners\n\n`;
+  }
+
   const system =
     `You are a senior Plaid demo designer with deep knowledge of Plaid's product ` +
     `portfolio and brand voice. You produce demo scripts that convert prospects and train sales teams.\n\n` +
@@ -632,18 +762,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
     `- Never use: "simply", "just", "unfortunately", "robust", "seamless".\n` +
     `- Use only approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth", ` +
     `"Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".\n\n` +
-    `Narrative arc (always follow):\n` +
-    `1. Problem — friction or compliance challenge\n` +
-    `2. Solution entry — Plaid introduced as the answer\n` +
-    `3. Frictionless experience — key flow steps\n` +
-    `4. Key reveal — the "wow moment" (score, approval, matched data)\n` +
-    `5. Outcome — faster, safer, more compliant\n\n` +
-    `Quality standards:\n` +
-    `- 8–14 steps, 2–3 minutes total\n` +
-    `- Narration: 20–35 words per step\n` +
-    `- Include a climactic reveal with a quantified outcome\n` +
-    `- Use realistic persona data (never generic placeholders)\n` +
-    `- No error states, declined flows, or unresolved loading spinners\n\n` +
+    narrativeArcBlock +
     `Claims and stats: prefer **CURATED PRODUCT KNOWLEDGE** (verbatim proof points and talk tracks). ` +
     `Use **PRODUCT RESEARCH** mainly for API facts, Gong color, and internal snippets — do not invent numbers.`;
 

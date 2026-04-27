@@ -40,13 +40,24 @@ test('resolveResearchMode reads prompt line', () => {
   }
 });
 
-test('effectiveResearchMode defaults', () => {
+test('effectiveResearchMode defaults and aliases', () => {
   const prev = process.env.RESEARCH_MODE;
   delete process.env.RESEARCH_MODE;
   try {
-    assert.strictEqual(effectiveResearchMode('', true), 'gapfill');
-    assert.strictEqual(effectiveResearchMode('', false), 'gapfill');
+    // Default is now `full` (was `gapfill` prior to the hyper-realism upgrade).
+    // Tokens are not a constraint; broader research = more grounded sample data.
+    assert.strictEqual(effectiveResearchMode('', true), 'full');
+    assert.strictEqual(effectiveResearchMode('', false), 'full');
+    // Native modes pass through:
     assert.strictEqual(effectiveResearchMode('skip', true), 'skip');
+    assert.strictEqual(effectiveResearchMode('gapfill', true), 'gapfill');
+    assert.strictEqual(effectiveResearchMode('messaging', true), 'messaging');
+    assert.strictEqual(effectiveResearchMode('full', true), 'full');
+    // CLI-vocabulary aliases map to `full`:
+    assert.strictEqual(effectiveResearchMode('broad', true), 'full');
+    assert.strictEqual(effectiveResearchMode('deep', true), 'full');
+    // Case-insensitive + whitespace-tolerant:
+    assert.strictEqual(effectiveResearchMode('  GAPFILL  ', true), 'gapfill');
   } finally {
     if (prev !== undefined) process.env.RESEARCH_MODE = prev;
   }

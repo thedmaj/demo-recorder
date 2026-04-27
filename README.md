@@ -82,6 +82,45 @@ Fill these in `.env` (the installer creates a template):
 3. Open <http://localhost:4040> in another terminal with `npm run dashboard` for live visibility. The dashboard shows every stage, every QA score, and a per-card link to the prompt you used.
 4. When the run finishes, its demo app lives at `out/demos/<runId>/scratch-app/index.html`. The dashboard's "Demo Apps" tab can launch it in one click.
 
+#### Pipeline anatomy — quality gates end-to-end
+
+The default pipeline runs **five quality gates** at strategic points to catch story drift, sample-data realism issues, and whole-video coherence — each pauses on a continue-gate under `PIPE_AGENT_MODE=1` so the agent can fix things before downstream stages commit:
+
+| When | Gate | What it catches | Output |
+|---|---|---|---|
+| After `script`, before `script-critique` | **`prompt-fidelity-check`** | Brand / persona / products / key amounts / Plaid Link mode in `prompt.txt` don't match `demo-script.json`. Three-tier story handling: respects user-written storyboards (verbatim), builds tailored arcs from scenario sentences (scenario-derived), or falls back to canonical (generic). | `prompt-fidelity-report.json` + `prompt-fidelity-task.md` |
+| After `script-critique`, before `embed-script-validate` | **`data-realism-check`** | Generic placeholders (John Doe, example@example.com), too many round dollar amounts, persona income ↔ balance inconsistencies, masking-pattern drift, fake-looking transaction descriptions. Optional Haiku grader on top. | `data-realism-report.json` + `data-realism-task.md` |
+| Between `script-critique` and `build` | **`embed-script-validate`** | Each step's narration disagrees with its `visualState`. Backed by Vertex / Google embeddings when available, with **Anthropic Haiku fallback** so the gate runs everywhere `ANTHROPIC_API_KEY` is set. | `script-validate-report.json` + `script-coherence-task.md` |
+| Inside `build-qa` | **brand-fidelity sub-check** | Rendered host HTML is missing the verified nav labels or verbatim regulatory disclosures (FDIC notice, copyright, NMLS ID) for the brand. Pulled from `inputs/brand-references/<slug>.md` (curated) or auto-crawled. | Diagnostics in `build-qa-diagnostics.json` (categories: `brand-disclosure-missing`, `brand-nav-label-missing`) |
+| After `voiceover`, before `coverage-check` | **`story-echo-check`** | Whole-video drift — Sonnet grades whether the concatenated voiceover, end-to-end, actually answers the user's `prompt.txt` pitch. Catches things per-step QA can't see (brand never mentioned, climactic reveal missing, persona swapped midway). | `story-echo-report.json` + `story-echo-task.md` |
+
+In addition, the **agent-driven QA touchup loop** runs inside the build-qa refinement loop (default under `PIPE_AGENT_MODE=1`): on each failed iteration, the orchestrator hands the agent a per-step task .md (`qa-touchup-task.md`) and pauses for surgical edits — no LLM regen. Loop max 5 iterations or until QA passes (88+).
+
+#### Three-tier story handling
+
+#### Three-tier story handling
+
+The script generator picks one of three strategies based on what's in `prompt.txt`:
+
+- **Verbatim** — when you write an explicit storyboard (numbered list ≥3 under a `## Storyboard` heading, or a markdown table with a `Beat` column), the LLM maps each of your beats to exactly one demo step, preserving order and step count. The canonical Plaid pitch arc is **not** applied.
+- **Scenario-derived** — when you give a brand + ≥1 product + a clear use-case sentence (`**Use case:**` line, or any sentence ≥30 words mentioning the brand and a product), the LLM builds a custom storyboard tailored to YOUR scenario, using the canonical arc (problem → solution → reveal → outcome) as structural skeleton only.
+- **Generic** — bare prompt with brand and products only → falls back to the canonical arc with generic content (today's behavior, the safety net).
+
+#### Default research mode is now broad
+
+`RESEARCH_MODE=broad` is the new install default (was `gapfill` — capped at 3-8 AskBill calls and 0-2 Glean calls). `broad` and `deep` map internally to research.js's `full` mode: more Glean breadth, more Gong color, more grounded sample data. Set `RESEARCH_MODE=gapfill` in `.env` to opt back into the shallow default.
+
+#### What happens when QA fails (agent-driven refinement loop, default)
+
+When `build-qa` flags issues, the pipeline's default refinement loop is **agent-driven** (set by `PIPE_AGENT_MODE=1` in `.env` — `install.sh` writes this for you). On each failed iteration:
+
+1. The orchestrator generates `<run>/qa-touchup-task.md` listing the failing steps with their HTML blocks, Playwright rows, and frame paths.
+2. It pauses on a continue-gate, emits a `::PIPE::qa_touchup_task_ready` event, and prints the path.
+3. **You (or the AI agent driving the session in Claude Code / Cursor) open that file in Agent mode** — the agent makes surgical `StrReplace` edits to the failing steps only, then runs `npm run pipe -- continue <run-id>`.
+4. The orchestrator wakes up, re-runs `build-qa`, and either passes the run or loops back to step 1. **Max 3 iterations**, no LLM full-app regen at any point.
+
+Why default to this? It's roughly **5-10× cheaper in tokens, 3-5× faster** than the legacy LLM regen path, and regressions on unrelated steps are bounded by `StrReplace` scope rather than LLM prompt discipline. To opt out (and use the legacy LLM regen of the full `index.html`), set `PIPE_AGENT_MODE=0` in `.env` or pass `--build-fix-mode=touchup` (or `=fullbuild`) on a single run.
+
 ### Resume a failed run
 
 ```bash
@@ -89,6 +128,18 @@ npm run pipe -- status                              # see where it failed
 npm run pipe -- resume <run-id> --from=<stage>      # pick up from that stage
 npm run pipe -- stage <stage-name> <run-id>         # re-run one stage in place
 ```
+
+### Fix a build that QA didn't like — agent-driven touchup (manual form)
+
+The default build flow already pauses on a continue-gate and asks the agent to fix QA findings (see "Build a demo" above). If you've already finished a run, came back later, and want to invoke the same per-step fix flow on demand, run:
+
+```bash
+npm run pipe -- qa-touchup <run-id>     # alias: npm run qa-touchup <run-id>
+```
+
+This reads the latest QA report, picks the failing steps, and writes `<run>/qa-touchup-task.md` with each step's HTML block, Playwright row, and frame paths embedded. Open it in **Cursor or Claude Code (Agent mode)** and say "Run this task." The agent edits exactly the failing steps using `Read` + `StrReplace`, then you re-verify with `pipe stage build-qa <run-id>`.
+
+The standalone form differs from the orchestrator-driven default in one place: it includes a **STOP and recommend `pipe stage build`** escalation block when QA flags structural issues (>=3 distinct failing steps, shared-chrome categories, or deterministic-blocker gate). The orchestrator-driven default suppresses that block (per "no rebuilds, agent makes iterations only") and surfaces the same signals as advisory context instead.
 
 ### Pull the latest shared demos and code
 

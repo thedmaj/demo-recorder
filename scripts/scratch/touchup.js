@@ -1,9 +1,28 @@
 #!/usr/bin/env node
 /**
- * touchup.js
- * Post-render interactive touchup loop.
- * Opens Remotion Studio (hot-reload on file changes), listens for user requests,
- * has Claude make targeted edits to Remotion compositions and overlay-plan.json.
+ * touchup.js — post-render Remotion polish stage.
+ *
+ * NAMING DISAMBIGUATION (three related concepts share the "touchup" string):
+ *
+ *   1. THIS FILE (the `touchup` stage in STAGES) — runs AFTER `render`.
+ *      Opens Remotion Studio with hot-reload, listens for user requests,
+ *      and has Claude make targeted edits to:
+ *        - Remotion compositions (e.g. `remotion/ScratchComposition.jsx`)
+ *        - `overlay-plan.json`
+ *      It does NOT touch `scratch-app/index.html`. Cosmetic post-render
+ *      polish only — wrong nav bars / wrong colors that were baked into
+ *      the recorded video survive this stage. Disable with --no-touchup.
+ *
+ *   2. `--build-fix-mode=touchup` (in build-app.js) — the LLM-narrowed
+ *      app regeneration path used during the build/QA refinement loop.
+ *      Different stage, different concern. Stays named "touchup" because
+ *      that's the orchestrator's mode vocabulary.
+ *
+ *   3. `pipe qa-touchup` (in bin/pipe.js) — the standalone agent-driven
+ *      QA fix command. Generates a per-step task .md so an AI agent can
+ *      surgically StrReplace failing steps in scratch-app HTML. This
+ *      DOES touch scratch-app and is the right tool for fixing build-time
+ *      mistakes.
  *
  * Usage: node scripts/scratch/touchup.js [--composition=DemoScratch]
  *        (called automatically by orchestrator unless --no-touchup)

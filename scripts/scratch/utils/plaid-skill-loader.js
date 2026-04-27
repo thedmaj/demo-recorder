@@ -427,15 +427,36 @@ function resolveResearchMode(promptText = '') {
 }
 
 /**
- * Effective mode: **gapfill** whenever prompt/env did not set a mode (pipeline default).
+ * Resolve the effective research mode for `research.js`. Two vocabularies:
+ *
+ *   - User-facing (CLI / dashboard / RESEARCH_MODE env):
+ *       gapfill | broad | deep | messaging | skip
+ *
+ *   - Internal (`research.js` branches):
+ *       full | gapfill | messaging | skip
+ *
+ * Mapping:
+ *   - `broad` and `deep`  → `full`  (broader Glean + Gong scope, larger tool budget)
+ *   - `gapfill`           → `gapfill`
+ *   - `messaging`         → `messaging`
+ *   - `skip`              → `skip`
+ *   - empty / unrecognized → `full`  (PIPELINE DEFAULT — was `gapfill` prior to
+ *                                     the hyper-realism upgrade. The user said
+ *                                     tokens are not a constraint; broader
+ *                                     research yields more grounded sample
+ *                                     data, real Gong color, and stronger
+ *                                     scenario-specific context. Set
+ *                                     RESEARCH_MODE=gapfill to opt back into
+ *                                     the shallow default.)
+ *
  * @param {string} explicit from resolveResearchMode (may be '')
  * @param {boolean} [_skillLoaded] unused — kept for call-site compatibility
  */
 function effectiveResearchMode(explicit, _skillLoaded) {
-  if (explicit === 'full' || explicit === 'gapfill' || explicit === 'skip' || explicit === 'messaging') {
-    return explicit;
-  }
-  return 'gapfill';
+  const v = String(explicit || '').toLowerCase().trim();
+  if (v === 'gapfill' || v === 'messaging' || v === 'skip' || v === 'full') return v;
+  if (v === 'broad' || v === 'deep') return 'full';
+  return 'full';
 }
 
 module.exports = {

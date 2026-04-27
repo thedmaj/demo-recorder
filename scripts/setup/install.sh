@@ -156,8 +156,44 @@ PLAID_LINK_CUSTOMIZATION=
 PLAID_LAYER_TEMPLATE_ID=
 GLEAN_API_TOKEN=
 GLEAN_INSTANCE_URL=
+# Default refinement loop = agent-driven (no LLM rebuilds on QA fail).
+PIPE_AGENT_MODE=1
 ENV
     ok "Created a minimal .env — fill in the API keys before your first run."
+  fi
+fi
+
+# Idempotently ensure PIPE_AGENT_MODE=1 is present so SEs running under
+# Claude Code / Cursor get the agent-driven refinement loop by default
+# (orchestrator pauses on a continue-gate after each failed build-qa, hands
+# the agent a per-step task .md, no LLM rebuilds). Set to 0 in .env to opt
+# out and fall back to the legacy LLM regen path.
+if [ -f ".env" ]; then
+  if grep -qE '^[[:space:]]*PIPE_AGENT_MODE[[:space:]]*=' .env; then
+    ok ".env already declares PIPE_AGENT_MODE — leaving it untouched."
+  else
+    {
+      echo ""
+      echo "# Default refinement loop = agent-driven (set 0 to fall back to LLM regen)."
+      echo "PIPE_AGENT_MODE=1"
+    } >> .env
+    ok "Added PIPE_AGENT_MODE=1 to .env (agent-driven refinement is the new default)."
+  fi
+fi
+
+# Idempotently ensure RESEARCH_MODE=broad is present so SEs get deeper
+# research by default (more Glean breadth, more Gong color, more grounded
+# sample data). Set to gapfill in .env to opt back into the shallow default.
+if [ -f ".env" ]; then
+  if grep -qE '^[[:space:]]*RESEARCH_MODE[[:space:]]*=' .env; then
+    ok ".env already declares RESEARCH_MODE — leaving it untouched."
+  else
+    {
+      echo ""
+      echo "# Default research mode = broad (set gapfill for the shallow legacy default)."
+      echo "RESEARCH_MODE=broad"
+    } >> .env
+    ok "Added RESEARCH_MODE=broad to .env (deeper research is the new default)."
   fi
 fi
 

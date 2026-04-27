@@ -114,6 +114,13 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'plaid-embedded-size-profile',
   'plaid-link-mobile-layout',
   'plaid-embedded-launch-selector-drift',
+  // Brand-fidelity blockers (Phase 3 hyper-realism upgrade). Missing
+  // regulatory disclosures are critical (legal risk for the customer);
+  // missing nav labels are critical when ≥60% of expected labels are
+  // absent (it means the LLM invented a different nav).
+  'brand-disclosure-missing',
+  'brand-nav-label-missing',
+  'brand-fidelity-vision', // reserved for future LLM-graded sub-check
 ]);
 
 const PLAID_BTN_RE = /link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_](?:\w+[-_])?bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i;
@@ -2687,6 +2694,62 @@ async function main(opts = {}) {
   if (prebuiltStepFrames.length === 0) {
     console.error('[build-qa] No frames to QA');
     process.exit(1);
+  }
+
+  // Brand-fidelity scan (Phase 3 hyper-realism upgrade).
+  // Reads the brand profile produced by `brand-extract` and checks that the
+  // rendered host HTML contains the expected nav labels + verbatim regulatory
+  // disclosures. Missing items are pushed into `diagnostics` BEFORE
+  // normalization so the existing deterministic-gate logic picks them up.
+  // No-op when no brand profile or no nav/footer expectations are declared.
+  try {
+    const { runBrandFidelityChecks } = require('../utils/brand-fidelity');
+    let brandProfile = null;
+    const brandDir = path.join(OUT_DIR, 'artifacts', 'brand');
+    if (fs.existsSync(brandDir)) {
+      for (const f of fs.readdirSync(brandDir)) {
+        if (f.endsWith('.json') && !/brand-extract\.json$/.test(f)) {
+          try {
+            const j = JSON.parse(fs.readFileSync(path.join(brandDir, f), 'utf8'));
+            if (j && (j.nav || j.footer)) { brandProfile = j; break; }
+          } catch (_) {}
+        }
+      }
+    }
+    if (!brandProfile) {
+      const legacy = path.join(OUT_DIR, 'brand-extract.json');
+      if (fs.existsSync(legacy)) {
+        try {
+          const j = JSON.parse(fs.readFileSync(legacy, 'utf8'));
+          if (j && (j.nav || j.footer)) brandProfile = j;
+        } catch (_) {}
+      }
+    }
+    if (brandProfile) {
+      const indexHtmlPath = path.join(SCRATCH_DIR, 'index.html');
+      if (fs.existsSync(indexHtmlPath)) {
+        const html = fs.readFileSync(indexHtmlPath, 'utf8');
+        const fidelityDiagnostics = runBrandFidelityChecks(html, brandProfile);
+        if (fidelityDiagnostics.length > 0) {
+          console.warn(
+            `[build-qa] Brand-fidelity scan: ${fidelityDiagnostics.length} diagnostic(s) ` +
+            `for "${brandProfile.name || brandProfile.slug || 'brand'}"`
+          );
+          for (const d of fidelityDiagnostics) {
+            console.warn(`  [${d.severity.toUpperCase()}] ${d.category} — ${d.issue}`);
+          }
+          diagnostics.push(...fidelityDiagnostics);
+        } else {
+          console.log(
+            `[build-qa] Brand-fidelity scan: clean ` +
+            `(${(brandProfile.nav && brandProfile.nav.items || []).length} nav labels, ` +
+            `${(brandProfile.footer && brandProfile.footer.disclosures || []).length} disclosures)`
+          );
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[build-qa] Brand-fidelity scan skipped: ${e.message}`);
   }
 
   console.log(`[build-qa] Running vision QA on ${prebuiltStepFrames.length} step(s)...`);

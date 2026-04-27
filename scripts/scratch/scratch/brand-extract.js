@@ -213,6 +213,204 @@ async function captureBrandSiteReferenceScreenshot(url, outPath) {
  * Crawls a URL with Playwright and extracts CSS design tokens.
  * Returns a raw token object or null on failure.
  */
+/**
+ * Multi-page crawl that captures realism inputs the single-page Playwright
+ * extraction can't get: nav-item labels, footer regulatory text, and per-
+ * page reference screenshots. Best-effort — we ignore 404s + timeouts and
+ * just return what we got.
+ *
+ * Returns:
+ *   {
+ *     navItems:       Array<{ label, href }>      // deduplicated, top 12
+ *     footerText:     string                       // raw concatenated footer text
+ *     copyright:      string|null                  // first plausible © line
+ *     disclosures:    Array<string>                // FDIC / Equal Housing / etc, verbatim
+ *     nmlsId:         string|null                  // "NMLS [ID] 1234567" if found
+ *     referencePages: Array<{ url, screenshot }>   // best-effort screenshots
+ *   }
+ */
+async function crawlAdditionalBrandPages(homeUrl, opts = {}) {
+  const out = {
+    navItems: [],
+    footerText: '',
+    copyright: null,
+    disclosures: [],
+    nmlsId: null,
+    referencePages: [],
+  };
+  if (!homeUrl) return out;
+
+  // Best-effort path set. Most banks' marketing pages are crawl-friendly;
+  // post-login pages are not. We only try public marketing variants.
+  const pathsToTry = (opts.paths || ['', 'sign-in', 'about', 'privacy', 'security']).slice(0, 5);
+  let browser;
+  try {
+    const { chromium } = require('playwright');
+    browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({
+      viewport: { width: 1440, height: 900 },
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    });
+
+    for (const subPath of pathsToTry) {
+      const url = subPath ? new URL(subPath, homeUrl).toString() : homeUrl;
+      let page;
+      try {
+        page = await context.newPage();
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 12000 });
+        await page.waitForTimeout(800); // brief settle
+
+        const pageData = await page.evaluate(() => {
+          const navData = [];
+          const navSelectors = ['nav a', 'header a', '[role="navigation"] a'];
+          for (const sel of navSelectors) {
+            for (const el of document.querySelectorAll(sel)) {
+              const label = (el.textContent || '').trim().replace(/\s+/g, ' ');
+              const href = el.getAttribute('href') || '';
+              // Skip tiny / icon-only links + anchors:
+              if (label.length < 2 || label.length > 40) continue;
+              if (href.startsWith('#')) continue;
+              navData.push({ label, href });
+            }
+            if (navData.length > 0) break;
+          }
+          const footerEl = document.querySelector('footer, [role="contentinfo"], [class*="footer"]');
+          const footerText = footerEl ? (footerEl.innerText || '').replace(/\s+/g, ' ').trim() : '';
+          return { navData, footerText };
+        });
+
+        // Merge nav items (dedupe by label):
+        for (const item of pageData.navData || []) {
+          if (!out.navItems.find(existing => existing.label === item.label)) {
+            out.navItems.push(item);
+          }
+          if (out.navItems.length >= 12) break;
+        }
+
+        if (pageData.footerText && !out.footerText) {
+          out.footerText = pageData.footerText.slice(0, 4000);
+        }
+
+        // Best-effort reference screenshot for the home page only — full-page
+        // screenshots are expensive and we don't need every variant.
+        if (!subPath && opts.refScreenshotPath) {
+          try {
+            await page.screenshot({ path: opts.refScreenshotPath, fullPage: false });
+            out.referencePages.push({ url, screenshot: opts.refScreenshotPath });
+          } catch (_) {}
+        }
+      } catch (err) {
+        // Skip pages that fail; this is best-effort.
+        console.log(`[BrandExtract]   crawl miss ${url}: ${err.message.split('\n')[0]}`);
+      } finally {
+        if (page) await page.close().catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn(`[BrandExtract] multi-page crawl failed: ${err.message}`);
+    return out;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+
+  // Pull regulatory phrases out of the concatenated footer text:
+  const ft = out.footerText || '';
+  const fdicMatch = ft.match(/Member\s+FDIC\.?(?:\s+Equal\s+Housing\s+(?:Lender|Opportunity)\.?)?/i);
+  if (fdicMatch) out.disclosures.push(fdicMatch[0].replace(/\s+/g, ' ').trim());
+  const equalHousingMatch = ft.match(/Equal\s+Housing\s+(?:Lender|Opportunity)\.?/i);
+  if (equalHousingMatch && !out.disclosures.find(d => /Equal\s+Housing/i.test(d))) {
+    out.disclosures.push(equalHousingMatch[0].replace(/\s+/g, ' ').trim());
+  }
+  const nmlsMatch = ft.match(/NMLS(?:R|S)?\s*(?:ID|#)?\s*[:#]?\s*(\d{5,8})/i);
+  if (nmlsMatch) out.nmlsId = nmlsMatch[0].replace(/\s+/g, ' ').trim();
+  const copyrightMatch = ft.match(/©\s*(?:\d{4}\s*[-\u2013]\s*)?\d{4}\s+[A-Z][\w\s&,.'-]{4,80}/);
+  if (copyrightMatch) out.copyright = copyrightMatch[0].replace(/\s+/g, ' ').trim();
+
+  return out;
+}
+
+/**
+ * Load a hand-curated brand reference file (`inputs/brand-references/<slug>.md`)
+ * and parse out: nav items, hero patterns, footer disclosures, transaction
+ * feed examples, masking pattern, motifs. Returns an object MATCHING the
+ * brand profile schema additions, or null when no file exists. The caller
+ * merges this on top of the auto-crawled data so curated facts win.
+ */
+function loadBrandReferenceFile(slug) {
+  if (!slug) return null;
+  const refPath = path.resolve(PROJECT_ROOT, 'inputs', 'brand-references', `${slug}.md`);
+  if (!fs.existsSync(refPath)) return null;
+  let md;
+  try { md = fs.readFileSync(refPath, 'utf8'); }
+  catch (_) { return null; }
+
+  const out = {
+    nav: { items: [] },
+    hero: { patterns: [] },
+    footer: { disclosures: [], copyright: null, nmlsId: null },
+    transactionFeedExamples: [],
+    masking: null,
+    motifs: [],
+    _source: 'brand-references',
+    _refPath: path.relative(PROJECT_ROOT, refPath),
+  };
+
+  // Each H2 block becomes a key. We use simple split-by-heading parsing —
+  // these files are short and human-curated so robustness > cleverness.
+  const sections = {};
+  let currentSection = '_preamble';
+  for (const line of md.split('\n')) {
+    const h2 = line.match(/^##\s+(.+?)\s*$/);
+    if (h2) {
+      currentSection = h2[1].trim().toLowerCase();
+      sections[currentSection] = [];
+    } else if (sections[currentSection]) {
+      sections[currentSection].push(line);
+    }
+  }
+  const bulletsOf = (heading) => {
+    const lines = sections[heading] || [];
+    return lines
+      .filter(l => /^\s*-\s+/.test(l))
+      .map(l => l.replace(/^\s*-\s+/, '').trim())
+      .filter(Boolean);
+  };
+
+  // Nav items: the file convention is a single bullet line `Item 1 | Item 2 | ...`.
+  const navLines = bulletsOf('nav (online banking, post-login)');
+  if (navLines.length > 0) {
+    out.nav.items = navLines[0].split('|').map(s => s.trim()).filter(Boolean).map(label => ({ label, href: null }));
+  }
+
+  out.hero.patterns = bulletsOf('hero / hero-area copy patterns');
+
+  // Footer disclosures: each bullet is a verbatim disclosure string.
+  const footerLines = bulletsOf('footer disclosures (verbatim — do not paraphrase)') ||
+    bulletsOf('footer disclosures (verbatim - do not paraphrase)');
+  for (const line of footerLines) {
+    const cleaned = line.replace(/^["']|["']$/g, ''); // strip surrounding quotes
+    if (/©|copyright/i.test(cleaned) && !out.footer.copyright) {
+      out.footer.copyright = cleaned;
+    } else if (/NMLS/i.test(cleaned) && !out.footer.nmlsId) {
+      out.footer.nmlsId = cleaned;
+    } else {
+      out.footer.disclosures.push(cleaned);
+    }
+  }
+
+  out.transactionFeedExamples = bulletsOf('transaction feed format');
+
+  const maskLines = bulletsOf('account number masks');
+  if (maskLines.length > 0) {
+    // Use the first bullet as the canonical pattern label.
+    out.masking = { pattern: maskLines[0], examples: maskLines };
+  }
+
+  out.motifs = bulletsOf('brand motifs');
+
+  return out;
+}
+
 async function extractWithPlaywright(url) {
   console.log(`[BrandExtract] Playwright CSS extraction: ${url}`);
   let browser;
@@ -637,6 +835,74 @@ async function main() {
     );
   } catch (e) {
     console.warn(`[BrandExtract] Could not compute host-banner recommendation: ${e.message}`);
+  }
+
+  // Multi-page crawl: nav items + footer disclosures + reference screenshots.
+  // Skipped when BRAND_EXTRACT_DEEP_CRAWL=0 (e.g. CI runs that don't have
+  // network access to the brand site).
+  const deepCrawlEnabled = String(process.env.BRAND_EXTRACT_DEEP_CRAWL ?? '1').trim() !== '0';
+  if (deepCrawlEnabled && url) {
+    try {
+      console.log(`[BrandExtract] Multi-page crawl: ${url} (+ sign-in / about / privacy / security)`);
+      const crawl = await crawlAdditionalBrandPages(url, {
+        refScreenshotPath: siteRefPath,
+      });
+      if (crawl.navItems.length > 0) {
+        profile.nav = profile.nav || {};
+        profile.nav.items = crawl.navItems;
+      }
+      if (crawl.disclosures.length > 0 || crawl.copyright || crawl.nmlsId) {
+        profile.footer = profile.footer || {};
+        if (crawl.disclosures.length > 0) profile.footer.disclosures = crawl.disclosures;
+        if (crawl.copyright) profile.footer.copyright = crawl.copyright;
+        if (crawl.nmlsId) profile.footer.nmlsId = crawl.nmlsId;
+      }
+      if (crawl.referencePages.length > 0) {
+        profile.referencePages = crawl.referencePages.map(p => ({
+          url: p.url,
+          screenshot: path.relative(OUT_DIR, p.screenshot),
+        }));
+      }
+      console.log(
+        `[BrandExtract]   crawl summary: ${crawl.navItems.length} nav item(s), ` +
+        `${crawl.disclosures.length} disclosure(s)` +
+        `${crawl.copyright ? ', ©' : ''}${crawl.nmlsId ? ', NMLS' : ''}`
+      );
+    } catch (e) {
+      console.warn(`[BrandExtract]   multi-page crawl skipped: ${e.message}`);
+    }
+  } else if (!deepCrawlEnabled) {
+    console.log('[BrandExtract] BRAND_EXTRACT_DEEP_CRAWL=0 — skipping multi-page crawl.');
+  }
+
+  // Brand-reference file MERGE — hand-curated facts from inputs/brand-references/<slug>.md
+  // override anything the auto-crawl produced (so a stale crawl can't poison
+  // the prompt with wrong nav items).
+  const refFile = loadBrandReferenceFile(slug);
+  if (refFile) {
+    console.log(`[BrandExtract] Loaded brand-reference file: ${refFile._refPath}`);
+    if (refFile.nav && refFile.nav.items && refFile.nav.items.length > 0) {
+      profile.nav = profile.nav || {};
+      profile.nav.items = refFile.nav.items;
+      profile.nav._source = 'brand-references';
+    }
+    if (refFile.hero && refFile.hero.patterns && refFile.hero.patterns.length > 0) {
+      profile.hero = { patterns: refFile.hero.patterns };
+    }
+    if (refFile.footer) {
+      profile.footer = profile.footer || {};
+      if (refFile.footer.disclosures && refFile.footer.disclosures.length > 0) {
+        profile.footer.disclosures = refFile.footer.disclosures;
+      }
+      if (refFile.footer.copyright) profile.footer.copyright = refFile.footer.copyright;
+      if (refFile.footer.nmlsId) profile.footer.nmlsId = refFile.footer.nmlsId;
+      profile.footer._source = 'brand-references';
+    }
+    if (refFile.transactionFeedExamples && refFile.transactionFeedExamples.length > 0) {
+      profile.transactionFeedExamples = refFile.transactionFeedExamples;
+    }
+    if (refFile.masking) profile.masking = refFile.masking;
+    if (refFile.motifs && refFile.motifs.length > 0) profile.motifs = refFile.motifs;
   }
 
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));

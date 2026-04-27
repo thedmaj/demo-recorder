@@ -47,7 +47,50 @@ const stageState = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils'
 const { STAGES, computeStatus } = stageState;
 
 const VALID_RESEARCH = new Set(['gapfill', 'broad', 'deep']);
-const VALID_BUILD_FIX_MODES = new Set(['smart', 'rebuild', 'patch']);
+
+// Two vocabularies in play here:
+//   - User-friendly (this CLI, README, dashboard): smart | rebuild | patch | agent-touchup
+//   - Orchestrator native (scripts/scratch/orchestrator.js): auto | fullbuild | touchup | agent-touchup
+// The orchestrator only validates the native names, so prior to this fix
+// `npm run pipe -- new --build-fix-mode=smart` would actually fail the
+// orchestrator's `VALID_BUILD_FIX_MODES` check at startup. Both sets are
+// accepted here; `translateBuildFixMode` normalizes to native before
+// forwarding the flag downstream.
+//
+// `agent-touchup` is the NEW DEFAULT when running under an AI agent (Claude
+// Code / Cursor) — see `isAgentContext()` in orchestrator.js. In that mode
+// the orchestrator pauses on a continue-gate after each failed build-qa and
+// hands the agent a per-step task .md; the agent makes surgical StrReplace
+// edits and resumes the orchestrator. NO LLM rebuilds happen on refinement
+// passes. The orchestrator picks this automatically when BUILD_FIX_MODE=auto
+// and an agent context is detected; users can opt out with
+// `--build-fix-mode=touchup` (legacy LLM regen) or `--build-fix-mode=fullbuild`.
+const BUILD_FIX_MODE_ALIASES = {
+  smart:            'auto',
+  rebuild:          'fullbuild',
+  patch:            'touchup',
+  auto:             'auto',
+  fullbuild:        'fullbuild',
+  touchup:          'touchup',
+  'agent-touchup':  'agent-touchup',
+  'agent':          'agent-touchup',
+};
+const VALID_BUILD_FIX_MODES = new Set(Object.keys(BUILD_FIX_MODE_ALIASES));
+
+function translateBuildFixMode(value) {
+  if (!value) return null;
+  const v = String(value).toLowerCase().trim();
+  const native = BUILD_FIX_MODE_ALIASES[v];
+  if (!native) {
+    console.warn(c.yellow(
+      `[pipe] WARNING: --build-fix-mode="${value}" is not a recognized value. ` +
+      `Forwarding as-is; the orchestrator may reject it. ` +
+      `Valid values: ${[...VALID_BUILD_FIX_MODES].join(', ')}.`
+    ));
+    return v;
+  }
+  return native;
+}
 
 // ── Color helpers (no deps) ──────────────────────────────────────────────────
 const USE_COLOR = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -410,7 +453,10 @@ async function cmdNew({ flags }) {
   if (flags.to)  args.push(`--to=${flags.to}`);
   if (flags['qa-threshold']) args.push(`--qa-threshold=${flags['qa-threshold']}`);
   if (flags['max-refinement-iterations']) args.push(`--max-refinement-iterations=${flags['max-refinement-iterations']}`);
-  if (flags['build-fix-mode']) args.push(`--build-fix-mode=${flags['build-fix-mode']}`);
+  if (flags['build-fix-mode']) {
+    const translated = translateBuildFixMode(flags['build-fix-mode']);
+    args.push(`--build-fix-mode=${translated}`);
+  }
   if (flags['no-touchup']) args.push('--no-touchup');
   if (flags.mode) args.push(`--mode=${flags.mode}`);
 
@@ -442,7 +488,10 @@ async function cmdResume({ positional, flags }) {
   if (flags['app-only'])    args.push('--app-only');
   if (flags['qa-threshold']) args.push(`--qa-threshold=${flags['qa-threshold']}`);
   if (flags['max-refinement-iterations']) args.push(`--max-refinement-iterations=${flags['max-refinement-iterations']}`);
-  if (flags['build-fix-mode']) args.push(`--build-fix-mode=${flags['build-fix-mode']}`);
+  if (flags['build-fix-mode']) {
+    const translated = translateBuildFixMode(flags['build-fix-mode']);
+    args.push(`--build-fix-mode=${translated}`);
+  }
   if (flags['no-touchup']) args.push('--no-touchup');
 
   const env = { PIPELINE_RUN_DIR: runDirFromId(runId) };
@@ -490,6 +539,159 @@ async function cmdPostPanels({ positional, flags }) {
   return new Promise((resolve) => {
     child.on('exit', (code) => resolve(code === 0 ? 0 : 2));
   });
+}
+
+// ── Command: figma-convert (demo → Figma file via plugin-figma-figma MCP) ───
+//
+// The Figma MCP cannot be invoked from the CLI directly — `use_figma` is an
+// agent-side tool that runs inside Cursor's plugin sandbox. So this command
+// builds a self-contained, agent-ready prompt (with all the demo context
+// embedded) and copies a paste-into-agent recipe to the user's clipboard.
+// First-time MCP setup (Cursor plugin install + `mcp_auth` OAuth) is walked
+// through inline in the prompt so the agent can drive the user through it.
+async function cmdFigmaConvert({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to convert — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const { buildFigmaConversionPrompt } = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'figma-conversion'));
+
+  console.log(c.bold(`[pipe] figma-convert ${runId}`));
+  let result;
+  try {
+    result = buildFigmaConversionPrompt(runDir, {
+      figmaFileUrl: flags['figma-file'] || flags['figma-file-url'] || process.env.FIGMA_FILE_URL,
+      figmaTeamId:  flags['figma-team']  || flags['figma-team-id']  || process.env.FIGMA_TEAM_ID,
+    });
+  } catch (e) {
+    console.error(c.red(`  ${e.message}`));
+    return 2;
+  }
+  const promptPath = path.join(runDir, 'figma-conversion-prompt.md');
+  fs.writeFileSync(promptPath, result.promptMarkdown, 'utf8');
+  console.log(c.green(`  ✓ Wrote ${path.relative(PROJECT_ROOT, promptPath)} (${result.summary.stepCount} step(s), ${result.summary.promptChars.toLocaleString()} chars)`));
+
+  // Best-effort clipboard copy of a SHORT paste-into-agent recipe (not the
+  // entire prompt — agent users prefer to open the file rather than paste
+  // 30k chars). On macOS we use pbcopy; elsewhere we just print.
+  const recipe =
+    `Open this file in your AI agent (Cursor OR Claude Code, Agent mode) and run it:\n\n` +
+    `  ${promptPath}\n\n` +
+    `It builds a Figma file (one frame per demo-script step) using the official figma plugin ` +
+    `(figma@claude-plugins-official → use_figma tool, hosted at https://mcp.figma.com/mcp). ` +
+    `The first run will trigger a Figma OAuth flow — click Authorize.\n`;
+  let clipboardOK = false;
+  if (process.platform === 'darwin') {
+    try {
+      const cp = spawnSync('pbcopy', [], { input: recipe });
+      clipboardOK = cp.status === 0;
+    } catch (_) {}
+  }
+
+  console.log('');
+  console.log(c.bold('Next:'));
+  console.log(`  1. Open ${c.cyan(path.relative(PROJECT_ROOT, promptPath))} in Cursor ${c.dim('OR')} Claude Code.`);
+  console.log(`  2. Switch to ${c.cyan('Agent mode')} (not Ask / read-only) so MCP tools are available.`);
+  console.log(`  3. Type "Run this prompt." The agent loads skills + calls use_figma.`);
+  console.log(`  4. First-time only: a Figma OAuth dialog opens → click ${c.cyan('Authorize')}.`);
+  if (clipboardOK) console.log(c.dim('  (paste-into-agent recipe copied to clipboard)'));
+  console.log('');
+  console.log(c.bold('First-time Figma MCP setup (same plugin in both clients):'));
+  console.log(`  ${c.cyan('Cursor:')}      type ${c.cyan('/add-plugin figma')} in chat`);
+  console.log(`               ${c.dim('(or Settings → Plugins → search "Figma" → Install, then restart Cursor)')}`);
+  console.log(`  ${c.cyan('Claude Code:')} run ${c.cyan('claude plugin install figma@claude-plugins-official')}`);
+  console.log(`               ${c.dim('(or /plugin install figma@claude-plugins-official from inside the chat;')}`);
+  console.log(`               ${c.dim(' verify with the /mcp command — "figma" should appear connected)')}`);
+  console.log(`  ${c.cyan('Optional:')}    ${c.cyan('export FIGMA_FILE_URL="https://www.figma.com/file/<key>/<name>"')} to target an existing file`);
+  if (!result.summary.figmaFileUrl) {
+    console.log(c.yellow('  · No FIGMA_FILE_URL set — the agent will create a new file in your default team.'));
+  }
+  console.log('');
+  console.log(c.bold('Pipeline summary:'));
+  console.log(`  Run:        ${result.summary.runId}`);
+  console.log(`  Brand:      ${result.summary.brand || '(unknown)'}`);
+  console.log(`  Steps:      ${result.summary.appSteps} app + ${result.summary.slideSteps} slide = ${result.summary.stepCount} total`);
+  console.log(`  Target:     ${result.summary.figmaFileUrl || '(new Figma file)'}`);
+  console.log(`  Prompt:     ${path.relative(PROJECT_ROOT, promptPath)}`);
+  return 0;
+}
+
+// ── Command: qa-touchup (agent-driven surgical fixes from QA findings) ──────
+//
+// Reads the run's most recent QA report, picks failing steps, extracts the
+// `<div data-testid="step-<id>">…</div>` block + Playwright row + frame
+// paths for each, and writes an agent-ready task .md the user opens in
+// Cursor / Claude Code (Agent mode). The agent edits ONLY the failing
+// steps with surgical StrReplace calls and reads the QA frames as images,
+// instead of asking the LLM to regenerate the whole `index.html` (which
+// is what `--build-fix-mode=touchup` still does today).
+//
+// On systemic issues (shared chrome, >=3 distinct failing steps, or a
+// deterministic-blocker gate), the task .md tells the agent to STOP and
+// recommend a fullbuild instead — mirrors `analyzeFixModeForQaIteration`
+// in the orchestrator.
+async function cmdQaTouchup({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to touchup — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const { buildQaTouchupPrompt } = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'qa-touchup'));
+
+  console.log(c.bold(`[pipe] qa-touchup ${runId}`));
+  let result;
+  try {
+    result = buildQaTouchupPrompt(runDir, {
+      passThreshold: flags['qa-threshold'] ? Number(flags['qa-threshold']) : undefined,
+    });
+  } catch (e) {
+    console.error(c.red(`  ${e.message}`));
+    return 2;
+  }
+  const promptPath = path.join(runDir, 'qa-touchup-task.md');
+  fs.writeFileSync(promptPath, result.promptMarkdown, 'utf8');
+  const scoreFmt = result.summary.overallScore != null
+    ? `${result.summary.overallScore}/${result.summary.passThreshold}`
+    : `?/${result.summary.passThreshold}`;
+  console.log(c.green(
+    `  ✓ Wrote ${path.relative(PROJECT_ROOT, promptPath)} ` +
+    `(${result.summary.failingStepCount} failing step(s), score ${scoreFmt}, ${result.summary.promptChars.toLocaleString()} chars)`
+  ));
+
+  const recipe =
+    `Open this file in your AI agent (Cursor OR Claude Code, Agent mode) and run it:\n\n` +
+    `  ${promptPath}\n\n` +
+    `It contains the QA findings + per-step HTML/Playwright snippets for ` +
+    `${result.summary.failingStepCount} failing step(s). The agent edits surgically; ` +
+    `you re-verify with: npm run pipe -- stage build-qa ${runId}\n`;
+  let clipboardOK = false;
+  if (process.platform === 'darwin') {
+    try {
+      const cp = spawnSync('pbcopy', [], { input: recipe });
+      clipboardOK = cp.status === 0;
+    } catch (_) {}
+  }
+
+  console.log('');
+  if (result.summary.systemic) {
+    console.log(c.yellow(c.bold('⚠ Systemic issue detected — the task .md tells the agent to STOP and escalate.')));
+    console.log(c.yellow('  Reasons: ' + result.summary.systemicReasons.join(', ')));
+    console.log(c.yellow(`  Recommended: npm run pipe -- stage build ${runId}`));
+    console.log('');
+  }
+  console.log(c.bold('Next:'));
+  console.log(`  1. Open ${c.cyan(path.relative(PROJECT_ROOT, promptPath))} in Cursor ${c.dim('OR')} Claude Code.`);
+  console.log(`  2. Switch to ${c.cyan('Agent mode')} (not Ask / read-only) so Read + StrReplace are available.`);
+  console.log(`  3. Type "Run this task." The agent edits only the failing steps.`);
+  console.log(`  4. Re-verify: ${c.cyan(`npm run pipe -- stage build-qa ${runId}`)}`);
+  if (clipboardOK) console.log(c.dim('  (paste-into-agent recipe copied to clipboard)'));
+  console.log('');
+  console.log(c.bold('QA summary:'));
+  console.log(`  Run:           ${result.summary.runId}`);
+  console.log(`  QA report:     ${path.relative(runDir, result.summary.qaReportPath)}`);
+  console.log(`  Score:         ${scoreFmt}`);
+  console.log(`  Failing steps: ${result.summary.failingStepCount} (${result.summary.distinctFailingSteps} distinct)`);
+  console.log(`  Systemic:      ${result.summary.systemic ? c.yellow('yes') : c.green('no')}`);
+  console.log(`  HTML:          ${path.relative(PROJECT_ROOT, result.summary.htmlPath)}`);
+  console.log(`  Playwright:    ${path.relative(PROJECT_ROOT, result.summary.playwrightPath)}`);
+  return 0;
 }
 
 // ── Commands: centralized demo-app distribution ─────────────────────────────
@@ -799,6 +1001,216 @@ function ask(rl, question) {
   return new Promise(resolve => rl.question(question, ans => resolve(ans.trim())));
 }
 
+async function askMulti(rl, question) {
+  const ans = await ask(rl, question);
+  if (!ans) return [];
+  return ans.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
+}
+
+// ── Command: quickstart (app-only wizard) ────────────────────────────────────
+//
+// Walks the user through a structured set of menus, then writes:
+//   1. inputs/prompt.txt        — draft prompt filled from the app-only template
+//   2. inputs/quickstart-research-task.md — agent handoff for AskBill + Glean
+// Any existing prompt.txt is backed up first.
+//
+// MCPs (AskBill, Glean) cannot be invoked from pure Node — they live in
+// agent context. So the wizard pre-stages everything and the agent (Cursor
+// or Claude Code) executes the research pass.
+async function cmdQuickstart(parsed = {}) {
+  const QS = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'quickstart'));
+  const flags = (parsed && parsed.flags) || {};
+
+  // Non-interactive path (for tests / scripted SE onboarding):
+  if (flags['non-interactive'] || flags.json) {
+    return await runQuickstartNonInteractive(flags, QS);
+  }
+
+  console.log('');
+  console.log(c.bold('╔══════════════════════════════════════════════════════════════════╗'));
+  console.log(c.bold('║  Plaid Demo Pipeline — Quickstart Wizard (APP-ONLY BUILD)       ║'));
+  console.log(c.bold('╚══════════════════════════════════════════════════════════════════╝'));
+  console.log('');
+  console.log('This wizard generates a draft ' + c.cyan('inputs/prompt.txt') + ' from the app-only');
+  console.log('template plus an agent task that runs ' + c.cyan('AskBill + Glean') + ' research.');
+  console.log(c.dim('Press ENTER at any prompt to use the default shown in [brackets].'));
+  console.log('');
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answers = {};
+  try {
+    // 1) Brand
+    answers.brand = await ask(rl, c.bold('1) Customer / brand name') + ' (e.g. Bank of America): ');
+    if (!answers.brand) {
+      console.log(c.red('  Brand name is required to proceed.'));
+      return 64;
+    }
+
+    // 2) Brand domain (optional)
+    answers.brandDomain = await ask(rl, c.bold('2) Brand domain') + ' (e.g. bankofamerica.com) ' + c.dim('[optional]') + ': ');
+    answers.brandDomain = answers.brandDomain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+    // 3) Industry
+    console.log('');
+    console.log(c.bold('3) Industry'));
+    QS.INDUSTRIES.forEach((ind, i) => console.log(`   [${i + 1}] ${ind.label}`));
+    let industryIdx = parseInt(await ask(rl, 'Choose [1]: '), 10);
+    if (!Number.isFinite(industryIdx) || industryIdx < 1 || industryIdx > QS.INDUSTRIES.length) industryIdx = 1;
+    const industry = QS.INDUSTRIES[industryIdx - 1];
+    answers.industry = industry.id;
+    answers.industryLabel = industry.label;
+    if (industry.id === 'other') {
+      const free = await ask(rl, '   Specify industry: ');
+      if (free) answers.industryLabel = free;
+    }
+
+    // 4) Plaid Link mode
+    console.log('');
+    console.log(c.bold('4) Plaid Link mode'));
+    QS.LINK_MODES.forEach((lm, i) => console.log(`   [${i + 1}] ${lm.label}`));
+    let linkIdx = parseInt(await ask(rl, 'Choose [1]: '), 10);
+    if (!Number.isFinite(linkIdx) || linkIdx < 1 || linkIdx > QS.LINK_MODES.length) linkIdx = 1;
+    answers.linkMode = QS.LINK_MODES[linkIdx - 1].id;
+
+    // 5) Plaid products (multi-select)
+    console.log('');
+    console.log(c.bold('5) Plaid products to feature') + c.dim(' (comma- or space-separated numbers)'));
+    QS.KNOWN_PRODUCTS.forEach((p, i) => console.log(`   [${String(i + 1).padStart(2)}] ${p.label.padEnd(36)} ${c.dim(p.hint)}`));
+    const picks = await askMulti(rl, 'Pick at least one (e.g. ' + c.cyan('1,2,3') + '): ');
+    const products = [];
+    for (const tok of picks) {
+      const n = parseInt(tok, 10);
+      if (Number.isFinite(n) && n >= 1 && n <= QS.KNOWN_PRODUCTS.length) products.push(QS.KNOWN_PRODUCTS[n - 1]);
+    }
+    if (!products.length) {
+      console.log(c.red('  At least one product is required.'));
+      rl.close();
+      return 64;
+    }
+    answers.products = products;
+
+    // 6) Persona
+    console.log('');
+    answers.persona = await ask(rl, c.bold('6) Persona') + ' (name + role, e.g. ' + c.dim('"Michael Carter, retail banking customer"') + '): ');
+
+    // 7) Use case (one-sentence pitch)
+    console.log('');
+    console.log(c.bold('7) Use case — one-sentence pitch'));
+    console.log(c.dim('   This is YOUR description of the demo. The agent will research around it.'));
+    answers.useCase = await ask(rl, '> ');
+    if (!answers.useCase) {
+      console.log(c.red('  Use case is required so research has a target.'));
+      rl.close();
+      return 64;
+    }
+
+    // 8) Research depth
+    console.log('');
+    console.log(c.bold('8) Research depth'));
+    QS.RESEARCH_DEPTHS.forEach((d, i) => console.log(`   [${i + 1}] ${d.label}`));
+    let depthIdx = parseInt(await ask(rl, 'Choose [1]: '), 10);
+    if (!Number.isFinite(depthIdx) || depthIdx < 1 || depthIdx > QS.RESEARCH_DEPTHS.length) depthIdx = 1;
+    answers.researchDepth = QS.RESEARCH_DEPTHS[depthIdx - 1].id;
+
+    // 9) Build after research?
+    console.log('');
+    const buildAns = await ask(rl, c.bold('9) Start the build automatically after research finishes?') + ' [Y/n]: ');
+    answers.buildAfter = !/^n/i.test(buildAns);
+
+    // ── Confirm + write ────────────────────────────────────────────────────
+    console.log('');
+    console.log(c.bold('Summary:'));
+    console.log(`  Brand:           ${c.cyan(answers.brand)}${answers.brandDomain ? c.dim(' (' + answers.brandDomain + ')') : ''}`);
+    console.log(`  Industry:        ${answers.industryLabel}`);
+    console.log(`  Plaid Link mode: ${answers.linkMode}`);
+    console.log(`  Products:        ${products.map(p => p.label).join(', ')}`);
+    console.log(`  Persona:         ${answers.persona || c.dim('(unset — agent will research)')}`);
+    console.log(`  Use case:        ${answers.useCase}`);
+    console.log(`  Research depth:  ${answers.researchDepth}`);
+    console.log(`  Build after:     ${answers.buildAfter ? 'yes' : 'no'}`);
+    console.log(`  Suggested run:   ${c.dim(QS.suggestRunId(answers))}`);
+    console.log('');
+    const confirm = await ask(rl, 'Write inputs/prompt.txt + research task? [Y/n]: ');
+    if (/^n/i.test(confirm)) {
+      console.log(c.yellow('Cancelled — no files written.'));
+      rl.close();
+      return 3;
+    }
+    rl.close();
+  } catch (err) {
+    try { rl.close(); } catch (_) { /* ignore */ }
+    throw err;
+  }
+
+  return writeQuickstartArtifacts(answers, QS);
+}
+
+async function runQuickstartNonInteractive(flags, QS) {
+  const products = (flags.products ? String(flags.products).split(/[\s,]+/) : [])
+    .map(s => QS.findProduct(s))
+    .filter(Boolean);
+  const industry = QS.findIndustry(flags.industry || 'other') || QS.INDUSTRIES[QS.INDUSTRIES.length - 1];
+  const answers = {
+    brand: flags.brand || '',
+    brandDomain: (flags.domain || '').replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+    industry: industry.id,
+    industryLabel: industry.label,
+    linkMode: flags['link-mode'] === 'embedded' ? 'embedded' : 'modal',
+    products,
+    persona: flags.persona || '',
+    useCase: flags['use-case'] || flags.usecase || '',
+    researchDepth: flags['research'] || 'gapfill',
+    buildAfter: !!flags['build-after'],
+  };
+  if (!answers.brand || !answers.useCase || !answers.products.length) {
+    console.error(c.red('quickstart: --brand, --use-case, and --products are required in non-interactive mode.'));
+    return 64;
+  }
+  return writeQuickstartArtifacts(answers, QS);
+}
+
+function writeQuickstartArtifacts(answers, QS) {
+  // Back up any existing prompt.txt so the user never loses prior content.
+  const promptPath   = path.join(INPUTS_DIR, 'prompt.txt');
+  const taskPath     = path.join(INPUTS_DIR, 'quickstart-research-task.md');
+  if (fs.existsSync(promptPath)) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const bak = path.join(INPUTS_DIR, `prompt.${stamp}.bak.txt`);
+    fs.copyFileSync(promptPath, bak);
+    console.log(c.dim(`  · backed up existing prompt.txt → ${path.relative(PROJECT_ROOT, bak)}`));
+  }
+
+  const draftPrompt = QS.fillTemplateFromAnswers(answers);
+  const taskMd      = QS.buildResearchTaskMarkdown(answers, { buildAfter: answers.buildAfter });
+  fs.writeFileSync(promptPath, draftPrompt, 'utf8');
+  fs.writeFileSync(taskPath,   taskMd, 'utf8');
+
+  console.log('');
+  console.log(c.green(`  ✓ Wrote ${path.relative(PROJECT_ROOT, promptPath)} (DRAFT — wizard header at top)`));
+  console.log(c.green(`  ✓ Wrote ${path.relative(PROJECT_ROOT, taskPath)} (agent research handoff)`));
+
+  // Clipboard recipe (best-effort, macOS only).
+  const recipe =
+    `Open this file in Cursor or Claude Code (Agent mode) and run it:\n\n` +
+    `  ${taskPath}\n\n` +
+    `It tells the agent to use AskBill + Glean to enrich inputs/prompt.txt, then ` +
+    `${answers.buildAfter ? 'kick off ' : 'optionally start '}the app-only build.\n`;
+  if (process.platform === 'darwin') {
+    try { spawnSync('pbcopy', [], { input: recipe }); } catch (_) {}
+  }
+
+  console.log('');
+  console.log(c.bold('Next:'));
+  console.log(`  1. Open ${c.cyan(path.relative(PROJECT_ROOT, taskPath))} in Cursor ${c.dim('OR')} Claude Code.`);
+  console.log(`  2. Switch to ${c.cyan('Agent mode')} so AskBill + Glean MCP tools are available.`);
+  console.log(`  3. Type "Run this task." The agent will research with AskBill + Glean,`);
+  console.log(`     refine ${c.cyan(path.relative(PROJECT_ROOT, promptPath))}, and ${answers.buildAfter ? c.cyan('start the build') : 'hand back to you'}.`);
+  console.log('');
+  console.log(c.dim('Tip: the wizard never invents numbers. Storyboard tables stay empty in the draft —'));
+  console.log(c.dim('     the agent fills them with researched facts from AskBill + Glean.'));
+  return 0;
+}
+
 async function pickFromList(rl, title, items, toLabel) {
   if (!items.length) { console.log(c.dim('(no runs)')); return null; }
   console.log(c.bold('\n' + title));
@@ -842,6 +1254,7 @@ async function interactiveMenu() {
       console.log('  [7] Stop active build');
       console.log('  [8] List recent runs');
       console.log('  [9] Open dashboard');
+      console.log('  [Q] Quickstart wizard (app-only — guided prompt + research)');
       console.log('  [0] Quit');
       const ans = await ask(rl, '\nChoose: ');
 
@@ -849,10 +1262,10 @@ async function interactiveMenu() {
 
       if (ans === '1') {
         const withSlidesAns = await ask(rl, 'Include slides? [y/N]: ');
-        const researchAns = await ask(rl, 'Research mode (gapfill/broad/deep) [gapfill]: ');
+        const researchAns = await ask(rl, 'Research mode (gapfill/broad/deep) [broad]: ');
         const flags = {};
         if (/^y/i.test(withSlidesAns)) flags['with-slides'] = true;
-        const r = (researchAns || 'gapfill').toLowerCase();
+        const r = (researchAns || 'broad').toLowerCase();
         if (VALID_RESEARCH.has(r)) flags.research = r;
         rl.close();
         return await cmdNew({ flags });
@@ -919,6 +1332,11 @@ async function interactiveMenu() {
         continue;
       }
 
+      if (ans.toLowerCase() === 'q') {
+        rl.close();
+        return await cmdQuickstart({ flags: {} });
+      }
+
       console.log(c.red('Unknown choice'));
     }
   } finally {
@@ -928,45 +1346,157 @@ async function interactiveMenu() {
 
 // ── Help ─────────────────────────────────────────────────────────────────────
 function cmdHelp() {
+  const H = (title) => '\n' + c.bold(title) + '\n' + '─'.repeat(72);
+  const cmd = (syntax, desc) =>
+    `  ${c.cyan(syntax)}\n     ${desc.split('\n').join('\n     ')}\n`;
+
   const help = `
-${c.bold('Plaid Demo Pipeline CLI')}   ${c.dim('(hybrid — humans + Claude)')}
+${c.bold('Plaid Demo Pipeline CLI')}   ${c.dim('(hybrid — humans + AI agents)')}
 
-Usage:
-  ${c.cyan('npm run pipe')}                              Interactive menu
-  ${c.cyan('npm run pipe -- new')}      [--prompt=PATH] [--with-slides|--app-only]
-                                 [--research=gapfill|broad|deep]
-                                 [--to=STAGE] [--qa-threshold=N]
-                                 [--max-refinement-iterations=N]
-                                 [--build-fix-mode=smart|rebuild|patch]
-                                 [--no-touchup] [--non-interactive] [--json]
+Run as ${c.cyan('npm run pipe -- <command> [args] [--flags]')} or with no command for the
+interactive menu. Aliases noted in parentheses. All commands accept ${c.cyan('--json')}
+where applicable, and ${c.cyan('--non-interactive')} to suppress prompts (return code 5
+instead of waiting for a continue gate).
+${H('GETTING STARTED — guided wizards')}
+${cmd('npm run pipe',
+`Interactive numeric menu. Picks a sane default (start, resume, status, logs)
+based on whether there is an active run. No flags. Exit codes follow the
+"Claude integration" section below.`)}
+${cmd('npm run quickstart   ' + c.dim('(alias: pipe quickstart, pipe qs)'),
+`APP-ONLY build wizard for sales engineers who want a guided "give me a
+prompt, do the research, build it" flow. Asks for brand, industry, persona,
+products, Plaid Link mode, and a one-sentence pitch, then writes a draft
+inputs/prompt.txt + an agent task that runs AskBill + Glean research in
+your AI agent. Optionally kicks off the build once research finishes.
+Backs up any existing inputs/prompt.txt → inputs/prompt.<timestamp>.bak.txt.`)}
+${H('BUILDING — start, resume, re-run')}
+${cmd('npm run pipe -- new   [--prompt=PATH] [--app-only|--with-slides]',
+`Start a new build from inputs/prompt.txt. Defaults to app-only; pass
+--with-slides to include the slide-generation phase. Other flags:
+  --research=gapfill|broad|deep  research depth. NEW DEFAULT is "broad" (was
+                                 "gapfill"). broad/deep map to research.js's
+                                 "full" mode: wider Glean coverage, more Gong
+                                 color, more grounded sample data. Set
+                                 RESEARCH_MODE=gapfill in .env to opt back
+                                 into the shallow legacy default.
+  --to=STAGE                     stop the pipeline after STAGE
+  --qa-threshold=N               vision-QA pass threshold (default 80)
+  --max-refinement-iterations=N  cap LLM refinement loops (default 3)
+  --build-fix-mode=smart|rebuild|patch|agent-touchup
+                                 strategy when build-qa flags issues. Aliases
+                                 (translated automatically before forwarding):
+                                 smart=auto, rebuild=fullbuild, patch=touchup.
+                                 DEFAULT under an AI agent (Claude Code or
+                                 Cursor with PIPE_AGENT_MODE=1) is now
+                                 \`agent-touchup\`: orchestrator pauses on a
+                                 continue-gate after each failed build-qa,
+                                 agent makes surgical edits, loop max 3
+                                 iterations or until QA passes. No LLM
+                                 rebuilds. Set PIPE_AGENT_MODE=0 (or pass
+                                 \`--build-fix-mode=touchup\`) to fall back
+                                 to the legacy LLM regen path.
+  --no-touchup                   skip the final cosmetic-touchup pass
+  --non-interactive              fail closed on prompt gates instead of waiting
+  --json                         emit machine-readable progress events`)}
+${cmd('npm run pipe -- resume   [RUN_ID] [--from=STAGE] [--to=STAGE]',
+`Resume a previously-stopped or partially-completed run. RUN_ID defaults to
+the most recent run. --from auto-detects the first incomplete stage if
+omitted. Flags: --with-slides | --app-only override the original mode;
+--non-interactive matches "new".`)}
+${cmd('npm run pipe -- stage   STAGE [RUN_ID]',
+`Re-run exactly one stage on an existing run. Useful after editing artifacts
+by hand or fixing a stage-specific input. STAGE must be one of the names
+listed under "Stages" below. Wipes downstream stage state so subsequent
+"resume" calls pick up cleanly.`)}
+${cmd('npm run pipe -- post-slides   [RUN_ID] [--steps=IDS] [--max-iters=N]',
+`Run the agent-driven, per-slide insertion stage in isolation. Useful when
+a build was app-only and you decide to add a slide at one or more steps,
+or when slide quality is below threshold. --steps accepts a comma list of
+step ids; --max-iters caps the LLM refinement loop per slide.`)}
+${cmd('npm run pipe -- post-panels   [RUN_ID] [--steps=IDS] [--dry-run]',
+`Deterministic side-panel normalizer for #api-response-panel and
+#link-events-panel: enforces the expand/collapse contract and hydrates
+JSON payloads. No LLM calls in the deterministic path; --dry-run prints
+the proposed HTML diff without writing.`)}
+${H('LIFECYCLE & INSPECTION — observe and steer a run')}
+${cmd('npm run pipe -- status   [RUN_ID] [--json]',
+`Print stage-by-stage state for a run (defaults to latest). --json emits
+the canonical structured object that scripts and Claude / Cursor agents
+use for recovery logic.`)}
+${cmd('npm run pipe -- logs   [RUN_ID] [--follow] [--since=STAGE]',
+`Tail the pipeline's stdout/stderr log for a run. --follow streams new
+output (good for monitoring); --since=STAGE jumps to where a specific
+stage began.`)}
+${cmd('npm run pipe -- list   [--limit=N] [--json]',
+`Show the most recent N runs (default 20) with their build-mode, latest
+QA score, and active/idle status. --json is the structured form.`)}
+${cmd('npm run pipe -- continue   [RUN_ID]',
+`Resolve a "prompt gate" — i.e. a stage that paused waiting on a human
+decision. Reads the gate's question file from the run dir and sends an
+"approve" answer. Exits with 5 if no gate is open.`)}
+${cmd('npm run pipe -- stop   [RUN_ID] [--force]',
+`Gracefully stop the active orchestrator process for RUN_ID by sending
+SIGINT. --force escalates to SIGKILL after the grace window. Subsequent
+"resume" picks up from the last completed stage.`)}
+${cmd('npm run pipe -- open   [RUN_ID]',
+`Open the dashboard in your default browser, scoped to RUN_ID's detail
+view if provided. Spawns the dashboard server if it isn't already up.`)}
+${H('DISTRIBUTION — share demos across the SE team (GHE)')}
+${cmd('npm run pipe -- whoami   [--refresh]',
+`Print the resolved GitHub Enterprise login + GHE host that publish
+operations will run as, plus the local + remote artifact paths. --refresh
+ignores the cache and re-runs gh auth / git-remote detection.`)}
+${cmd('npm run pipe -- pull',
+`git pull --ff-only on this code repo, then sync the central artifact
+repo (\`plaid-demo-apps\`) under ~/.plaid-demo-apps. Recovers from squash-
+merge divergence on artifact's main branch automatically.`)}
+${cmd('npm run pipe -- publish   [RUN_ID] [--message=...] [--include-prompt] [--no-auto-merge]',
+`Package the run (redact secrets via check-publish-safety, strip logs +
+intermediates), push to a per-user branch in plaid-demo-apps, open a PR,
+and enable auto-merge (squash + delete branch) so the demo lands in main
+without manual approval. --include-prompt embeds the original prompt.txt
+in the bundle (off by default to keep proprietary phrasing private).
+--direct-push force-pushes to main (maintainers only).
+--no-auto-merge leaves the PR open for review.`)}
+${cmd('npm run pipe -- unpublish   RUN_ID',
+`Remove a previously-published demo from plaid-demo-apps via a deletion
+PR. Same auto-merge behavior as publish.`)}
+${H('AGENT INTEGRATIONS — handoffs to Cursor / Claude Code')}
+${cmd('npm run pipe -- figma-convert   [RUN_ID] [--figma-file=URL]',
+`Generate an agent-ready prompt that converts a built demo into a Figma
+file (one frame per demo-script step) using the figma plugin
+(figma@claude-plugins-official → use_figma tool, MCP at mcp.figma.com).
+Writes <run>/figma-conversion-prompt.md and copies a paste-into-agent
+recipe to the clipboard. Works in both Cursor and Claude Code.`)}
+${cmd('npm run pipe -- qa-touchup   [RUN_ID] [--qa-threshold=N]   ' + c.dim('(alias: qt)'),
+`Generate an agent-ready prompt that fixes failing QA findings via surgical,
+single-step edits — instead of regenerating the whole index.html like the
+LLM-driven --build-fix-mode=touchup path. Reads the run's qa-report-build.json
+(or latest qa-report-N.json), extracts each failing step's HTML block +
+Playwright row + frame paths, and writes <run>/qa-touchup-task.md. Open it
+in Cursor or Claude Code (Agent mode) and the agent edits exactly the failing
+steps using Read + StrReplace. On systemic issues (>=3 distinct failing
+steps, shared-chrome categories, or deterministic-blocker gate), the task
+tells the agent to STOP and recommend a fullbuild instead. Re-verify with
+\`pipe stage build-qa <RUN_ID>\` once the agent reports done.
 
-  ${c.cyan('npm run pipe -- resume')}   [RUN_ID] [--from=STAGE] [--to=STAGE]
-                                 [--with-slides|--app-only] [--non-interactive]
+Token / wall-clock uplift vs LLM touchup on multi-step failures:
+~5-10x fewer tokens, ~3-5x faster, regressions on unrelated steps bounded
+by StrReplace scope rather than LLM prompt discipline.`)}
+${H('META')}
+${cmd('npm run pipe -- help   ' + c.dim('(aliases: -h, --help)'),
+`Print this listing.`)}
 
-  ${c.cyan('npm run pipe -- stage')}    STAGE [RUN_ID]    Re-run one stage
-  ${c.cyan('npm run pipe -- post-slides')}   [RUN_ID] [--steps=IDS] [--max-iters=N]
-                                 Per-slide agent-driven insertion + QA
-  ${c.cyan('npm run pipe -- post-panels')}   [RUN_ID] [--steps=IDS] [--dry-run]
-                                 Deterministic JSON side-panel normalizer
+${c.bold('Stages (in order, used by --to / --from / stage):')}
+${c.dim('  ' + STAGES.join('\n  '))}
 
-  ${c.cyan('npm run pipe -- whoami')}                      Resolved GHE identity + artifact paths
-  ${c.cyan('npm run pipe -- pull')}                        git pull code repo + artifact repo
-  ${c.cyan('npm run pipe -- publish')}  [RUN_ID] [--message=...] [--include-prompt] [--direct-push] [--no-auto-merge]
-                                 Package + redact + push a run to plaid-demo-apps
-  ${c.cyan('npm run pipe -- unpublish')} RUN_ID            Remove a published demo
-  ${c.cyan('npm run pipe -- status')}   [RUN_ID] [--json]  Run + stage state
-  ${c.cyan('npm run pipe -- logs')}     [RUN_ID] [--follow]
-  ${c.cyan('npm run pipe -- stop')}     [RUN_ID] [--force]
-  ${c.cyan('npm run pipe -- list')}     [--limit=N] [--json]
-  ${c.cyan('npm run pipe -- continue')} [RUN_ID]          Resolve prompt gate
-  ${c.cyan('npm run pipe -- open')}     [RUN_ID]          Open dashboard
-
-Stages (in order): ${STAGES.join(', ')}
-
-Claude integration:
-  ${c.dim('- ::PIPE:: lines on stdout mark stage_start / stage_end / prompt / pipeline_*')}
-  ${c.dim('- Exit codes: 0 ok, 2 pipeline err, 3 cancelled, 4 already running, 5 awaiting continue')}
-  ${c.dim('- `pipe status --json` is the canonical state object for recovery logic')}
+${c.bold('Claude / Cursor agent integration:')}
+${c.dim(`  · ::PIPE:: lines on stdout mark stage_start / stage_end / prompt / pipeline_*
+  · Exit codes: 0 ok, 2 pipeline err, 3 cancelled, 4 already running, 5 awaiting continue, 64 usage
+  · "pipe status --json" is the canonical state object for recovery logic
+  · "pipe quickstart", "pipe figma-convert", and "pipe qa-touchup" produce
+    agent task .md files that the AI agent (Cursor / Claude Code) executes
+    using MCP tools (AskBill / Glean / use_figma) and Read + StrReplace.`)}
 `;
   console.log(help);
   return 0;
@@ -983,6 +1513,8 @@ Claude integration:
         code = await interactiveMenu();
         break;
       case 'new':      code = await cmdNew(parsed);     break;
+      case 'quickstart':
+      case 'qs':       code = await cmdQuickstart(parsed); break;
       case 'resume':   code = await cmdResume(parsed);  break;
       case 'stage':    code = await cmdStage(parsed);   break;
       case 'post-panels': code = await cmdPostPanels(parsed); break;
@@ -991,6 +1523,10 @@ Claude integration:
       case 'pull':     code = await cmdPull();           break;
       case 'publish':  code = await cmdPublish(parsed);  break;
       case 'unpublish':code = await cmdUnpublish(parsed);break;
+      case 'figma-convert':
+      case 'figma':    code = await cmdFigmaConvert(parsed); break;
+      case 'qa-touchup':
+      case 'qt':       code = await cmdQaTouchup(parsed);    break;
       case 'status':   code = cmdStatus(parsed);        break;
       case 'logs':     code = await cmdLogs(parsed);    break;
       case 'list':     code = cmdList(parsed);          break;

@@ -1349,15 +1349,16 @@
             ${renderCheckbox('SCRATCH_AUTO_APPROVE', cfg, 'Skip all human-confirmation "press ENTER to continue" gates between pipeline stages. Required for CLI non-interactive runs and for the dashboard. Turn off only if you want to approve each stage manually.')}
             ${renderCheckbox('MANUAL_RECORD', cfg, 'Use the manual-operator Playwright recording path (human drives the UI) instead of the automated step-by-step recorder. Primarily useful for demos where the automation hits a wall on a specific institution or flow.')}
             ${renderCheckbox('FIGMA_REVIEW', cfg, 'Enable the Figma design-review stage, which posts QA screenshots to a configured Figma file for design-team comment. Requires FIGMA credentials in .env (not editable here).')}
-            ${renderCheckbox('TOUCHUP_ENABLED', cfg, 'Run the final touchup stage — a single-step LLM refinement pass targeting the lowest-scoring scene after the main build-qa / record loop. Off → the pipeline finishes at render without this extra polish pass.')}
+            ${renderCheckbox('TOUCHUP_ENABLED', cfg, 'Controls the LLM build-fix-mode fallback during the build-qa refinement loop: when ON and the orchestrator picks "touchup" mode, the LLM does a narrowed regen of the lowest-scoring step. When OFF, that path falls through to "fullbuild" (full app regen). Note: this does NOT control the post-render Remotion polish stage — that is gated by the --no-touchup CLI flag. Three different "touchup" things share a name; this toggle is the LLM build-fix one.')}
+            ${renderNumberField('MAX_REFINEMENT_ITERATIONS', cfg, 'Max QA refinement loops after the initial build (1–10). Each iteration re-runs build-qa and either does an LLM regen or hands an agent a per-step task .md (in agent mode). Default 5; was 3 prior to the hyper-realism upgrade.', 1, 10)}
             ${renderCheckbox('SKIP_BRAND_SITE_SCREENSHOT', cfg, 'Skip the brand-extract viewport screenshot of the customer brand URL (Brandfetch still runs for logo + colors). Saves ~15s per run; turn on when you trust the brand JSON and do not need fresh site inspiration for the build prompt.')}
             ${renderCheckbox('MOBILE_VISUAL_ENABLED', cfg, 'Render the host app inside a simulated mobile device shell (phone chrome). Used for Layer demos and other mobile-first flows. Only affects non-slide scenes.')}
             ${renderCheckbox('VERBOSE', cfg, 'Emit verbose pipeline logs. Useful when debugging a stuck stage or unexpected behavior; noisy for routine runs.')}
-            ${renderNumberField('MAX_REFINEMENT_ITERATIONS', cfg, 'Max QA refinement loops after the initial build (1–5). Each iteration re-runs build-qa and, if below threshold, asks the LLM to fix flagged issues. Higher = more chances to hit the QA threshold but more cost.', 1, 5)}
-            ${renderSelect('BUILD_FIX_MODE', cfg, 'How refinement iterations route QA failures. auto (recommended) picks between fullbuild and touchup per failure type. fullbuild always regenerates the full HTML. touchup always patches only the flagged scene — cheap but can miss cross-scene issues.', [
+            ${renderSelect('BUILD_FIX_MODE', cfg, 'How refinement iterations route QA failures. "auto" (recommended) picks between agent-touchup, touchup, and fullbuild based on signals + agent context. "agent-touchup" pauses on a continue-gate so an AI agent (Cursor / Claude Code) makes surgical edits — DEFAULT under PIPE_AGENT_MODE=1. "touchup" is the legacy LLM-narrowed regen of the lowest-scoring step. "fullbuild" regenerates the whole HTML.', [
               { value: 'auto', label: 'auto (recommended)' },
-              { value: 'fullbuild', label: 'fullbuild' },
-              { value: 'touchup', label: 'touchup' },
+              { value: 'agent-touchup', label: 'agent-touchup (default in agent mode)' },
+              { value: 'touchup', label: 'touchup (legacy LLM regen, narrowed)' },
+              { value: 'fullbuild', label: 'fullbuild (full LLM regen)' },
             ])}
           </div>
 

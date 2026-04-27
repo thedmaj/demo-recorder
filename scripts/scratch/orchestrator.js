@@ -138,8 +138,14 @@ const STAGES = [
   'script',
   // brand-extract after script so demo-script.json persona.company exists for Brandfetch / slug
   'brand-extract',
+  'prompt-fidelity-check',   // Story-fidelity gate: diffs prompt.txt entities vs demo-script.json
+                             //   before script-critique. Critical drift in agent mode pauses the
+                             //   orchestrator on a continue-gate so the agent fixes before build.
   'script-critique',
-  'embed-script-validate',   // Phase 3: narration/visual coherence check (skips when no GCP creds)
+  'data-realism-check',      // Sample-data realism gate: catches generic placeholders, persona/
+                             //   balance inconsistencies, fake-looking transaction feeds, masking
+                             //   format mismatches BEFORE the build LLM bakes them into HTML.
+  'embed-script-validate',   // narration/visual coherence (Vertex embeddings → Haiku fallback)
   // 'plaid-link-capture',  // DISABLED — using manual Playwright recording of real Plaid Link
   'build',
   'plaid-link-qa',
@@ -151,6 +157,9 @@ const STAGES = [
   'figma-review',
   'post-process',
   'voiceover',
+  'story-echo-check',        // Whole-video story-fidelity gate: Sonnet grades whether the
+                             //   voiceover end-to-end answers the user's prompt.txt pitch.
+                             //   Critical drift in agent mode pauses on a continue-gate.
   'coverage-check',          // Narration coverage: % of scripted steps/words that made it into voiceover
   'auto-gap',                // Intelligent inter-scene timing: clips video to narration+gap, not raw recording
   'resync-audio',
@@ -159,7 +168,11 @@ const STAGES = [
   'ai-suggest-overlays',    // Gemini 2.0 Flash: per-step overlay suggestion patches (skips when no credentials)
   'render',
   'ppt',
-  'touchup',
+  'touchup',                 // POST-RENDER Remotion polish stage. Cosmetic only — edits Remotion
+                             //   compositions + overlay-plan.json. Does NOT modify scratch-app HTML.
+                             //   For build-time HTML fixes use `pipe qa-touchup` instead. Disable
+                             //   with --no-touchup. (Distinct from --build-fix-mode=touchup, which
+                             //   is the LLM-narrowed app regeneration path.)
 ];
 
 // ── CLI arg parsing ───────────────────────────────────────────────────────────
@@ -941,9 +954,57 @@ function resolveStartIndex(fromStage) {
 }
 
 // ── Build fix-mode routing (Phase 1) ─────────────────────────────────────────
-
-const VALID_BUILD_FIX_MODES = new Set(['auto', 'touchup', 'fullbuild']);
+//
+// Modes (orchestrator-native vocabulary; bin/pipe.js translates user-facing
+// aliases smart=auto, rebuild=fullbuild, patch=touchup before forwarding):
+//
+//   - auto          : routing heuristics decide between touchup / fullbuild /
+//                     agent-touchup based on QA signals + agent context.
+//   - touchup       : LLM regenerates the full app with a narrowed prompt
+//                     focused on the lowest-scoring failing step. Legacy.
+//   - fullbuild     : LLM regenerates the full app with no narrowing.
+//   - agent-touchup : NEW default for runs initiated under an AI agent
+//                     (Cursor / Claude Code). Orchestrator pauses on a
+//                     continue-gate after each failed build-qa, hands the
+//                     agent a per-step task .md, and the agent makes
+//                     surgical StrReplace edits. NO LLM rebuilds happen on
+//                     refinement passes — the agent owns iteration scope.
+//                     Loop cap: MAX_REFINEMENT_ITERATIONS (default 3).
+const VALID_BUILD_FIX_MODES = new Set(['auto', 'touchup', 'fullbuild', 'agent-touchup']);
 const VALID_BUILD_PHASE_MODES = new Set(['app', 'slides']);
+
+/**
+ * Detect whether the orchestrator is running under an AI agent driver
+ * (Claude Code, Cursor agent mode) versus a human terminal or CI.
+ *
+ *   - Explicit env var `PIPE_AGENT_MODE=1` wins (set by install.sh by
+ *     default for SEs, and the user-facing toggle for opting in/out).
+ *   - Auto-detect via well-known agent envs:
+ *       Claude Code:  CLAUDECODE=1, CLAUDE_CODE_*
+ *       Cursor:       CURSOR_AGENT_*, CURSOR_TRACE_ID
+ *   - `PIPE_AGENT_MODE=0` (or =false) explicitly opts OUT, even if an
+ *     auto-detect signal is present (useful for human verification runs
+ *     inside Claude Code without auto-pausing on continue-gates).
+ *
+ * Returns `{ enabled: bool, source: string|null }` so the orchestrator
+ * can log why the default was picked.
+ */
+function isAgentContext() {
+  const explicit = String(process.env.PIPE_AGENT_MODE ?? '').trim().toLowerCase();
+  if (explicit === '0' || explicit === 'false' || explicit === 'no' || explicit === 'off') {
+    return { enabled: false, source: 'PIPE_AGENT_MODE_off' };
+  }
+  if (explicit === '1' || explicit === 'true' || explicit === 'yes' || explicit === 'on') {
+    return { enabled: true, source: 'PIPE_AGENT_MODE' };
+  }
+  if (process.env.CLAUDECODE === '1' || (process.env.CLAUDE_CODE_VERSION && process.env.CLAUDE_CODE_VERSION.length > 0)) {
+    return { enabled: true, source: 'CLAUDECODE' };
+  }
+  if (process.env.CURSOR_AGENT_MODE === '1' || (process.env.CURSOR_TRACE_ID && process.env.CURSOR_TRACE_ID.length > 0)) {
+    return { enabled: true, source: 'CURSOR_AGENT' };
+  }
+  return { enabled: false, source: null };
+}
 
 function parseBoolEnv(value, defaultValue = false) {
   if (value == null) return defaultValue;
@@ -1065,8 +1126,21 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
     parseInt(process.env.BUILD_FIX_FULLBUILD_STEP_THRESHOLD || '3', 10) || 3
   );
   const touchupEnabled = parseBoolEnv(process.env.TOUCHUP_ENABLED, true);
+  const agentCtx = isAgentContext();
   const reasons = [];
-  let evaluatedMode = requestedMode === 'auto' ? 'touchup' : requestedMode;
+
+  // In `auto` mode, the FIRST routing decision is "are we under an AI agent?"
+  // If yes, pick `agent-touchup` and short-circuit all the systemic-issue
+  // heuristics — the user's contract for that mode is "no rebuilds, agent
+  // makes iterations only." If no agent, fall through to the legacy
+  // touchup/fullbuild dispatch.
+  let evaluatedMode;
+  if (requestedMode === 'auto' && agentCtx.enabled) {
+    evaluatedMode = 'agent-touchup';
+    reasons.push(`agent_context_${agentCtx.source}`);
+  } else {
+    evaluatedMode = requestedMode === 'auto' ? 'touchup' : requestedMode;
+  }
 
   const qaReportPath = path.join(versionedDir, `qa-report-${iteration}.json`);
   const qaReport = readJsonSafe(qaReportPath);
@@ -1091,7 +1165,30 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
       ? qaReport.deterministicReasons
       : [];
 
-  if (requestedMode === 'auto') {
+  if (requestedMode === 'auto' && evaluatedMode === 'agent-touchup') {
+    // Agent-touchup wins regardless of the systemic-issue heuristics — the
+    // mode's contract is "no rebuilds, agent makes iterations only." We
+    // still surface the signals as advisory reasons so logs reveal what
+    // was flagged (the agent reads these via the qa-touchup task .md too).
+    if (!fs.existsSync(path.join(versionedDir, 'scratch-app', 'index.html'))) {
+      reasons.push('advisory:no_index_html');
+    }
+    if (detectPlaywrightAlignmentMismatch(versionedDir)) {
+      reasons.push('advisory:playwright_demo_script_mismatch');
+    }
+    if (qaReport && typeof qaReport.overrideReason === 'string' && qaReport.overrideReason.trim()) {
+      reasons.push('advisory:build_qa_guardrail_override');
+    }
+    if (!deterministicPassed) {
+      reasons.push('advisory:deterministic_blocker_gate');
+    }
+    const failingDistinctSteps = new Set(
+      stepsWithIssues.map((s) => s?.stepId).filter(Boolean)
+    );
+    if (failingDistinctSteps.size >= fullbuildStepThreshold) {
+      reasons.push(`advisory:failing_steps_gte_${fullbuildStepThreshold}`);
+    }
+  } else if (requestedMode === 'auto') {
     if (!fs.existsSync(path.join(versionedDir, 'scratch-app', 'index.html'))) {
       evaluatedMode = 'fullbuild';
       reasons.push('no_index_html');
@@ -1157,7 +1254,78 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
     deterministicPassed,
     deterministicBlockerCount,
     deterministicReasons,
+    agentContext: agentCtx,
   };
+}
+
+/**
+ * Agent-touchup gate.
+ *
+ * When the build-qa refinement loop chose `executedMode=agent-touchup`, we
+ * call this in place of `build-app.main()`. The function:
+ *
+ *   1. Builds the per-step QA touchup prompt (`scripts/scratch/utils/qa-touchup`)
+ *      with `suppressSystemicGate=true` and `orchestratorDriven=true` so the
+ *      agent gets the right CTA (`pipe continue`) and no "stop and rebuild"
+ *      escalation block (the orchestrator's contract is no rebuilds).
+ *   2. Writes `<runDir>/qa-touchup-task.md`.
+ *   3. Emits a structured `::PIPE::qa_touchup_task_ready` event so dashboards
+ *      and downstream tooling can react.
+ *   4. Calls `await promptContinue(...)` — the existing continue-gate. The
+ *      orchestrator stays alive (same process, same iter counter) and
+ *      resumes when the agent calls `pipe continue <RUN_ID>`.
+ *
+ * If the helper throws (e.g. no QA report, no scratch-app), the function
+ * logs the failure and returns `{ skipped: true }` so the caller can choose
+ * to break the loop without crashing the whole pipeline.
+ */
+async function runAgentTouchupGate({ runDir, iteration, fixModeDecision, phaseMode }) {
+  const { buildQaTouchupPrompt } = require('./utils/qa-touchup');
+  let result;
+  try {
+    result = buildQaTouchupPrompt(runDir, {
+      suppressSystemicGate: true,
+      orchestratorDriven: true,
+    });
+  } catch (err) {
+    cliWarn(`[Orchestrator] agent-touchup helper failed (${err.message}) — skipping iteration.`);
+    return { skipped: true, error: err.message };
+  }
+
+  const taskPath = path.join(runDir, 'qa-touchup-task.md');
+  try {
+    fs.writeFileSync(taskPath, result.promptMarkdown, 'utf8');
+  } catch (err) {
+    cliWarn(`[Orchestrator] could not write ${taskPath}: ${err.message}`);
+    return { skipped: true, error: err.message };
+  }
+
+  const summary = result.summary;
+  emitPipeEvent('qa_touchup_task_ready', {
+    iteration,
+    phase: phaseMode,
+    runId: path.basename(runDir),
+    taskPath,
+    failingStepCount: summary.failingStepCount,
+    distinctFailingSteps: summary.distinctFailingSteps,
+    overallScore: summary.overallScore,
+    passThreshold: summary.passThreshold,
+    systemic: summary.systemic,
+    systemicReasons: summary.systemicReasons,
+    fixModeReasons: fixModeDecision.reasons,
+  });
+
+  const relTask = path.relative(PROJECT_ROOT, taskPath);
+  cliLog(`[Orchestrator] agent-touchup gate (iter ${iteration}, phase=${phaseMode}): ${summary.failingStepCount} failing step(s), score ${summary.overallScore ?? '?'}/${summary.passThreshold}.`);
+  cliLog(`[Orchestrator]   task: ${relTask}`);
+  cliLog(`[Orchestrator]   open it in Cursor or Claude Code (Agent mode) and edit the failing steps,`);
+  cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${path.basename(runDir)}`);
+
+  await promptContinue(
+    `QA touchup ready (iter ${iteration}). Open ${relTask} in your AI agent, edit the ` +
+    `failing steps, then continue.`
+  );
+  return { skipped: false, summary };
 }
 
 /**
@@ -1769,14 +1937,133 @@ async function runScratchPipeline({
     await require('./scratch/brand-extract').main();
   });
 
+  // Stage 3b: prompt-fidelity-check
+  // Diffs entities in inputs/prompt.txt vs demo-script.json BEFORE the build LLM
+  // commits to a wrong demo. Brand / persona / products / Plaid Link mode
+  // mismatches are critical; dollar-amount drift is a warning. Under
+  // PIPE_AGENT_MODE=1, critical drift pauses the orchestrator on a continue-gate
+  // so the agent fixes the script before downstream stages run.
+  await stageRunner('prompt-fidelity-check', async () => {
+    delete require.cache[require.resolve('./scratch/prompt-fidelity-check')];
+    const fidelityReport = await require('./scratch/prompt-fidelity-check').main();
+    const ctx = isAgentContext();
+    if (
+      fidelityReport &&
+      fidelityReport.comparison &&
+      fidelityReport.comparison.criticalCount > 0 &&
+      ctx.enabled &&
+      !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)
+    ) {
+      const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
+      const taskRel = path.relative(PROJECT_ROOT, path.join(runDir, 'prompt-fidelity-task.md'));
+      cliWarn(
+        `[Orchestrator] prompt-fidelity-check found ${fidelityReport.comparison.criticalCount} ` +
+        `critical drift(s) (score ${fidelityReport.comparison.score}/100). ` +
+        `Pausing for agent fix.`
+      );
+      cliLog(`[Orchestrator]   task: ${taskRel}`);
+      cliLog(`[Orchestrator]   open it in Cursor or Claude Code (Agent mode), edit demo-script.json,`);
+      cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${path.basename(runDir)}`);
+      await promptContinue(
+        `Prompt-fidelity drift detected (${fidelityReport.comparison.criticalCount} critical). ` +
+        `Open ${taskRel} in your AI agent, fix the drifts, then continue.`
+      );
+    }
+  });
+
   // Stage 4: script-critique
   await stageRunner('script-critique', async () => {
     await runScriptCritique();
   });
 
-  // Stage 5: embed-script-validate (Phase 3 — graceful no-op if VERTEX_AI_PROJECT_ID unset)
+  // Stage 4b: data-realism-check
+  // Catches generic placeholder data, persona/balance inconsistencies, fake-
+  // looking transaction descriptions, and masking style drift in the LLM-
+  // generated demo-script.json. Backed by deterministic regex checks plus an
+  // optional Haiku grader (skipped via DATA_REALISM_HAIKU=0). Critical issues
+  // pause on a continue-gate under PIPE_AGENT_MODE=1.
+  await stageRunner('data-realism-check', async () => {
+    delete require.cache[require.resolve('./scratch/data-realism-check')];
+    const realismReport = await require('./scratch/data-realism-check').main();
+    const ctx = isAgentContext();
+    if (
+      realismReport &&
+      realismReport.criticalCount > 0 &&
+      !realismReport.skipped &&
+      ctx.enabled &&
+      !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)
+    ) {
+      const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
+      const taskRel = path.relative(PROJECT_ROOT, path.join(runDir, 'data-realism-task.md'));
+      cliWarn(
+        `[Orchestrator] data-realism-check found ${realismReport.criticalCount} ` +
+        `critical issue(s) in sample data. Pausing for agent fix.`
+      );
+      cliLog(`[Orchestrator]   task: ${taskRel}`);
+      cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${path.basename(runDir)}`);
+      await promptContinue(
+        `Data-realism issues (${realismReport.criticalCount} critical). ` +
+        `Open ${taskRel} in your AI agent, fix demo-script.json, then continue.`
+      );
+    }
+  });
+
+  // Stage 5: embed-script-validate
+  // Backends: Vertex/Google embeddings (preferred) → Anthropic Haiku fallback.
+  // Always runs when ANTHROPIC_API_KEY is present (was a silent no-op for SE
+  // setups without GCP creds prior to the hyper-realism upgrade). Under
+  // PIPE_AGENT_MODE=1, ≥1 flag pauses on a continue-gate so the agent can
+  // align narration with visualState before build commits.
   await stageRunner('embed-script-validate', async () => {
-    await require('./scratch/embed-script-validate').main();
+    delete require.cache[require.resolve('./scratch/embed-script-validate')];
+    const validateReport = await require('./scratch/embed-script-validate').main();
+    const ctx = isAgentContext();
+    if (
+      validateReport &&
+      Array.isArray(validateReport.flags) &&
+      validateReport.flags.length > 0 &&
+      !validateReport.skipped &&
+      ctx.enabled &&
+      !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)
+    ) {
+      const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
+      const runId = path.basename(runDir);
+      // Write a small task .md so the agent has a concrete editing checklist.
+      const taskPath = path.join(runDir, 'script-coherence-task.md');
+      const lines = [
+        `# Script-coherence flags — ${runId}\n`,
+        `> The narration and \`visualState\` for the steps below disagree on what the user sees vs what the voiceover claims. ` +
+          `Open \`demo-script.json\` and align them before continuing.\n`,
+        `> Backend: \`${validateReport.backend || 'embeddings'}\`  ·  threshold: \`${validateReport.threshold}\`\n`,
+        `## Flagged steps\n`,
+      ];
+      for (const f of validateReport.flags) {
+        lines.push(`### \`${f.stepId}\` — ${f.message}\n`);
+        lines.push(`- **Narration:** ${f.narration}`);
+        lines.push(`- **Visual state:** ${f.visualState}`);
+        if (f.reason) lines.push(`- **Why flagged:** ${f.reason}`);
+        lines.push(``);
+      }
+      lines.push(
+        `## Editing contract\n`,
+        `- Edit \`demo-script.json\` directly. Use \`Read\` + \`StrReplace\`. Preserve schema.`,
+        `- Either rewrite the narration to match the visual state, OR rewrite the visualState to match what the narration claims — whichever reflects the user's prompt better.`,
+        `- Do NOT touch \`build-app.js\` or \`prompt-templates.js\`.\n`,
+        `## Final\n`,
+        `Run \`npm run pipe -- continue ${runId}\` once you're done.\n`,
+      );
+      try { fs.writeFileSync(taskPath, lines.join('\n'), 'utf8'); } catch (_) {}
+      cliWarn(
+        `[Orchestrator] embed-script-validate flagged ${validateReport.flags.length} narration/visual ` +
+        `mismatch(es). Pausing for agent fix.`
+      );
+      cliLog(`[Orchestrator]   task: ${path.relative(PROJECT_ROOT, taskPath)}`);
+      cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${runId}`);
+      await promptContinue(
+        `Script coherence flags (${validateReport.flags.length}). ` +
+        `Open ${path.relative(PROJECT_ROOT, taskPath)} in your AI agent and fix before continuing.`
+      );
+    }
   });
 
   // Stage 4b: value-prop claim verification (inline — fast Haiku call)
@@ -1965,12 +2252,16 @@ async function runScratchPipeline({
       cliLog('[Orchestrator] mobile-visual enabled from prompt language (mobile intent detected).');
     }
   }
+  // Phase 3 hyper-realism upgrade: raise both the QA pass bar and the
+  // refinement-loop ceiling. Tokens are not a constraint; we want polished,
+  // not "fine enough." Defaults are documented in .env.example and are
+  // overridable per-run via `--qa-threshold=` / `--max-refinement-iterations=`.
   const resolvedBuildIterations = Number.isInteger(maxRefinementIterationsOverride) && maxRefinementIterationsOverride > 0
     ? maxRefinementIterationsOverride
-    : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
+    : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '5', 10);
   const resolvedBuildQaThreshold = Number.isInteger(qaThresholdOverride) && qaThresholdOverride > 0
     ? qaThresholdOverride
-    : parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+    : parseInt(process.env.QA_PASS_THRESHOLD || '88', 10);
   const requestedBuildFixMode = String(buildFixModeOverride || process.env.BUILD_FIX_MODE || 'auto').toLowerCase();
   const plaidLinkQaMode = String(process.env.PLAID_LINK_QA_MODE || 'auto').trim().toLowerCase();
   const buildQaPlaidMode = String(process.env.BUILD_QA_PLAID_MODE || 'auto').trim().toLowerCase();
@@ -2031,7 +2322,26 @@ async function runScratchPipeline({
         });
       }
 
-      if (shouldRun('build')) {
+      // ── Refinement step: either the LLM regenerates (touchup / fullbuild),
+      // or — when running under an AI agent — we skip the build stage and
+      // hand control to the agent via a continue-gate. The agent makes
+      // surgical StrReplace edits to the existing scratch-app and resumes
+      // the orchestrator with `pipe continue <RUN_ID>`.
+      const isAgentTouchupIter = fixModeDecision.executedMode === 'agent-touchup' && iter > 1;
+      if (isAgentTouchupIter) {
+        const gateResult = await runAgentTouchupGate({
+          runDir: versionedDir,
+          iteration: iter,
+          fixModeDecision,
+          phaseMode,
+        });
+        if (gateResult.skipped) {
+          cliWarn(`[Orchestrator] agent-touchup gate skipped on iter ${iter} — breaking refinement loop.`);
+          break;
+        }
+        // After the gate releases (agent edited + ran `pipe continue`),
+        // fall through to the build-qa step below to re-score the run.
+      } else if (shouldRun('build')) {
         let buildError = null;
         await runStage('build', async () => {
           try {
@@ -2188,10 +2498,10 @@ async function runScratchPipeline({
     let bestRecording = null;
     const resolvedMaxIterations = Number.isInteger(maxRefinementIterationsOverride) && maxRefinementIterationsOverride > 0
       ? maxRefinementIterationsOverride
-      : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '3', 10);
+      : parseInt(process.env.MAX_REFINEMENT_ITERATIONS || '5', 10);
     const resolvedQaThreshold = Number.isInteger(qaThresholdOverride) && qaThresholdOverride > 0
       ? qaThresholdOverride
-      : parseInt(process.env.QA_PASS_THRESHOLD || '80', 10);
+      : parseInt(process.env.QA_PASS_THRESHOLD || '88', 10);
     const maxIterations = (studioMode || manualRecord) ? 1 : resolvedMaxIterations;
     const qaThreshold = resolvedQaThreshold;
     const effectiveBuildFixMode = String(buildFixModeOverride || process.env.BUILD_FIX_MODE || 'auto').toLowerCase();
@@ -2626,6 +2936,39 @@ async function runScratchPipeline({
         stdio: 'inherit',
         cwd: PROJECT_ROOT,
       });
+    }, timer);
+  }
+
+  // Stage: story-echo-check — whole-video fidelity gate.
+  // Asks Sonnet whether the voiceover end-to-end answers the user's pitch.
+  // Skipped automatically when ANTHROPIC_API_KEY is missing or
+  // STORY_ECHO_CHECK=0. Critical drift in agent mode pauses on a continue-gate
+  // so the agent can fix demo-script narration + re-run voiceover.
+  if (shouldRun('story-echo-check')) {
+    await runStage('story-echo-check', async () => {
+      delete require.cache[require.resolve('./scratch/story-echo-check')];
+      const echoReport = await require('./scratch/story-echo-check').main();
+      const ctx = isAgentContext();
+      if (
+        echoReport &&
+        echoReport.passed === false &&
+        !echoReport.skipped &&
+        ctx.enabled &&
+        !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)
+      ) {
+        const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
+        const taskRel = path.relative(PROJECT_ROOT, path.join(runDir, 'story-echo-task.md'));
+        cliWarn(
+          `[Orchestrator] story-echo-check failed (score ${echoReport.score}/${echoReport.threshold}). ` +
+          `Pausing for agent fix.`
+        );
+        cliLog(`[Orchestrator]   task: ${taskRel}`);
+        cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${path.basename(runDir)}`);
+        await promptContinue(
+          `Story-echo drift (${echoReport.score}/${echoReport.threshold}). ` +
+          `Open ${taskRel} in your AI agent, fix demo-script narration / re-run voiceover, then continue.`
+        );
+      }
     }, timer);
   }
 
@@ -3522,12 +3865,24 @@ async function main() {
   ], { runDir: versionedDir });
 }
 
-main().catch(err => {
-  cliError(`[Orchestrator] Fatal error: ${err.message}`);
-  emitPipeEvent('pipeline_end', { status: 'failed', message: err.message });
-  if (err.stack) console.error(err.stack);
-  cleanupPipelinePidFile();
-  process.exit(1);
-});
+// Only auto-run when invoked as a script (not when required by unit tests).
+// `require.main === module` is the canonical Node idiom for this; previously
+// every `require('orchestrator')` (including from tests) would kick off the
+// whole pipeline.
+if (require.main === module) {
+  main().catch(err => {
+    cliError(`[Orchestrator] Fatal error: ${err.message}`);
+    emitPipeEvent('pipeline_end', { status: 'failed', message: err.message });
+    if (err.stack) console.error(err.stack);
+    cleanupPipelinePidFile();
+    process.exit(1);
+  });
+}
 
-module.exports = { main };
+module.exports = {
+  main,
+  // Exposed for unit tests of the agent-driven refinement loop:
+  isAgentContext,
+  analyzeFixModeForQaIteration,
+  VALID_BUILD_FIX_MODES,
+};

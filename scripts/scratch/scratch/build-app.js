@@ -2340,18 +2340,60 @@ async function main(opts = {}) {
 
         // Load QA frame images for steps that failed — visual context for the build agent.
         // Without frames, the agent is fixing visual problems from a text description alone.
+        //
+        // Frame-naming reality: there are TWO conventions in this codebase:
+        //   (A) Post-record QA writes        `qa-frames/<stepId>-{start,mid,end}.png`
+        //   (B) Build-QA writes              `artifacts/qa/frames/<stepId>-buildqa-<rowIndex>-{start,mid,end}.png`
+        //                                     (also mirrored to `qa-frames/<stepId>-buildqa-...`)
+        // Until the fix below, only (A) was searched for, which meant the LLM touchup
+        // loop got ZERO visual context after a build-QA failure (since build-QA only
+        // writes (B) names). Now we try both conventions per (suffix, stepId), preferring
+        // the latest rowIndex of (B) when present.
         const framesDirPrimary = path.join(RUN_LAYOUT.qaDir, 'frames');
         const framesDirLegacy = path.join(OUT_DIR, 'qa-frames');
-        const framesDir = fs.existsSync(framesDirPrimary) ? framesDirPrimary : framesDirLegacy;
-        const failedSteps = (qaReport.stepsWithIssues || []).map(s => s.stepId);
-        if (failedSteps.length > 0 && fs.existsSync(framesDir)) {
+        const framesDirsToScan = [framesDirPrimary, framesDirLegacy].filter((d) => {
+          try { return fs.existsSync(d); } catch (_) { return false; }
+        });
+        const failedSteps = (qaReport.stepsWithIssues || []).map(s => s.stepId).filter(Boolean);
+        if (failedSteps.length > 0 && framesDirsToScan.length > 0) {
           if (failedSteps.length > 8) {
             console.warn(`[Build] WARNING: ${failedSteps.length} failed steps but only 8 included in refinement context — subsequent passes needed`);
           }
+
+          /**
+           * Resolve a single frame path for `(stepId, suffix)`. Strategy:
+           *   1. Direct hit on `<stepId>-<suffix>.png` (post-record convention).
+           *   2. Highest-rowIndex match for `<stepId>-buildqa-<row>-<suffix>.png`
+           *      across all known frames dirs (build-QA convention).
+           */
+          const resolveFramePath = (stepId, suffix) => {
+            for (const dir of framesDirsToScan) {
+              const direct = path.join(dir, `${stepId}-${suffix}.png`);
+              if (fs.existsSync(direct)) return direct;
+            }
+            const buildQaPattern = new RegExp(
+              `^${stepId.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}-buildqa-(\\d+)-${suffix}\\.png$`,
+            );
+            let best = null;
+            for (const dir of framesDirsToScan) {
+              let files;
+              try { files = fs.readdirSync(dir); } catch (_) { continue; }
+              for (const f of files) {
+                const m = f.match(buildQaPattern);
+                if (!m) continue;
+                const rowIndex = parseInt(m[1], 10);
+                if (!best || rowIndex > best.rowIndex) {
+                  best = { rowIndex, file: path.join(dir, f) };
+                }
+              }
+            }
+            return best ? best.file : null;
+          };
+
           for (const stepId of failedSteps.slice(0, 8)) { // cap to limit token budget
             for (const suffix of ['start', 'mid']) {
-              const framePath = path.join(framesDir, `${stepId}-${suffix}.png`);
-              if (fs.existsSync(framePath)) {
+              const framePath = resolveFramePath(stepId, suffix);
+              if (framePath) {
                 try {
                   const base64 = fs.readFileSync(framePath).toString('base64');
                   qaFrames.push({ stepId, suffix, base64 });
