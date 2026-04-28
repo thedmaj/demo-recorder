@@ -5285,11 +5285,24 @@
         ? `<span title="Owner" style="font-size:10px;color:rgba(255,255,255,0.45);padding:2px 6px;background:rgba(255,255,255,0.05);border-radius:999px;border:1px solid rgba(255,255,255,0.1);flex-shrink:0">@${esc(app.owner.login)}</span>`
         : '';
       const promptBtn = app.promptViewerUrl
-        ? `<a class="demo-app-prompt-btn" href="${esc(app.promptViewerUrl)}" target="_blank" rel="noopener" style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer;text-decoration:none">Prompt</a>`
+        ? `<a class="demo-app-prompt-btn" href="${esc(app.promptViewerUrl)}" target="_blank" rel="noopener"
+             title="Open the original inputs/prompt.txt that produced this demo. Renders as markdown with copy-to-clipboard so you can reuse the prompt for future builds."
+             style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer;text-decoration:none">Prompt</a>`
         : '';
       const publishBtn = app.source === 'remote'
-        ? `<span style="font-size:10px;color:rgba(255,255,255,0.45);padding:4px 8px;background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.3);border-radius:5px;flex-shrink:0">Remote</span>`
-        : `<button class="demo-app-publish-btn" data-run="${esc(app.runId)}" type="button" style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer">Publish</button>`;
+        ? `<span title="This demo lives in the shared plaid-demo-apps repo (someone else published it). Run \`pipe pull\` to refresh; only the owner can re-publish."
+                 style="font-size:10px;color:rgba(255,255,255,0.45);padding:4px 8px;background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.3);border-radius:5px;flex-shrink:0">Remote</span>`
+        : `<button class="demo-app-publish-btn" data-run="${esc(app.runId)}" type="button"
+                   title="Package this demo (redact secrets, strip logs + research artifacts), push it to your namespace in plaid-demo-apps, and open an auto-merging PR. Teammates can then \`pipe pull\` to launch it locally."
+                   style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer">Publish</button>`;
+
+      // Copy PID button — copies the run ID (the canonical identifier an
+      // agent in Claude Code / Cursor needs to operate on this demo:
+      // file paths under out/demos/<runId>/, `pipe qa-touchup <runId>`,
+      // `pipe stage build-qa <runId>`, etc.).
+      const copyPidBtn = `<button class="demo-app-copy-pid-btn" data-run="${esc(app.runId)}" type="button"
+        title="Copy the process ID if you want an agent to modify this demo in Claude Code / Cursor"
+        style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer">Copy PID</button>`;
 
       card.innerHTML = `
         ${statusDot}
@@ -5299,39 +5312,90 @@
             ${qaBadge}
             ${buildBadge}
             ${ownerBadge}
-            <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Rename</button>
-            <button class="demo-app-clone-btn" data-run="${esc(app.runId)}" type="button" style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Clone</button>
+            <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button"
+              title="Rename the friendly display name shown on this card. The underlying run ID (the directory name on disk) does not change."
+              style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Rename</button>
+            <button class="demo-app-clone-btn" data-run="${esc(app.runId)}" type="button"
+              title="Clone this demo to a fresh run id. Optionally rebrand for a different customer (LLM-driven swap of brand colors, logo, persona, copy) so you can use this app as a starting point without overwriting it."
+              style="padding:2px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;flex-shrink:0">Clone</button>
           </div>
           <div class="demo-app-rename-row" style="display:none;align-items:center;gap:6px;margin-top:6px">
-            <input class="demo-app-rename-input" type="text" maxlength="120" value="${esc(app.displayName || app.runId)}" style="flex:1;min-width:0;padding:5px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.16);border-radius:5px;color:#fff;font-size:12px">
-            <button class="demo-app-rename-save-btn" data-run="${esc(app.runId)}" type="button" style="padding:4px 8px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">Save</button>
-            <button class="demo-app-rename-cancel-btn" type="button" style="padding:4px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer">Cancel</button>
+            <input class="demo-app-rename-input" type="text" maxlength="120" value="${esc(app.displayName || app.runId)}"
+              title="Friendly display name (max 120 chars). Stored in the dashboard's app-names mapping; safe to edit."
+              style="flex:1;min-width:0;padding:5px 8px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.16);border-radius:5px;color:#fff;font-size:12px">
+            <button class="demo-app-rename-save-btn" data-run="${esc(app.runId)}" type="button"
+              title="Save the new display name."
+              style="padding:4px 8px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:11px;cursor:pointer">Save</button>
+            <button class="demo-app-rename-cancel-btn" type="button"
+              title="Discard the rename and restore the previous display name."
+              style="padding:4px 8px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer">Cancel</button>
           </div>
           ${app.displayName && app.displayName !== app.runId
             ? `<div style="font-size:11px;color:rgba(255,255,255,0.3)">Run ID: ${esc(app.runId)}</div>`
             : ''
           }
           ${app.running && app.url
-            ? `<a href="${esc(app.url)}" target="_blank" style="font-size:11px;color:#00A67E;text-decoration:none">${esc(app.url)}</a>`
+            ? `<a href="${esc(app.url)}" target="_blank" title="Open the running demo in a new tab" style="font-size:11px;color:#00A67E;text-decoration:none">${esc(app.url)}</a>`
             : `<span style="font-size:11px;color:rgba(255,255,255,0.3)">Not running</span>`
           }
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
+          ${copyPidBtn}
           ${promptBtn}
           ${publishBtn}
           <a class="btn btn-sm btn-secondary"
              href="/api/runs/${encodeURIComponent(app.runId)}/download-app-package"
+             title="Download a self-contained zip of this demo (HTML + assets + demo-script + Playwright walkthrough). Strips secrets and intermediates so the bundle is safe to share."
              style="text-decoration:none;padding:5px 10px">
              Download
           </a>
           ${app.running
-            ? `<button class="demo-app-open-btn" data-url="${esc(app.url)}" style="padding:5px 12px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">Open ↗</button>
-               <button class="demo-app-stop-btn" data-run="${esc(app.runId)}" style="padding:5px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer">Stop</button>`
-            : `<button class="demo-app-launch-btn" data-run="${esc(app.runId)}" style="padding:5px 14px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Launch</button>`
+            ? `<button class="demo-app-open-btn" data-url="${esc(app.url)}"
+                       title="Open the running preview in a new browser tab. The page hot-reloads automatically when slides are inserted, AI edits land, or other dashboard actions modify the running app."
+                       style="padding:5px 12px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;cursor:pointer">Open ↗</button>
+               <button class="demo-app-stop-btn" data-run="${esc(app.runId)}"
+                       title="Stop the local Express server serving this demo (frees the port). The demo's files on disk are NOT deleted; click Launch to start it again."
+                       style="padding:5px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer">Stop</button>`
+            : `<button class="demo-app-launch-btn" data-run="${esc(app.runId)}"
+                       title="Start a local Express server for this demo (auto-picks a free port from 3750+) and inject the AI-edit overlay. Returns a URL you can open in your browser."
+                       style="padding:5px 14px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Launch</button>`
           }
         </div>
       `;
       list.appendChild(card);
+    });
+
+    // Copy PID — copies the run ID to the clipboard. The label deliberately
+    // says "PID" (process id) per the user-facing wording, but the value
+    // copied is the run id (e.g. 2026-04-27-Chase-Bank-...-v1) — the
+    // canonical handle agents use to operate on a demo.
+    list.querySelectorAll('.demo-app-copy-pid-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const runId = btn.dataset.run;
+        if (!runId) return;
+        try {
+          await navigator.clipboard.writeText(runId);
+          showToast(`Copied PID: ${runId}`, 'success');
+        } catch (err) {
+          // Older browsers / non-secure contexts: fall back to a hidden
+          // textarea + execCommand so the click still produces a usable
+          // clipboard. Best-effort; on failure we toast the value so the
+          // user can copy it manually from the toast.
+          try {
+            const ta = document.createElement('textarea');
+            ta.value = runId;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            showToast(`Copied PID: ${runId}`, 'success');
+          } catch (_) {
+            showToast(`Could not copy automatically — PID is: ${runId}`, 'info');
+          }
+        }
+      });
     });
 
     // Launch buttons
