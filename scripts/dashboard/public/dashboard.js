@@ -879,7 +879,14 @@
     });
     // Lazy-load on first switch (files tab was removed; loadFiles() retained
     // as harmless dead code).
-    if (tabName === 'storyboard' && currentRunId) loadStoryboard();
+    if (tabName === 'storyboard') {
+      // Wire the subtab nav once, then dispatch to whichever subtab is
+      // currently active (canvas vs templates). The canvas subtab still
+      // requires a selected run; the templates subtab does not.
+      setupStoryboardSubtabs();
+      const sub = getActiveStoryboardSubtab();
+      switchStoryboardSubtab(sub);
+    }
     if (tabName === 'config') loadConfig();
     if (tabName === 'pipeline') loadPipeline();
     if (tabName === 'valueprop') loadValueProps();
@@ -3332,6 +3339,411 @@
 
     } catch (e) {
       el.innerHTML = `<div class="empty-state error">Failed to load storyboard: ${esc(e.message)}</div>`;
+    }
+  }
+
+  // ── Storyboard subtabs (Storyboard | Slide Templates) ─────────────────────
+  //
+  // The Storyboard tab has two child panels:
+  //   - #storyboard-content        (existing — canvas + timeline)
+  //   - #slide-templates-content   (new — library browser + uploader + AI editor)
+  //
+  // We persist the active subtab in sessionStorage so navigating away and
+  // back doesn't yank users out of whichever view they were using. Lazy-
+  // load the heavy renderer for whichever subtab is active so we don't pay
+  // the storyboard render cost when the user is only browsing templates.
+  const STORYBOARD_SUBTAB_KEY = 'dashboard:storyboard-subtab';
+  const VALID_STORYBOARD_SUBTABS = ['canvas', 'templates'];
+  let _slideTemplatesLoaded = false;
+
+  function getActiveStoryboardSubtab() {
+    let sub = '';
+    try { sub = sessionStorage.getItem(STORYBOARD_SUBTAB_KEY) || ''; } catch (_) {}
+    return VALID_STORYBOARD_SUBTABS.includes(sub) ? sub : 'canvas';
+  }
+
+  function setupStoryboardSubtabs() {
+    const subnav = document.getElementById('storyboard-subnav');
+    if (!subnav || subnav.dataset.wired === '1') return;
+    subnav.dataset.wired = '1';
+    subnav.addEventListener('click', (evt) => {
+      const btn = evt.target instanceof Element
+        ? evt.target.closest('.storyboard-subtab[data-subtab]')
+        : null;
+      if (!btn) return;
+      switchStoryboardSubtab(btn.dataset.subtab);
+    });
+  }
+
+  function switchStoryboardSubtab(subtab) {
+    if (!VALID_STORYBOARD_SUBTABS.includes(subtab)) subtab = 'canvas';
+    try { sessionStorage.setItem(STORYBOARD_SUBTAB_KEY, subtab); } catch (_) {}
+    document.querySelectorAll('#storyboard-subnav .storyboard-subtab').forEach((el) => {
+      const isActive = el.dataset.subtab === subtab;
+      el.classList.toggle('active', isActive);
+      el.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+    document.querySelectorAll('#tab-storyboard .storyboard-subpanel').forEach((el) => {
+      el.classList.toggle('hidden', el.dataset.subtab !== subtab);
+    });
+    if (subtab === 'canvas') {
+      // Only kick off a re-render if the canvas hasn't been rendered for
+      // this run yet — otherwise we'd lose unsaved narration edits etc.
+      if (currentRunId) {
+        const el = document.getElementById('storyboard-content');
+        if (el && (el.children.length === 0 || el.querySelector('.empty-state'))) {
+          loadStoryboard();
+        }
+      }
+    } else if (subtab === 'templates') {
+      loadSlideTemplatesPanel();
+    }
+  }
+
+  // ── Slide Templates panel ─────────────────────────────────────────────────
+  //
+  // Two-pane layout: left = list (search + upload + scrollable rows), right
+  // = preview iframe + AI chat editor + management actions. The list feeds
+  // from the same `/api/slide-library` endpoint the storyboard's
+  // `+ Insert library slide` modal uses, so anything uploaded here also
+  // appears in the storyboard's slide picker.
+  let _slideTemplates = [];
+  let _selectedSlideTemplateId = null;
+  let _slideTemplatesChatHistory = []; // per-selected-slide; reset on selection change.
+
+  async function loadSlideTemplatesPanel() {
+    const el = document.getElementById('slide-templates-content');
+    if (!el) return;
+    if (!_slideTemplatesLoaded) {
+      el.innerHTML = `
+        <div class="slide-templates-shell">
+          <div class="slide-templates-list-pane">
+            <input type="search" class="slide-templates-search" id="slide-templates-search"
+                   placeholder="Search slide templates…"
+                   title="Filter by name, run id, step id, scene type, or tag" />
+            <input type="file" id="slide-templates-upload-input" style="display:none"
+                   accept=".html,text/html,image/png,image/jpeg,image/webp,image/gif" />
+            <button type="button" class="slide-templates-upload-btn" id="slide-templates-upload-btn"
+                    title="Upload an HTML file or image (png, jpg, webp, gif). Once uploaded the slide appears in the storyboard's slide library picker.">
+              ＋ Upload (HTML or image)
+            </button>
+            <div class="slide-templates-list" id="slide-templates-list"></div>
+          </div>
+          <div class="slide-templates-preview-pane" id="slide-templates-preview">
+            <div class="slide-templates-empty">Select a slide template on the left to preview and edit.</div>
+          </div>
+        </div>`;
+      wireSlideTemplatesPanel();
+      _slideTemplatesLoaded = true;
+    }
+    await refreshSlideTemplatesList();
+  }
+
+  function wireSlideTemplatesPanel() {
+    const search = document.getElementById('slide-templates-search');
+    const uploadBtn = document.getElementById('slide-templates-upload-btn');
+    const fileInput = document.getElementById('slide-templates-upload-input');
+    const list = document.getElementById('slide-templates-list');
+    if (search) {
+      search.addEventListener('input', () => renderSlideTemplatesList(search.value || ''));
+    }
+    if (uploadBtn && fileInput) {
+      uploadBtn.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', () => handleSlideTemplateUpload(fileInput));
+    }
+    if (list) {
+      list.addEventListener('click', (evt) => {
+        const row = evt.target instanceof Element
+          ? evt.target.closest('.slide-template-row[data-slide-id]')
+          : null;
+        if (!row) return;
+        selectSlideTemplate(row.dataset.slideId);
+      });
+    }
+  }
+
+  async function refreshSlideTemplatesList() {
+    try {
+      const data = await api('/api/slide-library');
+      _slideTemplates = Array.isArray(data && data.slides) ? data.slides : [];
+    } catch (err) {
+      _slideTemplates = [];
+      const list = document.getElementById('slide-templates-list');
+      if (list) list.innerHTML = `<div class="slide-templates-empty">Failed to load: ${esc(err.message)}</div>`;
+      return;
+    }
+    const search = document.getElementById('slide-templates-search');
+    renderSlideTemplatesList(search ? (search.value || '') : '');
+    // Re-select the previously selected slide if it still exists; else
+    // pick the first one so the right pane isn't empty on entry.
+    if (_selectedSlideTemplateId && _slideTemplates.some((s) => s.id === _selectedSlideTemplateId)) {
+      selectSlideTemplate(_selectedSlideTemplateId, { reloadPreview: true });
+    } else if (_slideTemplates.length > 0) {
+      selectSlideTemplate(_slideTemplates[0].id);
+    } else {
+      renderSlideTemplatePreview(null);
+    }
+  }
+
+  function renderSlideTemplatesList(query) {
+    const list = document.getElementById('slide-templates-list');
+    if (!list) return;
+    const q = String(query || '').trim().toLowerCase();
+    const filtered = q
+      ? _slideTemplates.filter((s) => {
+          const hay = [
+            s.name, s.id, s.sceneType, s.kind, s.source, s.sourceRunId, s.sourceStepId,
+            ...(Array.isArray(s.tags) ? s.tags : []),
+          ].map((v) => String(v || '').toLowerCase()).join(' ');
+          return hay.includes(q);
+        })
+      : _slideTemplates;
+    if (filtered.length === 0) {
+      list.innerHTML = `<div class="slide-templates-empty">No slide templates${q ? ' matching that filter' : ''} yet.</div>`;
+      return;
+    }
+    list.innerHTML = filtered.map((slide) => {
+      const isActive = slide.id === _selectedSlideTemplateId;
+      const kind = slide.kind === 'image' ? 'image' : 'html';
+      const source = slide.source || 'builtin';
+      const icon = kind === 'image' ? '🖼' : '📄';
+      const badgeClass = source === 'upload' ? 'upload' : (source === 'submit' ? 'submit' : 'builtin');
+      const badgeLabel = source === 'upload' ? 'Upload' : (source === 'submit' ? 'Submit' : 'Built-in');
+      return `
+        <div class="slide-template-row${isActive ? ' active' : ''}" data-slide-id="${esc(slide.id)}"
+             title="${esc(slide.name || slide.id)} — ${esc(slide.id)}">
+          <span class="kind-icon" aria-hidden="true">${icon}</span>
+          <span class="row-name">${esc(slide.name || slide.id)}</span>
+          <span class="row-badge ${badgeClass}">${badgeLabel}</span>
+        </div>`;
+    }).join('');
+  }
+
+  function selectSlideTemplate(slideId, opts = {}) {
+    if (!slideId) return;
+    if (slideId !== _selectedSlideTemplateId) {
+      _slideTemplatesChatHistory = []; // fresh chat per slide
+    }
+    _selectedSlideTemplateId = slideId;
+    document.querySelectorAll('#slide-templates-list .slide-template-row').forEach((el) => {
+      el.classList.toggle('active', el.dataset.slideId === slideId);
+    });
+    const slide = _slideTemplates.find((s) => s.id === slideId);
+    renderSlideTemplatePreview(slide || null, opts);
+  }
+
+  function renderSlideTemplatePreview(slide, opts = {}) {
+    const pane = document.getElementById('slide-templates-preview');
+    if (!pane) return;
+    if (!slide) {
+      pane.innerHTML = '<div class="slide-templates-empty">Select a slide template on the left to preview and edit.</div>';
+      return;
+    }
+    // Cache-buster on the iframe URL so the AI editor's writes are picked
+    // up immediately on reload — without it, the browser would happily
+    // serve the stale HTML until the user did a hard refresh.
+    const cacheBust = Date.now();
+    const previewUrl = `/api/slide-library/slides/${encodeURIComponent(slide.id)}/html?_=${cacheBust}`;
+    const isUserOwned = slide.source === 'upload' || slide.source === 'submit';
+    const standaloneHref = `/api/slide-library/slides/${encodeURIComponent(slide.id)}/html`;
+    const sourceLabel = slide.source === 'upload' ? 'Uploaded'
+      : slide.source === 'submit' ? 'Submitted from a run'
+      : 'Built-in';
+    const subtitle = [
+      slide.kind === 'image' ? 'Image' : 'HTML',
+      sourceLabel,
+      slide.sceneType ? slide.sceneType : null,
+    ].filter(Boolean).join(' • ');
+
+    pane.innerHTML = `
+      <div class="slide-templates-actions" data-slide-id="${esc(slide.id)}">
+        <strong style="margin-right:8px">${esc(slide.name || slide.id)}</strong>
+        <span style="color:rgba(255,255,255,0.5);font-size:12px;margin-right:auto">${esc(subtitle)}</span>
+        <a href="${esc(standaloneHref)}" target="_blank" rel="noopener"
+           title="Open the slide template in a new tab">Open standalone</a>
+        <button type="button" class="slide-tpl-rename"
+                title="Rename the display name shown in the slide library and storyboard picker">Rename</button>
+        ${isUserOwned ? `
+          <button type="button" class="slide-tpl-delete danger"
+                  title="Delete this slide template. Cannot be undone — built-in templates are read-only.">Delete</button>
+        ` : ''}
+      </div>
+      <iframe class="slide-templates-preview-frame" id="slide-templates-preview-frame"
+              src="${esc(previewUrl)}" sandbox="allow-same-origin allow-scripts"
+              title="Slide template preview"></iframe>
+      <div class="slide-templates-chat" data-slide-id="${esc(slide.id)}">
+        <div class="slide-templates-chat-history" id="slide-templates-chat-history"></div>
+        <div class="slide-templates-chat-input-row">
+          <textarea class="slide-templates-chat-input" id="slide-templates-chat-input"
+                    placeholder="Ask the AI editor to change this slide template (e.g. 'make the title teal', 'tighten the spacing under the header by 16px')…"
+                    rows="2"></textarea>
+          <button type="button" class="slide-templates-chat-send" id="slide-templates-chat-send"
+                  title="Send your edit request to the AI editor — the slide HTML will be rewritten and the preview reloaded.">Send</button>
+        </div>
+      </div>
+    `;
+
+    // Wire actions for THIS preview render. The pane's content is replaced
+    // on every selection / render, so handlers don't accumulate.
+    const renameBtn = pane.querySelector('.slide-tpl-rename');
+    const deleteBtn = pane.querySelector('.slide-tpl-delete');
+    const chatInput = pane.querySelector('#slide-templates-chat-input');
+    const chatSend = pane.querySelector('#slide-templates-chat-send');
+    if (renameBtn) renameBtn.addEventListener('click', () => handleSlideTemplateRename(slide.id));
+    if (deleteBtn) deleteBtn.addEventListener('click', () => handleSlideTemplateDelete(slide.id));
+    if (chatSend && chatInput) {
+      chatSend.addEventListener('click', () => sendSlideTemplateChat(slide.id, chatInput, chatSend));
+      chatInput.addEventListener('keydown', (evt) => {
+        // Cmd/Ctrl+Enter sends — matches the AI overlay's UX.
+        if ((evt.metaKey || evt.ctrlKey) && evt.key === 'Enter') {
+          evt.preventDefault();
+          sendSlideTemplateChat(slide.id, chatInput, chatSend);
+        }
+      });
+    }
+    renderSlideTemplatesChatHistory();
+  }
+
+  function renderSlideTemplatesChatHistory() {
+    const historyEl = document.getElementById('slide-templates-chat-history');
+    if (!historyEl) return;
+    if (_slideTemplatesChatHistory.length === 0) {
+      historyEl.innerHTML = '<div style="color:rgba(255,255,255,0.4);font-size:11px">AI editor chat — try "make the title teal" or "tighten spacing".</div>';
+      return;
+    }
+    historyEl.innerHTML = _slideTemplatesChatHistory.map((m) => `
+      <div class="slide-templates-chat-msg ${esc(m.role)}">${esc(m.content)}</div>
+    `).join('');
+    historyEl.scrollTop = historyEl.scrollHeight;
+  }
+
+  function appendSlideTemplatesChatMessage(role, content) {
+    _slideTemplatesChatHistory.push({ role, content: String(content || '') });
+    renderSlideTemplatesChatHistory();
+  }
+
+  async function sendSlideTemplateChat(slideId, inputEl, sendBtn) {
+    const message = (inputEl.value || '').trim();
+    if (!message || !slideId) return;
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Thinking…';
+    appendSlideTemplatesChatMessage('user', message);
+    inputEl.value = '';
+    try {
+      const data = await apiPost(`/api/slide-library/slides/${encodeURIComponent(slideId)}/ai-edit`, {
+        message,
+        // Bound to last 12 turns just like the demo-app overlay does.
+        conversationHistory: _slideTemplatesChatHistory.slice(-12),
+      });
+      if (data && data.ok) {
+        appendSlideTemplatesChatMessage('assistant', data.reply || 'Slide updated. Reloading preview…');
+        // Reload the preview iframe with a fresh cache-buster so the
+        // updated HTML shows up immediately.
+        const frame = document.getElementById('slide-templates-preview-frame');
+        if (frame) {
+          frame.src = `/api/slide-library/slides/${encodeURIComponent(slideId)}/html?_=${Date.now()}`;
+        }
+      } else {
+        const err = (data && (data.error || data.message)) || 'Unknown error';
+        const hint = data && data.hint ? ` — ${data.hint}` : '';
+        appendSlideTemplatesChatMessage('system', `Error: ${err}${hint}`);
+      }
+    } catch (err) {
+      appendSlideTemplatesChatMessage('system', `Network error: ${err.message}`);
+    } finally {
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send';
+    }
+  }
+
+  async function handleSlideTemplateUpload(fileInput) {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    const isHtml = /\.html?$/i.test(file.name) || file.type === 'text/html';
+    const isImage = /^image\//i.test(file.type) || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+    if (!isHtml && !isImage) {
+      showToast('Only HTML and image files (png, jpg, webp, gif) are supported.', 'warn');
+      return;
+    }
+    const defaultName = file.name.replace(/\.(html?|png|jpe?g|webp|gif)$/i, '').replace(/[-_]+/g, ' ').trim();
+    const name = window.prompt('Slide template name', defaultName || 'New Slide Template');
+    if (name == null) return;
+    const trimmedName = String(name).trim();
+    if (!trimmedName) { showToast('Name is required', 'warn'); return; }
+    try {
+      const contentBase64 = await fileToBase64(file);
+      const data = await apiPost('/api/slide-library/upload', {
+        kind: isImage ? 'image' : 'html',
+        name: trimmedName,
+        filename: file.name,
+        mimeType: file.type || '',
+        contentBase64,
+        sceneType: 'slide',
+      });
+      if (data && data.ok && data.slide) {
+        showToast(`Uploaded "${data.slide.name}"`, 'success');
+        await refreshSlideTemplatesList();
+        selectSlideTemplate(data.slide.id);
+      } else {
+        showToast(`Upload failed: ${(data && data.error) || 'unknown'}`, 'error');
+      }
+    } catch (err) {
+      showToast(`Upload failed: ${err.message}`, 'error');
+    }
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        // Strip the "data:<mime>;base64," prefix that FileReader adds.
+        const idx = result.indexOf(',');
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleSlideTemplateRename(slideId) {
+    const slide = _slideTemplates.find((s) => s.id === slideId);
+    if (!slide) return;
+    const newName = window.prompt('Rename slide template', slide.name || '');
+    if (newName == null) return;
+    const trimmed = String(newName).trim();
+    if (!trimmed) { showToast('Name is required', 'warn'); return; }
+    if (trimmed === slide.name) return;
+    try {
+      const data = await apiPost(`/api/slide-library/slides/${encodeURIComponent(slideId)}/rename`, { name: trimmed });
+      if (data && data.ok) {
+        showToast('Renamed', 'success');
+        await refreshSlideTemplatesList();
+      } else {
+        showToast(`Rename failed: ${(data && data.error) || 'unknown'}`, 'error');
+      }
+    } catch (err) {
+      showToast(`Rename failed: ${err.message}`, 'error');
+    }
+  }
+
+  async function handleSlideTemplateDelete(slideId) {
+    const slide = _slideTemplates.find((s) => s.id === slideId);
+    if (!slide) return;
+    if (!window.confirm(`Delete slide template "${slide.name || slide.id}"? This cannot be undone.`)) return;
+    try {
+      const resp = await fetch(`/api/slide-library/slides/${encodeURIComponent(slideId)}`, { method: 'DELETE' });
+      const data = await resp.json().catch(() => ({}));
+      if (resp.ok && data.ok) {
+        showToast('Deleted', 'success');
+        if (_selectedSlideTemplateId === slideId) _selectedSlideTemplateId = null;
+        await refreshSlideTemplatesList();
+      } else {
+        showToast(`Delete failed: ${data.error || resp.statusText}`, 'error');
+      }
+    } catch (err) {
+      showToast(`Delete failed: ${err.message}`, 'error');
     }
   }
 

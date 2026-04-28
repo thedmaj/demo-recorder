@@ -1117,6 +1117,350 @@ app.get('/api/slide-library/slides/:slideId/html', (req, res) => {
   }
 });
 
+// ── Slide Templates subtab support ──────────────────────────────────────────
+//
+// The "Slide Templates" subtab under Storyboard exposes the same slide
+// library that the storyboard's `+ Insert library slide` modal uses, but
+// with three new capabilities:
+//
+//   1. Upload  — POST /api/slide-library/upload   (HTML or image, base64-in-JSON)
+//   2. AI edit — POST /api/slide-library/slides/:slideId/ai-edit
+//                Always-on (NOT gated by `DASHBOARD_WRITE`). Slide templates
+//                are dashboard-local artifacts; allowing edits doesn't
+//                touch any pipeline run.
+//   3. Manage  — POST /api/slide-library/slides/:slideId/rename
+//                DELETE /api/slide-library/slides/:slideId
+//                Only user-owned (`source: 'upload'|'submit'`) entries are
+//                writable; built-ins are read-only by design (they're
+//                referenced by demos in flight).
+//
+// Image uploads land as `<id>.<ext>` next to a generated `<id>.html`
+// wrapper that conforms to the slide-splice contract (`.step.slide-root`
+// + `data-testid="step-..."`), so they flow through the existing splice
+// pipeline without any special-casing on the consumer side.
+const slideUploads = require(path.join(__dirname, 'utils', 'slide-library-uploads.js'));
+
+// Per-route JSON parser with a 50 MB limit so base64-encoded image uploads
+// fit. The default `express.json()` registered at module scope is 100 KB.
+const slideLibraryUploadJson = require('express').json({ limit: '50mb' });
+
+app.post('/api/slide-library/upload', slideLibraryUploadJson, (req, res) => {
+  try {
+    const body = req.body || {};
+    const kind = String(body.kind || '').toLowerCase();
+    const name = sanitizeSlideLibraryName(body.name);
+    const tags = Array.isArray(body.tags)
+      ? body.tags.map((t) => String(t || '').trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const sceneType = body.sceneType === 'demo' ? 'demo' : 'slide';
+    const contentBase64 = String(body.contentBase64 || '').trim();
+    const filename = String(body.filename || '').trim();
+    const mimeType = String(body.mimeType || '').trim();
+
+    if (!name) return res.status(400).json({ error: 'name required' });
+    if (!contentBase64) return res.status(400).json({ error: 'contentBase64 required' });
+    if (kind !== 'html' && kind !== 'image') {
+      return res.status(400).json({ error: 'kind must be "html" or "image"' });
+    }
+
+    let buffer;
+    try {
+      buffer = Buffer.from(contentBase64, 'base64');
+    } catch (e) {
+      return res.status(400).json({ error: 'contentBase64 is not valid base64' });
+    }
+    if (buffer.length === 0) {
+      return res.status(400).json({ error: 'uploaded file is empty' });
+    }
+    // Hard cap (50 MB matches the JSON parser limit, with a small slack for
+    // the surrounding JSON envelope; reject earlier to give a clear error).
+    if (buffer.length > 48 * 1024 * 1024) {
+      return res.status(413).json({ error: 'file exceeds 48 MB limit' });
+    }
+
+    const index = readSlideLibraryIndex();
+    const slideId = makeUniqueLibrarySlideId(index, name);
+    const createdAt = new Date().toISOString();
+    ensureSlideLibraryDirs();
+
+    let entry;
+    if (kind === 'html') {
+      const html = buffer.toString('utf8');
+      // Tiny safety check: must look HTML-ish so the AI editor and splice
+      // path don't get fed PDF / random bytes that decode to UTF-8 garbage.
+      if (!/<html|<body|<div|<!doctype/i.test(html)) {
+        return res.status(400).json({ error: 'uploaded HTML does not contain any recognizable tags' });
+      }
+      const htmlFilename = `${slideId}.html`;
+      const htmlAbs = path.join(SLIDE_LIBRARY_SLIDES_DIR, htmlFilename);
+      fs.writeFileSync(htmlAbs, html, 'utf8');
+      entry = {
+        id: slideId,
+        name,
+        createdAt,
+        kind: 'html',
+        source: 'upload',
+        sceneType,
+        tags,
+        htmlPath: path.join('out', 'slide-library', 'slides', htmlFilename),
+        sourceSnapshot: {
+          label: name,
+          narration: '',
+          durationMs: 12000,
+        },
+      };
+    } else {
+      // image
+      const ext = slideUploads.pickImageExt({ filename, mimeType });
+      if (!ext) {
+        return res.status(400).json({
+          error: 'unsupported image type',
+          hint: 'Use png, jpg, jpeg, webp, or gif',
+        });
+      }
+      const imageBasename = `${slideId}.${ext}`;
+      const htmlBasename = `${slideId}.html`;
+      const imageAbs = path.join(SLIDE_LIBRARY_SLIDES_DIR, imageBasename);
+      const htmlAbs = path.join(SLIDE_LIBRARY_SLIDES_DIR, htmlBasename);
+      fs.writeFileSync(imageAbs, buffer);
+      // Wrapper uses the dashboard's asset endpoint as an absolute URL —
+      // see buildImageWrapperHtml's docblock for why relative paths break
+      // when the wrapper is served at `/api/slide-library/slides/<id>/html`.
+      const wrapperHtml = slideUploads.buildImageWrapperHtml({
+        title: name,
+        imageSrc: `/api/slide-library/slides/${encodeURIComponent(slideId)}/asset`,
+        altText: name,
+      });
+      fs.writeFileSync(htmlAbs, wrapperHtml, 'utf8');
+      entry = {
+        id: slideId,
+        name,
+        createdAt,
+        kind: 'image',
+        source: 'upload',
+        sceneType,
+        tags,
+        htmlPath: path.join('out', 'slide-library', 'slides', htmlBasename),
+        imagePath: path.join('out', 'slide-library', 'slides', imageBasename),
+        imageMimeType: slideUploads.mimeForExt(ext),
+        sourceSnapshot: {
+          label: name,
+          narration: '',
+          durationMs: 12000,
+        },
+      };
+    }
+
+    index.slides = Array.isArray(index.slides) ? index.slides : [];
+    index.slides.unshift(entry);
+    writeSlideLibraryIndex(index);
+    res.json({ ok: true, slide: entry });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message || 'Unknown error' });
+  }
+});
+
+// Serve the raw image file for an image-kind slide so the wrapper HTML's
+// `<img src="...">` resolves when the slide is previewed via
+// `/api/slide-library/slides/:slideId/html`. Path-traversal guarded.
+app.get('/api/slide-library/slides/:slideId/asset', (req, res) => {
+  try {
+    const slideId = String(req.params.slideId || '').trim();
+    if (!slideId) return res.status(400).send('slideId required');
+    const index = readSlideLibraryIndex();
+    const slide = (index.slides || []).find((s) => s && s.id === slideId);
+    if (!slide || !slide.imagePath) return res.status(404).send('Slide image not found');
+    const { imageAbs } = slideUploads.pathsForSlide(slide, SLIDE_LIBRARY_SLIDES_DIR);
+    if (!imageAbs || !imageAbs.startsWith(SLIDE_LIBRARY_SLIDES_DIR + path.sep) || !fs.existsSync(imageAbs)) {
+      return res.status(404).send('Slide image not found');
+    }
+    const ext = (path.extname(imageAbs) || '').replace(/^\./, '').toLowerCase();
+    const mime = slideUploads.mimeForExt(ext) || 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'no-store');
+    fs.createReadStream(imageAbs).pipe(res);
+  } catch (err) {
+    res.status(500).send(err && err.message || 'Unknown error');
+  }
+});
+
+// AI edit a slide template's HTML. Single mode (full-document rewrite) —
+// simpler than the demo-app endpoint because there's no element picker
+// and no per-step scoping.  Always-on: NO `guardWriteOrStage` because
+// slide templates are dashboard-local artifacts.
+app.post('/api/slide-library/slides/:slideId/ai-edit', slideLibraryUploadJson, async (req, res) => {
+  try {
+    const slideId = String(req.params.slideId || '').trim();
+    if (!slideId) return res.status(400).json({ error: 'slideId required' });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({
+        error: 'AI editing unavailable',
+        hint: 'Set ANTHROPIC_API_KEY in .env to enable the slide template editor',
+      });
+    }
+
+    const message = String(req.body && req.body.message || '').trim();
+    if (!message) return res.status(400).json({ error: 'message required' });
+    const conversationHistory = Array.isArray(req.body && req.body.conversationHistory)
+      ? req.body.conversationHistory
+      : [];
+
+    const index = readSlideLibraryIndex();
+    const slide = (index.slides || []).find((s) => s && s.id === slideId);
+    if (!slide || !slide.htmlPath) return res.status(404).json({ error: 'Slide not found' });
+    const htmlAbs = path.resolve(PROJECT_ROOT, slide.htmlPath);
+    if (!htmlAbs.startsWith(SLIDE_LIBRARY_DIR + path.sep) || !fs.existsSync(htmlAbs)) {
+      return res.status(404).json({ error: 'Slide HTML not found' });
+    }
+    const currentHtml = fs.readFileSync(htmlAbs, 'utf8');
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const cfg = getAiEditRuntimeConfig();
+
+    const systemPrompt = [
+      'You are editing a standalone slide template HTML file.',
+      'It is a single self-contained document that includes its own <style> block.',
+      'Design system: dark navy gradient backgrounds (#0d1117 → #0a2540), accent #00A67E (teal), light text on dark.',
+      '',
+      'CRITICAL CONTRACT (do not break or the slide stops working):',
+      '  - Preserve the outermost <div data-testid="step-..." class="step ..."> element.',
+      '    Keep the data-testid value AND the "step" class. Other classes (slide-root,',
+      '    insight-layout, etc.) may be added or removed.',
+      '  - Keep the entire output a valid full HTML document (<!doctype html>, <html>, <head>, <body>).',
+      '  - Keep ALL <style> blocks inside <head>. Do not move them into <body>.',
+      '',
+      'Respond with ONLY the complete updated HTML document — no explanations,',
+      'no markdown fences, no commentary. The first non-whitespace characters',
+      'of your response MUST be "<!doctype" or "<!DOCTYPE".',
+    ].join('\n');
+
+    const messages = [];
+    // Bound conversation history per the runtime config so we don't blow
+    // the context window on long-lived sessions.
+    const maxTurns = cfg.conversation.maxTurns;
+    const maxCharsPerTurn = cfg.conversation.maxCharsPerTurn;
+    const maxTotalChars = cfg.conversation.maxTotalChars;
+    let totalChars = 0;
+    const trimmedHistory = [];
+    for (let i = conversationHistory.length - 1; i >= 0; i--) {
+      const turn = conversationHistory[i];
+      if (!turn || (turn.role !== 'user' && turn.role !== 'assistant')) continue;
+      const content = String(turn.content || '').slice(0, maxCharsPerTurn);
+      if (totalChars + content.length > maxTotalChars) continue;
+      trimmedHistory.unshift({ role: turn.role, content });
+      totalChars += content.length;
+      if (trimmedHistory.length >= maxTurns) break;
+    }
+    messages.push(...trimmedHistory);
+    messages.push({
+      role: 'user',
+      content: `Request: ${message}\n\nCurrent slide HTML:\n${currentHtml}`,
+    });
+
+    const completion = await client.messages.create({
+      model: cfg.models.full,
+      max_tokens: cfg.maxTokens.full,
+      system: systemPrompt,
+      messages,
+    });
+    let responseText = (completion.content || [])
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+    // Strip optional code fences if the model ignored the contract.
+    responseText = responseText.replace(/^```(?:html)?\s*/i, '').replace(/\s*```\s*$/, '');
+    if (!/^<!doctype/i.test(responseText) && !/^<html\b/i.test(responseText)) {
+      return res.status(502).json({
+        error: 'AI response did not return a valid HTML document',
+        reason: 'invalid-response',
+        rawPreview: responseText.slice(0, 240),
+      });
+    }
+    // Slide must still carry a `step-...` container — otherwise splice
+    // would break next time someone inserts it.
+    if (!/<div[^>]*\bdata-testid="step-[^"]+"/i.test(responseText)) {
+      return res.status(502).json({
+        error: 'AI response dropped the step container — refusing to write',
+        reason: 'missing-step-container',
+      });
+    }
+
+    // Backup before overwriting so the user can recover if the AI breaks
+    // a slide they cared about.
+    try {
+      fs.writeFileSync(htmlAbs + '.bak', currentHtml, 'utf8');
+    } catch (_) { /* best-effort */ }
+    fs.writeFileSync(htmlAbs, responseText, 'utf8');
+
+    res.json({
+      ok: true,
+      slideId,
+      reply: 'Slide updated. Reload the preview to see changes.',
+      bytesWritten: Buffer.byteLength(responseText, 'utf8'),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message || 'Unknown error' });
+  }
+});
+
+app.post('/api/slide-library/slides/:slideId/rename', slideLibraryUploadJson, (req, res) => {
+  try {
+    const slideId = String(req.params.slideId || '').trim();
+    const newName = String(req.body && req.body.name || '').trim();
+    if (!slideId) return res.status(400).json({ error: 'slideId required' });
+    if (!newName) return res.status(400).json({ error: 'name required' });
+
+    const index = readSlideLibraryIndex();
+    const result = slideUploads.renameSlideInIndex(index, slideId, newName);
+    if (!result.changed) {
+      if (result.reason === 'slide-not-found') return res.status(404).json({ error: 'Slide not found' });
+      // No-op rename or empty name — still 200 with reason for the client.
+      return res.json({ ok: true, changed: false, reason: result.reason, slide: result.slide });
+    }
+    writeSlideLibraryIndex(result.index);
+    res.json({ ok: true, changed: true, slide: result.slide });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message || 'Unknown error' });
+  }
+});
+
+app.delete('/api/slide-library/slides/:slideId', (req, res) => {
+  try {
+    const slideId = String(req.params.slideId || '').trim();
+    if (!slideId) return res.status(400).json({ error: 'slideId required' });
+    const index = readSlideLibraryIndex();
+    const slide = (index.slides || []).find((s) => s && s.id === slideId);
+    if (!slide) return res.status(404).json({ error: 'Slide not found' });
+    if (!slideUploads.isUserOwnedSlide(slide)) {
+      return res.status(403).json({
+        error: 'Built-in slides are read-only',
+        hint: 'Only user-uploaded or dashboard-submitted slides can be deleted',
+      });
+    }
+    // Unlink files BEFORE rewriting the index — if file removal fails we
+    // want the index to still match disk on retry.
+    const { htmlAbs, imageAbs } = slideUploads.pathsForSlide(slide, SLIDE_LIBRARY_SLIDES_DIR);
+    for (const p of [htmlAbs, imageAbs]) {
+      if (p && fs.existsSync(p)) {
+        try { fs.unlinkSync(p); }
+        catch (_) { /* best-effort — index will still drop the entry */ }
+      }
+      // Also nuke the optional .bak created by the AI editor.
+      const bak = p ? p + '.bak' : null;
+      if (bak && fs.existsSync(bak)) {
+        try { fs.unlinkSync(bak); } catch (_) {}
+      }
+    }
+    const result = slideUploads.removeSlideFromIndex(index, slideId);
+    writeSlideLibraryIndex(result.index);
+    res.json({ ok: true, removed: result.removed });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message || 'Unknown error' });
+  }
+});
+
 app.post('/api/slide-library/submit', (req, res) => {
   try {
     const runId = String(req.body && req.body.runId || '').trim();

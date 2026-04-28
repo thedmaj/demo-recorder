@@ -285,6 +285,299 @@ ul, ol {
 }
 
 /* =============================================================================
+   Storyboard subtabs (Storyboard | Slide Templates)
+   - Same vibe as the main sidebar's nav-item state, but horizontal and at
+     the top of #tab-storyboard. Clicking a subtab toggles which subpanel
+     (#storyboard-content vs #slide-templates-content) is visible.
+   ============================================================================ */
+
+.storyboard-subnav {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.storyboard-subtab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.storyboard-subtab:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.storyboard-subtab.active {
+  color: #fff;
+  border-bottom-color: #00A67E;
+}
+
+.storyboard-subpanel.hidden {
+  display: none;
+}
+
+/* Slide Templates subtab — two-pane layout (left list, right preview + chat). */
+.slide-templates-shell {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  height: calc(100vh - 120px);
+  padding: 16px;
+}
+
+.slide-templates-list-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.slide-templates-search {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.slide-templates-upload-btn {
+  appearance: none;
+  background: rgba(0, 166, 126, 0.18);
+  border: 1px solid rgba(0, 166, 126, 0.4);
+  color: #00d99c;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.slide-templates-upload-btn:hover {
+  background: rgba(0, 166, 126, 0.28);
+}
+
+.slide-templates-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slide-template-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.slide-template-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.slide-template-row.active {
+  background: rgba(0, 166, 126, 0.12);
+  border-color: rgba(0, 166, 126, 0.4);
+  color: #fff;
+}
+
+.slide-template-row .kind-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.slide-template-row .row-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slide-template-row .row-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.slide-template-row .row-badge.builtin { background: rgba(255, 255, 255, 0.06); }
+.slide-template-row .row-badge.upload  { background: rgba(0, 166, 126, 0.18); color: #00d99c; }
+.slide-template-row .row-badge.submit  { background: rgba(99, 102, 241, 0.18); color: #a5b4fc; }
+
+.slide-templates-preview-pane {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+  min-height: 0;
+}
+
+.slide-templates-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  flex-wrap: wrap;
+}
+
+.slide-templates-actions button,
+.slide-templates-actions a {
+  appearance: none;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.slide-templates-actions button:hover,
+.slide-templates-actions a:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.slide-templates-actions button.danger {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fca5a5;
+}
+
+.slide-templates-actions button.danger:hover {
+  background: rgba(248, 113, 113, 0.18);
+}
+
+.slide-templates-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: #fff;
+  min-height: 280px;
+}
+
+.slide-templates-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 240px;
+  min-height: 140px;
+}
+
+.slide-templates-chat-history {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.slide-templates-chat-msg {
+  padding: 6px 10px;
+  border-radius: 6px;
+  max-width: 85%;
+}
+
+.slide-templates-chat-msg.user {
+  align-self: flex-end;
+  background: rgba(0, 166, 126, 0.16);
+  color: #d8fff0;
+  border: 1px solid rgba(0, 166, 126, 0.3);
+}
+
+.slide-templates-chat-msg.assistant,
+.slide-templates-chat-msg.system {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.slide-templates-chat-msg.system {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.slide-templates-chat-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.slide-templates-chat-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: none;
+  min-height: 36px;
+  max-height: 120px;
+}
+
+.slide-templates-chat-send {
+  appearance: none;
+  background: rgba(0, 166, 126, 0.2);
+  border: 1px solid rgba(0, 166, 126, 0.45);
+  color: #00d99c;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 16px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.slide-templates-chat-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.slide-templates-empty {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+
+/* =============================================================================
    Cards
    ============================================================================= */
 

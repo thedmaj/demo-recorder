@@ -71,8 +71,24 @@
 
       <!-- Storyboard Tab -->
       <div class="tab-panel" id="tab-storyboard">
-        <div id="storyboard-content">
+        <!-- Subtab nav: "Storyboard" (the canvas + timeline) and
+             "Slide Templates" (browse / upload / AI-edit library slides).
+             Hidden helpers in dashboard.js wire the active subtab + lazy
+             render the right pane. -->
+        <div id="storyboard-subnav" class="storyboard-subnav" role="tablist">
+          <button type="button" class="storyboard-subtab active" data-subtab="canvas" role="tab" aria-selected="true">
+            <span aria-hidden="true">🎬</span> Storyboard
+          </button>
+          <button type="button" class="storyboard-subtab" data-subtab="templates" role="tab" aria-selected="false"
+                  title="Browse, upload, and AI-edit reusable slide templates that show up in the storyboard's slide library picker">
+            <span aria-hidden="true">🗂</span> Slide Templates
+          </button>
+        </div>
+        <div id="storyboard-content" class="storyboard-subpanel" role="tabpanel" data-subtab="canvas">
           <div class="empty-state">Select a run to view storyboard</div>
+        </div>
+        <div id="slide-templates-content" class="storyboard-subpanel hidden" role="tabpanel" data-subtab="templates">
+          <div class="empty-state">Loading slide templates…</div>
         </div>
       </div>
 
