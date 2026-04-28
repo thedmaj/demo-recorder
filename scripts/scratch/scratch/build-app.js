@@ -941,6 +941,209 @@ function dedupePlaywrightRowsByStepId(playwrightScript, demoScript) {
   );
 }
 
+/**
+ * Strip LLM-hallucinated duplicate `data-testid` attributes from buttons.
+ *
+ * The build LLM occasionally emits buttons with TWO data-testid attributes,
+ * usually because it tried to also stuff a CSS selector into the markup:
+ *
+ *   <button data-testid="continue-btn" onclick="..." data-testid="[data-testid=&quot;continue-btn&quot;]">…</button>
+ *
+ * That's invalid HTML — browsers honor only the first attribute, but the
+ * literal selector string in the second attribute confuses Playwright's
+ * `waitForSelector` and Vision QA reads the malformed markup as evidence of
+ * a broken button. Real BofA / Chase fix flow surfaced four of these in a
+ * single Chase run.
+ *
+ * Strategy: find every `<button …>` start-tag with ≥2 `data-testid=` occurrences,
+ * keep the first, drop everything after that matches `data-testid="…"`.
+ * Returns `{ html, fixedCount }`.
+ */
+function cleanMalformedTestidDuplicates(html) {
+  if (!html || typeof html !== 'string') return { html, fixedCount: 0 };
+  let fixedCount = 0;
+  // Match the start-tag of any element that has a data-testid attribute.
+  // We restrict to <button …>/<a …>/<div …> since those are the LLM's usual
+  // offenders; broadening to .* would risk eating legitimate cross-tag content.
+  const tagRe = /<(button|a|div)\b[^>]*\sdata-testid=[^>]*>/gi;
+  const result = String(html).replace(tagRe, (tag) => {
+    // Count how many data-testid attributes appear in this single tag.
+    const occurrences = tag.match(/\sdata-testid\s*=\s*("[^"]*"|'[^']*')/gi) || [];
+    if (occurrences.length < 2) return tag;
+    // Keep the FIRST data-testid attribute, drop subsequent ones.
+    let kept = false;
+    const cleaned = tag.replace(
+      /\sdata-testid\s*=\s*("[^"]*"|'[^']*')/g,
+      (attr) => {
+        if (!kept) { kept = true; return attr; }
+        return ''; // drop
+      }
+    );
+    if (cleaned !== tag) fixedCount++;
+    return cleaned;
+  });
+  if (fixedCount > 0) {
+    console.warn(
+      `[Build] cleanMalformedTestidDuplicates: stripped ${fixedCount} duplicate data-testid attribute(s). ` +
+      `(LLM hallucination; first attribute is canonical.)`
+    );
+  }
+  return { html: result, fixedCount };
+}
+
+/**
+ * Catch the Playwright "target testid is one step behind" bug.
+ *
+ * What goes wrong: the LLM is asked to produce one Playwright row per demo
+ * step. For each click row, the `target` should be the testid of the button
+ * INSIDE that step's `<div data-testid="step-X">…</div>` — i.e. the CTA that
+ * navigates from this step to the next. The LLM frequently picks the button
+ * from the PREVIOUS step (the one that brought us TO this step), because
+ * narratively "what advances to step X" = "the click that landed us here".
+ *
+ * Real Chase Bank run failure: 4/7 steps targeted the prior step's testid.
+ * Each row failed at `waitForSelector` because the targeted button was no
+ * longer in the DOM (it lived in the now-hidden previous-step div).
+ *
+ * This validator:
+ *   1. For each click row whose target is `[data-testid="X"]`, check that X
+ *      exists INSIDE the step's own div.
+ *   2. If not, attempt auto-fix by finding the primary CTA button INSIDE the
+ *      step's div whose `onclick` calls `goToStep('<next-step-id>')`. That's
+ *      the canonical "next" button.
+ *   3. Only auto-fix when we can find exactly one matching button — bail out
+ *      otherwise so we don't paper over a real authoring error.
+ *
+ * Returns `{ fixedCount, warningCount }`.
+ */
+function validatePlaywrightTargetsAgainstSteps(playwrightScript, demoScript, html) {
+  const rows = playwrightScript?.steps;
+  if (!Array.isArray(rows) || rows.length === 0) return { fixedCount: 0, warningCount: 0 };
+  if (typeof html !== 'string' || !html) return { fixedCount: 0, warningCount: 0 };
+
+  const orderedStepIds = (demoScript.steps || []).map(s => s && s.id).filter(Boolean);
+  const launchId = (demoScript.steps || []).find(s => s && s.plaidPhase === 'launch')?.id || null;
+
+  // Helper: extract the markup for a given step's container div.
+  function extractStepBlock(stepId) {
+    if (!stepId) return null;
+    const safe = String(stepId).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const re = new RegExp(
+      `<div[^>]*\\bdata-testid="step-${safe}"[^>]*>[\\s\\S]*?(?=<div[^>]*\\bdata-testid="step-|<!--[\\s\\S]*?SIDE PANELS|<\\/body>|$)`,
+      'i'
+    );
+    const m = String(html).match(re);
+    return m ? m[0] : null;
+  }
+
+  // Helper: find the primary CTA button inside a step's block.
+  //
+  //   - When `nextId` is provided, prefer buttons whose onclick calls
+  //     `goToStep('<nextId>')`. This is the strongest signal — "the button
+  //     that advances to the next step in the script."
+  //
+  //   - When `nextId` is null (last step in the script) OR no button matches
+  //     it, fall back to "the only btn-primary with ANY goToStep onclick."
+  //     Ambiguous (>1 candidate) → return null so we don't auto-fix
+  //     incorrectly. Last steps often navigate back to a "home" or "done"
+  //     screen, which still represents the canonical CTA for that step.
+  //
+  // Always prefers `.btn-primary` over secondary buttons.
+  function findPrimaryCtaToNext(stepBlock, nextId) {
+    if (!stepBlock) return null;
+    const buttonRe = /<button\b[^>]*>/gi;
+    const allCandidates = [];
+    let m;
+    while ((m = buttonRe.exec(stepBlock))) {
+      const tag = m[0];
+      const onclickMatch = tag.match(/onclick\s*=\s*"([^"]*)"|onclick\s*=\s*'([^']*)'/i);
+      const onclick = (onclickMatch && (onclickMatch[1] || onclickMatch[2])) || '';
+      const goToMatch = onclick.match(/goToStep\s*\(\s*['"]([^'"]+)['"]/);
+      const goToTarget = goToMatch ? goToMatch[1] : null;
+      const tidMatch = tag.match(/\bdata-testid\s*=\s*"([^"]+)"|data-testid\s*=\s*'([^']+)'/);
+      const testId = (tidMatch && (tidMatch[1] || tidMatch[2])) || null;
+      if (!testId) continue;
+      const isPrimary = /\bbtn[-\s]*primary\b|\bprimary\b/i.test(tag);
+      allCandidates.push({ testId, isPrimary, goToTarget });
+    }
+    if (allCandidates.length === 0) return null;
+
+    // Prefer exact next-step match.
+    if (nextId) {
+      const exact = allCandidates.filter(c => c.goToTarget === nextId);
+      if (exact.length > 0) {
+        const primary = exact.find(c => c.isPrimary);
+        return primary ? primary.testId : exact[0].testId;
+      }
+    }
+
+    // Fallback: the only btn-primary that has SOME goToStep onclick.
+    const primaryWithGoTo = allCandidates.filter(c => c.isPrimary && c.goToTarget);
+    if (primaryWithGoTo.length === 1) return primaryWithGoTo[0].testId;
+    if (primaryWithGoTo.length > 1) return null; // ambiguous, don't guess
+
+    // Final fallback: any single primary button (even without goToStep).
+    const primaryAny = allCandidates.filter(c => c.isPrimary);
+    if (primaryAny.length === 1) return primaryAny[0].testId;
+    return null;
+  }
+
+  let fixedCount = 0;
+  let warningCount = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || String(row.action || '').toLowerCase() !== 'click') continue;
+    const target = String(row.target || '');
+    const tidMatch = target.match(/\[data-testid=["']([^"']+)["']\]/);
+    if (!tidMatch) continue;
+    const targetTid = tidMatch[1];
+    const stepId = row.stepId || row.id;
+    if (!stepId) continue;
+    const block = extractStepBlock(stepId);
+    if (!block) continue; // step missing — different problem; skip
+    // Already correct? Move on.
+    if (new RegExp(`\\bdata-testid\\s*=\\s*["']${targetTid.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}["']`).test(block)) {
+      continue;
+    }
+
+    // Drift detected. Try auto-fix.
+    // Skip the launch step — its CTA is normalized separately by
+    // normalizeLaunchPlaywrightRow which knows about live vs token-only mode.
+    if (stepId === launchId) {
+      console.warn(
+        `[Build] validatePlaywrightTargets: target "${targetTid}" not in launch step "${stepId}" block — ` +
+        `leaving alone (launch normalizer owns this row).`
+      );
+      warningCount++;
+      continue;
+    }
+
+    const stepIdx = orderedStepIds.indexOf(stepId);
+    const nextStepId = stepIdx >= 0 && stepIdx + 1 < orderedStepIds.length
+      ? orderedStepIds[stepIdx + 1]
+      : null;
+    const candidate = findPrimaryCtaToNext(block, nextStepId);
+    if (candidate && candidate !== targetTid) {
+      console.warn(
+        `[Build] validatePlaywrightTargets: step "${stepId}" target "${targetTid}" is not in this step's div ` +
+        `(LLM picked the previous step's button). Auto-fixing to "${candidate}" (CTA → ${nextStepId}).`
+      );
+      row.target = `[data-testid="${candidate}"]`;
+      fixedCount++;
+    } else {
+      console.warn(
+        `[Build] validatePlaywrightTargets: step "${stepId}" target "${targetTid}" is not in this step's div, ` +
+        `but no unambiguous CTA → "${nextStepId || '(no next step)'}" was found. Leaving as-is — author should review.`
+      );
+      warningCount++;
+    }
+  }
+  if (fixedCount > 0 || warningCount > 0) {
+    console.warn(`[Build] validatePlaywrightTargets: fixed ${fixedCount}, warned ${warningCount}.`);
+  }
+  return { fixedCount, warningCount };
+}
+
 function normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript) {
   const rows = playwrightScript?.steps;
   if (!Array.isArray(rows) || !rows.length) return;
@@ -2608,10 +2811,23 @@ async function main(opts = {}) {
     }
   }
 
+  // Strip LLM-hallucinated duplicate data-testid attributes BEFORE we run
+  // any Playwright-target validation — otherwise the validator could match
+  // the bogus inner attribute and miss the real bug.
+  const cleanResult = cleanMalformedTestidDuplicates(html);
+  if (cleanResult.fixedCount > 0) {
+    html = cleanResult.html;
+  }
+
   repairPlaywrightInsightNavigation(playwrightScript, demoScript);
   normalizeLaunchPlaywrightRow(playwrightScript, demoScript);
   normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript);
   dedupePlaywrightRowsByStepId(playwrightScript, demoScript);
+  // Catch the "target testid is in the previous step's div" drift that broke
+  // ~60% of Chase Bank QA runs. Auto-fixes when an unambiguous CTA-to-next
+  // exists; warns otherwise. Runs LAST so it sees the cleaned HTML +
+  // normalized rows.
+  validatePlaywrightTargetsAgainstSteps(playwrightScript, demoScript, html);
 
   const layerReport = validateLayerContracts({
     html,
@@ -3722,7 +3938,12 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   console.log('[Build] Done — next: node scripts/scratch/scratch/record-local.js');
 }
 
-module.exports = { main };
+module.exports = {
+  main,
+  // Exported for unit tests (pure functions, safe to call standalone):
+  cleanMalformedTestidDuplicates,
+  validatePlaywrightTargetsAgainstSteps,
+};
 
 if (require.main === module) {
   main().catch(err => {

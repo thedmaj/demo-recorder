@@ -35,6 +35,104 @@
   // Track whether the backend is reachable; updated by health-check below.
   let _backendOnline = null; // null = checking, true = online, false = offline
 
+  // ── Hot-reload subscription ─────────────────────────────────────────────────
+  //
+  // The demo-app preview server (same origin as this page) exposes
+  // /__hot-reload as an SSE stream. When the dashboard modifies a running
+  // app's files (slide insert, AI edit, etc.), it broadcasts a `reload`
+  // event and this listener calls location.reload(). The browser shows a
+  // brief toast first so users see what happened.
+  //
+  // Disabled if EventSource isn't available (very old browsers) or the
+  // page already has `?__noHotReload=1` in the URL (debug bypass).
+  (function setupHotReload() {
+    try {
+      if (typeof EventSource !== 'function') return;
+      if (/\b__noHotReload=1\b/.test(window.location.search || '')) return;
+
+      let source = null;
+      let reloadingForReason = null;
+      let lastSeqSeen = null;
+      let backoffMs = 1500;
+      const BACKOFF_MAX_MS = 30000;
+      const TOAST_VISIBLE_MS = 1400;
+
+      function showReloadToast(reason) {
+        try {
+          const existing = document.getElementById('__demo-app-reload-toast');
+          if (existing) existing.remove();
+          const t = document.createElement('div');
+          t.id = '__demo-app-reload-toast';
+          t.textContent = `Reloading… (${reason})`;
+          t.style.cssText = [
+            'position:fixed','top:16px','right:16px','z-index:2147483647',
+            'background:#0f172a','color:#fff','font:600 13px/1.4 ui-sans-serif,system-ui,Segoe UI,sans-serif',
+            'padding:10px 14px','border-radius:8px','box-shadow:0 6px 24px rgba(0,0,0,0.35)',
+            'pointer-events:none','letter-spacing:0.01em',
+          ].join(';');
+          document.body.appendChild(t);
+        } catch (_) { /* DOM may not be ready */ }
+      }
+
+      function reloadNow(reason) {
+        if (reloadingForReason) return;
+        reloadingForReason = reason || 'changed';
+        showReloadToast(reloadingForReason);
+        setTimeout(() => {
+          try { window.location.reload(); }
+          catch (_) { /* ignore — best-effort */ }
+        }, TOAST_VISIBLE_MS);
+      }
+
+      function connect() {
+        try {
+          source = new EventSource('/__hot-reload');
+        } catch (_) { return; }
+
+        source.addEventListener('hello', (ev) => {
+          backoffMs = 1500; // reset backoff on successful connect
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            // If we reconnected and the server's seq is ahead of what we
+            // last saw, the server pushed a reload while we were offline —
+            // act on it now.
+            if (lastSeqSeen != null && Number.isFinite(payload.seq) && payload.seq > lastSeqSeen) {
+              reloadNow('reconnect-detected-changes');
+              return;
+            }
+            if (Number.isFinite(payload.seq)) lastSeqSeen = payload.seq;
+          } catch (_) {}
+        });
+
+        source.addEventListener('reload', (ev) => {
+          try {
+            const payload = JSON.parse(ev.data || '{}');
+            if (Number.isFinite(payload.seq)) lastSeqSeen = payload.seq;
+            reloadNow(payload.reason || 'changed');
+          } catch (_) {
+            reloadNow('changed');
+          }
+        });
+
+        source.addEventListener('error', () => {
+          // EventSource auto-retries on its own, but if the connection was
+          // explicitly closed by the server, we want a controlled exponential
+          // backoff. EventSource only fires `error` when readyState !== OPEN.
+          try { source.close(); } catch (_) {}
+          source = null;
+          setTimeout(connect, backoffMs);
+          backoffMs = Math.min(BACKOFF_MAX_MS, Math.round(backoffMs * 1.7));
+        });
+      }
+
+      connect();
+
+      // Cosmetic: if the user backgrounded the tab and the app server was
+      // restarted in the meantime, EventSource might quietly reconnect with
+      // a fresh seq. The `hello` handler covers that case.
+    } catch (_) { /* hot reload is best-effort; never break the demo page */ }
+  })();
+
   // ── Restore step position after reload ───────────────────────────────────────
   const SESSION_KEY = '__ai_overlay_step_' + RUN_ID;
   function restoreStep() {

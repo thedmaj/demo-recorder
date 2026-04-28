@@ -601,11 +601,15 @@ function makeTimer() {
       const pipelineSec = ((Date.now() - pipelineStart) / 1000).toFixed(1);
       const order = stageOrderLabel(stage);
       const idx = STAGES.indexOf(stage);
+      // Stage banner — formatted to be impossible to miss in a streaming agent
+      // log. Includes stage progress (N/total) + elapsed so anyone (human or
+      // AI) reading the log can answer "where is the pipeline?" at a glance.
+      const idxLabel = idx >= 0 ? `${idx + 1}/${STAGES.length}` : '?/?';
       console.log('');
-      console.log(`${'─'.repeat(60)}`);
-      console.log(`[${ts}] MILESTONE: stage "${stage}" START`);
-      console.log(`[${ts}]   ${order} | pipeline elapsed ${pipelineSec}s`);
-      console.log(`${'─'.repeat(60)}`);
+      console.log('━'.repeat(72));
+      console.log(`▶  STAGE ${idxLabel}: ${stage}   (pipeline elapsed ${pipelineSec}s)`);
+      console.log(`   started ${ts}`);
+      console.log('━'.repeat(72));
       emitPipeEvent('stage_start', {
         stage,
         index: idx >= 0 ? idx + 1 : null,
@@ -624,7 +628,11 @@ function makeTimer() {
       const elapsed = ((Date.now() - (stageStart[stage] || Date.now())) / 1000).toFixed(1);
       const ts = cliIsoTime();
       const pipelineSec = ((Date.now() - pipelineStart) / 1000).toFixed(1);
-      cliLog(`MILESTONE: stage "${stage}" DONE | stage ${elapsed}s | pipeline total ${pipelineSec}s`);
+      const idx = STAGES.indexOf(stage);
+      const idxLabel = idx >= 0 ? `${idx + 1}/${STAGES.length}` : '?/?';
+      // Mirror the stage_start banner shape so agents can pattern-match
+      // "which stage finished?" without re-reading prior context.
+      console.log(`✓  STAGE ${idxLabel}: ${stage}   (stage ${elapsed}s, pipeline total ${pipelineSec}s)`);
       emitPipeEvent('stage_end', {
         stage,
         status: 'ok',
@@ -647,6 +655,65 @@ function makeTimer() {
 
 // ── User prompt for continue/abort ───────────────────────────────────────────
 
+/**
+ * Print a prominent multi-line "AGENT ACTION REQUIRED" banner to stdout. An AI
+ * agent (Cursor / Claude Code) streaming the pipeline log cannot easily see a
+ * single buried "Waiting for continue signal" line; this block is impossible to
+ * miss and tells the agent exactly what to do next.
+ *
+ * Used by promptContinue. Keeps formatting plain ASCII so it renders correctly
+ * in non-TTY pipes (dashboard, CI logs).
+ */
+function printAgentActionBanner({ message, taskPath, runId }) {
+  const ts = cliIsoTime();
+  const bar = '═'.repeat(72);
+  console.log('');
+  console.log(bar);
+  console.log('║  ⏸  AGENT ACTION REQUIRED — pipeline paused on continue-gate');
+  console.log(bar);
+  if (message)  console.log(`║  ${String(message).slice(0, 160)}`);
+  if (taskPath) console.log(`║  Task file:  ${taskPath}`);
+  if (runId)    console.log(`║  Run id:     ${runId}`);
+  console.log(`║  Time:       ${ts}`);
+  console.log('║');
+  console.log('║  TO RESUME:');
+  if (taskPath) {
+    console.log(`║    1. Open ${taskPath} in Cursor or Claude Code (Agent mode).`);
+    console.log('║    2. Say "Run this task." The agent will make targeted edits.');
+    if (runId) {
+      console.log(`║    3. Run:  npm run pipe -- continue ${runId}`);
+    } else {
+      console.log('║    3. Run:  npm run pipe -- continue');
+    }
+  } else if (runId) {
+    console.log(`║    Run:  npm run pipe -- continue ${runId}`);
+  } else {
+    console.log('║    Run:  npm run pipe -- continue');
+  }
+  console.log(bar);
+  console.log('');
+}
+
+function printAgentReleaseBanner({ via, runId, waitedSec }) {
+  const bar = '═'.repeat(72);
+  console.log('');
+  console.log(bar);
+  console.log(`║  ▶  CONTINUE SIGNAL RECEIVED — resuming pipeline (via ${via}, waited ${waitedSec}s)`);
+  if (runId) console.log(`║     ${runId}`);
+  console.log(bar);
+  console.log('');
+}
+
+/**
+ * Heuristic: pull "task: <path>" out of a continue-gate message so the agent
+ * banner can hyperlink to the right task .md without callers having to pass
+ * it as a separate field. Optional — falls back to the message body alone.
+ */
+function extractTaskPathFromMessage(message) {
+  const m = String(message || '').match(/(?:Open|task:?)\s+([^\s]+\.md)\b/i);
+  return m ? m[1] : null;
+}
+
 async function promptContinue(message) {
   // Write a continue-signal request marker so `pipe status --json` can surface
   // awaitingContinue=true and the CLI can display context. Best-effort: the
@@ -655,6 +722,8 @@ async function promptContinue(message) {
     try { return requireRunDir(PROJECT_ROOT, 'orchestrator'); }
     catch (_) { return null; }
   })();
+  const runId = runDirForSignal ? path.basename(runDirForSignal) : null;
+  const taskPath = extractTaskPathFromMessage(message);
   const requestFile = runDirForSignal ? path.join(runDirForSignal, 'continue.signal.request') : null;
   if (requestFile) {
     try {
@@ -662,13 +731,17 @@ async function promptContinue(message) {
         at: cliIsoTime(),
         pid: process.pid,
         message: String(message || ''),
+        taskPath,
+        runId,
       }, null, 2), 'utf8');
     } catch (_) { /* ignore */ }
   }
   emitPipeEvent('prompt', {
     kind: 'continue',
     message: String(message || ''),
-    hint: 'npm run pipe -- continue',
+    taskPath,
+    runId,
+    hint: runId ? `npm run pipe -- continue ${runId}` : 'npm run pipe -- continue',
   });
   const clearRequest = () => {
     if (requestFile) {
@@ -677,32 +750,71 @@ async function promptContinue(message) {
     }
   };
 
-  // TTY path: interactive terminal — readline works normally
+  // TTY path: interactive terminal — readline works normally. Print the banner
+  // so a human at the keyboard sees the same context an agent would.
   if (process.stdin.isTTY) {
+    printAgentActionBanner({ message, taskPath, runId });
+    const startedAt = Date.now();
     return new Promise(resolve => {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      rl.question(`${message} Press ENTER to continue or Ctrl+C to abort. `, () => {
+      rl.question(`Press ENTER to continue or Ctrl+C to abort. `, () => {
         rl.close();
         clearRequest();
-        emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'tty' });
+        const waitedSec = Math.round((Date.now() - startedAt) / 1000);
+        printAgentReleaseBanner({ via: 'tty', runId, waitedSec });
+        emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'tty', waitedSec });
         resolve();
       });
     });
   }
 
-  // Non-TTY path (spawned by dashboard/CLI with piped stdin):
-  // Accept ENTER via the pipe, OR wait for a signal file written by the
-  // dashboard / `pipe continue` at {runDir}/continue.signal.
+  // Non-TTY path (spawned by dashboard / Claude Code agent / CLI with piped
+  // stdin). This is the path an AI agent sees when the orchestrator is run as
+  // a background process and stdout streams to the agent's terminal. We need
+  // to be LOUD here — a single buried line is invisible in a streaming log.
   const runDir = runDirForSignal || requireRunDir(PROJECT_ROOT, 'orchestrator');
   const signalFile = path.join(runDir, 'continue.signal');
   // Remove stale signal file from a prior run
   try { fs.unlinkSync(signalFile); } catch (_) {}
 
-  cliLog('[Orchestrator] Waiting for continue signal — run `npm run pipe -- continue` or POST /api/pipeline/stdin');
+  printAgentActionBanner({ message, taskPath, runId });
 
   return new Promise(resolve => {
+    const startedAt = Date.now();
+    let heartbeatTimer = null;
+
+    // Periodic heartbeat reminds the agent (and humans tailing the log) that
+    // we're still waiting and nothing is hung. Cadence is intentionally
+    // calibrated so it shows up at human-tolerable intervals: 15s, 30s, 60s,
+    // then every minute. Configurable via PIPE_CONTINUE_GATE_HEARTBEAT_MS
+    // (set to 0 to disable, e.g. for CI runs).
+    const heartbeatEnv = parseInt(process.env.PIPE_CONTINUE_GATE_HEARTBEAT_MS || '30000', 10);
+    const heartbeatBaseMs = Number.isFinite(heartbeatEnv) ? heartbeatEnv : 30000;
+
+    function scheduleHeartbeat() {
+      if (heartbeatBaseMs <= 0) return;
+      heartbeatTimer = setTimeout(() => {
+        const waitedSec = Math.round((Date.now() - startedAt) / 1000);
+        const cmd = runId ? `npm run pipe -- continue ${runId}` : 'npm run pipe -- continue';
+        cliLog(
+          `[Orchestrator] ⏸  Still waiting on continue-gate (${waitedSec}s elapsed). ` +
+          (taskPath ? `Edit ${taskPath} then run: ${cmd}` : `Run: ${cmd}`)
+        );
+        emitPipeEvent('prompt_heartbeat', { kind: 'continue', waitedSec, taskPath, runId });
+        scheduleHeartbeat();
+      }, heartbeatBaseMs);
+    }
+    scheduleHeartbeat();
+
     // Option A: data arrives on piped stdin (dashboard sends '\n')
-    const onData = () => { cleanup(); emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'stdin' }); clearRequest(); resolve(); };
+    const onData = () => {
+      cleanup();
+      const waitedSec = Math.round((Date.now() - startedAt) / 1000);
+      printAgentReleaseBanner({ via: 'stdin', runId, waitedSec });
+      emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'stdin', waitedSec });
+      clearRequest();
+      resolve();
+    };
     process.stdin.once('data', onData);
 
     // Option B: signal file is written by dashboard / `pipe continue`
@@ -710,7 +822,9 @@ async function promptContinue(message) {
       if (fs.existsSync(signalFile)) {
         try { fs.unlinkSync(signalFile); } catch (_) {}
         cleanup();
-        emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'signal_file' });
+        const waitedSec = Math.round((Date.now() - startedAt) / 1000);
+        printAgentReleaseBanner({ via: 'signal_file', runId, waitedSec });
+        emitPipeEvent('prompt_resolved', { kind: 'continue', via: 'signal_file', waitedSec });
         clearRequest();
         resolve();
       }
@@ -719,6 +833,7 @@ async function promptContinue(message) {
     function cleanup() {
       process.stdin.removeListener('data', onData);
       clearInterval(poll);
+      if (heartbeatTimer) { clearTimeout(heartbeatTimer); heartbeatTimer = null; }
     }
   });
 }

@@ -2727,7 +2727,23 @@ app.post('/api/runs/:runId/insert-step', (req, res) => {
     const tmp = scriptPath + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
     fs.renameSync(tmp, scriptPath);
-    res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length, stepKind: step.stepKind });
+
+    // Notify any open browser tab for this run that demo-script.json
+    // changed. Note: insert-step (this endpoint) doesn't ship slide HTML,
+    // so the visible UI may not update until the next build pass — but the
+    // step will be reflected in the dashboard storyboard immediately and
+    // the running app's stepIds align on the next navigation.
+    const runId = String(req.params.runId || '').trim();
+    const notify = demoAppReload.notifyReload(runId, {
+      reason: 'step-inserted',
+      stepId: step.id,
+      stepKind: step.stepKind,
+    });
+    if (notify.notified > 0) {
+      console.log(`[InsertStep] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
+    }
+
+    res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length, stepKind: step.stepKind, notifiedTabs: notify.notified });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2814,12 +2830,51 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
     } catch (thumbErr) {
       console.warn(`[SlideLibrary] Thumbnail generation failed for ${runId}/${nextStepId}: ${thumbErr.message}`);
     }
+
+    // Splice the slide's HTML into the running app's index.html so a hot
+    // reload of the open browser tab actually SHOWS the new slide. Without
+    // this, the slide existed only in demo-script.json until the next
+    // pipeline run (post-slides stage). Any failure here is non-fatal —
+    // the demo-script.json edit still succeeded.
+    let spliceResult = { applied: false, skipped: true, skippedReason: 'not-attempted' };
+    try {
+      spliceResult = spliceLibrarySlideIntoRunHtml(dir, nextStepId, slide);
+      if (spliceResult.applied) {
+        console.log(
+          `[SlideLibrary] Spliced slide HTML into ${path.relative(PROJECT_ROOT, spliceResult.htmlPath)} ` +
+          `(reason: ${spliceResult.reason})`
+        );
+      } else if (!spliceResult.skipped) {
+        console.warn(
+          `[SlideLibrary] Splice failed for ${runId}/${nextStepId}: ${spliceResult.reason}`
+        );
+      }
+    } catch (spliceErr) {
+      console.warn(`[SlideLibrary] Splice raised: ${spliceErr.message}`);
+    }
+
+    // Push a hot-reload event to any open browser tab for this run.
+    // Ignored when no tab has subscribed (notified=0).
+    const notify = demoAppReload.notifyReload(runId, {
+      reason: 'slide-inserted',
+      stepId: nextStepId,
+      slideId: slide.id,
+      slideName: slide.name,
+      spliced: !!spliceResult.applied,
+    });
+    if (notify.notified > 0) {
+      console.log(`[SlideLibrary] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
+    }
+
     res.json({
       ok: true,
       step: nextStep,
       insertedAt: insertIdx,
       totalSteps: steps.length,
       thumbnailsWritten: thumbnailResult.written || [],
+      htmlSpliced: !!spliceResult.applied,
+      htmlSpliceReason: spliceResult.applied ? spliceResult.reason : (spliceResult.skippedReason || spliceResult.reason || null),
+      notifiedTabs: notify.notified,
     });
   } catch (err) {
     const msg = err && err.message;
@@ -3477,6 +3532,14 @@ const demoAppServers = new Map(); // runId → { url, port, server }
 const DEMO_APP_BASE_PORT = 3750;
 const DEMO_APP_OVERLAY_FILE = path.join(__dirname, 'public', 'ai-overlay.js');
 
+// Hot-reload bookkeeping for the demo-app preview servers. When the dashboard
+// modifies a running app's files (slide insert, AI edit, etc.), we call
+// `demoAppReload.notifyReload(runId, …)` to push a `reload` event to every
+// open browser tab for that run via the SSE endpoint registered in
+// launchDemoAppServer.
+const demoAppReload = require(path.join(__dirname, 'utils', 'demo-app-reload.js'));
+const { spliceLibrarySlideIntoRunHtml } = require(path.join(__dirname, 'utils', 'insert-slide-html.js'));
+
 const DEMO_MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -3568,6 +3631,25 @@ async function launchDemoAppServer(runId) {
       res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
       res.end(fs.readFileSync(DEMO_APP_OVERLAY_FILE, 'utf8'));
     } catch (_) { res.status(404).end('// overlay not found'); }
+  });
+
+  // Hot-reload SSE endpoint. The injected ai-overlay.js opens an
+  // EventSource against this and reloads the page when the dashboard pushes
+  // a `reload` event (slide inserted, AI edit applied, etc.).
+  // The route is unique per demo-app server (one per runId) and same-origin
+  // from the browser's perspective — no CORS shenanigans.
+  demoApp.get('/__hot-reload', (req, res) => {
+    demoAppReload.addListener(runId, res);
+    // addListener handles all writes + cleanup; nothing else to do here.
+  });
+
+  // Probe endpoint for clients that want to confirm hot-reload is wired up
+  // before opening an EventSource (or for non-EventSource clients to poll).
+  demoApp.get('/__hot-reload/seq', (req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    const state = demoAppReload.getState(runId);
+    res.end(JSON.stringify({ runId, ...state }));
   });
 
   // Plaid API proxy routes (only when live mode enabled)
@@ -3844,6 +3926,10 @@ app.post('/api/demo-apps/:runId/stop', async (req, res) => {
     const { runId } = req.params;
     const entry = demoAppServers.get(runId);
     if (!entry) return res.status(404).json({ error: 'Server not running' });
+    // Close any open hot-reload SSE listeners BEFORE we close the server,
+    // otherwise their kept-alive sockets will fight server.close() and
+    // delay the response.
+    demoAppReload.clearListeners(runId);
     await new Promise((resolve, reject) => entry.server.close(e => e ? reject(e) : resolve()));
     demoAppServers.delete(runId);
     res.json({ ok: true });
@@ -4731,10 +4817,21 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
     fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
     fs.writeFileSync(appHtmlPath, newHtml, 'utf8');
     _appCache.delete(runId);
+
+    // Push a hot-reload event to any open browser tab for this run.
+    const notify = demoAppReload.notifyReload(runId, {
+      reason: 'ai-edit',
+      mode,
+    });
+    if (notify.notified > 0) {
+      console.log(`[AI Edit] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
+    }
+
     res.json({
       ok: true,
       reply: `Done (${mode} mode) — changes written.`,
       assistantMessage: `Applied ${mode} edit${multiPassPlan ? ' with multi-pass planning' : ''}.`,
+      notifiedTabs: notify.notified,
     });
   } catch (err) {
     console.error('[AI Edit]', err);
