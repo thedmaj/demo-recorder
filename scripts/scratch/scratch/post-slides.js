@@ -83,61 +83,201 @@ function hasStepContainer(html, stepId) {
   return new RegExp(`<div[^>]*\\bdata-testid="step-${id}"[^>]*>`, 'i').test(html);
 }
 
+/**
+ * Sanitize a raw slide fragment for splicing into the host app.
+ *
+ * Returns `{ html, styles }`:
+ *   - `html`   = body-safe markup with a single outer `<div data-testid="step-<id>" class="step ...">`
+ *                whose existing classes (e.g. `slide-root`) are preserved.
+ *   - `styles` = array of full `<style>...</style>` blocks lifted out of the
+ *                fragment (caller injects them into the host `<head>` so the
+ *                slide's CSS — gradients, insight-layout, score cards, etc. —
+ *                actually applies).
+ *
+ * Earlier behavior (string return, stripping `<style>`) lost the slide's
+ * styling entirely AND prepended duplicate `class`/`data-testid` attributes
+ * onto the outer div, which produced malformed HTML and an invisible (or
+ * unstyled) slide. This implementation:
+ *   - Extracts and preserves `<style>` blocks instead of stripping them.
+ *   - Strips `<head>` content (the previous regex only removed the tags,
+ *     leaving stray `<meta>`/`<title>` text leaking into the body).
+ *   - Updates the outer `<div>`'s `data-testid` and `class` attributes
+ *     IN PLACE — replacing existing values rather than prepending new ones.
+ */
 function sanitizeSlideFragment(fragment, stepId) {
-  if (!fragment) return '';
+  if (!fragment) return { html: '', styles: [] };
   let s = String(fragment).trim();
   s = s.replace(/^```(?:html|HTML)?\s*/m, '').replace(/```\s*$/m, '');
+
+  // Extract <style> blocks BEFORE stripping anything else, so we can return
+  // them for injection into the host <head>.
+  const styles = [];
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, (match) => {
+    styles.push(match);
+    return '';
+  });
+
+  // Strip everything that doesn't belong in <body>. Note: we strip the
+  // <head>...</head> block *as a whole* (not just the tags), and also nuke
+  // any stray <meta>/<title>/<link> nodes that the LLM might emit outside
+  // <head>. The previous regex only removed the head tags, so meta/title
+  // contents leaked into the body as visible text.
   s = s.replace(/<!DOCTYPE[^>]*>/i, '');
   s = s.replace(/<\/?html[^>]*>/gi, '');
+  s = s.replace(/<head[\s\S]*?<\/head>/gi, '');
+  s = s.replace(/<meta[^>]*\/?>/gi, '');
+  s = s.replace(/<link[^>]*\/?>/gi, '');
+  s = s.replace(/<title[\s\S]*?<\/title>/gi, '');
   s = s.replace(/<\/?body[^>]*>/gi, '');
-  s = s.replace(/<\/?head[^>]*>/gi, '');
   s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
-  s = s.replace(/<style[\s\S]*?<\/style>/gi, '');
   s = s.trim();
 
+  if (!s) return { html: '', styles };
+
   const openingMatch = s.match(/<div[^>]*>/i);
-  if (!openingMatch) return '';
+  if (!openingMatch) return { html: '', styles };
   const opening = openingMatch[0];
-  const hasTestid = new RegExp(`data-testid="step-${stepId.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}"`).test(opening);
-  if (!hasTestid) {
-    const replaced = opening.replace(/<div\b/, `<div data-testid="step-${stepId}" class="step"`);
-    s = s.replace(opening, replaced);
+
+  // Update outer-div attributes IN PLACE so we don't end up with duplicates.
+  // Browsers keep the FIRST of any duplicated attribute and silently drop
+  // the rest, which previously meant `class="slide-root"` (the slide's
+  // styling hook) got dropped in favor of a prepended `class="step"`.
+  let updatedOpening = opening;
+
+  if (/\bdata-testid\s*=/.test(updatedOpening)) {
+    updatedOpening = updatedOpening.replace(
+      /\bdata-testid\s*=\s*"[^"]*"/i,
+      `data-testid="step-${stepId}"`
+    );
+  } else {
+    updatedOpening = updatedOpening.replace(
+      /<div\b/,
+      `<div data-testid="step-${stepId}"`
+    );
   }
+
+  const classMatch = updatedOpening.match(/\bclass\s*=\s*"([^"]*)"/i);
+  if (classMatch) {
+    const existing = classMatch[1].split(/\s+/).filter(Boolean);
+    if (!existing.includes('step')) existing.unshift('step');
+    updatedOpening = updatedOpening.replace(
+      /\bclass\s*=\s*"[^"]*"/i,
+      `class="${existing.join(' ')}"`
+    );
+  } else {
+    updatedOpening = updatedOpening.replace(/<div\b/, `<div class="step"`);
+  }
+
+  s = s.replace(opening, updatedOpening);
+
+  // Strip inline `style="display:..."` so a stale `display:none` left over
+  // from the slide's authoring environment doesn't override the host's
+  // `.step.active { display: ... }` rule once the slide becomes the active
+  // step. Any other inline styles are preserved.
   s = s.replace(/\sstyle="[^"]*\bdisplay\s*:[^";]+;?[^"]*"/gi, '');
-  return s.trim();
+
+  return { html: s.trim(), styles };
 }
 
-function spliceSlideFragmentIntoHtml(html, stepId, fragment) {
-  const cleaned = sanitizeSlideFragment(fragment, stepId);
+/**
+ * Inject extracted slide `<style>` blocks into the host's `<head>`, wrapped
+ * in per-step marker comments so re-inserts don't keep stacking duplicate
+ * style nodes. If the host has no `<head>`, fall back to before `<body>`
+ * or the top of the document.
+ */
+function injectSlideStylesIntoHead(html, styles, stepId) {
+  if (!Array.isArray(styles) || styles.length === 0) return html;
+  const safeId = String(stepId).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const startMarker = `<!-- POST-SLIDES STYLES: ${stepId} -->`;
+  const endMarker = `<!-- /POST-SLIDES STYLES: ${stepId} -->`;
+  const reExisting = new RegExp(
+    `<!--\\s*POST-SLIDES STYLES:\\s*${safeId}\\s*-->[\\s\\S]*?<!--\\s*/POST-SLIDES STYLES:\\s*${safeId}\\s*-->`,
+    'g'
+  );
+  let out = html.replace(reExisting, '');
+
+  const block = `${startMarker}\n${styles.join('\n')}\n${endMarker}`;
+
+  if (/<\/head>/i.test(out)) {
+    return out.replace(/<\/head>/i, `${block}\n</head>`);
+  }
+  if (/<body\b/i.test(out)) {
+    return out.replace(/<body\b/i, `${block}\n<body`);
+  }
+  return block + '\n' + out;
+}
+
+function spliceSlideFragmentIntoHtml(html, stepId, fragment, options = {}) {
+  const insertAfterId = options && options.insertAfterId
+    ? String(options.insertAfterId).trim()
+    : '';
+
+  const { html: cleaned, styles } = sanitizeSlideFragment(fragment, stepId);
   if (!cleaned) {
-    return { html, applied: false, reason: 'empty-fragment' };
+    return { html, applied: false, reason: 'empty-fragment', styleCount: 0 };
   }
 
-  if (hasStepContainer(html, stepId)) {
+  // Always inject styles up-front (idempotent per step id).
+  let workingHtml = injectSlideStylesIntoHead(html, styles, stepId);
+
+  // If a step block for this id already exists, replace it in place.
+  if (hasStepContainer(workingHtml, stepId)) {
     const re = stepBlockRegex(stepId);
-    const m = html.match(re);
+    const m = workingHtml.match(re);
     if (m) {
       return {
-        html: html.replace(m[0], cleaned + '\n'),
+        html: workingHtml.replace(m[0], cleaned + '\n'),
         applied: true,
         reason: 'replaced-existing-step-block',
+        styleCount: styles.length,
       };
     }
   }
 
+  // Preferred: splice the slide div RIGHT AFTER the previous step's closing
+  // div. This keeps DOM order in sync with demo-script.json order, which is
+  // critical because the host's arrow-key handler and click-to-advance
+  // handler both walk `.step` divs in DOM order to figure out "the next
+  // step". Without this, arrow keys (and click-anywhere) skip the slide.
+  if (insertAfterId && hasStepContainer(workingHtml, insertAfterId)) {
+    const prevRe = stepBlockRegex(insertAfterId);
+    const prevMatch = workingHtml.match(prevRe);
+    if (prevMatch) {
+      const prevBlock = prevMatch[0];
+      const idx = workingHtml.indexOf(prevBlock) + prevBlock.length;
+      const before = workingHtml.slice(0, idx);
+      const after = workingHtml.slice(idx);
+      // Ensure the inserted block ends with a trailing newline so the next
+      // step's div starts on its own line — keeps stepBlockRegex sentinels
+      // happy on subsequent splices.
+      return {
+        html: before + cleaned + '\n' + after,
+        applied: true,
+        reason: 'inserted-after-prev-step',
+        styleCount: styles.length,
+      };
+    }
+  }
+
+  // Fallback: append before the side-panels marker (legacy behavior). Used
+  // when no `insertAfterId` is provided or the previous step doesn't exist
+  // in the HTML yet (e.g. orchestrator's post-slides stage runs before the
+  // host has all of its step divs rendered).
   const beforeEndMarker =
-    html.indexOf('<!-- SIDE PANELS') >= 0 ? '<!-- SIDE PANELS' :
-    html.indexOf('<div id="link-events-panel"') >= 0 ? '<div id="link-events-panel"' :
-    html.indexOf('<div id="api-response-panel"') >= 0 ? '<div id="api-response-panel"' :
+    workingHtml.indexOf('<!-- SIDE PANELS') >= 0 ? '<!-- SIDE PANELS' :
+    workingHtml.indexOf('<!-- Side panels') >= 0 ? '<!-- Side panels' :
+    workingHtml.indexOf('<div id="link-events-panel"') >= 0 ? '<div id="link-events-panel"' :
+    workingHtml.indexOf('<div id="api-response-panel"') >= 0 ? '<div id="api-response-panel"' :
     '</body>';
-  if (html.includes(beforeEndMarker)) {
+  if (workingHtml.includes(beforeEndMarker)) {
     return {
-      html: html.replace(beforeEndMarker, `${cleaned}\n${beforeEndMarker}`),
+      html: workingHtml.replace(beforeEndMarker, `${cleaned}\n${beforeEndMarker}`),
       applied: true,
       reason: 'appended-before-side-panels',
+      styleCount: styles.length,
     };
   }
-  return { html, applied: false, reason: 'no-insertion-point' };
+  return { html: workingHtml, applied: false, reason: 'no-insertion-point', styleCount: styles.length };
 }
 
 function loadSlideTemplates(PROJECT_ROOT) {
@@ -305,6 +445,17 @@ async function main() {
   const brand = loadBrand(outDir);
   const vps = loadValueProps(outDir);
 
+  // Map each slide step to its predecessor in script order so we can
+  // splice it into the host HTML right after that step's div (preserves
+  // DOM order = script order, which the host's arrow-key + click-to-advance
+  // handlers depend on).
+  const stepIndexById = new Map(steps.map((s, i) => [s.id, i]));
+  const prevStepIdFor = (stepId) => {
+    const idx = stepIndexById.get(stepId);
+    if (typeof idx !== 'number' || idx <= 0) return null;
+    return steps[idx - 1] && steps[idx - 1].id ? steps[idx - 1].id : null;
+  };
+
   for (const step of targets) {
     const hostHasExistingSlide = hostAlreadyHasAnySlide(html);
     if (cli.dryRun) {
@@ -330,7 +481,12 @@ async function main() {
           narration: step.narration,
         });
         lastRaw = raw;
-        const { html: updated, applied: ok, reason } = spliceSlideFragmentIntoHtml(html, step.id, raw);
+        const { html: updated, applied: ok, reason } = spliceSlideFragmentIntoHtml(
+          html,
+          step.id,
+          raw,
+          { insertAfterId: prevStepIdFor(step.id) }
+        );
         lastReason = reason;
         if (ok) {
           html = updated;
@@ -383,6 +539,7 @@ module.exports = {
   main,
   sanitizeSlideFragment,
   spliceSlideFragmentIntoHtml,
+  injectSlideStylesIntoHead,
   stepHasSlideRoot,
   hostAlreadyHasAnySlide,
 };

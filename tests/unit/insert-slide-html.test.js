@@ -7,6 +7,7 @@ const path = require('path');
 
 const {
   spliceLibrarySlideIntoRunHtml,
+  rewirePreviousStepCta,
   removeStepBlockFromHtml,
   removeStepBlockFromRunHtml,
 } = require(
@@ -298,5 +299,251 @@ describe('removeStepBlockFromRunHtml', () => {
   test('returns skipped on missing args', () => {
     assert.equal(removeStepBlockFromRunHtml(null, 'a').skipped, true);
     assert.equal(removeStepBlockFromRunHtml('/tmp', '').skipped, true);
+  });
+});
+
+// ─── rewirePreviousStepCta — pure helper ────────────────────────────────────
+
+describe('rewirePreviousStepCta', () => {
+  test('rewrites the primary CTA to point at the slide step', () => {
+    const html =
+      '<html><body>' +
+      '<div data-testid="step-home" class="step active">' +
+      '<button class="btn btn-primary" data-testid="get-started" onclick="window.goToStep(\'next-real\')">Get started</button>' +
+      '</div>' +
+      '<div data-testid="step-next-real" class="step">next</div>' +
+      '<!-- SIDE PANELS --></body></html>';
+    const out = rewirePreviousStepCta(html, 'home', 'inserted-slide');
+    assert.equal(out.rewired, true);
+    assert.equal(out.previousTarget, 'next-real');
+    assert.match(out.html, /goToStep\('inserted-slide'\)/);
+    assert.doesNotMatch(out.html, /goToStep\('next-real'\)/);
+    // Other parts of the HTML untouched:
+    assert.match(out.html, /data-testid="step-next-real"/);
+  });
+
+  test('prefers btn-primary over a plain button when both have goToStep', () => {
+    const html =
+      '<div data-testid="step-home" class="step">' +
+      '<button class="btn" onclick="window.goToStep(\'plain-target\')">Plain</button>' +
+      '<button class="btn btn-primary" onclick="window.goToStep(\'primary-target\')">Primary</button>' +
+      '</div>' +
+      '<!-- SIDE PANELS -->';
+    const out = rewirePreviousStepCta(html, 'home', 'slide');
+    assert.equal(out.rewired, true);
+    assert.equal(out.previousTarget, 'primary-target');
+    // Only the primary CTA was rewired:
+    assert.match(out.html, /goToStep\('plain-target'\)/);
+    assert.match(out.html, /goToStep\('slide'\)/);
+    assert.doesNotMatch(out.html, /goToStep\('primary-target'\)/);
+  });
+
+  test('falls back to a clickable card when no buttons match', () => {
+    const html =
+      '<div data-testid="step-home" class="step">' +
+      '<div class="card" onclick="window.goToStep(\'card-target\')">click me</div>' +
+      '</div>' +
+      '<!-- SIDE PANELS -->';
+    const out = rewirePreviousStepCta(html, 'home', 'slide');
+    assert.equal(out.rewired, true);
+    assert.equal(out.previousTarget, 'card-target');
+    assert.match(out.html, /goToStep\('slide'\)/);
+    assert.match(out.reason, /card/);
+  });
+
+  test('returns rewired=false when prev step is not present', () => {
+    const html = '<div data-testid="step-other" class="step">x</div>';
+    const out = rewirePreviousStepCta(html, 'missing', 'slide');
+    assert.equal(out.rewired, false);
+    assert.equal(out.reason, 'prev-step-not-found');
+  });
+
+  test('returns rewired=false when CTA already points at the slide (idempotent)', () => {
+    const html =
+      '<div data-testid="step-home" class="step">' +
+      '<button class="btn btn-primary" onclick="window.goToStep(\'slide-id\')">Continue</button>' +
+      '</div>' +
+      '<!-- SIDE PANELS -->';
+    const out = rewirePreviousStepCta(html, 'home', 'slide-id');
+    assert.equal(out.rewired, false);
+    assert.equal(out.reason, 'already-points-at-slide');
+  });
+
+  test('returns rewired=false when previous step has no goToStep CTA', () => {
+    const html =
+      '<div data-testid="step-home" class="step">' +
+      '<button class="btn">Inert</button>' +
+      '</div>' +
+      '<!-- SIDE PANELS -->';
+    const out = rewirePreviousStepCta(html, 'home', 'slide');
+    assert.equal(out.rewired, false);
+    assert.equal(out.reason, 'no-cta-found');
+  });
+
+  test('handles malformed input gracefully', () => {
+    assert.equal(rewirePreviousStepCta(null, 'a', 'b').rewired, false);
+    assert.equal(rewirePreviousStepCta('<div/>', '', 'b').rewired, false);
+    assert.equal(rewirePreviousStepCta('<div/>', 'a', '').rewired, false);
+  });
+});
+
+// ─── spliceLibrarySlideIntoRunHtml — insertAfterId & styles preservation ────
+
+describe('spliceLibrarySlideIntoRunHtml — DOM ordering, styles, CTA rewire', () => {
+  test('preserves slide <style> blocks by injecting them into the host <head>', () => {
+    const slideHtml =
+      '<!doctype html><html><head>' +
+      '<style>.insight-layout{background:#0d1117;color:#fff}</style>' +
+      '<title>Slide</title>' +
+      '</head><body>' +
+      '<div data-testid="step-original" class="step slide-root"><div class="insight-layout">CONTENT</div></div>' +
+      '</body></html>';
+    const indexHtml =
+      '<!doctype html><html><head><title>App</title><style>.host{display:block}</style></head><body>' +
+      '<div data-testid="step-home" class="step active"><button class="btn btn-primary" onclick="window.goToStep(\'old-next\')">Continue</button></div>' +
+      '<div data-testid="step-old-next" class="step">next</div>' +
+      '<!-- SIDE PANELS -->' +
+      '</body></html>';
+    const fx = makeFixture(
+      'splice-styles-' + Date.now(),
+      'slide-styles-' + Date.now(),
+      slideHtml,
+      indexHtml
+    );
+    try {
+      const out = spliceLibrarySlideIntoRunHtml(fx.runDir, 'inserted-slide', fx.slide, { insertAfterId: 'home' });
+      assert.equal(out.applied, true);
+      assert.equal(out.stylesInjected, 1);
+      assert.equal(out.ctaRewired, true);
+
+      const written = fs.readFileSync(path.join(fx.runDir, 'scratch-app', 'index.html'), 'utf8');
+      // Slide CSS now lives in the head:
+      assert.match(written, /POST-SLIDES STYLES: inserted-slide/);
+      assert.match(written, /\.insight-layout\{background:#0d1117/);
+      // Stray <title>/<meta> from the slide head did NOT leak into the body:
+      const bodyOnly = written.split('</head>')[1] || '';
+      assert.doesNotMatch(bodyOnly, /<title[\s>]/i);
+      // Outer slide div has the user-picked stepId AND no duplicate attributes:
+      const slideOpenMatch = written.match(/<div[^>]*\bdata-testid="step-inserted-slide"[^>]*>/);
+      assert.ok(slideOpenMatch, 'slide opening div should have the new step id');
+      const opens = (written.match(/data-testid="step-inserted-slide"/g) || []).length;
+      assert.equal(opens, 1, 'no duplicate data-testid for the slide');
+      // The slide-root class survived (NOT clobbered by a duplicate class attr):
+      assert.match(slideOpenMatch[0], /class="[^"]*\bslide-root\b/);
+      assert.match(slideOpenMatch[0], /class="[^"]*\bstep\b/);
+      // Previous step's CTA now points at the slide, not at old-next:
+      assert.match(written, /goToStep\('inserted-slide'\)/);
+      assert.doesNotMatch(written, /goToStep\('old-next'\)/);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  test('splices slide RIGHT AFTER the insertAfterId step in DOM order', () => {
+    const fx = makeFixture(
+      'splice-domorder-' + Date.now(),
+      'slide-domorder-' + Date.now(),
+      '<div class="slide-root">SLIDE</div>',
+      '<!doctype html><html><head></head><body>' +
+        '<div data-testid="step-a" class="step">A</div>' +
+        '<div data-testid="step-b" class="step">B</div>' +
+        '<div data-testid="step-c" class="step">C</div>' +
+        '<!-- SIDE PANELS --></body></html>'
+    );
+    try {
+      const out = spliceLibrarySlideIntoRunHtml(fx.runDir, 'mid-slide', fx.slide, { insertAfterId: 'b' });
+      assert.equal(out.applied, true);
+      assert.match(out.reason, /inserted-after-prev-step/);
+
+      const written = fs.readFileSync(path.join(fx.runDir, 'scratch-app', 'index.html'), 'utf8');
+      const orderRe = /data-testid="step-(a|b|c|mid-slide)"/g;
+      const order = [];
+      let m;
+      while ((m = orderRe.exec(written)) !== null) order.push(m[1]);
+      assert.deepEqual(order, ['a', 'b', 'mid-slide', 'c']);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  test('falls back to side-panels append when insertAfterId step is missing', () => {
+    const fx = makeFixture(
+      'splice-fallback-' + Date.now(),
+      'slide-fallback-' + Date.now(),
+      '<div class="slide-root">x</div>',
+      '<!doctype html><html><body>' +
+        '<div data-testid="step-only" class="step">only</div>' +
+        '<!-- SIDE PANELS --></body></html>'
+    );
+    try {
+      const out = spliceLibrarySlideIntoRunHtml(fx.runDir, 'orphan-slide', fx.slide, { insertAfterId: 'nonexistent' });
+      assert.equal(out.applied, true);
+      assert.match(out.reason, /side-panels|inserted-after/);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  test('idempotent re-insert: does not stack duplicate <style> nodes', () => {
+    const slideHtml =
+      '<html><head><style>.x{color:red}</style></head><body>' +
+      '<div class="slide-root">v1</div></body></html>';
+    const fx = makeFixture(
+      'splice-idem-' + Date.now(),
+      'slide-idem-' + Date.now(),
+      slideHtml,
+      '<!doctype html><html><head></head><body>' +
+        '<div data-testid="step-home" class="step">home</div>' +
+        '<!-- SIDE PANELS --></body></html>'
+    );
+    try {
+      spliceLibrarySlideIntoRunHtml(fx.runDir, 'reinsert-slide', fx.slide, { insertAfterId: 'home' });
+      // Mutate the slide on disk and re-splice (simulating a re-import):
+      const slideAbs = path.join(SLIDE_LIBRARY_SLIDES_DIR, fx.slide.id, 'index.html');
+      fs.writeFileSync(
+        slideAbs,
+        '<html><head><style>.x{color:blue}</style></head><body>' +
+        '<div class="slide-root">v2</div></body></html>'
+      );
+      const out2 = spliceLibrarySlideIntoRunHtml(fx.runDir, 'reinsert-slide', fx.slide, { insertAfterId: 'home' });
+      assert.equal(out2.applied, true);
+
+      const written = fs.readFileSync(path.join(fx.runDir, 'scratch-app', 'index.html'), 'utf8');
+      const startMarkers = (written.match(/POST-SLIDES STYLES: reinsert-slide/g) || []).length;
+      // Exactly ONE start marker + ONE end marker — re-insert removed the
+      // prior block before adding the new one:
+      assert.equal(startMarkers, 2, 'expect exactly one start + one end marker after re-insert');
+      assert.match(written, /\.x\{color:blue\}/);
+      assert.doesNotMatch(written, /\.x\{color:red\}/);
+      // Step content also replaced:
+      assert.match(written, />v2</);
+      assert.doesNotMatch(written, />v1</);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  test('no insertAfterId argument keeps legacy fallback behavior (and skips CTA rewire)', () => {
+    const fx = makeFixture(
+      'splice-legacy-' + Date.now(),
+      'slide-legacy-' + Date.now(),
+      '<div class="slide-root">L</div>',
+      '<!doctype html><html><body>' +
+        '<div data-testid="step-home" class="step">' +
+        '<button class="btn btn-primary" onclick="window.goToStep(\'kept\')">Continue</button>' +
+        '</div>' +
+        '<!-- SIDE PANELS --></body></html>'
+    );
+    try {
+      const out = spliceLibrarySlideIntoRunHtml(fx.runDir, 'legacy-slide', fx.slide);
+      assert.equal(out.applied, true);
+      assert.equal(out.ctaRewired, false);
+      assert.equal(out.ctaRewireReason, 'no-insert-after-id');
+      const written = fs.readFileSync(path.join(fx.runDir, 'scratch-app', 'index.html'), 'utf8');
+      // Legacy CTA target preserved:
+      assert.match(written, /goToStep\('kept'\)/);
+    } finally {
+      fx.cleanup();
+    }
   });
 });

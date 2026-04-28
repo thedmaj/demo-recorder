@@ -2875,11 +2875,18 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
     // the demo-script.json edit still succeeded.
     let spliceResult = { applied: false, skipped: true, skippedReason: 'not-attempted' };
     try {
-      spliceResult = spliceLibrarySlideIntoRunHtml(dir, nextStepId, slide);
+      // Pass insertAfterId so the splice helper:
+      //   (a) puts the slide div right after the previous step in DOM order
+      //       — required for arrow-key + click-anywhere navigation to walk
+      //       to the slide as "the next step";
+      //   (b) rewires the previous step's primary CTA so clicking that
+      //       button lands on the slide instead of skipping past it.
+      spliceResult = spliceLibrarySlideIntoRunHtml(dir, nextStepId, slide, { insertAfterId });
       if (spliceResult.applied) {
         console.log(
           `[SlideLibrary] Spliced slide HTML into ${path.relative(PROJECT_ROOT, spliceResult.htmlPath)} ` +
-          `(reason: ${spliceResult.reason})`
+          `(reason: ${spliceResult.reason}, styles: ${spliceResult.stylesInjected || 0}, ` +
+          `cta: ${spliceResult.ctaRewired ? 'rewired' : (spliceResult.ctaRewireReason || 'skipped')})`
         );
       } else if (!spliceResult.skipped) {
         console.warn(
