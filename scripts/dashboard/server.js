@@ -2883,6 +2883,127 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
   }
 });
 
+// POST /api/runs/:runId/remove-step
+//
+// Remove a slide step from a built demo. By design this endpoint is
+// LIMITED to slide-kind steps — host / link / insight scenes are not
+// removable through this surface (deleting them would break the demo's
+// flow and Plaid Link contract). The "slide" gate uses the canonical
+// `deriveStepKind` so it matches `sceneType: 'slide'`, `sceneType: 'insight'`,
+// and steps with a `slideLibraryRef`.
+//
+// What it modifies (atomic-ish; each file is best-effort):
+//   1. demo-script.json     — remove the step from steps[]
+//   2. scratch-app/index.html (legacy + canonical when both exist)
+//                             — strip the <div data-testid="step-<id>"> block
+//   3. playwright-script.json — drop any rows whose stepId/id matches
+//   4. fires demoAppReload.notifyReload() so any open browser tab refreshes
+//
+// Returns 400 when the step is non-slide; 404 when the step doesn't exist;
+// 500 on filesystem failure mid-flight (with partial-write info in body).
+app.post('/api/runs/:runId/remove-step', (req, res) => {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId) return res.status(400).json({ error: 'runId required' });
+    const stepId = String((req.body && req.body.stepId) || '').trim();
+    if (!stepId) return res.status(400).json({ error: 'stepId required' });
+
+    const dir = getRunDir(runId);
+    const scriptPath = path.join(dir, 'demo-script.json');
+    const script = safeReadJson(scriptPath);
+    if (!script || !Array.isArray(script.steps)) {
+      return res.status(404).json({ error: 'demo-script.json not found' });
+    }
+
+    const idx = script.steps.findIndex(s => s && s.id === stepId);
+    if (idx < 0) {
+      return res.status(404).json({ error: `Step "${stepId}" not found in demo-script.json` });
+    }
+    const step = script.steps[idx];
+    const kind = deriveStepKind(step);
+
+    // Hard guard: only slide-kind steps are removable here. Sales engineers
+    // shouldn't accidentally delete a host or Plaid Link step from the
+    // dashboard — those changes need a deliberate edit to demo-script.json
+    // (or a fresh pipeline run with an updated prompt.txt).
+    if (kind !== 'slide') {
+      return res.status(400).json({
+        error: `Only slide steps can be removed via this endpoint. ` +
+               `Step "${stepId}" has stepKind="${kind}" (sceneType="${step.sceneType || 'host'}"). ` +
+               `Edit demo-script.json or rerun the pipeline to change non-slide steps.`,
+        stepKind: kind,
+        sceneType: step.sceneType || 'host',
+      });
+    }
+
+    // 1. Remove from demo-script.json (atomic write via tmp+rename).
+    script.steps.splice(idx, 1);
+    try {
+      const tmp = scriptPath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
+      fs.renameSync(tmp, scriptPath);
+    } catch (err) {
+      return res.status(500).json({ error: `Could not write demo-script.json: ${err.message}` });
+    }
+
+    // 2. Strip the step's <div> from index.html (legacy + canonical).
+    let htmlResult = { removedFrom: [], notFoundIn: [], skipped: false };
+    try { htmlResult = removeStepBlockFromRunHtml(dir, stepId); }
+    catch (err) { console.warn(`[RemoveStep] HTML strip failed for ${runId}/${stepId}: ${err.message}`); }
+
+    // 3. Drop any matching rows from playwright-script.json (legacy +
+    //    canonical artifact paths). Keep this best-effort — the absence of a
+    //    playwright row for a removed step is benign on subsequent runs.
+    const playwrightCandidates = [
+      path.join(dir, 'scratch-app', 'playwright-script.json'),
+      path.join(dir, 'artifacts', 'build', 'scratch-app', 'playwright-script.json'),
+    ].filter(p => fs.existsSync(p));
+    let playwrightRowsRemoved = 0;
+    for (const p of playwrightCandidates) {
+      try {
+        const ps = safeReadJson(p);
+        if (!ps || !Array.isArray(ps.steps)) continue;
+        const before = ps.steps.length;
+        ps.steps = ps.steps.filter(r => r && (r.stepId !== stepId && r.id !== stepId));
+        if (ps.steps.length !== before) {
+          playwrightRowsRemoved += (before - ps.steps.length);
+          const tmp = p + '.tmp';
+          fs.writeFileSync(tmp, JSON.stringify(ps, null, 2), 'utf8');
+          fs.renameSync(tmp, p);
+        }
+      } catch (_) { /* per-file best-effort */ }
+    }
+
+    // 4. Hot-reload any open browser tab for this run.
+    const notify = demoAppReload.notifyReload(runId, {
+      reason: 'slide-removed',
+      stepId,
+      stepKind: kind,
+    });
+    if (notify.notified > 0) {
+      console.log(`[RemoveStep] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
+    }
+
+    // Invalidate the AI-edit cache so subsequent /ai-edit calls re-parse
+    // the new HTML (and don't operate on stale step blobs).
+    try { _appCache.delete(runId); } catch (_) {}
+
+    res.json({
+      ok: true,
+      removed: { stepId, stepKind: kind, sceneType: step.sceneType || null },
+      removedFromHtmlFiles: htmlResult.removedFrom.map(p => path.relative(PROJECT_ROOT, p)),
+      htmlSkippedReason: htmlResult.skipped ? htmlResult.skippedReason : null,
+      playwrightRowsRemoved,
+      totalSteps: script.steps.length,
+      notifiedTabs: notify.notified,
+    });
+  } catch (err) {
+    const msg = err && err.message;
+    if (msg && /invalid runid/i.test(msg)) return res.status(400).json({ error: msg });
+    res.status(500).json({ error: msg || 'Unknown error' });
+  }
+});
+
 // ── Human feedback export/read ────────────────────────────────────────────────
 
 const FEEDBACK_FILE = path.join(INPUTS_DIR, 'build-feedback.md');
@@ -3538,7 +3659,10 @@ const DEMO_APP_OVERLAY_FILE = path.join(__dirname, 'public', 'ai-overlay.js');
 // open browser tab for that run via the SSE endpoint registered in
 // launchDemoAppServer.
 const demoAppReload = require(path.join(__dirname, 'utils', 'demo-app-reload.js'));
-const { spliceLibrarySlideIntoRunHtml } = require(path.join(__dirname, 'utils', 'insert-slide-html.js'));
+const {
+  spliceLibrarySlideIntoRunHtml,
+  removeStepBlockFromRunHtml,
+} = require(path.join(__dirname, 'utils', 'insert-slide-html.js'));
 
 const DEMO_MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',

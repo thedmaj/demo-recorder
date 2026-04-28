@@ -5,7 +5,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { spliceLibrarySlideIntoRunHtml } = require(
+const {
+  spliceLibrarySlideIntoRunHtml,
+  removeStepBlockFromHtml,
+  removeStepBlockFromRunHtml,
+} = require(
   path.join(__dirname, '../../scripts/dashboard/utils/insert-slide-html')
 );
 
@@ -168,5 +172,131 @@ describe('spliceLibrarySlideIntoRunHtml — skip paths', () => {
     assert.equal(spliceLibrarySlideIntoRunHtml(null, 'step', {}).skipped, true);
     assert.equal(spliceLibrarySlideIntoRunHtml('/tmp', '', {}).skipped, true);
     assert.equal(spliceLibrarySlideIntoRunHtml('/tmp', 'step', null).skipped, true);
+  });
+});
+
+// ─── removeStepBlockFromHtml — pure helper ──────────────────────────────────
+
+describe('removeStepBlockFromHtml', () => {
+  test('strips the targeted step div and leaves the rest intact', () => {
+    const html =
+      '<html><body>' +
+      '<div data-testid="step-a" class="step">A</div>' +
+      '<div data-testid="step-b" class="slide-root">B (slide)</div>' +
+      '<div data-testid="step-c" class="step">C</div>' +
+      '<!-- SIDE PANELS --></body></html>';
+    const out = removeStepBlockFromHtml(html, 'b');
+    assert.equal(out.removed, true);
+    assert.equal(out.reason, 'step-block-removed');
+    assert.match(out.html, /data-testid="step-a"/);
+    assert.match(out.html, /data-testid="step-c"/);
+    assert.doesNotMatch(out.html, /data-testid="step-b"/);
+    assert.doesNotMatch(out.html, /B \(slide\)/);
+  });
+
+  test('handles the LAST step (no closing sentinel before </body>)', () => {
+    const html =
+      '<html><body>' +
+      '<div data-testid="step-a" class="step">A</div>' +
+      '<div data-testid="step-final" class="slide-root">final</div>' +
+      '</body></html>';
+    const out = removeStepBlockFromHtml(html, 'final');
+    assert.equal(out.removed, true);
+    assert.doesNotMatch(out.html, /data-testid="step-final"/);
+    assert.match(out.html, /data-testid="step-a"/);
+  });
+
+  test('returns removed=false when stepId is not present', () => {
+    const html = '<div data-testid="step-a">a</div>';
+    const out = removeStepBlockFromHtml(html, 'nonexistent');
+    assert.equal(out.removed, false);
+    assert.equal(out.reason, 'step-block-not-found');
+    assert.equal(out.html, html);
+  });
+
+  test('escapes regex special characters in stepId', () => {
+    const html =
+      '<div data-testid="step-with.dots+plus" class="slide-root">danger</div>' +
+      '<!-- SIDE PANELS -->';
+    const out = removeStepBlockFromHtml(html, 'with.dots+plus');
+    assert.equal(out.removed, true);
+    assert.doesNotMatch(out.html, /data-testid="step-with\.dots\+plus"/);
+  });
+
+  test('handles malformed input gracefully (no throw)', () => {
+    assert.deepEqual(removeStepBlockFromHtml(null, 'a'), { html: null, removed: false, reason: 'empty-input' });
+    assert.deepEqual(removeStepBlockFromHtml('', 'a'), { html: '', removed: false, reason: 'empty-input' });
+    assert.deepEqual(removeStepBlockFromHtml('<div/>', '').reason, 'no-stepid');
+    assert.deepEqual(removeStepBlockFromHtml('<div/>', null).reason, 'no-stepid');
+  });
+
+  test('collapses ragged blank lines after the strip', () => {
+    const html =
+      '<div data-testid="step-a">A</div>\n\n\n\n\n' +
+      '<div data-testid="step-b">B</div>';
+    const out = removeStepBlockFromHtml(html, 'a');
+    // No more than 2 consecutive newlines should remain:
+    assert.doesNotMatch(out.html, /\n{3,}/);
+  });
+});
+
+// ─── removeStepBlockFromRunHtml — disk integration ──────────────────────────
+
+describe('removeStepBlockFromRunHtml', () => {
+  test('removes the step from both legacy and canonical index.html when both exist', () => {
+    const runDir = path.join(PROJECT_ROOT, 'out', 'demos', 'remove-test-' + Date.now());
+    const legacy = path.join(runDir, 'scratch-app', 'index.html');
+    const canonical = path.join(runDir, 'artifacts', 'build', 'scratch-app', 'index.html');
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    fs.mkdirSync(path.dirname(canonical), { recursive: true });
+    const baseHtml =
+      '<html><body>' +
+      '<div data-testid="step-home" class="step">home</div>' +
+      '<div data-testid="step-slide-x" class="slide-root">slide-x</div>' +
+      '<!-- SIDE PANELS --></body></html>';
+    fs.writeFileSync(legacy, baseHtml);
+    fs.writeFileSync(canonical, baseHtml);
+    try {
+      const out = removeStepBlockFromRunHtml(runDir, 'slide-x');
+      assert.equal(out.skipped, false);
+      assert.equal(out.removedFrom.length, 2);
+      // Disk reflects the change in BOTH files:
+      assert.doesNotMatch(fs.readFileSync(legacy, 'utf8'), /data-testid="step-slide-x"/);
+      assert.doesNotMatch(fs.readFileSync(canonical, 'utf8'), /data-testid="step-slide-x"/);
+    } finally {
+      try { fs.rmSync(runDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  test('returns notFoundIn entries when the step is not in a given file (idempotent re-run)', () => {
+    const runDir = path.join(PROJECT_ROOT, 'out', 'demos', 'remove-idem-' + Date.now());
+    const legacy = path.join(runDir, 'scratch-app', 'index.html');
+    fs.mkdirSync(path.dirname(legacy), { recursive: true });
+    fs.writeFileSync(legacy, '<html><body><div data-testid="step-home">home</div></body></html>');
+    try {
+      const out = removeStepBlockFromRunHtml(runDir, 'nonexistent-step');
+      assert.equal(out.skipped, false);
+      assert.equal(out.removedFrom.length, 0);
+      assert.equal(out.notFoundIn.length, 1);
+    } finally {
+      try { fs.rmSync(runDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  test('returns skipped when the run dir has no index.html', () => {
+    const runDir = path.join(PROJECT_ROOT, 'out', 'demos', 'remove-empty-' + Date.now());
+    fs.mkdirSync(runDir, { recursive: true });
+    try {
+      const out = removeStepBlockFromRunHtml(runDir, 'whatever');
+      assert.equal(out.skipped, true);
+      assert.equal(out.skippedReason, 'no-index-html');
+    } finally {
+      try { fs.rmSync(runDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  test('returns skipped on missing args', () => {
+    assert.equal(removeStepBlockFromRunHtml(null, 'a').skipped, true);
+    assert.equal(removeStepBlockFromRunHtml('/tmp', '').skipped, true);
   });
 });

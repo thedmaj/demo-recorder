@@ -483,6 +483,28 @@
   }
 
   /**
+   * Mirror of `deriveStepKind` from scripts/scratch/utils/step-kind.js — kept
+   * deliberately small so the storyboard render can decide which steps show a
+   * "Remove slide" button without an API round-trip. Server's POST
+   * /api/runs/:runId/remove-step uses the canonical helper as the source of
+   * truth; this is just the UI's render gate.
+   *
+   * Returns 'slide' for steps that the slide-removal flow targets (sceneType
+   * 'slide' / 'insight', or any step with a slideLibraryRef), 'app' otherwise.
+   */
+  function isSlideStepClient(step) {
+    if (!step || typeof step !== 'object') return false;
+    if (step.stepKind === 'slide') return true;
+    const sceneType = String(step.sceneType || '').toLowerCase();
+    if (sceneType === 'slide' || sceneType === 'insight') return true;
+    if (step.slideLibraryRef && step.slideLibraryRef.slideId) return true;
+    // Don't fall back to label-text heuristics here — those produce false
+    // positives. The server-side helper is more thorough; this is just for
+    // showing/hiding a button.
+    return false;
+  }
+
+  /**
    * Syntax-highlight a JSON string → HTML with span classes:
    * .json-key, .json-string, .json-number, .json-bool, .json-null
    */
@@ -2114,6 +2136,10 @@
                 ${hasIssues
                   ? `<button class="btn btn-sm btn-secondary toggle-issues-btn" data-step-id="${esc(sid)}">▼ ${issues.length} issue${issues.length !== 1 ? 's' : ''}</button>`
                   : ''}
+                ${isSlideStepClient(step)
+                  ? `<button class="btn btn-sm btn-danger sb-remove-slide-btn" data-step-id="${esc(sid)}"
+                       title="Remove this slide from the storyboard. Updates demo-script.json + index.html + playwright-script.json. Only slide-kind steps are removable through this button.">✕ Remove slide</button>`
+                  : ''}
               </div>
               <ul class="qa-issue-list" data-step-id="${esc(sid)}">
                 ${issues.map(i => `<li>${esc(i)}</li>`).join('')}
@@ -2825,6 +2851,53 @@
           const sid = btn.dataset.stepId;
           const list = el.querySelector(`.qa-issue-list[data-step-id="${sid}"]`);
           if (list) list.classList.toggle('open');
+        });
+      });
+
+      // Remove slide. Confirms first; on success, removes the card from the
+      // DOM (the running demo-app preview tab also auto-reloads via the
+      // /__hot-reload SSE channel — server's notifyReload fires there).
+      el.querySelectorAll('.sb-remove-slide-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const sid = btn.dataset.stepId;
+          if (!sid) return;
+          const card = el.querySelector(`.step-card[data-step-id="${sid}"]`);
+          const labelEl = card && card.querySelector('.step-label');
+          const labelText = labelEl ? labelEl.textContent.trim() : sid;
+          const confirmed = window.confirm(
+            `Remove slide "${labelText}" (id: ${sid})?\n\n` +
+            `This will delete the step from demo-script.json, strip its HTML ` +
+            `from the running app, and drop matching Playwright rows. The action ` +
+            `is reversible only by re-running the pipeline or re-inserting from ` +
+            `the slide library.`
+          );
+          if (!confirmed) return;
+          // Visual feedback while the request is in flight:
+          btn.disabled = true;
+          const origLabel = btn.textContent;
+          btn.textContent = '… removing';
+          try {
+            const result = await apiPost('/api/runs/' + currentRunId + '/remove-step', { stepId: sid });
+            if (!result || !result.ok) {
+              throw new Error((result && result.error) || 'Removal failed');
+            }
+            if (card) {
+              // Also drop the inserter-gap that follows this card so we don't leave a dangling +.
+              const next = card.nextElementSibling;
+              if (next && next.classList && next.classList.contains('sb-insert-gap')) {
+                next.parentNode.removeChild(next);
+              }
+              card.parentNode.removeChild(card);
+            }
+            const tabsMsg = result.notifiedTabs > 0
+              ? ` (reloaded ${result.notifiedTabs} open browser tab${result.notifiedTabs === 1 ? '' : 's'})`
+              : '';
+            showToast(`Removed slide "${sid}"${tabsMsg}`, 'success');
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = origLabel;
+            showToast(`Could not remove slide "${sid}": ${err.message}`, 'error');
+          }
         });
       });
 
