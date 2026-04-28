@@ -3554,6 +3554,14 @@
       sourceLabel,
       slide.sceneType ? slide.sceneType : null,
     ].filter(Boolean).join(' • ');
+    // The slide's HTML lives at out/slide-library/slides/<id>.html. Show it
+    // verbatim in the Copy ID hover so the user knows where to point an
+    // agent. Image-kind slides also have an .html wrapper at the same
+    // basename — clarifying that in the tooltip prevents confusion.
+    const slideRelHtmlPath = `out/slide-library/slides/${slide.id}.html`;
+    const copyIdHover = slide.kind === 'image'
+      ? `Copy the slide ID. Paste it into Claude Code / Cursor and ask the agent to edit ${slideRelHtmlPath} (the wrapper) — the underlying image lives next to it as ${slide.id}.<ext>.`
+      : `Copy the slide ID. Paste it into Claude Code / Cursor and ask the agent to edit ${slideRelHtmlPath}.`;
 
     pane.innerHTML = `
       <div class="slide-templates-actions" data-slide-id="${esc(slide.id)}">
@@ -3561,6 +3569,8 @@
         <span style="color:rgba(255,255,255,0.5);font-size:12px;margin-right:auto">${esc(subtitle)}</span>
         <a href="${esc(standaloneHref)}" target="_blank" rel="noopener"
            title="Open the slide template in a new tab">Open standalone</a>
+        <button type="button" class="slide-tpl-copy-id"
+                title="${esc(copyIdHover)}">Copy ID</button>
         <button type="button" class="slide-tpl-rename"
                 title="Rename the display name shown in the slide library and storyboard picker">Rename</button>
         ${isUserOwned ? `
@@ -3585,10 +3595,12 @@
 
     // Wire actions for THIS preview render. The pane's content is replaced
     // on every selection / render, so handlers don't accumulate.
+    const copyIdBtn = pane.querySelector('.slide-tpl-copy-id');
     const renameBtn = pane.querySelector('.slide-tpl-rename');
     const deleteBtn = pane.querySelector('.slide-tpl-delete');
     const chatInput = pane.querySelector('#slide-templates-chat-input');
     const chatSend = pane.querySelector('#slide-templates-chat-send');
+    if (copyIdBtn) copyIdBtn.addEventListener('click', () => handleSlideTemplateCopyId(slide.id));
     if (renameBtn) renameBtn.addEventListener('click', () => handleSlideTemplateRename(slide.id));
     if (deleteBtn) deleteBtn.addEventListener('click', () => handleSlideTemplateDelete(slide.id));
     if (chatSend && chatInput) {
@@ -3705,6 +3717,43 @@
       reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
     });
+  }
+
+  // ── Copy slide ID for hand-off to an AI agent (Claude Code / Cursor) ─────
+  //
+  // Mirrors the "Copy PID" button on the Demo Apps tab: copies a stable
+  // identifier the user can paste into an agent prompt to ask the agent to
+  // edit the underlying file directly. For slide templates, the canonical
+  // file is always `out/slide-library/slides/<slideId>.html` (image
+  // uploads have an additional `<slideId>.<ext>` next to the wrapper).
+  // The hover tooltip on the button surfaces the path so the user knows
+  // exactly what to tell the agent.
+  async function handleSlideTemplateCopyId(slideId) {
+    if (!slideId) return;
+    const slide = _slideTemplates.find((s) => s.id === slideId);
+    const path = `out/slide-library/slides/${slideId}.html`;
+    try {
+      // Modern clipboard API; falls back to the legacy execCommand path
+      // for older browsers / non-secure contexts (this dashboard is
+      // localhost so secure-context is fine, but the fallback costs us
+      // nothing and helps if users SSH-tunnel the dashboard).
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(slideId);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = slideId;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      const label = slide && slide.name ? `${slide.name} (${slideId})` : slideId;
+      showToast(`Copied slide ID — ${label}\nFile: ${path}`, 'success');
+    } catch (err) {
+      showToast(`Copy failed: ${err.message}`, 'error');
+    }
   }
 
   async function handleSlideTemplateRename(slideId) {
