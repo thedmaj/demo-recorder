@@ -8,7 +8,11 @@
   let _vpPendingOpenName = null;
   /** If set, switchTab runs once after loadRuns (from ?tab=). */
   let _urlInitialTab = null;
-  const VALID_DASHBOARD_TABS = new Set(['overview', 'config', 'files', 'storyboard', 'pipeline', 'valueprop', 'demo-apps']);
+  // Note: the legacy 'files' tab was removed (it duplicated the Product
+  // Knowledge tab's contents without adding utility). The loadFiles() function
+  // is kept so any external bookmark / programmatic call doesn't throw, but
+  // the tab is no longer in the sidebar.
+  const VALID_DASHBOARD_TABS = new Set(['overview', 'config', 'storyboard', 'pipeline', 'valueprop', 'demo-apps']);
   let studioStatusInterval = null;
   let logSSE = null;
   let fsWatchSSE = null;
@@ -857,7 +861,6 @@
   function loadCurrentRun() {
     loadOverview();
     updateStageDropdown();
-    if (currentTab === 'files') loadFiles();
     if (currentTab === 'storyboard') loadStoryboard();
   }
 
@@ -874,8 +877,8 @@
     document.querySelectorAll('.tab-panel').forEach(el => {
       el.classList.toggle('active', el.id === 'tab-' + tabName);
     });
-    // Lazy-load on first switch
-    if (tabName === 'files' && currentRunId) loadFiles();
+    // Lazy-load on first switch (files tab was removed; loadFiles() retained
+    // as harmless dead code).
     if (tabName === 'storyboard' && currentRunId) loadStoryboard();
     if (tabName === 'config') loadConfig();
     if (tabName === 'pipeline') loadPipeline();

@@ -204,7 +204,6 @@ This packages the demo (strips your `.env`, research artifacts, and logs; runs a
 | **Demo Apps** | Launch + preview every built or published demo. Search, filter (`All` / `Mine`), publish, download. |
 | **Config** | ~30 pipeline flags with hover tooltips. Edit-and-save; secrets still live in `.env`. |
 | **Product Knowledge** | Per-product markdown (`inputs/products/*.md`). Edit-and-save only — research refreshes value props automatically when `last_vp_research` is older than 30 days. |
-| **Files** | Read-only browser over the current run's artifacts. |
 
 ---
 
