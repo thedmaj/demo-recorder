@@ -42,6 +42,7 @@ const path = require('path');
 const { requireRunDir, getRunLayout } = require('../utils/run-io');
 const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind');
 const { buildSlideInsertionPrompt } = require('../utils/prompt-templates');
+const { scopeSlideCss } = require('../utils/slide-css-scoper');
 
 const MODEL = process.env.POST_SLIDES_MODEL || 'claude-opus-4-7';
 const MAX_TOKENS = Number(process.env.POST_SLIDES_MAX_TOKENS || 6000);
@@ -182,8 +183,22 @@ function sanitizeSlideFragment(fragment, stepId) {
 /**
  * Inject extracted slide `<style>` blocks into the host's `<head>`, wrapped
  * in per-step marker comments so re-inserts don't keep stacking duplicate
- * style nodes. If the host has no `<head>`, fall back to before `<body>`
- * or the top of the document.
+ * style nodes.
+ *
+ * CRITICAL: every block is run through `scopeSlideCss` so its rules are
+ * limited to the slide's subtree (`:where([data-testid="step-<id>"]) ...`).
+ * Without this, slide CSS — universal resets, `html`/`body` rules, generic
+ * `.step` rules — bleeds into the host app and clobbers its layout. The
+ * scoper:
+ *   - Drops `html`, `body`, and `:root` rules outright (cannot be scoped).
+ *   - Prefixes selectors that target `.step` / `[data-testid="step-..."]`
+ *     with the scope attached (no space) so they apply to the slide root
+ *     div itself.
+ *   - Prefixes everything else with `:where(scope) <sel>` so it applies
+ *     only inside the slide.
+ *
+ * If the host has no `<head>`, fall back to before `<body>` or the top of
+ * the document.
  */
 function injectSlideStylesIntoHead(html, styles, stepId) {
   if (!Array.isArray(styles) || styles.length === 0) return html;
@@ -196,7 +211,12 @@ function injectSlideStylesIntoHead(html, styles, stepId) {
   );
   let out = html.replace(reExisting, '');
 
-  const block = `${startMarker}\n${styles.join('\n')}\n${endMarker}`;
+  // Scope each <style> block so its rules stay inside the slide subtree.
+  // The scoper accepts either raw CSS or a full <style>...</style> tag and
+  // returns the same shape; we pass the tag verbatim so any attributes on
+  // the original tag (e.g. data-* hooks) survive.
+  const scopedStyles = styles.map((s) => scopeSlideCss(s, stepId));
+  const block = `${startMarker}\n${scopedStyles.join('\n')}\n${endMarker}`;
 
   if (/<\/head>/i.test(out)) {
     return out.replace(/<\/head>/i, `${block}\n</head>`);

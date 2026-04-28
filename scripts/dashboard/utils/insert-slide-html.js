@@ -312,12 +312,30 @@ function removeStepBlockFromHtml(html, stepId) {
     `<div[^>]*\\bid="(?:link-events-panel|api-response-panel)"|<\\/body>|$)`,
     'i'
   );
+  const stylesRe = new RegExp(
+    `<!--\\s*POST-SLIDES STYLES:\\s*${safeId}\\s*-->[\\s\\S]*?<!--\\s*/POST-SLIDES STYLES:\\s*${safeId}\\s*-->\\s*`,
+    'g'
+  );
   const m = String(html).match(re);
-  if (!m) return { html, removed: false, reason: 'step-block-not-found' };
-  // Strip the matched block + any trailing whitespace it left behind so we
-  // don't accumulate ragged blank lines on repeated insert/remove cycles.
-  const cleaned = html.replace(re, '').replace(/\n{3,}/g, '\n\n');
-  return { html: cleaned, removed: true, reason: 'step-block-removed' };
+  const stylesPresent = stylesRe.test(html);
+  // Reset stylesRe's lastIndex (test() advances it for /g regexes).
+  stylesRe.lastIndex = 0;
+  if (!m && !stylesPresent) {
+    return { html, removed: false, reason: 'step-block-not-found' };
+  }
+  // Strip the body div AND the matching POST-SLIDES STYLES block from the
+  // head. Without this second strip, removing a slide leaves its CSS
+  // injected into <head>, where rules like `* {margin:0;padding:0}` and
+  // `html,body{min-width:1440px}` (which the slide library's stylesheets
+  // include) keep mangling the host app's layout long after the slide div
+  // is gone.
+  let cleaned = m ? html.replace(re, '') : html;
+  cleaned = cleaned.replace(stylesRe, '').replace(/\n{3,}/g, '\n\n');
+  const reason =
+    m && stylesPresent ? 'step-block-and-styles-removed' :
+    m ? 'step-block-removed' :
+    'styles-only-removed';
+  return { html: cleaned, removed: true, reason };
 }
 
 /**

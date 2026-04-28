@@ -231,6 +231,43 @@ describe('removeStepBlockFromHtml', () => {
     assert.deepEqual(removeStepBlockFromHtml('<div/>', null).reason, 'no-stepid');
   });
 
+  test('also strips the matching POST-SLIDES STYLES block from <head>', () => {
+    const html =
+      '<html><head><title>App</title>' +
+      '<!-- POST-SLIDES STYLES: slide-x -->\n' +
+      '<style>:where([data-testid="step-slide-x"]) .a {color:red}</style>\n' +
+      '<!-- /POST-SLIDES STYLES: slide-x -->' +
+      '</head><body>' +
+      '<div data-testid="step-home" class="step">home</div>' +
+      '<div data-testid="step-slide-x" class="step slide-root">slide</div>' +
+      '<!-- SIDE PANELS --></body></html>';
+    const out = removeStepBlockFromHtml(html, 'slide-x');
+    assert.equal(out.removed, true);
+    assert.equal(out.reason, 'step-block-and-styles-removed');
+    // BOTH the body div AND the head styles block are gone:
+    assert.doesNotMatch(out.html, /data-testid="step-slide-x"/);
+    assert.doesNotMatch(out.html, /POST-SLIDES STYLES: slide-x/);
+    // Other content untouched:
+    assert.match(out.html, /data-testid="step-home"/);
+  });
+
+  test('strips an orphaned POST-SLIDES STYLES block even when the slide div is already gone', () => {
+    // This is the exact scenario that caused the host formatting bleed: a
+    // slide was removed from the body via an earlier (buggy) flow, but its
+    // unscoped CSS lingered in <head> and kept overriding the host's layout.
+    const html =
+      '<html><head>' +
+      '<!-- POST-SLIDES STYLES: orphan -->\n' +
+      '<style>* {margin:0}</style>\n' +
+      '<!-- /POST-SLIDES STYLES: orphan -->' +
+      '</head><body><div data-testid="step-home" class="step">home</div></body></html>';
+    const out = removeStepBlockFromHtml(html, 'orphan');
+    assert.equal(out.removed, true);
+    assert.equal(out.reason, 'styles-only-removed');
+    assert.doesNotMatch(out.html, /POST-SLIDES STYLES: orphan/);
+    assert.match(out.html, /data-testid="step-home"/);
+  });
+
   test('collapses ragged blank lines after the strip', () => {
     const html =
       '<div data-testid="step-a">A</div>\n\n\n\n\n' +
@@ -417,17 +454,26 @@ describe('spliceLibrarySlideIntoRunHtml — DOM ordering, styles, CTA rewire', (
       assert.equal(out.ctaRewired, true);
 
       const written = fs.readFileSync(path.join(fx.runDir, 'scratch-app', 'index.html'), 'utf8');
-      // Slide CSS now lives in the head:
+      // Slide CSS now lives in the head, SCOPED to the slide subtree so it
+      // never bleeds into the host:
       assert.match(written, /POST-SLIDES STYLES: inserted-slide/);
-      assert.match(written, /\.insight-layout\{background:#0d1117/);
+      assert.match(
+        written,
+        /:where\(\[data-testid="step-inserted-slide"\]\) \.insight-layout\s*\{background:#0d1117/
+      );
+      // Host's own CSS rules are still intact (untouched by the slide CSS):
+      assert.match(written, /\.host\s*\{display:block\}/);
       // Stray <title>/<meta> from the slide head did NOT leak into the body:
       const bodyOnly = written.split('</head>')[1] || '';
       assert.doesNotMatch(bodyOnly, /<title[\s>]/i);
-      // Outer slide div has the user-picked stepId AND no duplicate attributes:
+      // Outer slide div has the user-picked stepId AND no duplicate attributes
+      // on the actual element (count only attribute occurrences inside <div>
+      // tags — the data-testid string also appears in the scoped CSS prefix
+      // `:where([data-testid="step-..."])`, which is correct, not a dupe):
       const slideOpenMatch = written.match(/<div[^>]*\bdata-testid="step-inserted-slide"[^>]*>/);
       assert.ok(slideOpenMatch, 'slide opening div should have the new step id');
-      const opens = (written.match(/data-testid="step-inserted-slide"/g) || []).length;
-      assert.equal(opens, 1, 'no duplicate data-testid for the slide');
+      const dupesOnDiv = (slideOpenMatch[0].match(/data-testid="step-inserted-slide"/g) || []).length;
+      assert.equal(dupesOnDiv, 1, 'no duplicate data-testid attribute on the slide div');
       // The slide-root class survived (NOT clobbered by a duplicate class attr):
       assert.match(slideOpenMatch[0], /class="[^"]*\bslide-root\b/);
       assert.match(slideOpenMatch[0], /class="[^"]*\bstep\b/);
@@ -513,8 +559,9 @@ describe('spliceLibrarySlideIntoRunHtml — DOM ordering, styles, CTA rewire', (
       // Exactly ONE start marker + ONE end marker — re-insert removed the
       // prior block before adding the new one:
       assert.equal(startMarkers, 2, 'expect exactly one start + one end marker after re-insert');
-      assert.match(written, /\.x\{color:blue\}/);
-      assert.doesNotMatch(written, /\.x\{color:red\}/);
+      // CSS is scoped to the slide; v2 replaces v1:
+      assert.match(written, /:where\(\[data-testid="step-reinsert-slide"\]\) \.x\s*\{color:\s*blue\}/);
+      assert.doesNotMatch(written, /color:\s*red/);
       // Step content also replaced:
       assert.match(written, />v2</);
       assert.doesNotMatch(written, />v1</);
