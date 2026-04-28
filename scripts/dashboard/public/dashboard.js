@@ -1821,7 +1821,8 @@
     const el = document.getElementById('storyboard-content');
     el.innerHTML = '<div class="empty-state">Loading storyboard…</div>';
     originalNarrations = {};
-    _stepVisualNotes = {};
+    // _stepVisualNotes is now a const stub (Review Feedback was removed);
+    // no per-load reset needed.
 
     try {
       const [scriptData, qaData, framesData, timingData, autoGapData, syncMapData] = await Promise.allSettled([
@@ -2151,13 +2152,6 @@
                 Interaction: ${esc(step.interaction ? step.interaction.type : '–')} → ${esc(step.interaction ? step.interaction.target : '–')}
               </div>
 
-              <div class="sb-visual-notes-wrap">
-                <label class="sb-visual-notes-label">Visual notes for HTML build agent</label>
-                <textarea class="visual-notes-area" data-step-id="${esc(sid)}"
-                  placeholder="e.g. 'The teal button overlaps the footer', 'Add the bank logo to the confirmation card'"
-                >${esc(_stepVisualNotes[sid] || '')}</textarea>
-              </div>
-
               <div class="sb-rewrite-wrap" id="sb-rewrite-wrap-${esc(sid)}">
                 <div class="sb-rewrite-trigger">
                   <button type="button" class="btn btn-sm btn-secondary ai-rewrite-btn" data-step-id="${esc(sid)}">✦ AI Rewrite Narration</button>
@@ -2200,26 +2194,16 @@
         return cardHtml + gapHtml;
       }).join('');
 
-      // ── Feedback header card ──
-      const feedbackHeaderHtml = `
-        <div class="card sb-feedback-header" id="sb-feedback-header">
-          <div class="card-header">
-            <div class="card-title">Review Feedback</div>
-            <div class="sb-feedback-header-actions">
-              <button type="button" class="btn btn-sm btn-secondary" id="sb-load-feedback-btn"
-                title="Reload previously exported feedback from inputs/build-feedback.md into the visual notes fields">Load Saved</button>
-              <button type="button" class="btn btn-sm btn-primary" id="sb-export-btn"
-                title="Write all per-step visual notes and global HTML notes to inputs/build-feedback.md — the build agent reads this file during refinement">Export to build-feedback.md</button>
-              <button type="button" class="btn btn-sm btn-secondary" id="sb-run-refinement-btn"
-                title="Export feedback then re-run the pipeline from the build stage — the HTML build agent will receive your visual notes and regenerate the app">▶ Run Refinement</button>
-            </div>
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label class="config-label">Global HTML notes <span class="config-desc">(applies to entire app — layout, colours, branding, global components)</span></label>
-            <textarea id="sb-global-notes" class="narration-area" style="min-height:80px" placeholder="e.g. 'The header logo is too small', 'Use the Wells Fargo red (#D71E28) for the CTA button instead of teal', 'The font on the summary card is too small to read at 1440×900'">${esc(_globalHtmlNotes)}</textarea>
-          </div>
-          <div id="sb-export-status" style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:8px"></div>
-        </div>`;
+      // ── Review Feedback card removed ──
+      // The dashboard's old "Review Feedback" UI (global HTML notes textarea
+      // + Load Saved / Export / Run Refinement buttons) wrote to
+      // inputs/build-feedback.md and re-ran the pipeline from build.
+      // All feedback is now handled via Agent Mode in Claude Code, so the
+      // section was dropped from the storyboard render. Per-step "Visual
+      // notes" textareas were also removed for the same reason. The
+      // /api/feedback + /api/feedback/export server endpoints remain so any
+      // external bookmark / scripted call doesn't 404, but no UI surface
+      // calls them anymore.
 
       // Capture screenshots banner — shown when script exists but no frames yet
       const noFrames = framesList.length === 0;
@@ -2387,7 +2371,7 @@
           </div>`;
       })() : '';
 
-      el.innerHTML = actionBarHtml + captureBannerHtml + liveWorkspaceHtml + reorderBannerHtml + feedbackHeaderHtml + timelineHtml + (sceneTiming || '') + `<div class="storyboard-grid" id="storyboard-grid">${cardsHtml}</div>` + '<div id="ai-suggestions-panel" class="suggestion-panel"></div>';
+      el.innerHTML = actionBarHtml + captureBannerHtml + liveWorkspaceHtml + reorderBannerHtml + timelineHtml + (sceneTiming || '') + `<div class="storyboard-grid" id="storyboard-grid">${cardsHtml}</div>` + '<div id="ai-suggestions-panel" class="suggestion-panel"></div>';
 
       // Load AI overlay suggestions (async, non-blocking)
       loadOverlaySuggestions();
@@ -2904,38 +2888,12 @@
         });
       });
 
-      // Visual notes — persist in memory as user types
-      el.querySelectorAll('.visual-notes-area').forEach(ta => {
-        ta.addEventListener('input', () => {
-          _stepVisualNotes[ta.dataset.stepId] = ta.value;
-        });
-      });
-
-      // Global notes — persist
-      const globalNotesEl = document.getElementById('sb-global-notes');
-      if (globalNotesEl) {
-        globalNotesEl.addEventListener('input', () => { _globalHtmlNotes = globalNotesEl.value; });
-      }
-
-      // Export feedback
-      document.getElementById('sb-export-btn')?.addEventListener('click', exportFeedback);
-
-      // Load saved feedback
-      document.getElementById('sb-load-feedback-btn')?.addEventListener('click', loadSavedFeedback);
-
-      // Run Refinement — spawn pipeline from build stage
-      document.getElementById('sb-run-refinement-btn')?.addEventListener('click', async () => {
-        // First export any pending feedback
-        const exported = await exportFeedback(true);
-        if (!exported) return;
-        try {
-          await runPipeline( { fromStage: 'build', resumeRunId: currentRunId });
-          showToast('Refinement pipeline started from build stage', 'success');
-          switchTab('pipeline');
-        } catch (e) {
-          showToast('Failed to start: ' + e.message, 'error');
-        }
-      });
+      // The Review Feedback card was removed — feedback now flows through
+      // Agent Mode in Claude Code, not a textarea-and-export-file dance.
+      // The legacy `visual-notes-area`, `sb-global-notes`, `sb-export-btn`,
+      // `sb-load-feedback-btn`, and `sb-run-refinement-btn` event listeners
+      // are gone. The exportFeedback() / loadSavedFeedback() functions and
+      // /api/feedback server endpoints remain as harmless dead code.
 
       // AI Rewrite — show/hide panel
       el.querySelectorAll('.ai-rewrite-btn').forEach(btn => {
@@ -4745,8 +4703,14 @@
 
   // ── Value Props Markdown Tab ─────────────────────────────────────────────────
 
-  // ── Storyboard feedback state ───────────────────────────────────────────────
-  let _stepVisualNotes = {};    // { stepId: string }
+  // ── Storyboard feedback state — REMOVED ─────────────────────────────────────
+  // _stepVisualNotes and _globalHtmlNotes used to capture per-step and global
+  // visual notes that were exported to inputs/build-feedback.md. Feedback is
+  // now handled via Agent Mode in Claude Code, so the storyboard UI no longer
+  // collects these. The exportFeedback / loadSavedFeedback function bodies
+  // still reference them via these stub bindings so they don't ReferenceError
+  // if any external code path calls them.
+  const _stepVisualNotes = {};
   let _globalHtmlNotes = '';
 
   let _vpCurrentFile = null;
