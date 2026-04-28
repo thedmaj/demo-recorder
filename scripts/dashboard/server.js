@@ -1393,7 +1393,7 @@ app.get('/api/runs/:runId/frames', async (req, res) => {
         const slide = (libraryIndex.slides || []).find(s => s && s.id === slideId);
         if (!slide) continue;
         try {
-          await generateLibraryStepThumbnailsForRun(dir, step.id, slide);
+          await generateLibrarySlideThumbnail(dir, step.id, slide);
           generatedAny = true;
         } catch (thumbErr) {
           console.warn(`[Frames] Could not generate library thumbnail for ${step.id}: ${thumbErr.message}`);
@@ -2701,7 +2701,7 @@ Brand voice rules: active voice ("Plaid verifies" not "is verified"), quantify o
 
 // POST /api/runs/:runId/insert-step
 // body: { step: {...}, insertAfterId? }
-app.post('/api/runs/:runId/insert-step', (req, res) => {
+app.post('/api/runs/:runId/insert-step', async (req, res) => {
   try {
     const { step, insertAfterId } = req.body;
     if (!step || !step.id) return res.status(400).json({ error: 'step with id required' });
@@ -2728,11 +2728,39 @@ app.post('/api/runs/:runId/insert-step', (req, res) => {
     fs.writeFileSync(tmp, JSON.stringify(script, null, 2), 'utf8');
     fs.renameSync(tmp, scriptPath);
 
+    // For slide-kind steps, generate a build-preview thumbnail so the
+    // storyboard card has something to show before the next pipeline run's
+    // post-slides stage produces the real content. For library-backed steps
+    // we render the imported slide HTML; for custom slides (no library ref)
+    // we render a Plaid-styled "pending build" placeholder.
+    //
+    // Non-slide steps (host / link) are intentionally skipped — they don't
+    // get a thumbnail until build-qa actually walks the page.
+    let thumbnailResult = { written: [], skipped: true, reason: 'non-slide-step', mode: null };
+    const insertedKind = deriveStepKind(step);
+    if (insertedKind === 'slide') {
+      // If the step references a library slide, look up the entry so the
+      // helper can render the imported HTML directly. Otherwise the helper
+      // falls through to its placeholder mode.
+      let libSlide = null;
+      const libRef = step.slideLibraryRef && step.slideLibraryRef.slideId;
+      if (libRef) {
+        try {
+          const libIdx = readSlideLibraryIndex();
+          libSlide = (libIdx.slides || []).find(s => s && s.id === libRef) || null;
+        } catch (_) {}
+      }
+      try {
+        thumbnailResult = await generateSlideStepThumbnail(dir, step.id, step, libSlide);
+      } catch (thumbErr) {
+        console.warn(`[InsertStep] Thumbnail generation failed for ${step.id}: ${thumbErr.message}`);
+      }
+    }
+
     // Notify any open browser tab for this run that demo-script.json
-    // changed. Note: insert-step (this endpoint) doesn't ship slide HTML,
-    // so the visible UI may not update until the next build pass — but the
-    // step will be reflected in the dashboard storyboard immediately and
-    // the running app's stepIds align on the next navigation.
+    // changed. The dashboard's storyboard re-fetches frames as part of
+    // loadStoryboard() so the new thumbnail (if any) shows up on next
+    // render.
     const runId = String(req.params.runId || '').trim();
     const notify = demoAppReload.notifyReload(runId, {
       reason: 'step-inserted',
@@ -2743,7 +2771,16 @@ app.post('/api/runs/:runId/insert-step', (req, res) => {
       console.log(`[InsertStep] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
     }
 
-    res.json({ ok: true, stepId: step.id, insertedAt: insertIdx, totalSteps: steps.length, stepKind: step.stepKind, notifiedTabs: notify.notified });
+    res.json({
+      ok: true,
+      stepId: step.id,
+      insertedAt: insertIdx,
+      totalSteps: steps.length,
+      stepKind: step.stepKind,
+      notifiedTabs: notify.notified,
+      thumbnailGenerated: thumbnailResult.written.length > 0,
+      thumbnailMode: thumbnailResult.mode || null,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2826,7 +2863,7 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
 
     let thumbnailResult = { written: [] };
     try {
-      thumbnailResult = await generateLibraryStepThumbnailsForRun(dir, nextStepId, slide);
+      thumbnailResult = await generateSlideStepThumbnail(dir, nextStepId, nextStep, slide);
     } catch (thumbErr) {
       console.warn(`[SlideLibrary] Thumbnail generation failed for ${runId}/${nextStepId}: ${thumbErr.message}`);
     }
@@ -3663,6 +3700,10 @@ const {
   spliceLibrarySlideIntoRunHtml,
   removeStepBlockFromRunHtml,
 } = require(path.join(__dirname, 'utils', 'insert-slide-html.js'));
+const {
+  generateSlideStepThumbnail,
+  generateLibrarySlideThumbnail,
+} = require(path.join(__dirname, 'utils', 'slide-thumbnail.js'));
 
 const DEMO_MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -4651,34 +4692,11 @@ function injectMissingStoryboardLibrarySteps(runDir, html, script) {
   return html + block;
 }
 
-async function generateLibraryStepThumbnailsForRun(runDir, stepId, slide) {
-  if (!runDir || !stepId || !slide || !slide.htmlPath) return { written: [] };
-  const htmlAbs = path.resolve(PROJECT_ROOT, slide.htmlPath);
-  if (!htmlAbs.startsWith(SLIDE_LIBRARY_DIR + path.sep) || !fs.existsSync(htmlAbs)) {
-    return { written: [] };
-  }
-  const html = fs.readFileSync(htmlAbs, 'utf8');
-  const { chromium } = require('playwright');
-  const browser = await chromium.launch({ headless: true });
-  try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    await page.setContent(html, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(120);
-    const png = await page.screenshot({ fullPage: false, type: 'png' });
-
-    const targets = [
-      path.join(runDir, 'build-frames', `${stepId}-mid.png`),
-      path.join(runDir, 'qa-frames', `${stepId}-mid.png`),
-    ];
-    for (const outPath of targets) {
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, png);
-    }
-    return { written: targets };
-  } finally {
-    await browser.close();
-  }
-}
+// generateLibraryStepThumbnailsForRun was moved to scripts/dashboard/utils/slide-thumbnail.js
+// as generateLibrarySlideThumbnail (and generalized to generateSlideStepThumbnail
+// which also handles custom-slide placeholders for steps inserted via
+// /api/runs/:runId/insert-step). See that module for the canonical
+// implementation.
 
 app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
   if (guardWriteOrStage(req, res, 'build')) return;
