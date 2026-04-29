@@ -37,6 +37,24 @@ const readline = require('readline');
 const { spawn, spawnSync } = require('child_process');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+
+// Load .env so PLAID_DEMO_APPS_REPO and other vars are available without
+// requiring the caller to export them in the shell first.
+try {
+  const dotenvPath = path.join(PROJECT_ROOT, '.env');
+  if (fs.existsSync(dotenvPath)) {
+    const lines = fs.readFileSync(dotenvPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eq = trimmed.indexOf('=');
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      const val = trimmed.slice(eq + 1).trim();
+      if (!(key in process.env)) process.env[key] = val;
+    }
+  }
+} catch (_) { /* non-fatal */ }
 const INPUTS_DIR = path.join(PROJECT_ROOT, 'inputs');
 const OUT_DIR = path.join(PROJECT_ROOT, 'out');
 const DEMOS_DIR = path.join(OUT_DIR, 'demos');
@@ -716,6 +734,40 @@ function runGit(args, cwd) {
   return spawnSync('git', args, { cwd, stdio: 'inherit', env: process.env });
 }
 
+/** git@host:org/repo.git → https://host/org/repo.git */
+function sshGitUrlToHttps(url) {
+  const s = String(url || '').trim();
+  const m = s.match(/^git@([^:]+):(.+)$/);
+  if (!m) return '';
+  const host = m[1];
+  let repoPath = m[2].replace(/^\/*/, '');
+  if (!repoPath.endsWith('.git')) repoPath += '.git';
+  return `https://${host}/${repoPath}`;
+}
+
+function printArtifactRepoAuthHints(repoUrl) {
+  console.log('');
+  console.warn(c.yellow('[pipe] Artifact repo: clone or fetch failed (see git output above).'));
+  const sshUrl = String(repoUrl || '').trim();
+  const httpsUrl = sshGitUrlToHttps(sshUrl);
+  const hostMatch = sshUrl.match(/^git@([^:]+):/);
+  const sshHost = hostMatch ? hostMatch[1] : '';
+
+  if (httpsUrl && /^git@/i.test(sshUrl)) {
+    console.log(c.dim('  Common fix for `Permission denied (publickey)`:'));
+    console.log(c.dim('    · Add this Mac’s SSH public key to GHE: Settings → SSH and GPG keys'));
+    console.log(c.dim('      (copy ~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub)'));
+    if (sshHost) {
+      console.log(c.dim(`    · Test: ${c.cyan(`ssh -T git@${sshHost}`)}  (expect a greeting, not “Permission denied”)`));
+    }
+    console.log(c.dim('    · Or switch to HTTPS + token (use a PAT as the password when git prompts):'));
+    console.log(`       ${c.cyan(`export PLAID_DEMO_APPS_REPO=${httpsUrl}`)}`);
+    console.log(c.dim('    · You must also be granted Read access on the artifact repo by a maintainer.'));
+  } else {
+    console.log(c.dim('  Check VPN, repository URL, and that your account has read access.'));
+  }
+}
+
 function cmdWhoami({ flags = {} } = {}) {
   // Honor --refresh so `pipe whoami --refresh` re-queries gh and rewrites cache.
   const refresh = !!(flags && (flags.refresh || flags['re-resolve']));
@@ -746,10 +798,21 @@ function cmdWhoami({ flags = {} } = {}) {
 async function cmdPull() {
   let code = 0;
   console.log(c.bold('[pipe] pull — code repo'));
-  const codeResult = runGit(['pull', '--ff-only'], PROJECT_ROOT);
-  if (codeResult.status !== 0) {
-    console.warn(c.yellow('[pipe] code-repo pull failed (see git output above).'));
-    code = 2;
+  const gitMeta = path.join(PROJECT_ROOT, '.git');
+  if (!fs.existsSync(gitMeta)) {
+    console.warn(c.yellow(
+      '[pipe] This directory is not a git repository (no `.git` folder). ' +
+        'GitHub ZIP / archive downloads omit `.git`, so `git pull` cannot run.'
+    ));
+    console.log(c.dim('  To receive code updates: delete this folder and clone instead, e.g.'));
+    console.log(c.dim(`    git clone ${c.cyan('git@github.plaid.com:dmajetic/plaid-demo-recorder.git')} plaid-demo-recorder && cd plaid-demo-recorder`));
+    console.log(c.dim('  The pipeline still works from a ZIP; only `pipe pull` on this copy cannot update the source tree.'));
+  } else {
+    const codeResult = runGit(['pull', '--ff-only'], PROJECT_ROOT);
+    if (codeResult.status !== 0) {
+      console.warn(c.yellow('[pipe] code-repo pull failed (see git output above).'));
+      code = 2;
+    }
   }
   const artifactDir = resolveArtifactDir();
   const artifactRepo = resolveArtifactRepoUrl();
@@ -762,7 +825,11 @@ async function cmdPull() {
   if (!fs.existsSync(artifactDir)) {
     console.log(`  Cloning ${artifactRepo} → ${artifactDir}`);
     const cloneResult = runGit(['clone', artifactRepo, artifactDir]);
-    return cloneResult.status === 0 ? code : 2;
+    if (cloneResult.status !== 0) {
+      printArtifactRepoAuthHints(artifactRepo);
+      return 2;
+    }
+    return code;
   }
   // Artifact repo is a passive read-only clone for end-users — they only
   // mutate it via `pipe publish` which works on feature branches. So if a
@@ -772,6 +839,7 @@ async function cmdPull() {
   const fetchResult = runGit(['fetch', 'origin', 'main'], artifactDir);
   if (fetchResult.status !== 0) {
     console.warn(c.yellow('[pipe] artifact-repo fetch failed (see git output above).'));
+    printArtifactRepoAuthHints(artifactRepo);
     return 2;
   }
   // Best-effort fast-forward first.
@@ -1010,8 +1078,9 @@ async function askMulti(rl, question) {
 // ── Command: quickstart (app-only wizard) ────────────────────────────────────
 //
 // Walks the user through a structured set of menus, then writes:
-//   1. inputs/prompt.txt        — draft prompt filled from the app-only template
-//   2. inputs/quickstart-research-task.md — agent handoff for AskBill + Glean
+//   1. inputs/prompt.txt — draft prompt filled from the app-only template
+//   2. inputs/quickstart-research-task.md — Agent-mode task (AskBill + Glean + prompt edits + npm run demo)
+//   3. inputs/quickstart-agent-bootstrap.txt — paste-first message for Claude Code / Cursor Agent
 // Any existing prompt.txt is backed up first.
 //
 // MCPs (AskBill, Glean) cannot be invoked from pure Node — they live in
@@ -1107,13 +1176,13 @@ async function cmdQuickstart(parsed = {}) {
     // Research depth is intentionally NOT asked here. Quickstart's job
     // is fast app-only iteration; deeper research adds Glean/Gong roundtrips
     // that don't change the app build. Default to gapfill — users who want
-    // broad/deep research can pass `--research=broad` to `pipe new` after
+    // broad/deep research can pass `--research=broad` to `npm run demo` / orchestrator after
     // quickstart writes the prompt.
     answers.researchDepth = 'gapfill';
 
-    // 8) Build after research?
+    // 8) Run npm run demo after research?
     console.log('');
-    const buildAns = await ask(rl, c.bold('8) Start the build automatically after research finishes?') + ' [Y/n]: ');
+    const buildAns = await ask(rl, c.bold('8) After research, auto-run `npm run demo` (build-qa) in Agent mode?') + ' [Y/n]: ');
     answers.buildAfter = !/^n/i.test(buildAns);
 
     // ── Confirm + write ────────────────────────────────────────────────────
@@ -1172,6 +1241,7 @@ function writeQuickstartArtifacts(answers, QS) {
   // Back up any existing prompt.txt so the user never loses prior content.
   const promptPath   = path.join(INPUTS_DIR, 'prompt.txt');
   const taskPath     = path.join(INPUTS_DIR, 'quickstart-research-task.md');
+  const bootstrapPath = path.join(INPUTS_DIR, 'quickstart-agent-bootstrap.txt');
   if (fs.existsSync(promptPath)) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const bak = path.join(INPUTS_DIR, `prompt.${stamp}.bak.txt`);
@@ -1181,29 +1251,41 @@ function writeQuickstartArtifacts(answers, QS) {
 
   const draftPrompt = QS.fillTemplateFromAnswers(answers);
   const taskMd      = QS.buildResearchTaskMarkdown(answers, { buildAfter: answers.buildAfter });
+  const demoCmd =
+    answers.researchDepth === 'skip'
+      ? 'RESEARCH_MODE=skip npm run demo'
+      : 'npm run demo';
+  const bootstrap =
+    `Paste this as the FIRST message in Claude Code or Cursor (Agent mode).\n\n` +
+    `Execute ${path.relative(PROJECT_ROOT, taskPath)} end-to-end in one session: AskBill + Glean, ` +
+    `edit inputs/prompt.txt, pass the Step 5 sanity checklist.\n` +
+    `${answers.buildAfter !== false
+      ? `Then immediately run in the integrated terminal (do not use \`npm run pipe -- new --app-only\`):\n\n  ${demoCmd}\n`
+      : `Then tell the user research is complete; when they want to build, they run:\n\n  ${demoCmd}\n`}\n` +
+    `Do not run \`npm run pipe -- new --app-only\` for this flow — use only:\n  ${demoCmd}\n`;
+
   fs.writeFileSync(promptPath, draftPrompt, 'utf8');
   fs.writeFileSync(taskPath,   taskMd, 'utf8');
+  fs.writeFileSync(bootstrapPath, bootstrap, 'utf8');
 
   console.log('');
   console.log(c.green(`  ✓ Wrote ${path.relative(PROJECT_ROOT, promptPath)} (DRAFT — wizard header at top)`));
   console.log(c.green(`  ✓ Wrote ${path.relative(PROJECT_ROOT, taskPath)} (agent research handoff)`));
+  console.log(c.green(`  ✓ Wrote ${path.relative(PROJECT_ROOT, bootstrapPath)} (paste into Agent — auto-run hook)`));
 
   // Clipboard recipe (best-effort, macOS only).
-  const recipe =
-    `Open this file in Cursor or Claude Code (Agent mode) and run it:\n\n` +
-    `  ${taskPath}\n\n` +
-    `It tells the agent to use AskBill + Glean to enrich inputs/prompt.txt, then ` +
-    `${answers.buildAfter ? 'kick off ' : 'optionally start '}the app-only build.\n`;
+  const recipe = bootstrap;
   if (process.platform === 'darwin') {
     try { spawnSync('pbcopy', [], { input: recipe }); } catch (_) {}
   }
 
   console.log('');
-  console.log(c.bold('Next:'));
-  console.log(`  1. Open ${c.cyan(path.relative(PROJECT_ROOT, taskPath))} in Cursor ${c.dim('OR')} Claude Code.`);
-  console.log(`  2. Switch to ${c.cyan('Agent mode')} so AskBill + Glean MCP tools are available.`);
-  console.log(`  3. Type "Run this task." The agent will research with AskBill + Glean,`);
-  console.log(`     refine ${c.cyan(path.relative(PROJECT_ROOT, promptPath))}, and ${answers.buildAfter ? c.cyan('start the build') : 'hand back to you'}.`);
+  console.log(c.bold('Next (Agent mode — full auto):'));
+  console.log(`  1. Open ${c.cyan(path.relative(PROJECT_ROOT, bootstrapPath))}, copy all, paste as the first Agent message.`);
+  console.log(`     (${c.dim('Or')} open ${c.cyan(path.relative(PROJECT_ROOT, taskPath))} and say: run this task end-to-end; then ${c.cyan(demoCmd)}.)`);
+  console.log(`  2. Stay in ${c.cyan('Agent mode')} so AskBill + Glean MCP tools work.`);
+  console.log(`  3. The agent runs research, updates ${c.cyan(path.relative(PROJECT_ROOT, promptPath))},`);
+  console.log(`     ${answers.buildAfter !== false ? `then runs ${c.cyan(demoCmd)} in the terminal (${c.dim('build-qa stop')}).` : 'then hands back to you to run ' + c.cyan(demoCmd) + ' when ready.'}`);
   console.log('');
   console.log(c.dim('Tip: the wizard never invents numbers. Storyboard tables stay empty in the draft —'));
   console.log(c.dim('     the agent fills them with researched facts from AskBill + Glean.'));

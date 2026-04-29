@@ -6,6 +6,25 @@ This README is written for a sales engineer onboarding to the tool for the first
 
 ---
 
+## Get up and running quickly
+
+Do this **after** [`bash scripts/setup/install.sh`](#one-command-install) and a filled **`.env`** (API keys). This is the shortest path to a working app-only demo:
+
+| Step | Where | What you do |
+|------|-------|-------------|
+| **1** | **System terminal** — macOS Terminal, Windows Terminal, etc. — `cd` to this repo | Run **`npm run quickstart`** and complete the wizard. It writes **`inputs/prompt.txt`**, **`inputs/quickstart-research-task.md`**, and **`inputs/quickstart-agent-bootstrap.txt`** (paste-first hook for Agent mode). |
+| **2** | **Claude Code** | Open **this folder as the project** in Claude Code (not just a loose file). Turn on **Agent mode** so the agent can run commands and edit files. |
+| **3** | *(Recommended)* Claude Code | Open **`inputs/quickstart-agent-bootstrap.txt`**, copy all, and paste it as the **first** Agent message (or open **`inputs/quickstart-research-task.md`** and say **“Run this task end-to-end”**). That runs AskBill + Glean, refines the prompt, then runs **`npm run demo`** (build-qa) if you chose auto-build in the wizard. Skip only if you’re iterating on an already-enriched prompt. |
+| **4** | **Claude Code integrated terminal** | Run **`npm run demo`**. This runs the pipeline through **build-qa** (fast iteration; no full MP4). Stay in Agent mode so QA continue-gates can be handled automatically. |
+
+**Parallel:** in a **second terminal**, run **`npm run dashboard`** and open <http://localhost:4040> to watch stages and QA scores.
+
+**Ship video later:** when the app passes QA, run **`npm run demo:full`** for recording + render + MP4.
+
+Details, sample wizard transcript, and QA-loop behavior → [Your first demo — start here](#your-first-demo--start-here).
+
+---
+
 ## What this gets you
 
 - A **guided wizard** (`npm run quickstart`) that turns a one-sentence pitch into a researched, polished demo — runs AskBill + Glean, generates the prompt, kicks off the pipeline.
@@ -157,7 +176,9 @@ If credentials are incomplete (e.g. token without **`GLEAN_INSTANCE`**), the scr
 
 ### Your first demo — start here
 
-The fastest way for a new SE to ship a polished demo is the guided wizard. It writes a draft prompt + a research task that an AI agent can run for you, then kicks off the build.
+**Fast path:** follow **[Get up and running quickly](#get-up-and-running-quickly)** — **`npm run quickstart`** in a normal terminal → **Claude Code** (Agent mode) → paste **`inputs/quickstart-agent-bootstrap.txt`** (or **“Run this task”** on **`inputs/quickstart-research-task.md`**) → **`npm run demo`** in the integrated terminal when the task says to (not **`npm run pipe -- new --app-only`**, which runs the full orchestrator path).
+
+The guided wizard writes a draft prompt + a research handoff; the agent enriches it, then the build runs.
 
 ```bash
 npm run quickstart
@@ -213,7 +234,7 @@ Pick at least one (e.g. 1,2,3): 1,2,3
   Identity Match confirming ownership, and Signal scoring the transfer's
   return risk before it leaves her account.
 
-8) Start the build automatically after research finishes? [Y/n]: Y
+8) After research, auto-run `npm run demo` (build-qa) in Agent mode? [Y/n]: Y
 
 Summary:
   Brand:           SoFi (sofi.com)
@@ -230,31 +251,29 @@ Write inputs/prompt.txt + research task? [Y/n]: Y
 
 ✓ Wrote inputs/prompt.txt              (previous version backed up)
 ✓ Wrote inputs/quickstart-research-task.md
-✓ Wrote inputs/quickstart-answers.json (machine-readable record)
+✓ Wrote inputs/quickstart-agent-bootstrap.txt
 
-Next steps:
-  1. Open inputs/quickstart-research-task.md in Claude Code or Cursor
-     (Agent mode) and say "Run this task." The agent will run AskBill
-     + Glean and refine inputs/prompt.txt.
-  2. When the agent finishes, run:
-        npm run demo
-     The pipeline builds an app-only demo and stops at build-qa
-     (agent-mode default — fast iteration, no recording cost).
-  3. Open http://localhost:4040 in another terminal with `npm run dashboard`
-     for live visibility of stages, QA scores, and the agent-driven
-     refinement loop.
+Next (Agent mode — full auto):
+  1. Open inputs/quickstart-agent-bootstrap.txt, copy all, paste as the first Agent message.
+     (Or open inputs/quickstart-research-task.md and say: run this task end-to-end; then npm run demo.)
+  2. Stay in Agent mode so AskBill + Glean MCP tools work.
+  3. The agent runs research, updates inputs/prompt.txt, then runs npm run demo
+     in the terminal (build-qa stop) if you said yes to step 8.
+  4. Open http://localhost:4040 in another terminal with `npm run dashboard`
+     for live visibility of stages, QA scores, and the agent-driven refinement loop.
 ```
 
-The wizard does **not** ask for a research depth. It defaults to `gapfill` (the agent fills only what the prompt is missing) — the right answer for fast app-only iteration. If you later want broader research, pass `--research=broad` or `--research=deep` to `pipe new`.
+The wizard does **not** ask for a research depth. It defaults to `gapfill` (the agent fills only what the prompt is missing) — the right answer for fast app-only iteration. If you later want broader research, pass **`--research=broad`** (or similar) to **`npm run demo`** / the orchestrator, not the quickstart handoff command.
 
 #### After the wizard
 
-Two files land in `inputs/`:
+Three files land in `inputs/`:
 
 - **`inputs/prompt.txt`** — a draft pitch filled from the app-only template using your wizard answers. Already runnable, but the agent task below makes it richer.
-- **`inputs/quickstart-research-task.md`** — an agent task that runs **AskBill + Glean** to enrich the prompt with real product VPs, Gong color, and verified brand details before the build.
+- **`inputs/quickstart-research-task.md`** — the full Agent-mode checklist (AskBill + Glean + prompt rewrite + **`npm run demo`** when appropriate).
+- **`inputs/quickstart-agent-bootstrap.txt`** — short paste-first message so the agent starts the full flow without extra prompting.
 
-Open `quickstart-research-task.md` in **Cursor or Claude Code (Agent mode)** and say "Run this task." The agent:
+Open **`quickstart-agent-bootstrap.txt`** or **`quickstart-research-task.md`** in **Cursor or Claude Code (Agent mode)**. The agent:
 
 1. Calls AskBill for product VPs (cached for 30 days in `inputs/products/*.md`).
 2. Calls Glean for company context, Gong call snippets, and customer-facing positioning.
@@ -554,6 +573,7 @@ npm run pipe -- whoami
 
 ## Quick links
 
+- **Get up and running quickly** (terminal → Claude Code → `npm run demo`) → [above](#get-up-and-running-quickly)
 - **Pipeline architecture + stage list** → [`CLAUDE.md`](CLAUDE.md)
 - **Distribution / publish flow** → [`docs/distribution-architecture.md`](docs/distribution-architecture.md)
 - **CLI reference for Claude / agent use** → [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md)

@@ -24,14 +24,28 @@ function makeAnswers(overrides = {}) {
 describe('quickstart catalogs', () => {
   test('KNOWN_PRODUCTS contains the demo-pipeline-supported set', () => {
     const slugs = QS.KNOWN_PRODUCTS.map(p => p.slug);
-    for (const required of ['auth', 'identity-match', 'signal', 'transfer', 'cra-base-report', 'layer']) {
+    for (const required of [
+      'auth',
+      'identity-match',
+      'signal',
+      'transfer',
+      'transactions',
+      'liabilities',
+      'assets',
+      'investments',
+      'investments-move',
+      'cra-base-report',
+    ]) {
       assert.ok(slugs.includes(required), `KNOWN_PRODUCTS missing ${required}`);
     }
+    assert.ok(!slugs.includes('layer'), 'Plaid Layer removed from quickstart catalog');
+    assert.ok(!slugs.includes('idv'), 'Identity Verification (idv) removed from quickstart catalog');
   });
 
   test('findProduct is case-insensitive and matches slug or label', () => {
     assert.equal(QS.findProduct('AUTH').slug, 'auth');
     assert.equal(QS.findProduct('Plaid Signal').slug, 'signal');
+    assert.equal(QS.findProduct('Plaid Assets').slug, 'assets');
     assert.equal(QS.findProduct('not-a-product'), null);
     assert.equal(QS.findProduct(''), null);
     assert.equal(QS.findProduct(null), null);
@@ -128,23 +142,25 @@ describe('buildResearchTaskMarkdown', () => {
     assert.match(md, /upsertValuePropositionsSection/);
     // Agent instructions mention rewriting prompt.txt:
     assert.match(md, /Rewrite `inputs\/prompt\.txt`/);
-    // buildAfter: true → auto-build command rendered:
-    assert.match(md, /npm run pipe -- new --app-only/);
-    assert.match(md, /opted into "build after research"/);
+    // buildAfter: true → auto-run npm run demo after Step 5:
+    assert.match(md, /```bash\nnpm run demo\n```/);
+    assert.match(md, /run build after research/);
+    assert.match(md, /npm run pipe -- new --app-only/); // warned against, not prescribed
   });
 
-  test('emits "optional" build instruction when buildAfter is false', () => {
+  test('emits deferred build instruction when buildAfter is false', () => {
     const md = QS.buildResearchTaskMarkdown(makeAnswers({ buildAfter: false }), { buildAfter: false });
-    assert.match(md, /STEP 6 — Build \(optional\)/);
-    assert.doesNotMatch(md, /opted into "build after research"/);
+    assert.match(md, /STEP 6 — Run the app-only pipeline \(build-qa\)/);
+    assert.match(md, /When the user is ready to build/);
+    assert.doesNotMatch(md, /run build after research/);
   });
 
-  test('uses skip-research build command when researchDepth=skip', () => {
+  test('uses skip-research demo command when researchDepth=skip', () => {
     const md = QS.buildResearchTaskMarkdown(
       makeAnswers({ researchDepth: 'skip' }),
       { buildAfter: true }
     );
-    assert.match(md, /npm run pipe -- new --app-only --research=skip/);
+    assert.match(md, /RESEARCH_MODE=skip npm run demo/);
   });
 
   test('handles empty product list with an explicit "pause and ask" instruction', () => {

@@ -441,15 +441,17 @@ heading "All set — here's how to build your first demo"
 
 cat <<EOF
 
-  ${BOLD}Recommended path — guided wizard (your first demo):${RESET}
-    1. ${CYAN}npm run quickstart${RESET}    — asks brand / persona / products / use-case;
-                              writes inputs/prompt.txt + a research task md
-    2. Open the printed ${CYAN}inputs/quickstart-research-task.md${RESET} in
-       ${CYAN}Cursor or Claude Code (Agent mode)${RESET} and say "Run this task."
-       The agent runs AskBill + Glean to enrich the prompt, then kicks off
-       the full pipeline.
-    3. ${CYAN}npm run dashboard${RESET}     — http://localhost:4040 for live visibility.
-    4. ${CYAN}npm run pipe -- publish <run-id>${RESET}  (optional — share your demo)
+  ${BOLD}Get up and running (read README.md section “Get up and running quickly”):${RESET}
+    1. ${CYAN}npm run quickstart${RESET}  — in your normal terminal; wizard writes
+                              inputs/prompt.txt + inputs/quickstart-research-task.md
+                              + inputs/quickstart-agent-bootstrap.txt
+    2. Open this repo in ${CYAN}Claude Code${RESET} (Agent mode).
+    3. Paste ${CYAN}inputs/quickstart-agent-bootstrap.txt${RESET} as the first Agent message
+       (or open ${CYAN}inputs/quickstart-research-task.md${RESET} → “run this task end-to-end”).
+    4. Agent runs AskBill + Glean, updates prompt.txt, then ${CYAN}npm run demo${RESET} (build-qa)
+       when the task says to — not ${CYAN}npm run pipe -- new --app-only${RESET}.
+    5. Second terminal: ${CYAN}npm run dashboard${RESET} → http://localhost:4040
+    6. ${CYAN}npm run pipe -- publish <run-id>${RESET}  (optional — share your demo)
 
   ${BOLD}Alternative — hand-written prompt:${RESET}
     1. ${CYAN}Edit inputs/prompt.txt${RESET} (template at inputs/prompt-template-app-only.txt).
