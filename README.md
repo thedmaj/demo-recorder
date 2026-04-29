@@ -9,6 +9,7 @@ This README is written for a sales engineer onboarding to the tool for the first
 ## What this gets you
 
 - A **guided wizard** (`npm run quickstart`) that turns a one-sentence pitch into a researched, polished demo — runs AskBill + Glean, generates the prompt, kicks off the pipeline.
+- An **agent-mode default** (`npm run demo`) that stops at `build-qa` for fast iteration. When you're ready to ship the MP4, run `npm run demo:full` for the full pipeline through render.
 - An **agent-driven QA loop** that pauses on each quality checkpoint so an AI agent (Cursor / Claude Code) makes surgical edits between stages. No manual hand-holding for the common drift cases.
 - **Five quality gates** (story fidelity, sample-data realism, narration coherence, brand fidelity, whole-video story echo) that catch hyper-realism issues before they ship.
 - A local dashboard at <http://localhost:4040> for editing prompts, watching builds, inspecting demo apps, and managing your shared library.
@@ -77,18 +78,109 @@ Fill these in `.env` (the installer creates a template):
 
 ### Your first demo — start here
 
-The fastest way for a new SE to ship a polished demo is the guided wizard:
+The fastest way for a new SE to ship a polished demo is the guided wizard. It writes a draft prompt + a research task that an AI agent can run for you, then kicks off the build.
 
 ```bash
 npm run quickstart
 ```
 
-It walks you through brand / industry / persona / products / Plaid Link mode / one-sentence pitch, then writes:
+#### Sample session
 
-- `inputs/prompt.txt` — a draft pitch filled from the app-only template
-- `inputs/quickstart-research-task.md` — an agent task that runs **AskBill + Glean** to enrich the prompt with real product VPs and Gong color before the build
+Press **ENTER** at any prompt to use the default in `[brackets]`. Annotated transcript of an actual run:
 
-Open the research task in **Cursor or Claude Code (Agent mode)** and say "Run this task." The agent does the research, refines `inputs/prompt.txt`, and (optionally) kicks off the full pipeline. From there the agent-driven QA loop (below) takes over.
+```text
+╔══════════════════════════════════════════════════════════════════╗
+║  Plaid Demo Pipeline — Quickstart Wizard (APP-ONLY BUILD)       ║
+╚══════════════════════════════════════════════════════════════════╝
+
+This wizard generates a draft inputs/prompt.txt from the app-only
+template plus an agent task that runs AskBill + Glean research.
+
+1) Customer / brand name (e.g. Bank of America): SoFi
+2) Brand domain (e.g. bankofamerica.com) [optional]: sofi.com
+
+3) Industry
+   [1] Retail / consumer banking
+   [2] Lending / consumer credit
+   [3] Wealth / brokerage
+   [4] Fintech / neobank
+   ...
+Choose [1]: 4
+
+4) Plaid Link mode
+   [1] Modal (default — Plaid Link opens in a popover)
+   [2] Embedded (Link tile rendered in-page; iframe-launched)
+Choose [1]: 1
+
+5) Plaid products to feature (comma- or space-separated numbers)
+   [ 1] Plaid Auth                         ACH account + routing verification
+   [ 2] Plaid Identity Match               name / address / phone match scores
+   [ 3] Plaid Signal                       ACH return-risk scoring (low score = low risk)
+   [ 4] Plaid Transfer                     ACH money-movement orchestration
+   [ 5] Plaid Statements                   PDF statement retrieval + parsing
+   ...
+Pick at least one (e.g. 1,2,3): 1,2,3
+
+6) Persona (name + role, e.g. "Michael Carter, retail banking customer"): Maya Chen, SoFi Money customer
+
+7) Use case — one-sentence pitch
+   This is YOUR description of the demo. The agent will research around it.
+> Maya is a new SoFi Money customer linking her external Chase account so she
+  can fund a transfer in seconds, with Plaid Auth verifying the ACH rails,
+  Identity Match confirming ownership, and Signal scoring the transfer's
+  return risk before it leaves her account.
+
+8) Start the build automatically after research finishes? [Y/n]: Y
+
+Summary:
+  Brand:           SoFi (sofi.com)
+  Industry:        Fintech / neobank
+  Plaid Link mode: modal
+  Products:        Plaid Auth, Plaid Identity Match, Plaid Signal
+  Persona:         Maya Chen, SoFi Money customer
+  Use case:        Maya is a new SoFi Money customer linking her external...
+  Research depth:  gapfill
+  Build after:     yes
+  Suggested run:   2026-04-29-sofi-fund-transfer-auth-identity-signal-v1
+
+Write inputs/prompt.txt + research task? [Y/n]: Y
+
+✓ Wrote inputs/prompt.txt              (previous version backed up)
+✓ Wrote inputs/quickstart-research-task.md
+✓ Wrote inputs/quickstart-answers.json (machine-readable record)
+
+Next steps:
+  1. Open inputs/quickstart-research-task.md in Claude Code or Cursor
+     (Agent mode) and say "Run this task." The agent will run AskBill
+     + Glean and refine inputs/prompt.txt.
+  2. When the agent finishes, run:
+        npm run demo
+     The pipeline builds an app-only demo and stops at build-qa
+     (agent-mode default — fast iteration, no recording cost).
+  3. Open http://localhost:4040 in another terminal with `npm run dashboard`
+     for live visibility of stages, QA scores, and the agent-driven
+     refinement loop.
+```
+
+The wizard does **not** ask for a research depth. It defaults to `gapfill` (the agent fills only what the prompt is missing) — the right answer for fast app-only iteration. If you later want broader research, pass `--research=broad` or `--research=deep` to `pipe new`.
+
+#### After the wizard
+
+Two files land in `inputs/`:
+
+- **`inputs/prompt.txt`** — a draft pitch filled from the app-only template using your wizard answers. Already runnable, but the agent task below makes it richer.
+- **`inputs/quickstart-research-task.md`** — an agent task that runs **AskBill + Glean** to enrich the prompt with real product VPs, Gong color, and verified brand details before the build.
+
+Open `quickstart-research-task.md` in **Cursor or Claude Code (Agent mode)** and say "Run this task." The agent:
+
+1. Calls AskBill for product VPs (cached for 30 days in `inputs/products/*.md`).
+2. Calls Glean for company context, Gong call snippets, and customer-facing positioning.
+3. Edits `inputs/prompt.txt` in place to incorporate the findings.
+4. Either kicks off `npm run demo` for you (if you said yes to "Build after"), or hands you back the keys to run it yourself.
+
+From there the [agent-driven QA loop](#what-youll-see-when-the-pipeline-runs) takes over — gates pause for the agent to fix issues, the agent makes surgical edits, you run `npm run pipe -- continue <run-id>` to release.
+
+> **Why `npm run demo` and not `npm run demo:full`?** `npm run demo` is the **agent-mode default** — it stops at `build-qa` so the loop produces a QA-graded host app without spending time on recording / voiceover / rendering. That matches how agents iterate. When you're ready to ship the actual MP4, run `npm run demo:full` (full pipeline through render).
 
 If you already know what you want and don't need the wizard, jump to [Build a demo from a hand-written prompt](#build-a-demo-from-a-hand-written-prompt).
 
@@ -259,7 +351,11 @@ npm run pipe -- pull                     # latest code + shared demos
 npm run quickstart                       # guided wizard for a new app-only demo
                                          #   (asks brand/persona/products → writes prompt.txt
                                          #    + research task; agent runs AskBill + Glean,
-                                         #    then full pipeline kicks off)
+                                         #    then `npm run demo` kicks off and stops at
+                                         #    build-qa for fast agent-driven iteration)
+npm run demo                             # iterate: app-only build + QA, stops at build-qa
+                                         #   (agent-mode default — no recording cost)
+npm run demo:full                        # ship: full pipeline through MP4 render + ppt
 npm run pipe -- new --app-only           # alternative: build from a hand-written prompt.txt
 npm run pipe -- publish <run-id>         # share a demo (auto-merges into your namespace)
 ```

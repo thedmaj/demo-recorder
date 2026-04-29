@@ -1,6 +1,6 @@
 # inputs/prompt.txt Examples
 
-Drop one of these as `inputs/prompt.txt` and run `npm run demo`.
+Drop one of these as `inputs/prompt.txt` and run `npm run demo` (app-only build + QA, stops at `build-qa` for fast iteration). Use `npm run demo:full` when you're ready to render the final MP4.
 
 ---
 
