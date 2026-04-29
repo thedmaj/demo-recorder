@@ -3749,6 +3749,31 @@ async function main() {
   console.log(`[${bannerTs}] ${'='.repeat(54)}`);
   console.log('');
 
+  const skipEnvCheck =
+    process.env.PIPELINE_SKIP_ENV_CHECK === 'true' ||
+    process.env.PIPELINE_SKIP_ENV_CHECK === '1';
+  if (!skipEnvCheck) {
+    const { validatePipelineEnv, printValidationReport } = require('./utils/validate-pipeline-env');
+    const skipLivePing =
+      process.env.PIPELINE_SKIP_ENV_LIVE_CHECK === 'true' ||
+      process.env.PIPELINE_SKIP_ENV_LIVE_CHECK === '1';
+    const envResult = await validatePipelineEnv({
+      projectRoot: PROJECT_ROOT,
+      skipLiveCheck: skipLivePing,
+    });
+    printValidationReport(envResult, {
+      log: msg => cliLog(msg),
+      warn: msg => cliWarn(msg),
+      error: msg => cliError(msg),
+    });
+    if (!envResult.ok) {
+      cliError(
+        '[Orchestrator] Environment validation failed — fix the issues above, request `.env` keys from the repository owner if needed, or set PIPELINE_SKIP_ENV_CHECK=1 to bypass (not recommended).'
+      );
+      process.exit(64);
+    }
+  }
+
   const timer = makeTimer();
 
   // Load prompt

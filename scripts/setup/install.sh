@@ -12,7 +12,8 @@
 #      mode runs) brew install; otherwise prints manual install URLs.
 #   2. Runs `npm install` to fetch Node dependencies.
 #   3. Creates a local `.env` from `.env.example` if one doesn't exist; optionally
-#      prompts to paste secrets (default: skip) with guidance to ask the repo owner.
+#      prompts to paste secrets (default: skip). If you skip, reach out to the
+#      repository owner for real `.env` keys — never commit secrets.
 #   3a. Ensures ~/.config/plaid-demo-recorder exists and writes GOOGLE_APPLICATION_CREDENTIALS
 #      in .env when unset or empty (optional Vertex / Gemini — teammates drop JSON per machine).
 #   3b. When .env lists Glean (token + instance) and/or AskBill mcp-remote settings,
@@ -75,6 +76,13 @@ confirm() {
     y|Y|yes|YES) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+print_env_owner_message() {
+  printf "\n"
+  info "${BOLD}Secrets / .env:${RESET} Reach out to the ${BOLD}repository owner${RESET} for environment file keys (API tokens and credentials). Do not paste secrets into chat logs or tickets."
+  info "Ensure \`.env\` matches \`.env.example\` structure, then fill values from the maintainer."
+  printf "\n"
 }
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }

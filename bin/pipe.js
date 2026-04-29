@@ -20,6 +20,7 @@
  *   pipe list       [--limit=N] [--json]
  *   pipe continue   [RUN_ID]
  *   pipe open       [RUN_ID]
+ *   pipe validate-env    (alias: env-check)
  *   pipe help
  *
  * Global flags: --json  --non-interactive
@@ -1425,6 +1426,32 @@ async function interactiveMenu() {
   }
 }
 
+async function cmdValidateEnv() {
+  try {
+    require('dotenv').config({
+      path: path.join(PROJECT_ROOT, '.env'),
+      override: true,
+      quiet: true,
+    });
+  } catch (_) { /* ignore */ }
+  const { validatePipelineEnv, printValidationReport } = require(path.join(
+    PROJECT_ROOT,
+    'scripts',
+    'scratch',
+    'utils',
+    'validate-pipeline-env.js'
+  ));
+  const skipLive =
+    process.env.PIPELINE_SKIP_ENV_LIVE_CHECK === 'true' ||
+    process.env.PIPELINE_SKIP_ENV_LIVE_CHECK === '1';
+  const result = await validatePipelineEnv({
+    projectRoot: PROJECT_ROOT,
+    skipLiveCheck: skipLive,
+  });
+  printValidationReport(result);
+  return result.ok ? 0 : 64;
+}
+
 // ── Help ─────────────────────────────────────────────────────────────────────
 function cmdHelp() {
   const H = (title) => '\n' + c.bold(title) + '\n' + '─'.repeat(72);
@@ -1565,6 +1592,12 @@ Token / wall-clock uplift vs LLM touchup on multi-step failures:
 ~5-10x fewer tokens, ~3-5x faster, regressions on unrelated steps bounded
 by StrReplace scope rather than LLM prompt discipline.`)}
 ${H('META')}
+${cmd('npm run pipe -- validate-env   ' + c.dim('(alias: env-check)'),
+`Validate API keys and credential paths before a pipeline run: required env vars,
+readable GOOGLE_APPLICATION_CREDENTIALS, parsable GCP JSON secrets, and Google/Vertex
+OAuth. Unless PIPELINE_SKIP_ENV_LIVE_CHECK is set, performs a live Anthropic key check.
+Exits 64 on failure. PIPELINE_SKIP_ENV_CHECK=1 skips all checks (not recommended).
+Request `.env` values from the repository owner if you do not have them.`)}
 ${cmd('npm run pipe -- help   ' + c.dim('(aliases: -h, --help)'),
 `Print this listing.`)}
 
@@ -1614,6 +1647,9 @@ ${c.dim(`  · ::PIPE:: lines on stdout mark stage_start / stage_end / prompt / p
       case 'stop':     code = cmdStop(parsed);          break;
       case 'continue': code = cmdContinue(parsed);      break;
       case 'open':     code = cmdOpen(parsed);          break;
+      case 'validate-env':
+      case 'env-check':
+                       code = await cmdValidateEnv();   break;
       case 'help':
       case '--help':
       case '-h':       code = cmdHelp();                break;
