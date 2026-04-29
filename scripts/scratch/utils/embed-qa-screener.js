@@ -17,7 +17,12 @@
  */
 
 const fs   = require('fs');
-const { embedImage, embedTextMultimodal, cosineSimilarity } = require('./vertex-embed');
+const {
+  embedImage,
+  embedTextMultimodal,
+  cosineSimilarity,
+  hasVertexServiceAccountEnv,
+} = require('./vertex-embed');
 
 const QA_SCREEN_THRESHOLD = parseFloat(process.env.EMBED_QA_SCREEN_THRESHOLD || '0.80');
 
@@ -35,7 +40,7 @@ async function screenSteps(inputs) {
   // Graceful skip when Vertex AI OAuth2 is not configured.
   // Note: QA pre-screening uses image embedding (multimodalembedding@001) which requires
   // OAuth2 — GOOGLE_API_KEY alone is not sufficient for this stage.
-  if (!process.env.VERTEX_AI_PROJECT_ID || !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  if (!process.env.VERTEX_AI_PROJECT_ID || !hasVertexServiceAccountEnv()) {
     for (const { stepId } of inputs) {
       results.set(stepId, { screened: false, similarity: 0, score: 0 });
     }

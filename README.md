@@ -17,7 +17,7 @@ Do this **after** [`bash scripts/setup/install.sh`](#one-command-install) and a 
 | **3** | *(Recommended)* Claude Code | Open **`inputs/quickstart-agent-bootstrap.txt`**, copy all, and paste it as the **first** Agent message (or open **`inputs/quickstart-research-task.md`** and say **“Run this task end-to-end”**). That runs AskBill + Glean, refines the prompt, then runs **`npm run demo`** (build-qa) if you chose auto-build in the wizard. Skip only if you’re iterating on an already-enriched prompt. |
 | **4** | **Claude Code integrated terminal** | Run **`npm run demo`**. This runs the pipeline through **build-qa** (fast iteration; no full MP4). Stay in Agent mode so QA continue-gates can be handled automatically. |
 
-**Parallel:** in a **second terminal**, run **`npm run dashboard`** and open <http://localhost:4040> to watch stages and QA scores.
+**Parallel:** in a **second terminal**, run **`npm run dashboard`** and open <http://localhost:4040> to watch stages and QA scores. Optionally in a **third terminal**, run **`npm run pipe:status-loop`** so **`npm run pipe -- status`** prints every five minutes (set **`PIPE_STATUS_INTERVAL_SEC`** to override). Agents should still post brief updates in chat per **`CLAUDE.md`** heartbeat rules.
 
 **Ship video later:** when the app passes QA, run **`npm run demo:full`** for recording + render + MP4.
 

@@ -1,0 +1,15 @@
+---
+description: "Long-running Plaid pipeline builds — agents must post periodic status, avoid silent waits, and prefer non-interactive CLI. Pair with npm run pipe:status-loop in a second terminal."
+alwaysApply: true
+---
+
+# Pipeline heartbeat (Claude Code / Cursor agents)
+
+When you **start or supervise** any command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, log tailing):
+
+1. **At least every 5 minutes** while the run is active, give a short update in chat: run `npm run pipe -- status` or `npm run pipe -- status --json`. Summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and `nextRecoveryCommand` when present.
+2. **Do not wait silently.** If there is **no new stdout/stderr for ~5 minutes** and status still shows work in progress, investigate: `activePid`, tail `artifacts/logs/pipeline-build.log.md` under the run directory. Say what you found; only suggest `npm run pipe -- stop <RUN_ID>` if the user wants to kill the run.
+3. **Avoid stdin stalls:** prefer `npm run pipe -- new … --non-interactive` (and `SCRATCH_AUTO_APPROVE=true` in `.env` when appropriate). Warn the user if a gate needs their terminal.
+4. **Optional terminal helper:** `npm run pipe:status-loop` prints `pipe status` every 300s (`PIPE_STATUS_INTERVAL_SEC` to change). Use a **second or third** shell alongside the build and dashboard — it does not replace chat updates.
+
+Full detail: `CLAUDE.md` (heartbeat section) and `.claude/skills/pipeline-cli/SKILL.md`.

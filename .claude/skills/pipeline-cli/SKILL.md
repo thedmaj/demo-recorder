@@ -140,6 +140,16 @@ Pass `--non-interactive` to skip all human prompts; the orchestrator will auto-a
 
 Combine with `--json` to parse events programmatically instead of scraping human logs.
 
+## Long-running builds — 5-minute heartbeat (agent behavior)
+
+When monitoring a pipeline that may run for many minutes:
+
+- At least **every 5 minutes**, run `npm run pipe -- status` (or `--json`) and **tell the user** what stage is running, whether `awaitingContinue` is true, and any `firstFailed` / `nextRecoveryCommand`.
+- **Never wait silently** if logs have stalled ~5 minutes while status still shows activity — inspect `pipeline-build.log.md` or suggest `pipe stop` / recovery.
+- Use **`--non-interactive`** on `pipe new` / `resume` when possible so stdin gates do not hang.
+
+Optional parallel terminal: `npm run pipe:status-loop` (prints status every 300s; `PIPE_STATUS_INTERVAL_SEC` to override).
+
 ## Worked example
 
 ```text

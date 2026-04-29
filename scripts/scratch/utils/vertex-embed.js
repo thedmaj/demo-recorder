@@ -14,6 +14,12 @@
  *
  * Rate-limited to 120 req/min (Vertex AI multimodalembedding@001 limit).
  * All functions throw when VERTEX_AI_PROJECT_ID is not set.
+ *
+ * OAuth2 service account (Vertex when GOOGLE_API_KEY is unset), priority:
+ *   1. GCP_SERVICE_ACCOUNT_JSON_B64 — base64 of the standard GCP JSON key file (single .env line)
+ *   2. GCP_SERVICE_ACCOUNT_JSON — same JSON as a single-line string (escaped newlines in private_key)
+ *   3. GOOGLE_APPLICATION_CREDENTIALS — filesystem path to that JSON (Google ADC default)
+ *   4. Application Default Credentials otherwise (e.g. gcloud auth application-default login)
  */
 
 const { GoogleAuth } = require('google-auth-library');
@@ -22,6 +28,8 @@ const PROJECT_ID  = process.env.VERTEX_AI_PROJECT_ID;
 const REGION      = process.env.VERTEX_AI_REGION || 'us-central1';
 const MM_MODEL    = 'multimodalembedding@001';
 const TEXT_MODEL  = 'text-embedding-004';
+
+const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
 // ── Rate limiter ──────────────────────────────────────────────────────────────
 // 120 req/min = 1 per 500ms minimum gap
@@ -36,13 +44,43 @@ async function rateLimitedFetch(url, opts) {
   return fetch(url, opts);
 }
 
+/**
+ * True when env provides material for a service-account OAuth client (file path or inline JSON).
+ * GOOGLE_API_KEY alone does not count — multimodal Vertex paths need OAuth.
+ */
+function hasVertexServiceAccountEnv() {
+  if (process.env.GCP_SERVICE_ACCOUNT_JSON_B64 && String(process.env.GCP_SERVICE_ACCOUNT_JSON_B64).trim()) {
+    return true;
+  }
+  if (process.env.GCP_SERVICE_ACCOUNT_JSON && String(process.env.GCP_SERVICE_ACCOUNT_JSON).trim()) {
+    return true;
+  }
+  const p = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  return !!(p && String(p).trim());
+}
+
+function createGoogleAuth() {
+  const scopes = [CLOUD_PLATFORM_SCOPE];
+  const b64 = process.env.GCP_SERVICE_ACCOUNT_JSON_B64;
+  if (b64 != null && String(b64).trim() !== '') {
+    const json = JSON.parse(Buffer.from(String(b64).trim(), 'base64').toString('utf8'));
+    return new GoogleAuth({ credentials: json, scopes });
+  }
+  const raw = process.env.GCP_SERVICE_ACCOUNT_JSON;
+  if (raw != null && String(raw).trim() !== '') {
+    const json = JSON.parse(String(raw).trim());
+    return new GoogleAuth({ credentials: json, scopes });
+  }
+  return new GoogleAuth({ scopes });
+}
+
 // ── Auth headers ──────────────────────────────────────────────────────────────
 // Priority: GOOGLE_API_KEY (simple key) → OAuth2 ADC (service account / gcloud)
 let _auth = null;
 
 async function getAccessToken() {
   if (!_auth) {
-    _auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+    _auth = createGoogleAuth();
   }
   const client = await _auth.getClient();
   const tok    = await client.getAccessToken();
@@ -207,6 +245,55 @@ function cosineSimilarity(a, b) {
   return denom < 1e-10 ? 0 : dot / denom;
 }
 
+function resetGoogleAuthClient() {
+  _auth = null;
+}
+
+/**
+ * One-shot check: API key presence, or obtain an OAuth2 access token via inline/path ADC.
+ * Does not call Vertex predict endpoints (no quota burn).
+ * @returns {Promise<{ ok: boolean, mode: string, message: string, tokenPreview?: string }>}
+ */
+async function verifyVertexConnectivity() {
+  resetGoogleAuthClient();
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (apiKey && String(apiKey).trim()) {
+    return {
+      ok: true,
+      mode: 'api_key',
+      message:
+        'GOOGLE_API_KEY is set — embedding routes that support API keys will use x-goog-api-key.',
+    };
+  }
+  if (!hasVertexServiceAccountEnv()) {
+    return {
+      ok: true,
+      mode: 'skipped',
+      message:
+        'No GOOGLE_API_KEY and no service-account env (GCP_SERVICE_ACCOUNT_JSON_B64, GCP_SERVICE_ACCOUNT_JSON, or GOOGLE_APPLICATION_CREDENTIALS). Nothing to verify.',
+    };
+  }
+  try {
+    const token = await getAccessToken();
+    const s = token && String(token);
+    if (!s) {
+      return { ok: false, mode: 'oauth2', message: 'OAuth client returned an empty access token.' };
+    }
+    return {
+      ok: true,
+      mode: 'oauth2',
+      message: 'OAuth2 access token obtained (google-auth-library + service account or ADC).',
+      tokenPreview: `${s.slice(0, 10)}…`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      mode: 'oauth2',
+      message: err && err.message ? err.message : String(err),
+    };
+  }
+}
+
 module.exports = {
   embedVideo,
   embedImage,
@@ -216,4 +303,9 @@ module.exports = {
   cosineSimilarity,
   getAccessToken,
   getAuthHeaders,
+  hasVertexServiceAccountEnv,
+  resetGoogleAuthClient,
+  verifyVertexConnectivity,
+  /** @internal unit tests only — prefer verifyVertexConnectivity */
+  createGoogleAuth,
 };

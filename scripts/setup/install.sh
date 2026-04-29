@@ -13,6 +13,8 @@
 #   2. Runs `npm install` to fetch Node dependencies.
 #   3. Creates a local `.env` from `.env.example` if one doesn't exist; optionally
 #      prompts to paste secrets (default: skip) with guidance to ask the repo owner.
+#   3a. Ensures ~/.config/plaid-demo-recorder exists and writes GOOGLE_APPLICATION_CREDENTIALS
+#      in .env when unset or empty (optional Vertex / Gemini — teammates drop JSON per machine).
 #   3b. When .env lists Glean (token + instance) and/or AskBill mcp-remote settings,
 #      prefetches @gleanwork/local-mcp-server and/or mcp-remote into the npm cache.
 #   4. Runs `gh auth status` to confirm the user is signed in to their
@@ -260,6 +262,59 @@ if [ -f ".env" ]; then
   fi
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 3a. Per-machine Google Cloud credentials path (optional Vertex / Gemini)
+# ─────────────────────────────────────────────────────────────────────────────
+heading "Google Cloud credentials path (optional)"
+
+GOOGLE_CREDS_DIR="${HOME}/.config/plaid-demo-recorder"
+DEFAULT_GCP_JSON="${GOOGLE_CREDS_DIR}/gcp-service-account.json"
+mkdir -p "${GOOGLE_CREDS_DIR}"
+ok "Directory ready for optional service account JSON: ${DEFAULT_GCP_JSON}"
+
+if [ -f ".env" ]; then
+  if grep -qE '^[[:space:]]*GOOGLE_APPLICATION_CREDENTIALS=[^[:space:]#]' .env; then
+    ok "GOOGLE_APPLICATION_CREDENTIALS already set in .env — leaving untouched."
+  elif command -v python3 >/dev/null 2>&1; then
+    export _DEMO_RECORDER_GCP_JSON="${DEFAULT_GCP_JSON}"
+    python3 <<'PY'
+import os
+from pathlib import Path
+path = Path(".env")
+key = "GOOGLE_APPLICATION_CREDENTIALS"
+val = os.environ.get("_DEMO_RECORDER_GCP_JSON", "").strip()
+if not val:
+    raise SystemExit(0)
+text = path.read_text(encoding="utf-8")
+lines = text.splitlines()
+out = []
+replaced = False
+prefix = key + "="
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith(prefix) or stripped.startswith(key + " ="):
+        if not replaced:
+            out.append(prefix + val)
+            replaced = True
+        continue
+    out.append(line)
+if not replaced:
+    if out and out[-1].strip():
+        out.append("")
+    out.append("# Optional: Vertex AI / Gemini embeddings — place your service account JSON at the path below.")
+    out.append(prefix + val)
+nl = "\n"
+ending = nl if (text.endswith("\n") or not text) else ""
+path.write_text(nl.join(out) + ending, encoding="utf-8")
+PY
+    unset _DEMO_RECORDER_GCP_JSON
+    ok "Set GOOGLE_APPLICATION_CREDENTIALS to ${DEFAULT_GCP_JSON}"
+    info "If you use Vertex, download JSON from GCP IAM → Keys and save it as that filename."
+  else
+    warn "python3 not found — add to .env manually: GOOGLE_APPLICATION_CREDENTIALS=${DEFAULT_GCP_JSON}"
+  fi
+fi
+
 if [ "${NEW_ENV_CREATED}" -eq 1 ]; then
   if [ "${NON_INTERACTIVE}" = true ]; then
     print_env_owner_message
@@ -451,7 +506,8 @@ cat <<EOF
     4. Agent runs AskBill + Glean, updates prompt.txt, then ${CYAN}npm run demo${RESET} (build-qa)
        when the task says to — not ${CYAN}npm run pipe -- new --app-only${RESET}.
     5. Second terminal: ${CYAN}npm run dashboard${RESET} → http://localhost:4040
-    6. ${CYAN}npm run pipe -- publish <run-id>${RESET}  (optional — share your demo)
+    6. Optional third terminal: ${CYAN}npm run pipe:status-loop${RESET} — prints ${CYAN}pipe status${RESET} every 300s (${CYAN}PIPE_STATUS_INTERVAL_SEC${RESET} to change). Agents: follow ${CYAN}CLAUDE.md${RESET} heartbeat + ${CYAN}.cursor/rules/pipeline-heartbeat.mdc${RESET}.
+    7. ${CYAN}npm run pipe -- publish <run-id>${RESET}  (optional — share your demo)
 
   ${BOLD}Alternative — hand-written prompt:${RESET}
     1. ${CYAN}Edit inputs/prompt.txt${RESET} (template at inputs/prompt-template-app-only.txt).
@@ -468,6 +524,7 @@ cat <<EOF
   ${BOLD}Monitor an in-flight run:${RESET}
     ${CYAN}npm run pipe -- status${RESET}       — snapshot of every stage
     ${CYAN}npm run pipe -- logs --follow${RESET} — tail the live output
+    ${CYAN}npm run pipe:status-loop${RESET}     — status every 300s (${CYAN}PIPE_STATUS_INTERVAL_SEC${RESET})
 
   ${BOLD}Pull the latest shared demos:${RESET}
     ${CYAN}npm run pipe -- pull${RESET}         — git pull this repo AND plaid-demo-apps
@@ -476,6 +533,7 @@ cat <<EOF
     · ${DIM}README.md${RESET}                          — setup + workflow primer
     · ${DIM}docs/distribution-architecture.md${RESET}  — two-repo distribution model details
     · ${DIM}CLAUDE.md${RESET}                          — pipeline architecture + stage list
+    · ${DIM}.cursor/rules/pipeline-heartbeat.mdc${RESET} — agent heartbeat + non-interactive hints
     · ${DIM}.claude/skills/pipeline-cli/SKILL.md${RESET} — agent-facing CLI reference
 
 ${GREEN}Done.${RESET}

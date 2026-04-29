@@ -390,6 +390,15 @@ npm run demo:full -- --from=record    # full pipeline starting at record
 
 Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
 
+### Claude Code / Cursor agents — long-running builds (heartbeat policy)
+
+These rules apply whenever you **start or supervise** a command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, or tailing logs).
+
+1. **Visibility:** While a run is active, post a **short progress note at least every 5 minutes**. Use `npm run pipe -- status` or `npm run pipe -- status --json` and summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and anything actionable from `nextRecoveryCommand`.
+2. **No silent waiting:** If there has been **no new stdout/stderr for ~5 minutes** and `pipe status` still shows an in-flight stage, **do not idle** — treat as possibly hung: check `activePid`, read the tail of `artifacts/logs/pipeline-build.log.md` under the run dir, and tell the user what you found (or run `npm run pipe -- stop <RUN_ID>` only if they want to kill it).
+3. **Avoid stdin stalls:** Prefer launching pipeline commands with **`--non-interactive`** (equivalent to `SCRATCH_AUTO_APPROVE=true`) so the orchestrator does not block on interactive **Press ENTER** gates. If you cannot use that flag, warn the user when a gate requires their terminal.
+4. **Optional helper (human or second shell):** `npm run pipe:status-loop` prints `pipe status` every **300s** (override with `PIPE_STATUS_INTERVAL_SEC`). Run it in parallel while a build runs if you want automatic timestamps in the terminal; the **agent** should still follow rules 1–3 in chat.
+
 ## Build mode (App-only vs App + Slides)
 
 The pipeline now defaults to **App-only** mode end-to-end. No slide steps are

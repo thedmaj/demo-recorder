@@ -1,6 +1,8 @@
 {
   "scripts": {
     "test": "node --test 'tests/unit/**/*.test.js'",
+    "test:vertex-auth": "node scripts/setup/test-vertex-auth.js",
+    "pipe:status-loop": "bash scripts/setup/pipe-status-loop.sh",
     "dashboard": "node scripts/dashboard/server.js",
     "pipe": "node bin/pipe.js",
     "quickstart": "node bin/pipe.js quickstart",
