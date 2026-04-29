@@ -72,7 +72,7 @@ PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 Products featured (approved names only):
-«e.g. Plaid Link, Plaid Layer, Plaid Identity Verification (IDV), Plaid Auth, Plaid Signal»
+«e.g. Plaid Auth, Plaid Assets, Plaid Transactions, Plaid Liabilities, Plaid Investments, Plaid Signal»
 
 Solutions supported (used to query Solutions Master):
 «e.g. Account Opening, Funding, Consumer Report Underwriting»
@@ -91,7 +91,7 @@ CONNECTION & RECORDING (CHECKLIST)
 -------------------------------------------------------------------------------
 
 [ ] Live Plaid Link (single `plaidPhase: "launch"` step)
-[ ] Plaid Layer / OAuth / IDV noted if applicable
+[ ] Extra Link products (transactions, investments, etc.) noted if applicable
 [ ] Sandbox / persona selected (or defaults from `inputs/plaid-link-sandbox.md`)
 
 -------------------------------------------------------------------------------
@@ -126,7 +126,7 @@ Sample on-screen fields: «amounts, scores, labels — no generic placeholders»
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-«Nav, entry screen, CTA label that opens Link / Layer / IDV. 2-4 sentences.»
+«Nav, entry screen, CTA label that opens Link. 2-4 sentences.»
 
 Viewport: 1440x900
 

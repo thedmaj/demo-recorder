@@ -304,7 +304,7 @@ This applies to every gate in the table below: prompt fidelity, sample-data real
 
 For repeat builds where you've already authored `inputs/prompt.txt`:
 
-1. Edit [`inputs/prompt.txt`](inputs/prompt.txt). A full example is in [`inputs/prompt-template-app-only.txt`](inputs/prompt-template-app-only.txt). The richer reference with slide support is in [`docs/prompt-examples.md`](docs/prompt-examples.md).
+1. Edit [`inputs/prompt.txt`](inputs/prompt.txt). Start from [`inputs/prompt-template-app-only.txt`](inputs/prompt-template-app-only.txt) if you want a blank structure — **that template is committed in this repo** so every clone has the same canonical app-only skeleton (copy it and customize). The richer reference with slide support is in [`docs/prompt-examples.md`](docs/prompt-examples.md).
 2. Run:
    ```bash
    npm run pipe -- new --app-only --non-interactive
