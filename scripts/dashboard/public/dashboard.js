@@ -3579,17 +3579,6 @@
         ` : ''}
       </div>
       <div class="slide-templates-preview-frame-wrap" id="slide-templates-preview-wrap">
-        <!--
-          Slide files are authored at the demo's native 1440×900 viewport
-          (their CSS pins `body { min-width: 1440px }`), so embedding them
-          1:1 in a smaller pane shows only a corner. The wrap above is
-          measured at runtime and the iframe below is pinned to 1440×900
-          and SCALED to fit by JS (see applySlideTemplatePreviewScale).
-          Sandbox: allow-scripts ONLY — the previous combo of
-          `allow-same-origin allow-scripts` triggers Chrome's "iframe can
-          escape its sandbox" warning, and slide library files are static
-          previews that don't need same-origin access to anything.
-        -->
         <iframe class="slide-templates-preview-frame" id="slide-templates-preview-frame"
                 src="${esc(previewUrl)}" sandbox="allow-scripts"
                 title="Slide template preview"></iframe>
