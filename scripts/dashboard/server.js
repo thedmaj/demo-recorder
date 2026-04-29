@@ -978,7 +978,20 @@ function mimeFor(filePath) {
 
 // ── App setup ─────────────────────────────────────────────────────────────────
 const app = express();
-app.use(express.json());
+
+// Slide library upload + AI edit accept large JSON bodies (base64-encoded
+// images and full slide HTML). We register a per-route 50 MB JSON parser
+// for those endpoints below, but Express runs middleware in registration
+// order — so the GLOBAL `express.json()` (default 100 KB limit) intercepts
+// and rejects the request before the per-route parser runs. To fix that,
+// the global parser SKIPS those large-body routes; their dedicated
+// `slideLibraryUploadJson` parser takes over and applies the 50 MB cap.
+const _globalJsonParser = express.json();
+const LARGE_BODY_ROUTE_RE = /^\/api\/slide-library\/(?:upload|slides\/[^/]+\/(?:ai-edit|rename))(?:\/|$)/;
+app.use((req, res, next) => {
+  if (LARGE_BODY_ROUTE_RE.test(req.path)) return next();
+  return _globalJsonParser(req, res, next);
+});
 app.use('/api/slide-library', (req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
