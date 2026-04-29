@@ -7,11 +7,18 @@
 #   bash scripts/setup/install.sh --non-interactive
 #
 # What this script does (all optional prompts when anything is missing):
-#   1. Verifies prerequisites (node >= 20, npm, git, gh CLI, ffmpeg).
+#   1. Verifies prerequisites (node >= 20, npm, git, gh CLI, ffmpeg). If gh or
+#      ffmpeg is missing and Homebrew is available, offers (or in --non-interactive
+#      mode runs) brew install; otherwise prints manual install URLs.
 #   2. Runs `npm install` to fetch Node dependencies.
-#   3. Creates a local `.env` from `.env.example` if one doesn't exist.
+#   3. Creates a local `.env` from `.env.example` if one doesn't exist; optionally
+#      prompts to paste secrets (default: skip) with guidance to ask the repo owner.
+#   3b. When .env lists Glean (token + instance) and/or AskBill mcp-remote settings,
+#      prefetches @gleanwork/local-mcp-server and/or mcp-remote into the npm cache.
 #   4. Runs `gh auth status` to confirm the user is signed in to their
 #      GitHub Enterprise host; offers to run `gh auth login` if not.
+#      When auth is missing, prints step-by-step hints for users who have
+#      never used `gh` or signed in to GitHub before.
 #   5. Resolves and caches the user's GHE identity
 #      (~/.plaid-demo-recorder/identity.json) via `npm run pipe -- whoami`.
 #   6. Clones (or refreshes) the artifact repo `plaid-demo-apps` at
@@ -68,20 +75,81 @@ confirm() {
   esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 1. Prerequisite check
-# ─────────────────────────────────────────────────────────────────────────────
-heading "Checking prerequisites"
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 require_cmd() {
   local name="$1"; local hint="${2:-}"
-  if command -v "$name" >/dev/null 2>&1; then
+  if have_cmd "$name"; then
     ok "${name} found ($(command -v "$name"))"
     return 0
   fi
   err "${name} not found. ${hint}"
   return 1
 }
+
+# Install gh / ffmpeg via Homebrew when missing. Required for this installer.
+ensure_github_cli() {
+  if have_cmd gh; then
+    ok "gh found ($(command -v gh))"
+    return 0
+  fi
+  warn "gh (GitHub CLI) not found — required for \`pipe publish\`, \`pipe pull\`, and identity."
+  if have_cmd brew; then
+    if [ "${NON_INTERACTIVE}" = true ] || confirm "Install gh with Homebrew (\`brew install gh\`)?" y; then
+      info "Running \`brew install gh\` …"
+      brew install gh || {
+        err "\`brew install gh\` failed."
+        return 1
+      }
+    else
+      err "Install gh manually: https://cli.github.com — or run: brew install gh"
+      return 1
+    fi
+  else
+    err "Install GitHub CLI: https://cli.github.com — On macOS, install Homebrew from https://brew.sh then re-run this script (it can install gh automatically)."
+    return 1
+  fi
+  if have_cmd gh; then
+    ok "gh installed ($(command -v gh))"
+    return 0
+  fi
+  err "gh still not on PATH after install."
+  return 1
+}
+
+ensure_ffmpeg_bin() {
+  if have_cmd ffmpeg; then
+    ok "ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
+    return 0
+  fi
+  warn "ffmpeg not found — required for recording and MP4 render (\`npm run demo:full\`)."
+  if have_cmd brew; then
+    if [ "${NON_INTERACTIVE}" = true ] || confirm "Install ffmpeg with Homebrew (\`brew install ffmpeg\`)?" y; then
+      info "Running \`brew install ffmpeg\` …"
+      brew install ffmpeg || {
+        err "\`brew install ffmpeg\` failed."
+        return 1
+      }
+    else
+      err "Install ffmpeg manually: https://ffmpeg.org/download.html — e.g. Debian/Ubuntu: sudo apt-get install ffmpeg"
+      return 1
+    fi
+  else
+    err "Install ffmpeg: macOS Homebrew \`brew install ffmpeg\` (https://brew.sh) — or https://ffmpeg.org/download.html — Debian/Ubuntu: sudo apt-get install ffmpeg"
+    return 1
+  fi
+  if have_cmd ffmpeg; then
+    ok "ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
+    return 0
+  fi
+  err "ffmpeg still not on PATH after install."
+  return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Prerequisite check
+# ─────────────────────────────────────────────────────────────────────────────
+heading "Checking prerequisites"
 
 FAIL=0
 
@@ -100,18 +168,12 @@ fi
 
 require_cmd npm  "Bundled with Node.js — reinstall Node.js." || FAIL=1
 require_cmd git  "Install from https://git-scm.com or via \`brew install git\`." || FAIL=1
-require_cmd gh   "Install GitHub CLI from https://cli.github.com or via \`brew install gh\`." || FAIL=1
 
-# ffmpeg is used by the record + post-process stages. Warn-only (not required
-# for setup, but demos can't render without it).
-if command -v ffmpeg >/dev/null 2>&1; then
-  ok "ffmpeg $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}')"
-else
-  warn "ffmpeg not found. Install it before running full demos: \`brew install ffmpeg\` (macOS) or see https://ffmpeg.org/download.html"
-fi
+ensure_github_cli || FAIL=1
+ensure_ffmpeg_bin || FAIL=1
 
 if [ "${FAIL}" -ne 0 ]; then
-  err "One or more required tools are missing. Install them and re-run this script."
+  err "One or more required tools are missing. Fix the errors above and re-run this script."
   exit 2
 fi
 
@@ -134,32 +196,33 @@ ok "npm install complete"
 # ─────────────────────────────────────────────────────────────────────────────
 heading "Setting up .env"
 
+NEW_ENV_CREATED=0
 if [ -f ".env" ]; then
   ok ".env already exists — leaving it untouched."
 else
+  NEW_ENV_CREATED=1
   if [ -f ".env.example" ]; then
     cp .env.example .env
     ok "Created .env from .env.example"
-    warn "Open .env and fill in the API keys (ANTHROPIC_API_KEY, PLAID_SANDBOX_SECRET, etc.) before running the pipeline."
   else
     cat > .env <<'ENV'
-# Minimum keys needed to run the pipeline. Fill in before your first run.
-# (Request these from a maintainer or provision your own Plaid sandbox.)
+# Minimum keys — if you later obtain `.env.example` from the repo, replace this file with it.
+# (Request API keys from a maintainer or provision your own Plaid sandbox.)
 ANTHROPIC_API_KEY=
 PLAID_ENV=sandbox
 PLAID_CLIENT_ID=
 PLAID_SANDBOX_SECRET=
 PLAID_LINK_LIVE=true
 ELEVENLABS_API_KEY=
-# Optional but recommended:
 PLAID_LINK_CUSTOMIZATION=
 PLAID_LAYER_TEMPLATE_ID=
 GLEAN_API_TOKEN=
-GLEAN_INSTANCE_URL=
-# Default refinement loop = agent-driven (no LLM rebuilds on QA fail).
+GLEAN_INSTANCE=
+PLAID_GHE_HOSTNAME=github.plaid.com
+PLAID_DEMO_APPS_REPO=https://github.plaid.com/dmajetic/plaid-demo-apps
 PIPE_AGENT_MODE=1
 ENV
-    ok "Created a minimal .env — fill in the API keys before your first run."
+    ok "Created a minimal .env — fill in keys; prefer replacing with the repo's full .env.example when available."
   fi
 fi
 
@@ -197,10 +260,53 @@ if [ -f ".env" ]; then
   fi
 fi
 
+if [ "${NEW_ENV_CREATED}" -eq 1 ]; then
+  if [ "${NON_INTERACTIVE}" = true ]; then
+    print_env_owner_message
+  elif confirm "Paste pipeline secrets into .env now (Anthropic, Plaid sandbox, ElevenLabs)? (ENTER = skip — ask repo owner)" n; then
+    if command -v python3 >/dev/null 2>&1; then
+      prompt_optional_env_secrets
+      ok "Updated .env — open the file to verify or add optional keys from .env.example."
+    else
+      warn "python3 not found — cannot paste secrets from this script. Edit .env manually."
+      print_env_owner_message
+    fi
+  else
+    print_env_owner_message
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3b. MCP npm packages (Glean + AskBill bridge)
+# ─────────────────────────────────────────────────────────────────────────────
+heading "Knowledge MCP packages (Glean + AskBill)"
+
+if node "${REPO_ROOT}/scripts/setup/prefetch-mcp-packages.js"; then
+  ok "MCP package prefetch finished (see log above if skipped)."
+else
+  warn "MCP prefetch script exited unexpectedly — first research run may download packages."
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. GitHub Enterprise authentication
 # ─────────────────────────────────────────────────────────────────────────────
 heading "GitHub Enterprise authentication"
+
+# Printed when `gh auth status` fails — helps first-time `gh` users who have
+# never run `gh auth login` (or never authenticated against this host).
+print_gh_first_time_help() {
+  local host="$1"
+  printf "\n"
+  info "${BOLD}First time with GitHub CLI or this host?${RESET} \`gh auth login\` is interactive and safe:"
+  info "  ${BOLD}1.${RESET} Install \`gh\` if needed: https://cli.github.com (macOS: \`brew install gh\`)."
+  info "  ${BOLD}2.${RESET} When prompted for ${BOLD}account type${RESET}, choose ${BOLD}GitHub Enterprise Server${RESET} (not GitHub.com), unless you intentionally use github.com only."
+  info "  ${BOLD}3.${RESET} ${BOLD}Hostname${RESET}: enter ${CYAN}${host}${RESET} (or set ${CYAN}PLAID_GHE_HOSTNAME${RESET} before this script so we target the right server)."
+  info "  ${BOLD}4.${RESET} ${BOLD}Protocol${RESET}: pick ${BOLD}SSH${RESET} if you clone/publish with SSH URLs (\`git@...\`); pick HTTPS if you only use HTTPS remotes."
+  info "  ${BOLD}5.${RESET} ${BOLD}Authenticate${RESET}: ${BOLD}Login with a web browser${RESET} is easiest. If the browser flow fails (VPN, headless), use ${BOLD}Paste an authentication token${RESET} and create a PAT on your GHE instance with \`repo\` scope."
+  info "  ${BOLD}6.${RESET} Verify after: ${CYAN}gh auth status --hostname ${host}${RESET}"
+  info "Full reference: ${DIM}https://cli.github.com/manual/gh_auth_login${RESET}"
+  printf "\n"
+}
 
 # If the var isn't in the current shell env, peek at the user's rc files
 # (added there once and persisted across sessions) so first-time setup
@@ -251,12 +357,23 @@ if gh auth status --hostname "${GHE_HOST}" >/dev/null 2>&1; then
   ok "gh CLI is signed in to ${GHE_HOST} as ${GH_LOGIN:-<unknown>}"
 else
   warn "Not signed in to ${GHE_HOST}."
+  print_gh_first_time_help "${GHE_HOST}"
   if confirm "Run \`gh auth login --hostname ${GHE_HOST}\` now?" y; then
-    gh auth login --hostname "${GHE_HOST}"
+    gh auth login --hostname "${GHE_HOST}" || {
+      err "\`gh auth login\` exited with an error."
+      warn "Fix auth (browser or PAT), then run: gh auth status --hostname ${GHE_HOST}"
+      warn "See: https://cli.github.com/manual/gh_auth_login"
+    }
   else
     warn "Skipping gh auth. You will need it before \`pipe publish\` and \`pipe pull\` work end-to-end."
+    info "When ready, run: gh auth login --hostname ${GHE_HOST}"
   fi
 fi
+
+info "${BOLD}Git pulls (code + demo repo):${RESET} \`gh auth login\` covers the GitHub CLI only. For \`npm run pipe -- pull\` you also need \`git\` access:"
+info "  · SSH: add your public key to GHE → Settings → SSH keys; test: ${CYAN}ssh -T git@${GHE_HOST:-github.plaid.com}${RESET}"
+info "  · HTTPS: set ${CYAN}PLAID_DEMO_APPS_REPO${RESET} to an https:// URL in .env and use a PAT when Git prompts."
+info "  See README: GitHub authentication — pull updated code + shared demo repo."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Identity cache

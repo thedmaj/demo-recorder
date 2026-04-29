@@ -21,6 +21,42 @@ You do **not** need to know git internals, Node internals, or the Plaid SDK to r
 
 ---
 
+## Prerequisites
+
+Install **before** or **during** setup:
+
+| Tool | Why | How |
+|------|-----|-----|
+| **Node.js 20+** + **npm** | Pipeline runtime | [nodejs.org](https://nodejs.org) or `nvm install 20` |
+| **git** | Clone / pull | [git-scm.com](https://git-scm.com) — macOS: `brew install git` |
+| **GitHub CLI (`gh`)** | **Publish/pull** and optional identity via `gh api user` — **not** required to compile/run a local pipeline build | [cli.github.com](https://cli.github.com) — macOS/Linux with [Homebrew](https://brew.sh): `brew install gh` |
+| **ffmpeg** | Recording + MP4 render (`npm run demo:full`) | [ffmpeg.org/download.html](https://ffmpeg.org/download.html) — macOS: `brew install ffmpeg`; Debian/Ubuntu: `sudo apt-get install ffmpeg` |
+
+**Automatic installs:** If [Homebrew](https://brew.sh) (`brew`) is on your `PATH`, `bash scripts/setup/install.sh` **checks** for `gh` and `ffmpeg` and, when either is missing, **offers** to run `brew install gh` / `brew install ffmpeg` (defaults to **yes**). With `--non-interactive`, it runs those installs without prompting when Homebrew is present. If `brew` is not installed, the script exits with links and OS-specific commands so you can install manually.
+
+### GitHub authentication — pull updated code + shared demo repo
+
+To **`git pull` this codebase** and to **clone / pull `plaid-demo-apps`** (published demos), Git must authenticate to **GitHub Enterprise** the same way you would for any private repo. Do **not** rely on a ZIP download if you want updates — use a **git clone** of `plaid-demo-recorder`.
+
+| What you need | Why |
+|---------------|-----|
+| **`gh auth login --hostname github.plaid.com`** | Unlocks **`gh`** (identity for `pipe publish`, **`gh pr create`**, and consistent hostname for `gh api user`). The installer walks you through this if you are not logged in. |
+| **SSH *or* HTTPS credentials for `git`** | `npm run pipe -- pull` runs **`git pull`** in this repo and **`git fetch` / `git pull`** in `~/.plaid-demo-apps`. That uses **your SSH key** (if remotes are `git@...`) or **HTTPS + personal access token** (if remotes / `PLAID_DEMO_APPS_REPO` are `https://...`). **`gh` login alone does not replace `git` credentials** — if you see `Permission denied (publickey)`, add your SSH key to GHE (**Settings → SSH keys**) or switch **`PLAID_DEMO_APPS_REPO`** to HTTPS and use a PAT when Git prompts. |
+| **Read access** on `plaid-demo-recorder`, **Read** on `plaid-demo-apps` | A maintainer must add you under **Settings → Collaborators** on both repos (see [Onboard a new sales engineer](#onboard-a-new-sales-engineer)). |
+
+**Verify after setup:**
+
+```bash
+gh auth status --hostname github.plaid.com   # logged in to GHE
+ssh -T git@github.plaid.com                  # SSH users — expect a success message, not "Permission denied"
+npm run pipe -- whoami                       # resolved GHE login + paths
+npm run pipe -- pull                         # updates this clone + ~/.plaid-demo-apps
+```
+
+More detail: [First time with GitHub or the GitHub CLI?](#first-time-with-github-or-the-github-cli); ZIP / SSH issues → [Troubleshooting the installer](#troubleshooting-the-installer).
+
+---
+
 ## One-command install
 
 From a fresh clone of this repo:
@@ -35,18 +71,41 @@ What it does:
 
 1. Checks `node` (≥20), `npm`, `git`, `gh` (GitHub CLI), and `ffmpeg`.
 2. `npm install` — Node dependencies.
-3. Creates `.env` from `.env.example` if missing (you fill in the API keys after).
-4. Verifies you're signed in to GitHub Enterprise via `gh auth status`; offers to run `gh auth login` if not.
-5. Resolves and caches your GHE identity to `~/.plaid-demo-recorder/identity.json`.
-6. Clones (or `git pull`s) the shared `plaid-demo-apps` artifact repo to `~/.plaid-demo-apps`.
-7. Installs Playwright's Chromium browser for the recorder.
-8. Prints the quick-start commands.
+3. Creates `.env` from `.env.example` if missing. **Interactive installs** then ask whether to paste secrets (Anthropic, Plaid, ElevenLabs); **ENTER skips** with a reminder to ask your **repo owner** for keys. `--non-interactive` skips the prompt and prints the same reminder.
+4. Prefetches **npm packages** for **Glean** (`@gleanwork/local-mcp-server`) and **AskBill** (`mcp-remote` when using a websocket URL) when `.env` has the matching variables — `scripts/setup/prefetch-mcp-packages.js`.
+5. Verifies you're signed in to GitHub Enterprise via `gh auth status`; offers to run `gh auth login` if not.
+6. Resolves and caches your GHE identity to `~/.plaid-demo-recorder/identity.json`.
+7. Clones (or `git pull`s) the shared `plaid-demo-apps` artifact repo to `~/.plaid-demo-apps`.
+8. Installs Playwright's Chromium browser for the recorder.
+9. Prints the quick-start commands.
+
+### First time with GitHub or the GitHub CLI?
+
+If you have **never** signed in with [`gh`](https://cli.github.com) (or never to **your** GitHub Enterprise host), do this once before or during setup:
+
+1. **Install the CLI** — Usually handled by `bash scripts/setup/install.sh` if Homebrew is installed (`brew install gh`). Otherwise: macOS `brew install gh`, or see [Installing gh](https://github.com/cli/cli#installation).
+2. **Sign in to the right server** — For Plaid’s deployment, run `gh auth login --hostname github.plaid.com` *before* `bash scripts/setup/install.sh`, or answer **yes** when the installer offers to run it. If your company uses another GHE host, set `PLAID_GHE_HOSTNAME` first (see the env table below).
+3. **Follow the prompts** — Choose **GitHub Enterprise Server** (not GitHub.com) when asked. Enter the **hostname** you were given (e.g. `github.plaid.com`). Pick **SSH** if you use `git@...` clone URLs; **HTTPS** if you only use HTTPS remotes. Prefer **Login with a web browser**; if that fails (VPN, SSO quirks), choose **Paste an authentication token** and create a **personal access token** on your GHE server with at least `repo` scope.
+4. **Verify** — `gh auth status --hostname github.plaid.com` should show “Logged in to github.plaid.com”. Then `npm run pipe -- whoami` should print your login.
+
+The installer also prints these hints automatically when you are not logged in. Full CLI reference: [`gh auth login`](https://cli.github.com/manual/gh_auth_login).
 
 Run with `--non-interactive` for CI / unattended setup:
 
 ```bash
 bash scripts/setup/install.sh --non-interactive
 ```
+
+### Zip download, no git clone, or no GitHub authentication?
+
+**Yes — you can run a pipeline build** (`npm run demo`, `npm run demo:full`, etc.) without authenticating to GitHub and without a `.git` directory (e.g. you unpacked a ZIP).
+
+What actually matters for building:
+
+- **Required:** Node.js 20+, `npm install`, and a filled-in **`.env`** (API keys from your repo owner). **`ffmpeg`** is required if you run stages that record or render video.
+- **Not required for build:** `gh auth login`, remotes, or `git` history. The pipeline resolves **owner** metadata as: cached identity → `gh api user` → **`PLAID_DEMO_USER`** in `.env` → **null**. A **null owner** is fine — runs still write under `out/demos/<run-id>/`. Set `PLAID_DEMO_USER=your-handle` if you want owner labels in the dashboard without using `gh`.
+
+What **does** need GitHub + `gh`: **`npm run pipe -- publish`**, **`npm run pipe -- pull`** on the **artifact** repo when **`PLAID_DEMO_APPS_REPO`** is set (shared demos), and the **`bash scripts/setup/install.sh`** path that clones `plaid-demo-apps`. **`pipe pull`** also runs **`git pull`** on **this** repo — that step **does nothing useful** if you installed from a **ZIP** (there is no `.git` folder); clone the repo instead if you want upstream code updates. If you skipped the full installer, run **`npm install`** (and **`npx playwright install chromium`**) yourself; install **`ffmpeg`** manually for full renders.
 
 ---
 
@@ -64,13 +123,33 @@ Fill these in `.env` (the installer creates a template):
 | `ELEVENLABS_API_KEY` | yes | Voiceover narration. |
 | `PLAID_LINK_CUSTOMIZATION` | optional | Plaid Link customization name (e.g. `ascend`). |
 | `PLAID_LAYER_TEMPLATE_ID` | optional | Plaid Layer template ID for Layer demos. |
-| `GLEAN_API_TOKEN` + `GLEAN_INSTANCE_URL` | optional | Enables Glean-powered research. |
-| `PLAID_DEMO_APPS_REPO` | required for publish / pull | SSH URL of the artifact repo. Current deployment: `git@github.plaid.com:dmajetic/plaid-demo-apps.git`. |
+| `GLEAN_API_TOKEN` + **`GLEAN_INSTANCE`** + `GLEAN_INSTANCE_URL` | optional | **`GLEAN_INSTANCE`** (tenant short name, e.g. `plaid`) is required with the token for **`@gleanwork/local-mcp-server`** / `glean_chat`. URL used elsewhere — see `.env.example`. Unset → `[Glean unavailable]`. |
+| `ASKBILL_MCP_COMMAND` / `ASKBILL_API_URL` | optional | Plaid docs (AskBill) via MCP or HTTP — see `.env.example`. WebSocket URLs use `npx -y mcp-remote`. Unset → `[AskBill unavailable]`. |
+| `PLAID_DEMO_APPS_REPO` | required for publish / pull | Artifact repo URL. Default in `.env.example`: `https://github.plaid.com/dmajetic/plaid-demo-apps` (HTTPS + PAT avoids SSH setup). SSH: `git@github.plaid.com:dmajetic/plaid-demo-apps.git`. |
 | `PLAID_GHE_HOSTNAME` | required for GHE auth | Current deployment: `github.plaid.com`. The installer uses this for `gh auth` and the identity resolver uses it to query the right `gh` host. |
+| `PLAID_DEMO_USER` | optional | Override identity when `gh` is missing or not logged in — sets `run-manifest.json` owner without GitHub CLI (ZIP / offline builds). |
 
 **All of these live in `.env`, which is `.gitignore`d.** The installer will never write real keys to disk from flags.
 
 > Tip: The dashboard's **Config** tab exposes ~30 non-sensitive flags (build strategy, QA gates, research mode, Plaid Link QA behavior, etc.) with hover tooltips. Secrets still live in `.env` — you edit them in your shell, not in the dashboard.
+
+### Glean and AskBill MCP — does the installer set these up?
+
+The installer **does not** obtain tokens or run MCP servers as daemons. It **does**:
+
+1. Create `.env` from **`.env.example`** or a minimal stub (including **`GLEAN_INSTANCE`**, **`ASKBILL_*`** placeholders).
+2. After `.env` exists, run **`scripts/setup/prefetch-mcp-packages.js`**, which reads `.env` and, when configured, **`npm install`**s into a temp directory so **`@gleanwork/local-mcp-server`** (Glean) and **`mcp-remote`** (AskBill `wss://` bridges) land in the **npm cache**. That way `npx -y …` on the first research run hits the cache — matching how `mcp-clients.js` launches tools.
+
+**Prefetch runs when:**
+
+- **`GLEAN_API_TOKEN`** and **`GLEAN_INSTANCE`** are both non-empty → prefetch **`@gleanwork/local-mcp-server`**.
+- **`ASKBILL_API_URL`** is a **`ws://` or `wss://`** URL, or **`ASKBILL_MCP_COMMAND`** mentions **`mcp-remote`** → prefetch **`mcp-remote`**.
+
+If credentials are incomplete (e.g. token without **`GLEAN_INSTANCE`**), the script **warns** and skips the Glean prefetch until you align `.env` with [`mcp-clients.js`](scripts/scratch/utils/mcp-clients.js).
+
+**If you leave integrations unset:** Research still runs (Anthropic + tools), but internal-knowledge calls return **`[Glean unavailable]`** or **`[AskBill unavailable]`** — **not** a hard failure; builds complete using `inputs/products/*.md` and your prompt.
+
+**To enable:** Follow [`.env.example`](.env.example) — **`GLEAN_INSTANCE`** + **`GLEAN_API_TOKEN`** for Glean MCP, and **`ASKBILL_MCP_COMMAND`** and/or **`ASKBILL_API_URL`** for AskBill. Ask your maintainer for values.
 
 ---
 
@@ -117,8 +196,12 @@ Choose [1]: 1
    [ 2] Plaid Identity Match               name / address / phone match scores
    [ 3] Plaid Signal                       ACH return-risk scoring (low score = low risk)
    [ 4] Plaid Transfer                     ACH money-movement orchestration
-   [ 5] Plaid Statements                   PDF statement retrieval + parsing
-   ...
+   [ 5] Plaid Transactions                 historical + recurring transaction sync
+   [ 6] Plaid Liabilities                  student loans, mortgages, credit accounts
+   [ 7] Plaid Assets                       balances + holdings via standard Link (not CRA)
+   [ 8] Plaid Investments                  brokerage holdings + investment accounts
+   [ 9] Plaid Investments Move             ACATS / POST /investments/auth/get transfers
+   ... (Statements, CRA Base Report, Bank Income, Income Insights — full list in CLI)
 Pick at least one (e.g. 1,2,3): 1,2,3
 
 6) Persona (name + role, e.g. "Michael Carter, retail banking customer"): Maya Chen, SoFi Money customer
@@ -274,7 +357,7 @@ The standalone form differs from the orchestrator-driven default in one place: i
 npm run pipe -- pull
 ```
 
-This runs `git pull --ff-only` in BOTH this repo (code) and `~/.plaid-demo-apps` (shared demos). Any demo another engineer has published is now browsable in the dashboard.
+This runs `git pull --ff-only` in **this repo** (pipeline code) and syncs **`~/.plaid-demo-apps`** (shared demos). **Requires [GitHub authentication](#github-authentication--pull-updated-code--shared-demo-repo)** — `gh` login plus SSH or HTTPS credentials for `git`, and collaborator access on both repositories. Any demo another engineer has published is then browsable in the dashboard.
 
 ### Publish your own demo
 
@@ -326,10 +409,14 @@ Send them this block. The installer is idempotent and safe to re-run.
 
 ```bash
 # One-time per laptop (~3 min)
+# If you've never used `gh`, run the next command and follow the prompts:
+#   GitHub Enterprise Server → hostname github.plaid.com → SSH or HTTPS → browser or PAT.
+# See README § "First time with GitHub or the GitHub CLI?" for details.
 gh auth login --hostname github.plaid.com
 cat >> ~/.zshrc <<'EOF'
 export PLAID_GHE_HOSTNAME=github.plaid.com
-export PLAID_DEMO_APPS_REPO=git@github.plaid.com:dmajetic/plaid-demo-apps.git
+export PLAID_DEMO_APPS_REPO=https://github.plaid.com/dmajetic/plaid-demo-apps
+# or SSH: git@github.plaid.com:dmajetic/plaid-demo-apps.git
 EOF
 source ~/.zshrc
 
@@ -453,11 +540,14 @@ npm run pipe -- whoami
 | Symptom | Fix |
 |---------|-----|
 | `node is too old` | `nvm install 20 && nvm use 20` (install `nvm` from <https://github.com/nvm-sh/nvm> first). |
-| `gh: command not found` | `brew install gh` (macOS) or <https://cli.github.com>. |
-| `ffmpeg: command not found` | `brew install ffmpeg` (macOS); record stage will fail without it. |
+| `gh: command not found` after install | Install [Homebrew](https://brew.sh) and re-run `bash scripts/setup/install.sh`, or install manually: `brew install gh` / <https://cli.github.com>. |
+| `ffmpeg: command not found` after install | Same: use Homebrew + re-run the installer, or `brew install ffmpeg` / Debian `sudo apt-get install ffmpeg` — required for full pipeline video. |
 | `npm install` fails on `playwright` | Re-run `npx playwright install chromium` separately. |
-| `pipe whoami` returns no login | `gh auth status --hostname <ghe-host>`; if not signed in, `gh auth login --hostname <ghe-host>`, then re-run `pipe whoami`. |
+| `pipe whoami` returns no login | `gh auth status --hostname <ghe-host>`; if not signed in, `gh auth login --hostname <ghe-host>`, then re-run `pipe whoami`. See [First time with GitHub or the GitHub CLI?](#first-time-with-github-or-the-github-cli). |
+| Never authenticated GitHub / first time using `gh` | Install `gh`, then `gh auth login --hostname <ghe-host>` — choose Enterprise Server, enter hostname, SSH vs HTTPS, then browser or PAT. Verify with `gh auth status`. |
 | Artifact repo clone fails | Confirm `PLAID_DEMO_APPS_REPO` is set and you have read access. Try `git clone <url>` manually to get a real error message. |
+| `pipe pull` — `fatal: not a git repository` on **this** repo | You’re in a **ZIP** copy (no `.git`). That’s expected — only a **git clone** can `git pull` code updates. Use a fresh `git clone` of `plaid-demo-recorder` if you need upstream changes; the pipeline still runs from a ZIP. **Update** to a `pipe` that detects missing `.git` so the message is explicit. |
+| `Permission denied (publickey)` cloning **plaid-demo-apps** | **SSH:** Add your machine’s public key to GHE (**Settings → SSH keys**), then `ssh -T git@github.plaid.com`. **Or** use HTTPS + PAT: `export PLAID_DEMO_APPS_REPO=https://github.plaid.com/dmajetic/plaid-demo-apps.git` (use a **personal access token** as the password when git prompts). You must be a **Read** collaborator on that repo. |
 | `.env` missing after install | Installer skips existing `.env` files. Delete yours or manually copy from `.env.example`. |
 
 ---
