@@ -1138,21 +1138,41 @@ app.get('/api/slide-library', (req, res) => {
 });
 
 // Slide preview override: slide library files are authored against the
-// host demo app's step framework, where `.step { opacity:0; transform:
-// translateX(24px) }` is the BASE state and the host's `goToStep` JS
-// adds `.active` to fade the step in. In the dashboard's standalone
-// preview iframe there is no host nav JS, so the `.active` class never
-// gets added — and the slide renders fully transparent ("blank white
-// space"). The default `display: block !important` override that
-// `buildStandaloneSlideHtml` writes only fixes display, not opacity or
-// transform.
+// host demo app's step framework, where animation classes hold the
+// off-stage state and the host's animation JS adds `.active` /
+// `.revealed` etc. to fade content in over time. In the dashboard's
+// standalone preview iframe there is no host nav/animation JS, so
+// those reveal classes never get added — and any element waiting on
+// them renders fully transparent or off-position.
 //
-// We inject this self-healing block on serve so EVERY slide — including
-// pre-existing files on disk written before the override was hardened —
-// renders correctly in preview, without mutating the underlying file
-// (which would change splice-into-demo-app behavior).
+// Specifically the slide library files use:
+//   .step                     → .step.active           (the slide root)
+//   .score-card               → .score-card.revealed   (score grid items)
+//   .core-attr                → .core-attr.revealed    (Signal core-attrs grid)
+//   .closing-step-item        → .closing-step-item.revealed
+//   inline style="opacity:0"  on specific badges (e.g. signal ACCEPT badge)
+//
+// This injects a self-healing CSS block on every preview response so
+// EVERY slide — including pre-existing files on disk written before the
+// override was hardened — renders all of its content visibly. The
+// underlying file is not mutated, so when a slide is spliced into a
+// per-run demo app the host's animation JS still controls the reveal
+// timing (which is the desired splice behavior).
 const SLIDE_PREVIEW_OVERRIDE = `<style data-slide-preview-override>
 .step { display: block !important; opacity: 1 !important; transform: none !important; min-height: 100vh; }
+.score-card, .core-attr, .closing-step-item, .score-badge {
+  opacity: 1 !important;
+  transform: none !important;
+}
+/* Also force-show any element using the inline opacity:0 idiom that the
+   host JS animates to 1 at runtime (e.g. the Signal slide's ACCEPT badge
+   and similar revealed-on-cue chrome). */
+[style*="opacity:0"], [style*="opacity: 0"] {
+  opacity: 1 !important;
+}
+[style*="transform:scale(0"], [style*="transform: scale(0"] {
+  transform: none !important;
+}
 </style>`;
 
 app.get('/api/slide-library/slides/:slideId/html', (req, res) => {
