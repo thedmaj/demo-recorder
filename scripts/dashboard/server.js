@@ -246,7 +246,12 @@ function buildStandaloneSlideHtml({ title, css, stepHtml }) {
     `  <title>${safeTitle}</title>`,
     '  <style>',
     safeCss,
-    '  .step { display: block !important; min-height: 100vh; }',
+    // Override the host's `.step` base state so the slide renders standalone.
+    // Host CSS uses `.step { opacity:0; transform: translateX(24px) }` as
+    // the off-stage state and adds `.active` via goToStep JS to fade in.
+    // Standalone slides have no nav JS, so without this override the slide
+    // would render fully transparent + offset 24px right.
+    '  .step { display: block !important; opacity: 1 !important; transform: none !important; min-height: 100vh; }',
     '  </style>',
     '</head>',
     '<body>',
@@ -1132,6 +1137,24 @@ app.get('/api/slide-library', (req, res) => {
   }
 });
 
+// Slide preview override: slide library files are authored against the
+// host demo app's step framework, where `.step { opacity:0; transform:
+// translateX(24px) }` is the BASE state and the host's `goToStep` JS
+// adds `.active` to fade the step in. In the dashboard's standalone
+// preview iframe there is no host nav JS, so the `.active` class never
+// gets added — and the slide renders fully transparent ("blank white
+// space"). The default `display: block !important` override that
+// `buildStandaloneSlideHtml` writes only fixes display, not opacity or
+// transform.
+//
+// We inject this self-healing block on serve so EVERY slide — including
+// pre-existing files on disk written before the override was hardened —
+// renders correctly in preview, without mutating the underlying file
+// (which would change splice-into-demo-app behavior).
+const SLIDE_PREVIEW_OVERRIDE = `<style data-slide-preview-override>
+.step { display: block !important; opacity: 1 !important; transform: none !important; min-height: 100vh; }
+</style>`;
+
 app.get('/api/slide-library/slides/:slideId/html', (req, res) => {
   try {
     const slideId = String(req.params.slideId || '').trim();
@@ -1143,8 +1166,25 @@ app.get('/api/slide-library/slides/:slideId/html', (req, res) => {
     if (!htmlAbs.startsWith(SLIDE_LIBRARY_DIR + path.sep) || !fs.existsSync(htmlAbs)) {
       return res.status(404).send('Slide HTML not found');
     }
+    let html = fs.readFileSync(htmlAbs, 'utf8');
+    // Inject the override right before `</head>` so it's the LAST style
+    // rule the browser sees and wins on equal specificity. Fall back to
+    // before `<body>` for malformed slides without a </head>; if neither
+    // anchor exists, prepend at the top so the iframe at least gets a
+    // visible slide.
+    if (/<\/head>/i.test(html)) {
+      html = html.replace(/<\/head>/i, `${SLIDE_PREVIEW_OVERRIDE}\n</head>`);
+    } else if (/<body\b/i.test(html)) {
+      html = html.replace(/<body\b/i, `${SLIDE_PREVIEW_OVERRIDE}\n<body`);
+    } else {
+      html = SLIDE_PREVIEW_OVERRIDE + '\n' + html;
+    }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.send(fs.readFileSync(htmlAbs, 'utf8'));
+    // No-store so the AI editor's writes are picked up immediately on
+    // reload. (Cosmetic Chrome devtools "Content unavailable" message
+    // on view-source comes from this header — harmless.)
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(html);
   } catch (err) {
     res.status(500).send(err.message || 'Unknown error');
   }
