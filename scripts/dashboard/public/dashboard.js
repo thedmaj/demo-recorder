@@ -3578,9 +3578,22 @@
                   title="Delete this slide template. Cannot be undone — built-in templates are read-only.">Delete</button>
         ` : ''}
       </div>
-      <iframe class="slide-templates-preview-frame" id="slide-templates-preview-frame"
-              src="${esc(previewUrl)}" sandbox="allow-same-origin allow-scripts"
-              title="Slide template preview"></iframe>
+      <div class="slide-templates-preview-frame-wrap" id="slide-templates-preview-wrap">
+        <!--
+          Slide files are authored at the demo's native 1440×900 viewport
+          (their CSS pins `body { min-width: 1440px }`), so embedding them
+          1:1 in a smaller pane shows only a corner. The wrap above is
+          measured at runtime and the iframe below is pinned to 1440×900
+          and SCALED to fit by JS (see applySlideTemplatePreviewScale).
+          Sandbox: allow-scripts ONLY — the previous combo of
+          `allow-same-origin allow-scripts` triggers Chrome's "iframe can
+          escape its sandbox" warning, and slide library files are static
+          previews that don't need same-origin access to anything.
+        -->
+        <iframe class="slide-templates-preview-frame" id="slide-templates-preview-frame"
+                src="${esc(previewUrl)}" sandbox="allow-scripts"
+                title="Slide template preview"></iframe>
+      </div>
       <div class="slide-templates-chat" data-slide-id="${esc(slide.id)}">
         <div class="slide-templates-chat-history" id="slide-templates-chat-history"></div>
         <div class="slide-templates-chat-input-row">
@@ -3603,6 +3616,10 @@
     if (copyIdBtn) copyIdBtn.addEventListener('click', () => handleSlideTemplateCopyId(slide.id));
     if (renameBtn) renameBtn.addEventListener('click', () => handleSlideTemplateRename(slide.id));
     if (deleteBtn) deleteBtn.addEventListener('click', () => handleSlideTemplateDelete(slide.id));
+    // Scale the 1440×900 iframe to fit the wrap, both right after this
+    // render and whenever the wrap resizes (window resize, sidebar
+    // collapse, devtools open, etc).
+    setupSlideTemplatePreviewScaling();
     if (chatSend && chatInput) {
       chatSend.addEventListener('click', () => sendSlideTemplateChat(slide.id, chatInput, chatSend));
       chatInput.addEventListener('keydown', (evt) => {
@@ -3717,6 +3734,63 @@
       reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
     });
+  }
+
+  // ── Slide-template preview scaling ────────────────────────────────────────
+  //
+  // Slide files in the library are authored at 1440×900 (the natural demo
+  // viewport — their CSS pins `body { min-width: 1440px }`). Embedding
+  // them 1:1 in the preview pane (typically ~600–900 px wide) shows only
+  // the top-left corner — exactly the "does not preview" symptom the user
+  // reported.
+  //
+  // Fix: pin the iframe to 1440×900 (in CSS) and scale it down to fit the
+  // wrap via `transform: scale(...)`. Re-apply on every container resize
+  // via ResizeObserver so the scale stays correct as the user opens the
+  // sidebar / DevTools / resizes the window.
+  const SLIDE_PREVIEW_TARGET_W = 1440;
+  const SLIDE_PREVIEW_TARGET_H = 900;
+  let _slideTemplatePreviewResizeObserver = null;
+
+  function applySlideTemplatePreviewScale() {
+    const wrap = document.getElementById('slide-templates-preview-wrap');
+    const frame = document.getElementById('slide-templates-preview-frame');
+    if (!wrap || !frame) return;
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    // Fit the entire 1440×900 inside the wrap. Use the smaller axis so we
+    // never crop content; centering happens via top/left offsets so the
+    // letterboxed area sits evenly around the slide.
+    const scale = Math.max(0.05, Math.min(w / SLIDE_PREVIEW_TARGET_W, h / SLIDE_PREVIEW_TARGET_H));
+    const scaledW = SLIDE_PREVIEW_TARGET_W * scale;
+    const scaledH = SLIDE_PREVIEW_TARGET_H * scale;
+    frame.style.transform = `scale(${scale})`;
+    frame.style.left = `${Math.max(0, Math.round((w - scaledW) / 2))}px`;
+    frame.style.top = `${Math.max(0, Math.round((h - scaledH) / 2))}px`;
+  }
+
+  function setupSlideTemplatePreviewScaling() {
+    const wrap = document.getElementById('slide-templates-preview-wrap');
+    if (!wrap) return;
+    // Tear down a previously-attached observer (the pane's HTML is
+    // replaced on every slide selection, so the old observer would be
+    // pointing at a detached node).
+    if (_slideTemplatePreviewResizeObserver) {
+      try { _slideTemplatePreviewResizeObserver.disconnect(); } catch (_) {}
+      _slideTemplatePreviewResizeObserver = null;
+    }
+    // Initial scale once the iframe element is in layout. requestAnimationFrame
+    // gives the browser one frame to paint so clientWidth/clientHeight are
+    // populated; without it we race the layout pass and apply scale=0.
+    requestAnimationFrame(applySlideTemplatePreviewScale);
+    if (typeof ResizeObserver === 'function') {
+      _slideTemplatePreviewResizeObserver = new ResizeObserver(applySlideTemplatePreviewScale);
+      _slideTemplatePreviewResizeObserver.observe(wrap);
+    } else {
+      // Fallback for old browsers: re-apply on window resize.
+      window.addEventListener('resize', applySlideTemplatePreviewScale);
+    }
   }
 
   // ── Copy slide ID for hand-off to an AI agent (Claude Code / Cursor) ─────

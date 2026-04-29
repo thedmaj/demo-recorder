@@ -476,13 +476,34 @@ ul, ol {
   background: rgba(248, 113, 113, 0.18);
 }
 
-.slide-templates-preview-frame {
-  width: 100%;
-  height: 100%;
+/* Slide-template preview: slide library files are authored at 1440×900
+   (the demo's natural viewport) with `body { min-width: 1440px }`. If we
+   embed them in an iframe sized 100%×100% of a smaller pane, the iframe
+   shows only the top-left ~600×400 corner of the slide and looks broken
+   ("does not preview"). Fix: pin the iframe to 1440×900 and scale it
+   down to fit the wrap via JS-applied transform (set on first render +
+   on every container resize via ResizeObserver). */
+.slide-templates-preview-frame-wrap {
+  position: relative;
+  overflow: hidden;
+  background: #0d1117;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  background: #fff;
   min-height: 280px;
+  width: 100%;
+  height: 100%;
+}
+
+.slide-templates-preview-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1440px;
+  height: 900px;
+  border: 0;
+  background: #fff;
+  transform-origin: top left;
+  /* transform: scale(...) is set by JS based on the wrap's measured size. */
 }
 
 .slide-templates-chat {
