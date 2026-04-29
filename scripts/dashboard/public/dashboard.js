@@ -3424,9 +3424,16 @@
             <input type="file" id="slide-templates-upload-input" style="display:none"
                    accept=".html,text/html,image/png,image/jpeg,image/webp,image/gif" />
             <button type="button" class="slide-templates-upload-btn" id="slide-templates-upload-btn"
-                    title="Upload an HTML file or image (png, jpg, webp, gif). Once uploaded the slide appears in the storyboard's slide library picker.">
+                    title="Upload an HTML file or image (png, jpg, webp, gif). Once uploaded the slide appears in the storyboard's slide library picker. For HTML, see templates/slide-template/UPLOAD_CONTRACT.md for the file structure that's guaranteed to render correctly.">
               ＋ Upload (HTML or image)
             </button>
+            <div style="font-size:11px;color:rgba(255,255,255,0.4);line-height:1.4">
+              HTML uploads should follow the structure in
+              <code style="color:rgba(255,255,255,0.6)">templates/slide-template/STARTER.html</code> ·
+              <a href="javascript:void(0)" data-open-contract="1"
+                 style="color:#00d99c;text-decoration:underline;cursor:pointer"
+                 title="Read the upload contract — what's auto-revealed in preview vs. what stays hidden">contract</a>
+            </div>
             <div class="slide-templates-list" id="slide-templates-list"></div>
           </div>
           <div class="slide-templates-preview-pane" id="slide-templates-preview">
@@ -3450,6 +3457,26 @@
     if (uploadBtn && fileInput) {
       uploadBtn.addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', () => handleSlideTemplateUpload(fileInput));
+    }
+    // "contract" link → show the upload contract markdown in a toast +
+    // a console.info pointer to the file path so a user can grep the
+    // contract from a terminal too. Avoids a full inline modal.
+    const contractLink = document.querySelector('#slide-templates-content [data-open-contract]');
+    if (contractLink) {
+      contractLink.addEventListener('click', () => {
+        showToast(
+          'Upload contract: templates/slide-template/UPLOAD_CONTRACT.md\nStarter file: templates/slide-template/STARTER.html\n(Both opened in your editor work too — check console for paths.)',
+          'success',
+          { duration: 7000 }
+        );
+        try {
+          // eslint-disable-next-line no-console
+          console.info(
+            '[Slide Templates] Upload contract: templates/slide-template/UPLOAD_CONTRACT.md\n' +
+            '[Slide Templates] Starter HTML : templates/slide-template/STARTER.html'
+          );
+        } catch (_) {}
+      });
     }
     if (list) {
       list.addEventListener('click', (evt) => {

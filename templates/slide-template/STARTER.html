@@ -1,0 +1,145 @@
+<!doctype html>
+<!--
+  Slide Templates — starter file
+  ────────────────────────────────
+  Copy this file, change the title + content, and upload via the
+  dashboard's Slide Templates subtab. See UPLOAD_CONTRACT.md for the
+  full rules; this starter is the minimum-viable shape that's
+  guaranteed to render in the preview iframe AND splice cleanly into
+  a per-run demo app.
+
+  Required outer div contract (do NOT remove):
+    <div data-testid="step-<UNIQUE-ID>" class="step …">
+      ...your content...
+    </div>
+
+  Things you CAN safely change:
+    - The data-testid value (must start with "step-").
+    - Any CSS classes on inner elements.
+    - All inner HTML / styles / inline scripts.
+
+  Things to AVOID:
+    - opacity:0 or display:none on inner elements with custom class
+      names — only `.score-card`, `.core-attr`, `.closing-step-item`,
+      `.score-badge`, and `.insight-value-line` are auto-revealed in
+      the preview.
+    - External <link rel="stylesheet"> or <script src="…"> — the
+      preview iframe can't proxy external resources.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>My Slide Template</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%;
+      min-width: 1440px;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    }
+    body { position: relative; }
+
+    /* Plaid step framework — keep these as-is. The preview adds .active
+       at load time; in production the host demo app's goToStep does it. */
+    .step {
+      display: none;
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      width: 100%; min-height: 100vh;
+      opacity: 0;
+      transform: translateX(24px);
+      transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                  transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .step.active { display: flex; opacity: 1; transform: translateX(0); }
+
+    /* Plaid dark insight layout — change these freely to match your
+       brand or use entirely different layout / colors. */
+    .insight-layout {
+      width: 100%; min-height: 100vh;
+      background: linear-gradient(135deg, #0d1117, #0a2540);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      height: 44px;
+      padding: 0 40px;
+      border-bottom: 2px solid #00A67E;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .topbar-label    { font-size: 12px; letter-spacing: 0.08em; color: #00A67E; text-transform: uppercase; }
+    .topbar-endpoint { font-size: 13px; font-family: "SF Mono", Consolas, monospace; color: rgba(255, 255, 255, 0.45); }
+
+    .body {
+      flex: 1;
+      padding: 40px 48px;
+      overflow-y: auto;
+    }
+
+    .title { font-size: 32px; font-weight: 700; margin-bottom: 10px; line-height: 1.2; }
+    .sub   { font-size: 15px; color: rgba(255, 255, 255, 0.65); margin-bottom: 32px; }
+
+    /* Auto-revealed in preview — fade in via the standard reveal class. */
+    .score-card {
+      flex: 1; min-width: 200px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 20px 24px;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+    }
+    .score-card.revealed { opacity: 1; transform: translateY(0); }
+
+    .score-grid       { display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
+    .score-card-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255, 255, 255, 0.45); margin-bottom: 8px; }
+    .score-card-value { font-size: 48px; font-weight: 700; color: #00A67E; line-height: 1; }
+  </style>
+</head>
+<body>
+  <!--
+    Required outer container — keep `data-testid="step-…"` and
+    `class="step"`. Add additional classes after `step` if you want
+    (`class="step slide-root my-custom-class"`).
+  -->
+  <div data-testid="step-my-slide-template" class="step">
+    <div class="insight-layout">
+      <div class="topbar">
+        <span class="topbar-label">My Slide Template</span>
+        <span class="topbar-endpoint">replace me</span>
+      </div>
+      <div class="body">
+        <h1 class="title">Your slide headline goes here</h1>
+        <p class="sub">A short subtitle in lighter text.</p>
+
+        <!--
+          Score card grid — count up animations work in preview.
+          Set data-target on the card and data-count="0" on the value:
+          the preview will substitute the final value automatically.
+        -->
+        <div class="score-grid">
+          <div class="score-card" data-target="42">
+            <div class="score-card-label">First metric</div>
+            <div class="score-card-value" data-count="0">0</div>
+          </div>
+          <div class="score-card" data-target="87">
+            <div class="score-card-label">Second metric</div>
+            <div class="score-card-value" data-count="0">0</div>
+          </div>
+          <div class="score-card" data-target="100">
+            <div class="score-card-label">Third metric</div>
+            <div class="score-card-value" data-count="0">0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

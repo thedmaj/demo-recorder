@@ -1137,43 +1137,123 @@ app.get('/api/slide-library', (req, res) => {
   }
 });
 
-// Slide preview override: slide library files are authored against the
-// host demo app's step framework, where animation classes hold the
-// off-stage state and the host's animation JS adds `.active` /
-// `.revealed` etc. to fade content in over time. In the dashboard's
-// standalone preview iframe there is no host nav/animation JS, so
-// those reveal classes never get added — and any element waiting on
-// them renders fully transparent or off-position.
+// ────────────────────────────────────────────────────────────────────────────
+// Slide preview override (CSS + reveal-trigger JS)
+// ────────────────────────────────────────────────────────────────────────────
 //
-// Specifically the slide library files use:
-//   .step                     → .step.active           (the slide root)
-//   .score-card               → .score-card.revealed   (score grid items)
-//   .core-attr                → .core-attr.revealed    (Signal core-attrs grid)
-//   .closing-step-item        → .closing-step-item.revealed
-//   inline style="opacity:0"  on specific badges (e.g. signal ACCEPT badge)
+// Slide library files are authored against the host demo app's step
+// framework, where animation classes hold the OFF-STAGE state and the
+// host's nav JS adds `.active` / `.revealed` etc. to fade content in
+// over time. In the dashboard's standalone preview iframe there is no
+// host nav/animation JS, so those reveal classes never get added — any
+// element waiting on them renders fully transparent or off-position.
 //
-// This injects a self-healing CSS block on every preview response so
-// EVERY slide — including pre-existing files on disk written before the
-// override was hardened — renders all of its content visibly. The
-// underlying file is not mutated, so when a slide is spliced into a
-// per-run demo app the host's animation JS still controls the reveal
-// timing (which is the desired splice behavior).
+// Two-layer fix injected on every preview response:
+//
+// 1. CSS overrides catch the COMMON patterns we know about (Plaid
+//    insight slide framework class names + the inline `opacity:0` /
+//    `transform:scale(0)` idiom used on specific reveal-on-cue chrome
+//    like the Signal ACCEPT badge). This is a hard guarantee for
+//    anything authored against the existing slide library template.
+//
+// 2. A reveal-trigger script runs once on DOMContentLoaded and:
+//      a. Adds `.active` to every `.step` (mimics goToStep on entry).
+//      b. Adds `.revealed` to anything that *might* be waiting on it
+//         (probed via `*` query for class-based reveal patterns).
+//      c. Clears inline `style="opacity:0"` / `transform:scale(0...)`.
+//      d. Resolves `data-count` → `data-target` count-up text on
+//         elements like `<div class="score-card-value" data-count="0">`,
+//         so the score numbers show their final values rather than the
+//         starting "0" placeholder.
+//
+// Authoring contract for free-form HTML uploads ────────────────────────
+//
+// Anything that follows EITHER of these two patterns is guaranteed to
+// render correctly in the Slide Templates preview iframe:
+//
+//   A. Plaid slide framework (most reliable):
+//      - Outer `<div class="step">` + Plaid insight class names
+//        (`.score-card`, `.core-attr`, `.closing-step-item`,
+//        `.insight-layout`, etc.).
+//      - For animated reveals, use `opacity: 0` on the base class and
+//        `opacity: 1` on the `.revealed` (or `.active`) variant.
+//      - For animated counters, set `data-target="<final>"` on the card
+//        and `data-count="0"` on the value element — the preview will
+//        substitute `<final>` automatically.
+//
+//   B. Static HTML (custom class names OK):
+//      - Don't use `opacity: 0` or `display: none` for off-stage states.
+//      - Render the FINAL state directly. The preview is meant to show
+//        what the slide LOOKS LIKE, not its entry animation.
+//
+// What WON'T work without the host app's runtime:
+//   - Custom JS-driven content (charts, dynamic data, etc.).
+//   - External `<link>` / `<script src>` references (CSP-isolated).
+//   - `display: none` on inner elements with custom toggle class names
+//     not in the standard Plaid framework — those stay hidden.
+//
+// The on-disk file is NEVER mutated — the override is added at SERVE
+// time only — so spliced demos still get the host's intended fade-in
+// behavior at runtime.
+
 const SLIDE_PREVIEW_OVERRIDE = `<style data-slide-preview-override>
 .step { display: block !important; opacity: 1 !important; transform: none !important; min-height: 100vh; }
 .score-card, .core-attr, .closing-step-item, .score-badge {
   opacity: 1 !important;
   transform: none !important;
 }
-/* Also force-show any element using the inline opacity:0 idiom that the
-   host JS animates to 1 at runtime (e.g. the Signal slide's ACCEPT badge
-   and similar revealed-on-cue chrome). */
-[style*="opacity:0"], [style*="opacity: 0"] {
-  opacity: 1 !important;
-}
-[style*="transform:scale(0"], [style*="transform: scale(0"] {
-  transform: none !important;
-}
-</style>`;
+/* Inline-style off-stage idiom used by reveal-on-cue chrome like the
+   Signal ACCEPT badge: <div style="opacity:0;transform:scale(0.8)..."> */
+[style*="opacity:0"], [style*="opacity: 0"] { opacity: 1 !important; }
+[style*="transform:scale(0"], [style*="transform: scale(0"] { transform: none !important; }
+</style>
+<script data-slide-preview-reveal>
+(function() {
+  function reveal() {
+    try {
+      // a. Activate every step (mimics goToStep on entry).
+      document.querySelectorAll('.step').forEach(function(el) {
+        el.classList.add('active');
+      });
+      // b. Reveal anything using the standard Plaid reveal-class pattern.
+      var revealSelectors = [
+        '.score-card', '.core-attr', '.closing-step-item',
+        '.score-badge', '.insight-value-line',
+      ];
+      revealSelectors.forEach(function(sel) {
+        document.querySelectorAll(sel).forEach(function(el) {
+          el.classList.add('revealed');
+        });
+      });
+      // c. Clear inline opacity:0 / transform:scale(0) so reveal-on-cue
+      //    chrome (badges, overlays) lands on its final state.
+      document.querySelectorAll('[style*="opacity"],[style*="transform"]').forEach(function(el) {
+        var s = el.getAttribute('style') || '';
+        var fixed = s
+          .replace(/opacity\\s*:\\s*0(?!\\.\\d)/gi, 'opacity:1')
+          .replace(/transform\\s*:\\s*scale\\(0(?:\\.\\d+)?\\)/gi, 'transform:none')
+          .replace(/transform\\s*:\\s*translate[XY]?\\([^)]*\\)/gi, 'transform:none');
+        if (fixed !== s) el.setAttribute('style', fixed);
+      });
+      // d. Resolve data-count → data-target so animated counters show
+      //    their final value (e.g. "85" instead of "0" on score cards).
+      document.querySelectorAll('[data-target]').forEach(function(card) {
+        var target = card.getAttribute('data-target');
+        if (target == null || target === '') return;
+        var n = Number(target);
+        if (!isFinite(n) || n < 0) return; // -1 etc. = "no numeric value" sentinel
+        var valueEl = card.querySelector('[data-count]');
+        if (valueEl) valueEl.textContent = String(n);
+      });
+    } catch (_) { /* preview-only enhancement; never break the iframe */ }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', reveal);
+  } else {
+    reveal();
+  }
+})();
+</script>`;
 
 app.get('/api/slide-library/slides/:slideId/html', (req, res) => {
   try {
