@@ -850,17 +850,37 @@ function computePipelineResume(completedStages) {
   return { lastCompletedStage, resumeFromStage };
 }
 
+// QA report naming has evolved across pipeline versions:
+//   - qa-report-N.json                       (legacy numeric)
+//   - qa-report-app-N.json                   (build-qa per-app-iteration)
+//   - qa-report-slides-N.json                (post-slides per-iteration)
+//   - qa-report-build.json                   (build-qa final)
+//   - qa-report-build-iterN.json             (build-qa per-iteration)
+//   - qa-report-build-fix-iterN.json         (build-qa post-touchup)
+//
+// The dashboard wants "the most relevant QA report" to surface on the
+// Storyboard tab. Rather than encode a category preference (which keeps
+// drifting as the pipeline evolves), accept all qa-report-*.json files
+// and pick the one with the most recent mtime. That naturally surfaces
+// the latest iteration regardless of which stage produced it.
 function getLatestQaReport(runId) {
   const dir = path.join(DEMOS_DIR, runId);
-  const files = safeReaddir(dir).filter(f => /^qa-report-\d+\.json$/.test(f));
+  const files = safeReaddir(dir).filter((f) => /^qa-report-.+\.json$/.test(f));
   if (files.length === 0) return null;
-  files.sort((a, b) => {
-    const nA = parseInt(a.match(/\d+/)[0], 10);
-    const nB = parseInt(b.match(/\d+/)[0], 10);
-    return nA - nB;
-  });
-  const latest = files[files.length - 1];
-  return safeReadJson(path.join(dir, latest));
+  let latestPath = null;
+  let latestMtime = -Infinity;
+  for (const f of files) {
+    const abs = path.join(dir, f);
+    try {
+      const st = fs.statSync(abs);
+      if (st.mtimeMs > latestMtime) {
+        latestMtime = st.mtimeMs;
+        latestPath = abs;
+      }
+    } catch (_) { /* skip unreadable entries */ }
+  }
+  if (!latestPath) return null;
+  return safeReadJson(latestPath);
 }
 
 function closePipelineDiskLog() {
