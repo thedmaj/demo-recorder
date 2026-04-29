@@ -3580,7 +3580,7 @@
       </div>
       <div class="slide-templates-preview-frame-wrap" id="slide-templates-preview-wrap">
         <iframe class="slide-templates-preview-frame" id="slide-templates-preview-frame"
-                src="${esc(previewUrl)}" sandbox="allow-scripts"
+                src="${esc(previewUrl)}"
                 title="Slide template preview"></iframe>
       </div>
       <div class="slide-templates-chat" data-slide-id="${esc(slide.id)}">
