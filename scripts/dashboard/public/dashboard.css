@@ -333,6 +333,16 @@ ul, ol {
 .slide-templates-shell {
   display: grid;
   grid-template-columns: 320px 1fr;
+  /* CRITICAL: without an explicit row track, the implicit row sizes to
+     children's natural height (~176 px from the action bar + chat min-
+     height). The preview-pane's nested `1fr` row then gets 0 px, the
+     iframe wrap collapses to height 0, and our scale-to-fit JS computes
+     scale = 0 — the slide renders inside the iframe but the iframe
+     itself is invisible. `minmax(0, 1fr)` on the row stretches the
+     children to fill the container's `calc(100vh - 120px)` height
+     (the `minmax(0, ...)` lets nested grids actually shrink as needed
+     instead of getting stuck at min-content). */
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   height: calc(100vh - 120px);
   padding: 16px;
