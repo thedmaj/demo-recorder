@@ -366,17 +366,26 @@ No manual editing of `remotion-props.json` needed for standard overlays.
 
 ---
 
-## Pipeline Restartability
-Every stage reads its inputs from disk (JSON files in `out/`). To restart from any stage:
+## Pipeline Restartability + the agent-mode default
+
+`npm run demo` is the **agent-mode default** and stops at `build-qa` so
+the loop produces a QA-graded host app + slides without spending time
+on recording / rendering. This matches how Claude Code / Cursor agents
+typically iterate — build, QA, fix, build, QA — and keeps round-trips
+fast. To run the full pipeline (record + voiceover + render + ppt),
+use `npm run demo:full`.
+
+To restart from any stage:
 ```
 npm run demo -- --from=STAGE_NAME
 ```
-To **stop early** after a stage (e.g. build the demo and run **build-only QA** without recording):
+
+To stop at a different stage (or override the build-qa default):
 ```
-npm run demo:build-qa
-# equivalent:
-npm run demo -- --to=build-qa
+npm run demo -- --to=STAGE_NAME       # stop earlier than build-qa
+npm run demo:full -- --from=record    # full pipeline starting at record
 ```
+
 `build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same Claude vision QA as post-record QA against `demo-script.json` `visualState` — output `qa-report-build.json` in the run dir. Optional: `BUILD_QA_STRICT=1` to exit non-zero if the score is below `QA_PASS_THRESHOLD`.
 
 Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
@@ -388,7 +397,8 @@ generated, no slide build phase runs, and no slide-scope `build-qa` pass runs.
 Slides are strictly opt-in:
 
 - **CLI**:
-  - `npm run demo` — App-only (default).
+  - `npm run demo` — App-only (default), stops at `build-qa` (agent-mode default).
+  - `npm run demo:full` — same defaults but runs the full pipeline through render.
   - `npm run demo:with-slides` (alias for `--with-slides`) — include slides phase + final value-summary slide.
   - `npm run demo:app-only` — explicit app-only override (useful when env vars elsewhere might enable slides).
 - **Dashboard**: the **Run Pipeline** card has an "Include slides phase" checkbox. It is pre-filled from your dashboard-wide default (persisted in browser localStorage at key `dashboard.withSlidesDefault`). Toggling it both runs this build with the chosen mode and updates your default for next time.

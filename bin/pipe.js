@@ -1104,17 +1104,16 @@ async function cmdQuickstart(parsed = {}) {
       return 64;
     }
 
-    // 8) Research depth
-    console.log('');
-    console.log(c.bold('8) Research depth'));
-    QS.RESEARCH_DEPTHS.forEach((d, i) => console.log(`   [${i + 1}] ${d.label}`));
-    let depthIdx = parseInt(await ask(rl, 'Choose [1]: '), 10);
-    if (!Number.isFinite(depthIdx) || depthIdx < 1 || depthIdx > QS.RESEARCH_DEPTHS.length) depthIdx = 1;
-    answers.researchDepth = QS.RESEARCH_DEPTHS[depthIdx - 1].id;
+    // Research depth is intentionally NOT asked here. Quickstart's job
+    // is fast app-only iteration; deeper research adds Glean/Gong roundtrips
+    // that don't change the app build. Default to gapfill — users who want
+    // broad/deep research can pass `--research=broad` to `pipe new` after
+    // quickstart writes the prompt.
+    answers.researchDepth = 'gapfill';
 
-    // 9) Build after research?
+    // 8) Build after research?
     console.log('');
-    const buildAns = await ask(rl, c.bold('9) Start the build automatically after research finishes?') + ' [Y/n]: ');
+    const buildAns = await ask(rl, c.bold('8) Start the build automatically after research finishes?') + ' [Y/n]: ');
     answers.buildAfter = !/^n/i.test(buildAns);
 
     // ── Confirm + write ────────────────────────────────────────────────────
