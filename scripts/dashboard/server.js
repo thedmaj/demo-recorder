@@ -1198,7 +1198,11 @@ app.get('/api/slide-library', (req, res) => {
 
 const SLIDE_PREVIEW_OVERRIDE = `<style data-slide-preview-override>
 .step { display: block !important; opacity: 1 !important; transform: none !important; min-height: 100vh; }
-.score-card, .core-attr, .closing-step-item, .score-badge {
+/* Explicit allow-list of reveal-pattern classes used across the slide
+   library. Anything matched here is force-shown from the first paint
+   so there's no opacity flash before the JS reveal walker runs below. */
+.score-card, .core-attr, .closing-step-item, .score-badge,
+.auth-row, .insight-value-line {
   opacity: 1 !important;
   transform: none !important;
 }
@@ -1218,7 +1222,7 @@ const SLIDE_PREVIEW_OVERRIDE = `<style data-slide-preview-override>
       // b. Reveal anything using the standard Plaid reveal-class pattern.
       var revealSelectors = [
         '.score-card', '.core-attr', '.closing-step-item',
-        '.score-badge', '.insight-value-line',
+        '.score-badge', '.insight-value-line', '.auth-row',
       ];
       revealSelectors.forEach(function(sel) {
         document.querySelectorAll(sel).forEach(function(el) {
@@ -1235,7 +1239,25 @@ const SLIDE_PREVIEW_OVERRIDE = `<style data-slide-preview-override>
           .replace(/transform\\s*:\\s*translate[XY]?\\([^)]*\\)/gi, 'transform:none');
         if (fixed !== s) el.setAttribute('style', fixed);
       });
-      // d. Resolve data-count → data-target so animated counters show
+      // d. CATCH-ALL safety net: any element whose computed opacity is
+      //    still 0 after step (b) is using a class-based reveal pattern
+      //    we haven't allow-listed. Force them visible. We deliberately
+      //    skip rotate/skew transforms so legitimate rotation animations
+      //    (clock hands, spinners stuck at 0deg, etc) aren't clobbered —
+      //    only translate/scale, which are the off-stage idioms.
+      try {
+        document.querySelectorAll('body *').forEach(function(el) {
+          var cs = window.getComputedStyle(el);
+          if (parseFloat(cs.opacity) === 0) {
+            el.style.opacity = '1';
+            var t = cs.transform || '';
+            if (t && t !== 'none' && !/rotate|skew/i.test(t)) {
+              el.style.transform = 'none';
+            }
+          }
+        });
+      } catch (_) { /* getComputedStyle unsupported in some test envs — fine */ }
+      // e. Resolve data-count → data-target so animated counters show
       //    their final value (e.g. "85" instead of "0" on score cards).
       document.querySelectorAll('[data-target]').forEach(function(card) {
         var target = card.getAttribute('data-target');

@@ -130,11 +130,19 @@ If you don't want to follow the Plaid framework, that's fine — just
 ```
 
 ### NOT allowed (will render invisible / partial)
-- `opacity: 0` on custom class names not in the auto-reveal list.
 - `display: none` on custom class names — the preview won't auto-show
   these because doing so would break legitimate hide/show toggles on
   modals, dropdowns, etc.
 - `visibility: hidden` — same reason.
+
+### Auto-revealed regardless of class name
+- Any element with computed `opacity: 0` is force-shown after first
+  paint by a catch-all walker. Custom reveal-class patterns (e.g.
+  `.fade-in`, `.entry-card`, `.scroll-reveal`) work without being in
+  the explicit allow-list. Only translate/scale transforms are reset
+  alongside the opacity force; rotation/skew transforms are preserved
+  so legitimate rotation animations (spinners, clock hands) aren't
+  clobbered.
 - External `<link rel="stylesheet" href="https://...">` or
   `<script src="https://...">` — the iframe is same-origin only and
   can't fetch external resources.
