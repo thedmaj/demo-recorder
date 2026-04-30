@@ -3,74 +3,67 @@
 
 const STEP_TIMING = [
   {
-    "id": "bofa-dashboard",
-    "label": "BofA dashboard",
-    "startFrame": 9,
-    "endFrame": 354,
-    "audioEndFrame": 320
+    "id": "portfolio-dashboard",
+    "label": "My Portfolio dashboard",
+    "startFrame": 0,
+    "endFrame": 357,
+    "audioEndFrame": 327
   },
   {
-    "id": "bofa-transfers",
-    "label": "Transfers landing",
-    "startFrame": 354,
-    "endFrame": 696,
-    "audioEndFrame": 670
+    "id": "transfer-method-choice",
+    "label": "Manual vs Plaid choice",
+    "startFrame": 357,
+    "endFrame": 736,
+    "audioEndFrame": 706
   },
   {
-    "id": "bofa-link-external",
-    "label": "Link external bank (embedded Plaid)",
-    "startFrame": 696,
-    "endFrame": 1044,
-    "audioEndFrame": 1033
+    "id": "plaid-link-launch",
+    "label": "Plaid Link",
+    "startFrame": 736,
+    "endFrame": 1265,
+    "audioEndFrame": 1042
   },
   {
-    "id": "bofa-external-connected",
-    "label": "External account connected",
-    "startFrame": 1044,
-    "endFrame": 1428,
-    "audioEndFrame": 1398
+    "id": "connecting-status",
+    "label": "Retrieving account details",
+    "startFrame": 1265,
+    "endFrame": 1380,
+    "audioEndFrame": 1582
   },
   {
-    "id": "identity-match-insight",
-    "label": "Identity Match",
-    "startFrame": 1428,
-    "endFrame": 1946,
-    "audioEndFrame": 1881
+    "id": "holdings-full-transfer",
+    "label": "Holdings staging — full transfer",
+    "startFrame": 1380,
+    "endFrame": 2118,
+    "audioEndFrame": 1841
   },
   {
-    "id": "bofa-ownership-confirmed",
-    "label": "Ownership confirmed",
-    "startFrame": 1946,
-    "endFrame": 2307,
-    "audioEndFrame": 2277
+    "id": "holdings-partial-transfer",
+    "label": "Partial transfer selection",
+    "startFrame": 2118,
+    "endFrame": 2516,
+    "audioEndFrame": 2479
   },
   {
-    "id": "auth-insight",
-    "label": "Auth — ACH numbers",
-    "startFrame": 2307,
-    "endFrame": 2700,
-    "audioEndFrame": 2628
+    "id": "acats-form-prefilled",
+    "label": "ACATS form pre-filled",
+    "startFrame": 2516,
+    "endFrame": 2570,
+    "audioEndFrame": 2863
   },
   {
-    "id": "bofa-amount-entry",
-    "label": "Transfer amount",
-    "startFrame": 2700,
-    "endFrame": 3046,
-    "audioEndFrame": 3016
+    "id": "submitting-request",
+    "label": "Submitting to DTCC",
+    "startFrame": 2570,
+    "endFrame": 3239,
+    "audioEndFrame": 2880
   },
   {
-    "id": "signal-insight",
-    "label": "Signal — ACH return risk",
-    "startFrame": 3046,
-    "endFrame": 3250,
-    "audioEndFrame": 3450
-  },
-  {
-    "id": "bofa-transfer-approved",
-    "label": "Transfer approved",
-    "startFrame": 3250,
-    "endFrame": 3665,
-    "audioEndFrame": 3630
+    "id": "transfer-confirmed",
+    "label": "Transfer confirmed",
+    "startFrame": 3239,
+    "endFrame": 3550,
+    "audioEndFrame": 3520
   }
 ];
 

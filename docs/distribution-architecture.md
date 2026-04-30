@@ -97,6 +97,19 @@ Resolution order:
 
 Implementation: [scripts/scratch/utils/identity.js](../scripts/scratch/utils/identity.js).
 
+### First-time `gh` authentication
+
+Many engineers have never run the [GitHub CLI](https://cli.github.com) before. Identity resolution and `pipe publish` depend on a successful `gh auth login` against the same host as your remotes (e.g. `github.plaid.com`).
+
+**One-time steps:**
+
+1. Install `gh` ([installation](https://github.com/cli/cli#installation)).
+2. Run `gh auth login --hostname <ghe-host>` (or rely on `bash scripts/setup/install.sh`, which detects missing auth and prints guided hints before offering to launch login).
+3. At the prompts: select **GitHub Enterprise Server** when you use GHE (not “GitHub.com” unless you truly only use github.com). Enter **hostname** `<ghe-host>`. Choose **SSH** if your `PLAID_DEMO_APPS_REPO` and clones use `git@...`; **HTTPS** otherwise. Authenticate via **web browser** when possible; use a **personal access token** (with `repo` scope) if browser SSO fails.
+4. Confirm: `gh auth status --hostname <ghe-host>` and `npm run pipe -- whoami`.
+
+See also the README section *First time with GitHub or the GitHub CLI?* and `gh auth login` [manual](https://cli.github.com/manual/gh_auth_login).
+
 On every `pipe new` / `pipe resume`, the orchestrator stamps the resolved
 identity onto `run-manifest.json`:
 
@@ -226,7 +239,7 @@ To bring the centralized model online for a team:
    with a CODEOWNERS bot that rewrites `/demos/<login>/**` ownership at PR
    time based on the author.
 4. Configure branch protection on `main` (see "CODEOWNERS template" above).
-5. Tell engineers:
+5. Tell engineers (expand **First-time `gh` authentication** above if they have never used `gh`):
    ```bash
    gh auth login --hostname <ghe-host>
    export PLAID_DEMO_APPS_REPO=git@ghe.plaid.com:plaid/plaid-demo-apps.git

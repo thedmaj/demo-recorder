@@ -12,6 +12,25 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 
 ---
 
+## REQUIRED — Pipeline heartbeat (supervising long-running builds)
+
+**Applies to Claude Code, Cursor Agent, and any assistant that starts or watches pipeline work.** Treat this as a **binding obligation**, not background documentation.
+
+**Triggers:** You kicked off or are responsible for monitoring any of: `npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, `npm run pipe -- stage …`, orchestrator output, or tailing `pipeline-build.log.md` while a run is active.
+
+**What “heartbeat” means**
+
+1. **Post a short progress note in chat at least every 5 minutes** for as long as the run is active. Use `npm run pipe -- status` or `npm run pipe -- status --json`. Mention `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and anything actionable from `nextRecoveryCommand`.
+2. **Do not wait for the user to ask “how’s it going?”** Silence until prompted is incorrect behavior. Proactive status is the default.
+3. **No silent waiting on stalls:** If there has been **no new stdout/stderr for ~5 minutes** while status still shows work in flight, treat as **possibly hung** — check `activePid`, tail `artifacts/logs/pipeline-build.log.md` under the run dir, report findings; only suggest `npm run pipe -- stop <RUN_ID>` if the user wants to kill the run.
+4. **Avoid stdin blocks:** Prefer `npm run pipe … --non-interactive` (and/or `SCRATCH_AUTO_APPROVE=true`) so orchestrator gates do not wait on **Enter** in the terminal.
+
+**Optional parallel terminal:** `npm run pipe:status-loop` prints `pipe status` every **300s** (`PIPE_STATUS_INTERVAL_SEC` overrides). Run it in another shell if you like — **it does not replace** chat heartbeat.
+
+**Also read:** expanded checklist in **Claude Code / Cursor agents — long-running builds (heartbeat policy)** later in this file; short mirror for tooling: [`AGENTS.md`](AGENTS.md); always-on Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
+
+---
+
 ## Brand Voice
 - Confident, precise, outcome-focused. Never apologetic or jargon-heavy.
 - Lead with customer value, not technical implementation details.
@@ -392,12 +411,12 @@ Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `emb
 
 ### Claude Code / Cursor agents — long-running builds (heartbeat policy)
 
-These rules apply whenever you **start or supervise** a command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, or tailing logs).
+**Duplicate of the REQUIRED section at the top of this file — kept here so searches land on one place.** Same rules apply whenever you **start or supervise** a command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, or tailing logs).
 
-1. **Visibility:** While a run is active, post a **short progress note at least every 5 minutes**. Use `npm run pipe -- status` or `npm run pipe -- status --json` and summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and anything actionable from `nextRecoveryCommand`.
-2. **No silent waiting:** If there has been **no new stdout/stderr for ~5 minutes** and `pipe status` still shows an in-flight stage, **do not idle** — treat as possibly hung: check `activePid`, read the tail of `artifacts/logs/pipeline-build.log.md` under the run dir, and tell the user what you found (or run `npm run pipe -- stop <RUN_ID>` only if they want to kill it).
-3. **Avoid stdin stalls:** Prefer launching pipeline commands with **`--non-interactive`** (equivalent to `SCRATCH_AUTO_APPROVE=true`) so the orchestrator does not block on interactive **Press ENTER** gates. If you cannot use that flag, warn the user when a gate requires their terminal.
-4. **Optional helper (human or second shell):** `npm run pipe:status-loop` prints `pipe status` every **300s** (override with `PIPE_STATUS_INTERVAL_SEC`). Run it in parallel while a build runs if you want automatic timestamps in the terminal; the **agent** should still follow rules 1–3 in chat.
+1. **Visibility (MUST):** While a run is active, post a **short progress note at least every 5 minutes** in the **conversation**, not only when the user asks. Use `npm run pipe -- status` or `npm run pipe -- status --json` and summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and anything actionable from `nextRecoveryCommand`.
+2. **No silent waiting (MUST):** If there has been **no new stdout/stderr for ~5 minutes** and `pipe status` still shows an in-flight stage, **do not idle** — treat as possibly hung: check `activePid`, read the tail of `artifacts/logs/pipeline-build.log.md` under the run dir, and tell the user what you found (or run `npm run pipe -- stop <RUN_ID>` only if they want to kill it).
+3. **Avoid stdin stalls (SHOULD):** Prefer launching pipeline commands with **`--non-interactive`** (equivalent to `SCRATCH_AUTO_APPROVE=true`) so the orchestrator does not block on interactive **Press ENTER** gates. If you cannot use that flag, warn the user when a gate requires their terminal.
+4. **Optional helper (human or second shell):** `npm run pipe:status-loop` prints `pipe status` every **300s** (override with `PIPE_STATUS_INTERVAL_SEC`). Run it in parallel while a build runs if you want automatic timestamps in the terminal; the **agent** must still follow rules 1–2 in chat — **the loop is not a substitute for chat updates**.
 
 ## Build mode (App-only vs App + Slides)
 

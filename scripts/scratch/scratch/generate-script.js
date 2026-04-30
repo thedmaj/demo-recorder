@@ -612,7 +612,7 @@ function validateDemoScript(demoScript, opts = {}) {
   if (productFamily === 'cra_base_report') {
     const hasBaseReport = indexByEndpoint.baseReport != null;
     if (!hasBaseReport) {
-      errors.push('CRA Base Report demos should include an insight step with /cra/check_report/base_report/get.');
+      (pipelineAppOnlyHostUi ? warnings : errors).push('CRA Base Report demos should include an insight step with /cra/check_report/base_report/get.');
     }
     const hasReadyBeat = steps.some(step => {
       const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();
@@ -626,7 +626,7 @@ function validateDemoScript(demoScript, opts = {}) {
   if (productFamily === 'income_insights') {
     const hasIncomeEndpoint = steps.some(step => /\/cra\/check_report\/income_insights\/get\b/i.test(step.apiResponse?.endpoint || ''));
     if (!hasIncomeEndpoint) {
-      errors.push('CRA Income Insights demos should include an insight step using /cra/check_report/income_insights/get.');
+      (pipelineAppOnlyHostUi ? warnings : errors).push('CRA Income Insights demos should include an insight step using /cra/check_report/income_insights/get.');
     }
     const hasReadyBeat = steps.some(step => {
       const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();

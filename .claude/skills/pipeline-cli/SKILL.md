@@ -1,8 +1,8 @@
 ---
 name: pipeline-cli
-description: Drive the Plaid Demo Pipeline from the Cursor CLI (`npm run pipe`). Use when the user asks to start, resume, rerun, inspect, stop, or recover a pipeline build, or mentions a run ID, a stage failure, or the dashboard. This skill lets Claude monitor progress, recover from failures, and unblock prompts without leaving the chat.
+description: Drive the Plaid Demo Pipeline from the Cursor CLI (`npm run pipe`). After status checks, run nextRecoveryCommand automatically when appropriate; on successful app-only builds through build-qa, bootstrap the dashboard (npm run dashboard if down) and pipe open. Use when the user asks to start, resume, inspect, or recover a pipeline build, or mentions a run ID or the dashboard.
 metadata:
-  tags: pipeline, cli, orchestrator, build, plaid, recovery, claude-code
+  tags: pipeline, cli, orchestrator, build, plaid, recovery, claude-code, dashboard
 ---
 
 ## Why this exists
@@ -80,6 +80,40 @@ Values containing whitespace or `=` are double-quoted with `\"` escaping.
 
 Statuses: `completed | running | failed | pending`. `nextRecoveryCommand` is the single command Claude should run next; follow it unless the user asks for something different.
 
+## Next best action (run automatically — stay transparent)
+
+**Default behavior:** Do not end the turn with only passive advice if a **concrete CLI step** is obvious. Fetch fresh state, **execute** the next command, **tell the user** what you ran (one short sentence).
+
+1. **After** any orchestrator exit, stage retry, `pipe stop`, or when deciding what to do next: run **`npm run pipe -- status --json`** (unless you already have fresh JSON from the last few seconds).
+2. If **`nextRecoveryCommand`** is non-null and the user has **not** asked you to stop or pursue a different strategy: **run that command verbatim** (append **`--non-interactive`** when it is a `pipe new` / `pipe resume` / `pipe stage` invocation and the user did not request an interactive gate). State in chat: *Running: `<command>` — recovering per pipe status.*
+3. If **`nextRecoveryCommand`** is null and **`running`** is false:
+   - If **`firstFailed`** is set → follow the [Recovery decision tree](#recovery-decision-tree); pick the first matching branch and **run** the recommended command, not only describe it.
+   - If **`firstFailed`** is null → summarize success (which stages completed) and apply [Dashboard after app-only build-qa success](#dashboard-after-app-only-build-qa-success) below when it matches.
+
+**Anti-pattern:** Listing what the user *could* run without running it when `nextRecoveryCommand` or an equivalent one-liner is already known.
+
+## Dashboard after app-only build-qa success
+
+When **all** of these hold (use `pipe status --json` or read `run-manifest.json` + `pipeline-progress.json`):
+
+- **`buildMode`** is **`app-only`**
+- Stage **`build-qa`** is **`completed`**
+- **`firstFailed`** is **null** (no stage failed on this run)
+- Pipeline is **not** currently **`running`** (orchestrator finished after build-qa — the usual **`npm run demo`** / `--to=build-qa` path)
+
+…then the **next best user experience** is reviewing frames, QA details, and the scratch app **in the dashboard** — not staring at the terminal.
+
+**Agent checklist (do in order):**
+
+1. **Announce** in one sentence: build-qa passed for an app-only run; next step is review in the local dashboard (default **http://localhost:4040/**).
+2. **Port alignment:** `npm run dashboard` binds **`PORT`** (default **4040**, see `scripts/dashboard/server.js`). **`npm run pipe -- open`** builds URLs with **`DASHBOARD_PORT`** (default **4040**). If `.env` changes one, set **both** so the probe, server, and opener agree.
+3. **Probe** whether the dashboard is already up (e.g. `curl -sf "http://localhost:<port>/" >/dev/null`, or HTTP GET to that origin). If the connection fails, the server is not running.
+4. **Start the dashboard** if needed: from the **repository root**, run **`npm run dashboard`** as a **background** long-running process (same as a dev server — do not block the session forever). Briefly wait until the port responds or retry the probe once or twice.
+5. **Open the browser** for this run: **`npm run pipe -- open <RUN_ID>`** (or **`npm run pipe -- open`** for the latest run). Uses the OS opener (`open` / `xdg-open` / `start`).
+6. If your environment **cannot** bind ports or spawn background servers (sandbox): **tell the user** to run **`npm run dashboard`** in a separate terminal, then **`npm run pipe -- open`**, and explain they should inspect the demo app + build-qa artifacts in the UI.
+
+**Note:** `pipe open` **does not** start the Node server — it only opens a URL. If nothing listens on the port, start **`npm run dashboard`** first.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -144,11 +178,12 @@ Combine with `--json` to parse events programmatically instead of scraping human
 
 When monitoring a pipeline that may run for many minutes:
 
-- At least **every 5 minutes**, run `npm run pipe -- status` (or `--json`) and **tell the user** what stage is running, whether `awaitingContinue` is true, and any `firstFailed` / `nextRecoveryCommand`.
+- At least **every 5 minutes**, run `npm run pipe -- status` (or `--json`) and **tell the user in chat** what stage is running, whether `awaitingContinue` is true, and any `firstFailed` / `nextRecoveryCommand`.
+- **Required cadence:** updates **must not** wait until the user asks “how’s it going?” — that pattern violates repo policy. Proactive heartbeat is the default (see [`CLAUDE.md`](../../../CLAUDE.md) **REQUIRED — Pipeline heartbeat**).
 - **Never wait silently** if logs have stalled ~5 minutes while status still shows activity — inspect `pipeline-build.log.md` or suggest `pipe stop` / recovery.
 - Use **`--non-interactive`** on `pipe new` / `resume` when possible so stdin gates do not hang.
 
-Optional parallel terminal: `npm run pipe:status-loop` (prints status every 300s; `PIPE_STATUS_INTERVAL_SEC` to override).
+Optional parallel terminal: `npm run pipe:status-loop` (prints status every 300s; `PIPE_STATUS_INTERVAL_SEC` to override). Does **not** replace chat updates.
 
 ## Worked example
 
@@ -171,6 +206,8 @@ Claude:
 - Run Pipeline / Resume / Kill / Continue buttons now **copy** a CLI command to the clipboard (plus show a toast). The server returns HTTP 410 with `{ cliCommand }` when the dashboard tries to POST.
 - Setting `DASHBOARD_WRITE=true` re-enables the legacy dashboard runner (fallback only — Cursor CLI is preferred).
 - `GET /api/runs/:runId/stage-state` returns the exact JSON from `pipe status --json`; it is also what the header badge polls.
+
+After a **successful app-only build through build-qa**, prefer driving the user through the dashboard using **[Dashboard after app-only build-qa success](#dashboard-after-app-only-build-qa-success)** — probe port, **`npm run dashboard`** if down, then **`npm run pipe -- open`**.
 
 ## Files to know
 

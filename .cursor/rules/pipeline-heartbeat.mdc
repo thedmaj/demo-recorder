@@ -1,15 +1,19 @@
 ---
-description: "Long-running Plaid pipeline builds — agents must post periodic status, avoid silent waits, and prefer non-interactive CLI. Pair with npm run pipe:status-loop in a second terminal."
+description: "MANDATORY: While a Plaid pipeline build runs, agents MUST post chat status every ≤5 min (pipe status); never wait silently; prefer non-interactive. Not satisfied by pipe:status-loop alone."
 alwaysApply: true
 ---
 
-# Pipeline heartbeat (Claude Code / Cursor agents)
+# Pipeline heartbeat — mandatory agent behavior
+
+**Priority:** High. **Applies to:** Every Cursor / Claude agent session in this repo when a pipeline command is running or you are monitoring it.
+
+This rule exists because models often **skip** periodic updates unless reminded. **Incorrect:** posting status only after the user asks *“how’s the build?”* **Correct:** proactively posting at least **every 5 minutes** while the run is active.
 
 When you **start or supervise** any command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, log tailing):
 
-1. **At least every 5 minutes** while the run is active, give a short update in chat: run `npm run pipe -- status` or `npm run pipe -- status --json`. Summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and `nextRecoveryCommand` when present.
-2. **Do not wait silently.** If there is **no new stdout/stderr for ~5 minutes** and status still shows work in progress, investigate: `activePid`, tail `artifacts/logs/pipeline-build.log.md` under the run directory. Say what you found; only suggest `npm run pipe -- stop <RUN_ID>` if the user wants to kill the run.
-3. **Avoid stdin stalls:** prefer `npm run pipe -- new … --non-interactive` (and `SCRATCH_AUTO_APPROVE=true` in `.env` when appropriate). Warn the user if a gate needs their terminal.
-4. **Optional terminal helper:** `npm run pipe:status-loop` prints `pipe status` every 300s (`PIPE_STATUS_INTERVAL_SEC` to change). Use a **second or third** shell alongside the build and dashboard — it does not replace chat updates.
+1. **MUST — Chat heartbeat:** At least **every 5 minutes**, give a short update **in this chat**. Run `npm run pipe -- status` or `npm run pipe -- status --json`. Summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and `nextRecoveryCommand` when present.
+2. **MUST — Stall detection:** If **no new stdout/stderr for ~5 minutes** while status still shows work in progress, investigate (`activePid`, tail `artifacts/logs/pipeline-build.log.md` under the run directory). Report what you found. Suggest `npm run pipe -- stop <RUN_ID>` only if the user wants to abort.
+3. **SHOULD — Stdin:** Prefer `npm run pipe -- new … --non-interactive` (and `SCRATCH_AUTO_APPROVE=true` in `.env` when appropriate). Warn if a gate needs their terminal.
+4. **Optional terminal helper:** `npm run pipe:status-loop` prints `pipe status` every 300s (`PIPE_STATUS_INTERVAL_SEC`). **Does not replace** rule 1 — users may not watch that terminal.
 
-Full detail: `CLAUDE.md` (heartbeat section) and `.claude/skills/pipeline-cli/SKILL.md`.
+Canonical copy: **`CLAUDE.md`** (section **REQUIRED — Pipeline heartbeat** at top, and expanded subsection near **Pipeline Restartability**). Skill: **`.claude/skills/pipeline-cli/SKILL.md`** (heartbeat subsection).
