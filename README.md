@@ -2,13 +2,113 @@
 
 Generate hyper-realistic Plaid customer demos — host banking UI, Plaid Link integration, narration, and final MP4 — entirely from a single `inputs/prompt.txt`. Publish finished demos to a shared catalog your Sales Engineering teammates can pull and launch locally.
 
-This README is written for a sales engineer onboarding to the tool for the first time. For the full pipeline architecture, see [`CLAUDE.md`](CLAUDE.md). For the GitHub-Enterprise distribution model, see [`docs/distribution-architecture.md`](docs/distribution-architecture.md).
+This README is written for a sales engineer onboarding to the tool for the first time. For the full pipeline architecture, see [`CLAUDE.md`](CLAUDE.md). **AI agents** (Cursor / Claude Code) supervising builds must follow **[`AGENTS.md`](AGENTS.md)** and the **heartbeat** rules there (brief chat updates at least every 5 minutes while a run is active — not only when asked). For the GitHub-Enterprise distribution model, see [`docs/distribution-architecture.md`](docs/distribution-architecture.md).
+
+**First-time machine setup?** Follow **[Sequential install (line by line)](#sequential-install-line-by-line)** below, then return here for the quick path.
+
+---
+
+## Sequential install (line by line)
+
+Do these **in order** in a normal terminal (macOS Terminal, Windows Terminal, etc.). The examples use [Homebrew](https://brew.sh) on **macOS**; on **Linux** use your distro’s package manager or the linked upstream docs; on **Windows** use [Winget](https://github.com/cli/cli#windows), [Scoop](https://scoop.sh), or the installers from [Node](https://nodejs.org), [Git](https://git-scm.com), and [GitHub CLI](https://cli.github.com). Adjust paths if your clone lives somewhere else.
+
+**0. Go to the repository root**
+
+```bash
+cd /path/to/demo-recorder
+```
+
+**1. Install Node.js 20+ and npm** (skip if `node -v` is already v20 or higher)
+
+```bash
+node -v
+```
+
+If the version is missing or below 20, install from [nodejs.org](https://nodejs.org) (LTS) or, with [nvm](https://github.com/nvm-sh/nvm): `nvm install 20 && nvm use 20`.
+
+**2. Install git** (skip if `git --version` works)
+
+**macOS (Homebrew):**
+
+```bash
+brew install git
+git --version
+```
+
+**3. Install the GitHub CLI (`gh`)** (needed for `pipe publish` / `pipe pull` / identity; the installer also expects it)
+
+**macOS (Homebrew):**
+
+```bash
+brew install gh
+gh --version
+```
+
+**4. Install ffmpeg** (needed for `npm run demo:full` recording and MP4 render)
+
+**macOS (Homebrew):**
+
+```bash
+brew install ffmpeg
+ffmpeg -version
+```
+
+*Alternatively*, run **steps 2–4** only inside **`bash scripts/setup/install.sh`** later: if Homebrew is present, the script can install `gh` and `ffmpeg` for you when they are missing.
+
+**5. Authenticate `gh` to GitHub Enterprise with the browser (Plaid host)**
+
+For Plaid’s GitHub Enterprise:
+
+```bash
+gh auth login --hostname github.plaid.com
+```
+
+At the interactive prompts, choose in order:
+
+1. **What account do you want to log into?** → **GitHub Enterprise Server** (not GitHub.com).
+2. **Hostname:** → `github.plaid.com` (or the host in `PLAID_GHE_HOSTNAME` if your org differs).
+3. **Preferred protocol for Git operations** → **SSH** if you use `git@...` remotes, or **HTTPS** if you only use `https://...` URLs.
+4. **Authenticate** → **Login with a web browser** (recommended). A one-time code may appear; complete sign-in in the browser (SSO as required). If the browser flow fails (VPN, headless), choose **Paste an authentication token** and create a [personal access token](https://docs.github.com/enterprise-server@3/get-started/learning-about-github/types-of-access-tokens) on your GHE instance with at least **repo** scope.
+
+Then verify:
+
+```bash
+gh auth status --hostname github.plaid.com
+```
+
+You should see a logged-in account for `github.plaid.com`. (`gh` login is separate from `git` SSH keys — for `git push`/`git pull` you may still need [SSH keys on GHE](https://docs.github.com/en/authentication/connecting-to-github-with-ssh) or an HTTPS token when Git prompts.)
+
+**6. Run the project installation script** (Node deps, `.env` template, Playwright browser, `plaid-demo-apps` clone, etc.)
+
+**Interactive (recommended the first time):**
+
+```bash
+bash scripts/setup/install.sh
+```
+
+Answer the prompts. If the script offers **`gh auth login`**, you can skip it if **step 5** already succeeded. If it offers to **paste** API keys, you can **skip** and fill `.env` later; ask your **repository owner** for real keys. See [One-command install](#one-command-install) for the full list of what the script does.
+
+**Unattended / CI:**
+
+```bash
+bash scripts/setup/install.sh --non-interactive
+```
+
+**7. Confirm identity and that the tool runs**
+
+```bash
+npm run pipe -- whoami
+```
+
+You should see your GHE login and paths. If not, re-check **step 5** and [Troubleshooting the installer](#troubleshooting-the-installer).
+
+**Next:** Fill **`.env`** (API keys), then follow [Get up and running quickly](#get-up-and-running-quickly).
 
 ---
 
 ## Get up and running quickly
 
-Do this **after** [`bash scripts/setup/install.sh`](#one-command-install) and a filled **`.env`** (API keys). This is the shortest path to a working app-only demo:
+Do this **after** [Sequential install](#sequential-install-line-by-line) (or [`bash scripts/setup/install.sh`](#one-command-install) if you already had dependencies) and a filled **`.env`** (API keys). This is the shortest path to a working app-only demo:
 
 | Step | Where | What you do |
 |------|-------|-------------|
@@ -78,7 +178,9 @@ More detail: [First time with GitHub or the GitHub CLI?](#first-time-with-github
 
 ## One-command install
 
-From a fresh clone of this repo:
+**New to the toolchain?** Use the full [Sequential install (line by line)](#sequential-install-line-by-line) (install `gh`, `ffmpeg`, **`gh auth login`**, then this script). The single command below is the same script after dependencies exist.
+
+From a **clone of this repo**:
 
 ```bash
 bash scripts/setup/install.sh
