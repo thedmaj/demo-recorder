@@ -280,6 +280,8 @@ If credentials are incomplete (e.g. token without **`GLEAN_INSTANCE`**), the scr
 
 **Fast path:** follow **[Get up and running quickly](#get-up-and-running-quickly)** — **`npm run quickstart`** in a normal terminal → **Claude Code** (Agent mode) → paste **`inputs/quickstart-agent-bootstrap.txt`** (or **“Run this task”** on **`inputs/quickstart-research-task.md`**) → **`npm run demo`** in the integrated terminal when the task says to (not **`npm run pipe -- new --app-only`**, which runs the full orchestrator path).
 
+**Prefer to stay in Agent mode only?** If switching between **Terminal** (`npm run quickstart`) and **Agent** feels confusing, skip the wizard and use **[Agent-only one-shot (no terminal quickstart)](#agent-only-one-shot-no-terminal-quickstart)** — one paste-first message that builds **`inputs/prompt.txt`** from the app-only template and runs **`npm run demo`**. Example copy lives in **[`inputs/agent-one-shot-app-only-message.example.txt`](inputs/agent-one-shot-app-only-message.example.txt)**.
+
 The guided wizard writes a draft prompt + a research handoff; the agent enriches it, then the build runs.
 
 ```bash
@@ -365,7 +367,35 @@ Next (Agent mode — full auto):
      for live visibility of stages, QA scores, and the agent-driven refinement loop.
 ```
 
-The wizard does **not** ask for a research depth. It defaults to `gapfill` (the agent fills only what the prompt is missing) — the right answer for fast app-only iteration. If you later want broader research, pass **`--research=broad`** (or similar) to **`npm run demo`** / the orchestrator, not the quickstart handoff command.
+The wizard does **not** ask for a research depth. It defaults to `gapfill` (the agent fills only what the prompt is missing) — the right answer for fast app-only iteration. For **broad** research (full Glean/Gong pass), set **`RESEARCH_MODE=broad`** for the run (e.g. `RESEARCH_MODE=broad npm run demo`) or use **`npm run pipe -- new --app-only --research=broad`**. You can also add **`**Research depth:** broad`** to `inputs/prompt.txt` or set **`RESEARCH_MODE=broad`** in `.env`.
+
+#### Agent-only one-shot (no terminal quickstart)
+
+Use this when you want **Cursor or Claude Code (Agent mode) from step one** — no **`npm run quickstart`** in the system terminal first.
+
+1. Open **this repo as the project folder** and turn on **Agent mode**.
+2. Paste **one** first message that instructs the agent to:
+   - Build **`inputs/prompt.txt`** using the canonical skeleton in **[`inputs/prompt-template-app-only.txt`](inputs/prompt-template-app-only.txt)**.
+   - Encode your **brand, products, Link mode, persona, journey, and value props**.
+   - Optionally use **AskBill + Glean** (MCP) to enrich per-product files and the prompt — requires a configured **`.env`** and MCP servers in the editor.
+   - Run **`npm run demo`** in the **integrated terminal** when the prompt is complete (app-only default; stops at **build-qa**). Prefer **`npm run demo`** over **`npm run pipe -- new --app-only`** unless you deliberately want the CLI `pipe new` entry path.
+
+**Ready-made example** (you can copy from **[`inputs/agent-one-shot-app-only-message.example.txt`](inputs/agent-one-shot-app-only-message.example.txt)** and edit the scenario): the file contains an **Airbnb host** scenario with **Plaid Link standard (modal)**, **Auth + Identity Match**, host value (**faster, easier payouts**) and platform value (**stronger verification, less fraud and returns**).
+
+**What the prompt must include for a successful app-only build**
+
+| Requirement | Why it matters |
+|-------------|----------------|
+| **Host / customer brand** and optional **canonical or brand URL** | Feeds **brand-extract**, realistic nav/footer, and regulated copy. |
+| **Plaid products** using **approved names** (e.g. Plaid Auth, Plaid Identity Match) | Wrong names break **product KB** linkage and QA. |
+| **Plaid Link mode** — **modal (standard)** vs **embedded** | Build and Playwright contracts differ; **modal** is the default “standard Link” UX. |
+| **Persona** (named user + role) | Script and sample data stay coherent across steps. |
+| **Use case** in plain language (who does what, which accounts, which outcome) | Drives **demo-script.json** steps and narration. |
+| **Value** for the **end customer** and, if relevant, the **platform / marketplace** | Aligns storyboard and “why Plaid” beats. |
+| **Story arc or storyboard beats** (host / link / insight only — **no slide beats**) | App-only pipeline expects **non-slide** scene types only. |
+| Optional **`Research depth:`** `gapfill` \| `broad` \| … | Overrides default research when not using `.env` only. |
+
+If anything above is missing, the pipeline may still run but you risk generic copy, **build-qa** failures, or **continue-gates** (prompt fidelity, data realism, etc.). Fill **`.env`** before first build (**`ANTHROPIC_API_KEY`**, Plaid sandbox, etc.) — see [Environment variables](#environment-variables).
 
 #### After the wizard
 
@@ -437,9 +467,9 @@ The script generator picks one of three strategies based on what's in `prompt.tx
 - **Scenario-derived** — when you give a brand + ≥1 product + a clear use-case sentence (`**Use case:**` line, or any sentence ≥30 words mentioning the brand and a product), the LLM builds a custom storyboard tailored to YOUR scenario, using the canonical arc (problem → solution → reveal → outcome) as structural skeleton only.
 - **Generic** — bare prompt with brand and products only → falls back to the canonical arc with generic content (today's behavior, the safety net).
 
-#### Default research mode is now broad
+#### Default research mode is `gapfill`
 
-`RESEARCH_MODE=broad` is the new install default (was `gapfill` — capped at 3-8 AskBill calls and 0-2 Glean calls). `broad` and `deep` map internally to research.js's `full` mode: more Glean breadth, more Gong color, more grounded sample data. Set `RESEARCH_MODE=gapfill` in `.env` to opt back into the shallow default.
+`RESEARCH_MODE=gapfill` is the install and pipeline default (targeted AskBill + 0–2 Glean calls in the research prompt). **`broad`** and **`deep`** map internally to research.js’s **`full`** mode: more Glean breadth, more Gong color, and a higher tool budget. Use **`RESEARCH_MODE=broad`**, **`npm run pipe -- new --research=broad`**, or a **`**Research depth:** broad`** line in `inputs/prompt.txt` when you want the deeper pass.
 
 #### What happens when QA fails (agent-driven refinement loop, default)
 

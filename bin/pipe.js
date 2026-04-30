@@ -1344,10 +1344,10 @@ async function interactiveMenu() {
 
       if (ans === '1') {
         const withSlidesAns = await ask(rl, 'Include slides? [y/N]: ');
-        const researchAns = await ask(rl, 'Research mode (gapfill/broad/deep) [broad]: ');
+        const researchAns = await ask(rl, 'Research mode (gapfill/broad/deep) [gapfill]: ');
         const flags = {};
         if (/^y/i.test(withSlidesAns)) flags['with-slides'] = true;
-        const r = (researchAns || 'broad').toLowerCase();
+        const r = (researchAns || 'gapfill').toLowerCase();
         if (VALID_RESEARCH.has(r)) flags.research = r;
         rl.close();
         return await cmdNew({ flags });
@@ -1481,12 +1481,11 @@ ${H('BUILDING — start, resume, re-run')}
 ${cmd('npm run pipe -- new   [--prompt=PATH] [--app-only|--with-slides]',
 `Start a new build from inputs/prompt.txt. Defaults to app-only; pass
 --with-slides to include the slide-generation phase. Other flags:
-  --research=gapfill|broad|deep  research depth. NEW DEFAULT is "broad" (was
-                                 "gapfill"). broad/deep map to research.js's
-                                 "full" mode: wider Glean coverage, more Gong
-                                 color, more grounded sample data. Set
-                                 RESEARCH_MODE=gapfill in .env to opt back
-                                 into the shallow legacy default.
+  --research=gapfill|broad|deep  research depth. DEFAULT is "gapfill"
+                                 (targeted AskBill + minimal Glean). broad/deep
+                                 map to research.js "full" mode (wider Glean,
+                                 more Gong). Override per run or set
+                                 RESEARCH_MODE=broad in .env for always-broad.
   --to=STAGE                     stop the pipeline after STAGE
   --qa-threshold=N               vision-QA pass threshold (default 80)
   --max-refinement-iterations=N  cap LLM refinement loops (default 3)

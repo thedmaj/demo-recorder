@@ -412,6 +412,7 @@ function writePlaidLinkUxSkillManifest(runDir, meta) {
 function resolveResearchMode(promptText = '') {
   const env = (process.env.RESEARCH_MODE || '').toLowerCase().trim();
   if (['full', 'gapfill', 'skip', 'messaging'].includes(env)) return env;
+  if (env === 'broad' || env === 'deep') return env;
 
   const t = String(promptText);
   const m = t.match(/\*\*Research depth:\*\*\s*([a-z0-9_-]+)/i) ||
@@ -422,6 +423,7 @@ function resolveResearchMode(promptText = '') {
     if (v === 'skip') return 'skip';
     if (v === 'messaging' || v === 'messaging_only' || v === 'messagingonly') return 'messaging';
     if (v === 'technical_gapfill' || v === 'gapfill') return 'gapfill';
+    if (v === 'broad' || v === 'deep') return v;
   }
   return '';
 }
@@ -440,14 +442,8 @@ function resolveResearchMode(promptText = '') {
  *   - `gapfill`           → `gapfill`
  *   - `messaging`         → `messaging`
  *   - `skip`              → `skip`
- *   - empty / unrecognized → `full`  (PIPELINE DEFAULT — was `gapfill` prior to
- *                                     the hyper-realism upgrade. The user said
- *                                     tokens are not a constraint; broader
- *                                     research yields more grounded sample
- *                                     data, real Gong color, and stronger
- *                                     scenario-specific context. Set
- *                                     RESEARCH_MODE=gapfill to opt back into
- *                                     the shallow default.)
+ *   - empty / unrecognized → `gapfill`  (pipeline default: targeted AskBill/Glean, lower cost)
+ *   - Set `RESEARCH_MODE=broad` / `deep` or pass `--research=broad` on `pipe new` for full research
  *
  * @param {string} explicit from resolveResearchMode (may be '')
  * @param {boolean} [_skillLoaded] unused — kept for call-site compatibility
@@ -456,7 +452,7 @@ function effectiveResearchMode(explicit, _skillLoaded) {
   const v = String(explicit || '').toLowerCase().trim();
   if (v === 'gapfill' || v === 'messaging' || v === 'skip' || v === 'full') return v;
   if (v === 'broad' || v === 'deep') return 'full';
-  return 'full';
+  return 'gapfill';
 }
 
 module.exports = {

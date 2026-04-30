@@ -35,8 +35,23 @@ test('resolveResearchMode reads prompt line', () => {
       resolveResearchMode('Research depth: messaging'),
       'messaging'
     );
+    assert.strictEqual(
+      resolveResearchMode('Research depth: broad'),
+      'broad'
+    );
   } finally {
     if (prev !== undefined) process.env.RESEARCH_MODE = prev;
+  }
+});
+
+test('resolveResearchMode reads RESEARCH_MODE=broad from env', () => {
+  const prev = process.env.RESEARCH_MODE;
+  process.env.RESEARCH_MODE = 'broad';
+  try {
+    assert.strictEqual(resolveResearchMode(''), 'broad');
+  } finally {
+    if (prev !== undefined) process.env.RESEARCH_MODE = prev;
+    else delete process.env.RESEARCH_MODE;
   }
 });
 
@@ -44,10 +59,8 @@ test('effectiveResearchMode defaults and aliases', () => {
   const prev = process.env.RESEARCH_MODE;
   delete process.env.RESEARCH_MODE;
   try {
-    // Default is now `full` (was `gapfill` prior to the hyper-realism upgrade).
-    // Tokens are not a constraint; broader research = more grounded sample data.
-    assert.strictEqual(effectiveResearchMode('', true), 'full');
-    assert.strictEqual(effectiveResearchMode('', false), 'full');
+    assert.strictEqual(effectiveResearchMode('', true), 'gapfill');
+    assert.strictEqual(effectiveResearchMode('', false), 'gapfill');
     // Native modes pass through:
     assert.strictEqual(effectiveResearchMode('skip', true), 'skip');
     assert.strictEqual(effectiveResearchMode('gapfill', true), 'gapfill');

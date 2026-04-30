@@ -1329,7 +1329,7 @@ async function main() {
   const explicitMode = resolveResearchMode(context.type === 'prompt' ? context.content : '');
   let mode = effectiveResearchMode(explicitMode, bundle.skillLoaded);
   if (explicitMode) console.log(`  Research mode: ${mode} (from prompt or RESEARCH_MODE)`);
-  else console.log(`  Research mode: ${mode} (default gapfill; skillLoaded=${bundle.skillLoaded})`);
+  else console.log(`  Research mode: ${mode} (default gapfill — set RESEARCH_MODE=broad/deep or **Research depth:** in prompt for full; skillLoaded=${bundle.skillLoaded})`);
 
   let research;
   if (mode === 'skip') {

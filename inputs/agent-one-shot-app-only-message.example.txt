@@ -1,0 +1,57 @@
+================================================================================
+AGENT-MODE ONE-SHOT — APP-ONLY BUILD (no `npm run quickstart` in Terminal)
+================================================================================
+Copy everything under “PASTE BELOW INTO CURSOR / CLAUDE CODE (Agent mode)” into a
+new Agent chat with this repo open. The agent should fill inputs/prompt.txt from
+inputs/prompt-template-app-only.txt, optionally run AskBill/Glean, then run:
+  npm run demo
+(App-only default — stops at build-qa. Not `npm run pipe -- new --app-only` unless
+you explicitly want that entry path.)
+
+Prerequisites: Node 20+, `npm install`, filled `.env` (see README / .env.example).
+MCP: AskBill + Glean only if you want the agent to run research inside the agent
+ session — configure .env + Cursor/Claude MCP per project docs.
+
+================================================================================
+PASTE BELOW INTO CURSOR / CLAUDE CODE (Agent mode) — first message
+================================================================================
+
+Use `inputs/prompt-template-app-only.txt` as the structure and write a complete
+`inputs/prompt.txt` for an app-only Plaid demo (no slides). Then run the pipeline
+with `npm run demo` in the integrated terminal (build-qa stop) after the prompt
+is ready.
+
+Scenario to implement:
+- Host: an Airbnb (airbnb.com) host.
+- Plaid: Link with **standard (modal) Plaid Link**; products **Plaid Link** (Auth
+  path) for bank account linking, and **Plaid Identity Match** for identity
+  verification in support of payouts / disbursements.
+- User value: faster, easier payouts.
+- Platform (Airbnb) value: strong verification leading to less fraud and returns.
+- Keep language concrete: one primary persona, a clear journey (link account →
+  verify identity for disbursement eligibility), and story beats that match
+  host/link/insight scene types only.
+
+Add a `Research depth: gapfill` line unless I need broad Gong/collateral research
+(then use `Research depth: broad`).
+
+================================================================================
+REQUIREMENTS — what `inputs/prompt.txt` should include for a strong build
+================================================================================
+- Customer / host brand name and optional **Brand URL** (e.g. airbnb.com) for
+  brand-extract and realistic chrome.
+- **Plaid products** using approved names (e.g. Plaid Auth, Plaid Identity Match);
+  do not invent product names.
+- **Plaid Link mode** stated explicitly: **modal / standard Link** vs embedded.
+- **Persona**: a named person + role (e.g. host name, “gig host”, “account owner”).
+- **Use case** in clear prose: who is doing what and why (link bank, verify for
+  disbursements).
+- **Value** for the **end user** (host) and, if relevant, for the **platform**
+  (marketplace / Airbnb): fraud reduction, payout speed, etc.
+- **Story arc or storyboard beats** so script generation has a narrative spine
+  (problem → Plaid → reveal → outcome); app-only = host / link / insight scenes
+  only (no slide beats).
+- Optional: **Solutions supported** line if using Solutions Master routing.
+- Optional: **Research depth:** gapfill | broad | messaging | skip
+
+Fix any remaining «placeholders» before running `npm run demo`.

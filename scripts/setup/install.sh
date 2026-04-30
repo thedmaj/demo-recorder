@@ -254,19 +254,18 @@ if [ -f ".env" ]; then
   fi
 fi
 
-# Idempotently ensure RESEARCH_MODE=broad is present so SEs get deeper
-# research by default (more Glean breadth, more Gong color, more grounded
-# sample data). Set to gapfill in .env to opt back into the shallow default.
+# Idempotently ensure RESEARCH_MODE=gapfill is present so SEs get fast,
+# targeted research by default. Set to broad or deep in .env for wider Glean/Gong coverage.
 if [ -f ".env" ]; then
   if grep -qE '^[[:space:]]*RESEARCH_MODE[[:space:]]*=' .env; then
     ok ".env already declares RESEARCH_MODE — leaving it untouched."
   else
     {
       echo ""
-      echo "# Default research mode = broad (set gapfill for the shallow legacy default)."
-      echo "RESEARCH_MODE=broad"
+      echo "# Default research mode = gapfill (set broad or deep for full research.js \"full\" mode)."
+      echo "RESEARCH_MODE=gapfill"
     } >> .env
-    ok "Added RESEARCH_MODE=broad to .env (deeper research is the new default)."
+    ok "Added RESEARCH_MODE=gapfill to .env (targeted research is the default)."
   fi
 fi
 
@@ -517,7 +516,12 @@ cat <<EOF
     6. Optional third terminal: ${CYAN}npm run pipe:status-loop${RESET} — prints ${CYAN}pipe status${RESET} every 300s (${CYAN}PIPE_STATUS_INTERVAL_SEC${RESET} to change). Agents: follow ${CYAN}CLAUDE.md${RESET} heartbeat + ${CYAN}.cursor/rules/pipeline-heartbeat.mdc${RESET}.
     7. ${CYAN}npm run pipe -- publish <run-id>${RESET}  (optional — share your demo)
 
-  ${BOLD}Alternative — hand-written prompt:${RESET}
+  ${BOLD}Alternative A — Agent-only one-shot (no terminal quickstart):${RESET}
+    Stay in ${CYAN}Cursor / Claude Code${RESET} Agent mode; paste the message in
+    ${CYAN}inputs/agent-one-shot-app-only-message.example.txt${RESET} (edit scenario).
+    Agent fills ${CYAN}inputs/prompt.txt${RESET} from the template, then ${CYAN}npm run demo${RESET}.
+    Details: README → “Agent-only one-shot”.
+  ${BOLD}Alternative B — hand-written prompt + CLI:${RESET}
     1. ${CYAN}Edit inputs/prompt.txt${RESET} (template at inputs/prompt-template-app-only.txt).
     2. ${CYAN}npm run pipe -- new --app-only --non-interactive${RESET}
     3. ${CYAN}npm run dashboard${RESET}     — http://localhost:4040 for live visibility.

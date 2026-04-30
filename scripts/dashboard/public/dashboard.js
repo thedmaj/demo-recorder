@@ -4334,10 +4334,12 @@
             <option value="">Through end</option>
             ${stageOptions}
           </select></label>
-          <label title="Passed as RESEARCH_MODE for the research stage (empty = use prompt line or default)">Research: <select id="research-mode-select">
+          <label title="Passed as RESEARCH_MODE for the research stage (empty = use prompt line or default gapfill)">Research: <select id="research-mode-select">
             <option value="">Default (gapfill) / prompt</option>
-            <option value="full">full</option>
             <option value="gapfill">gapfill</option>
+            <option value="broad">broad (maps to full)</option>
+            <option value="deep">deep (maps to full)</option>
+            <option value="full">full</option>
             <option value="messaging">messaging</option>
             <option value="skip">skip</option>
           </select></label>

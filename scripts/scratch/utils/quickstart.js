@@ -226,8 +226,9 @@ function buildResearchTaskMarkdown(answers, opts = {}) {
     `> **Execution mode — Agent only:** Run this entire document in **Claude Code or Cursor (Agent mode)** ` +
     `as **one continuous task**. Do not ask the human to approve each micro-step unless an MCP tool fails or credentials are missing. ` +
     `Complete Steps 1–5, pass the Step 5 sanity gate, then ${step6Auto ? '**immediately** run the terminal command in Step 6' : 'tell the user research is complete and they should run Step 6 when ready'}.\n\n` +
-    `> **Build command:** Use **only** \`${demoCmd.split('\n')[0]}\` for the pipeline. ` +
-    `**Do not** run \`npm run pipe -- new --app-only\` here — that drives the **full** orchestrator stack; ` +
+    `> **Build command:** Use **only** \`${demoCmd.split('\n')[0]}\` for the pipeline (research defaults to **gapfill** via \`.env\` / pipeline rules). ` +
+    `For **broad** research instead, run \`RESEARCH_MODE=broad npm run demo\` or \`npm run pipe -- new --app-only --research=broad\`. ` +
+    `**Do not** run \`npm run pipe -- new --app-only\` without user intent — that drives the **full** orchestrator stack; ` +
     `\`npm run demo\` is the repo default and stops at **build-qa** for fast iteration.\n\n` +
     `> **Why not pure CLI?** AskBill + Glean are MCP servers and must run inside an agent. ` +
     `\`npm run quickstart\` only writes this file + \`inputs/prompt.txt\`.\n\n` +
