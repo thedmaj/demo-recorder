@@ -1,6 +1,6 @@
 # Plaid Demo Recorder
 
-Generate hyper-realistic Plaid customer demos — host banking UI, Plaid Link integration, narration, and final MP4 — entirely from a single `inputs/prompt.txt`. Publish finished demos to a shared catalog your Sales Engineering teammates can pull and launch locally.
+Generate hyper-realistic Plaid customer demo **apps** — host banking UI with a real Plaid Link integration — entirely from a single `inputs/prompt.txt`. Publish finished demos to a shared catalog your Sales Engineering teammates can pull and launch locally. (Full-pipeline recording + voiceover + MP4 render is under active stabilization and intentionally not part of this README yet.)
 
 This README is scoped to **install → first demo**. For pipeline architecture, see [`CLAUDE.md`](CLAUDE.md). AI agents supervising builds follow [`AGENTS.md`](AGENTS.md) and the [heartbeat rule](.cursor/rules/pipeline-heartbeat.mdc). Distribution / publish details live in [`docs/distribution-architecture.md`](docs/distribution-architecture.md).
 
@@ -110,14 +110,11 @@ The wizard asks for brand, industry, Plaid Link mode (modal / embedded), product
 - `inputs/quickstart-research-task.md` — agent task that runs AskBill + Glean and refines the prompt.
 - `inputs/quickstart-agent-bootstrap.txt` — paste-first message for Claude Code / Cursor Agent mode.
 
-**Then kick off the build.** Two options:
+**Then kick off the build.** App-only is the only supported mode right now — full-pipeline (recording + MP4 + pptx) is being stabilized and intentionally not documented yet.
 
 ```bash
-# App-only, stops at build-qa (agent-mode default — fast iteration, no MP4).
+# App-only, stops at build-qa (fast iteration, no recording / render).
 npm run demo
-
-# Full pipeline — recording + voiceover + MP4 + pptx. Use when the app passes QA.
-npm run demo:full
 ```
 
 In a second terminal, open the dashboard for live visibility of stages and QA scores:
@@ -208,8 +205,7 @@ to release the orchestrator. Loop max **5 iterations** or until QA ≥ 88. The s
 ```bash
 npm run pipe -- pull                     # latest code + shared demos (~/.plaid-demo-apps)
 npm run quickstart                       # wizard-driven app-only build
-npm run demo                             # app-only, stop at build-qa (agent-mode default)
-npm run demo:full                        # full pipeline through MP4 render + pptx
+npm run demo                             # app-only, stop at build-qa (only supported mode today)
 npm run pipe -- new --app-only           # alternative: build from a hand-written prompt.txt
 npm run pipe -- status                   # where is my run?
 npm run pipe -- resume <run-id> --from=<stage>
