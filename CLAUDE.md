@@ -27,53 +27,25 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 
 **Optional parallel terminal:** `npm run pipe:status-loop` prints `pipe status` every **300s** (`PIPE_STATUS_INTERVAL_SEC` overrides). Run it in another shell if you like — **it does not replace** chat heartbeat.
 
-**Also read:** expanded checklist in **Claude Code / Cursor agents — long-running builds (heartbeat policy)** later in this file; short mirror for tooling: [`AGENTS.md`](AGENTS.md); always-on Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
+**Also read:** short mirror for tooling: [`AGENTS.md`](AGENTS.md); always-on Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc); agent-facing CLI reference: [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md).
 
 ---
 
-## Brand Voice
-- Confident, precise, outcome-focused. Never apologetic or jargon-heavy.
-- Lead with customer value, not technical implementation details.
-- Use active voice. "Plaid verifies the document in real time" not "the document is verified."
-- Quantify value where possible: "Signal score 12 — ACCEPT", "verified in under 3 seconds."
-- Never use: "simply", "just", "unfortunately", "robust", "seamless" (overused).
-- Approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth",
-  "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".
+## Brand Voice & Demo Quality — summary (full rules in skill)
 
----
+**Load the [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md) skill** when authoring or critiquing script, narration, persona, slide copy, or any voiceover material. It owns narrative arc, pacing (8–14 steps, 20–35 words/step, 2–3 min), reveal-moment checklist, prohibited words, approved product names, Plaid Link narration boundary, and persona guidelines.
+
+Pipeline-specific reminders kept here (because build/QA agents sometimes don't load the skill):
+
+- Approved product names (use verbatim): **Plaid Identity Verification (IDV)**, **Plaid Instant Auth**, **Plaid Layer**, **Plaid Monitor**, **Plaid Signal**, **Plaid Assets**.
+- Quantify outcomes where possible: *Signal score 12 — ACCEPT*, *verified in 2.4 seconds*. Never use the term **Trust Index**.
+- Active voice. No apologetic / filler words (*simply*, *just*, *unfortunately*, *robust*, *seamless*).
+- Main demo = happy path only: no error / declined / edge-case flows.
 
 ### Host app background interpretation (UX rule)
 - For **host/customer-branded app screens** (non-Plaid modal content), default the primary page background to white or another light neutral when compatible with brand colors.
 - Keep brand identity through accent colors, typography, nav treatment, and CTA styles while maintaining accessible contrast.
 - Keep Plaid-dark surfaces for Plaid-specific contexts (for example dedicated Plaid insight scenes), not as the default host canvas.
-
----
-
-## Demo Quality Standards
-
-### A great Plaid demo has:
-- Clear problem statement in the first 15 seconds
-- A named persona with a specific, relatable use case
-- 8–14 steps, 2–3 minutes total duration
-- Narration of 20–35 words per step (fits ~8–12s of speech at 150 wpm)
-- A climactic "reveal" moment (Signal ACCEPT score, instant approval, matched identity, etc.)
-- Quantified outcomes ("Signal score 12 — ACCEPT", "verified in 2.4 seconds")
-- A clear CTA or outcome in the final screen
-
-### Anti-patterns to avoid:
-- Showing error states, edge cases, or declined flows
-- More than 35 words of narration per step
-- Generic placeholder data (use realistic persona details)
-- Steps that show loading spinners without resolving
-- Passive voice or apologetic tone
-- Technical API jargon without context
-
-### Narrative Arc (always follow this structure):
-1. **Problem** — The user/developer faces a friction or compliance challenge
-2. **Solution entry** — Plaid product is introduced as the answer
-3. **Frictionless experience** — Walk through the key flow steps
-4. **Key reveal** — The "wow moment" (score, approval, matched data)
-5. **Outcome** — The result: faster, safer, more compliant
 
 ---
 
@@ -179,13 +151,13 @@ When `plaidLinkMode` is `embedded`, follow Embedded Institution Search behavior:
 
 ### CRA / Consumer Report Link Requirements (Base Report + Income Insights)
 
-- CRA demos MUST use the real Plaid Link CRA/Check experience (single `"plaidPhase": "launch"` step with real SDK modal).
-- Do not replace CRA Link with host-only pseudo flows, simulated forms, or custom wizard screens.
-- CRA setup must include user setup semantics before report retrieval (`/user/create` identity context + permissible purpose in token config).
-- For CRA stories, `"/link/token/create"` products should include `cra_base_report` and `cra_income_insights` when income insights are part of the flow.
-- CRA retrieval remains asynchronous: show a report-ready lifecycle beat before insight retrieval.
-- Plaid Passport may be present via enabled templates for stronger identity verification; treat Passport as optional per account configuration, but never omit the core CRA Link/consent experience.
-- Any CRA "setup" or "data returned / report returned" explanatory scene should use Plaid-branded insight-style presentation (not customer-branded host chrome).
+Product details: [`inputs/products/plaid-cra-base-report.md`](inputs/products/plaid-cra-base-report.md).
+
+- CRA demos MUST use the real Plaid Link CRA/Check experience (single `"plaidPhase": "launch"` step with real SDK modal). The general "no simulated Link step divs" rule above still applies.
+- CRA setup semantics before report retrieval: `/user/create` identity context + permissible purpose in token config. Include `cra_base_report` and (when used) `cra_income_insights` in `/link/token/create` products.
+- Retrieval is asynchronous — show a report-ready lifecycle beat before insight retrieval.
+- Plaid Passport is optional per account configuration; never omit the core CRA Link/consent experience.
+- CRA "setup" / "data returned / report returned" explanatory scenes use Plaid-branded insight-style presentation, not customer-branded host chrome.
 
 ### Layer Mobile Eligibility Helper Rule (Global)
 
@@ -334,54 +306,20 @@ dwell is inserted between `institution-list-shown` and the click. Do not remove 
 - Build agents must read the brand JSON written by the **current run's** brand-extract stage. Never commit brand JSON files as library assets to rely on later.
 - `BRANDFETCH_API_KEY` and `BRANDFETCH_CLIENT_ID` are already in `.env` — no additional env variables should be added for branding.
 
-## Recording & Audio Quality Standards
+## Recording, Audio & Remotion — defaults (full rules in skills)
 
-### Screen recording (record-local.js)
-- `headless: false` — GPU compositor; captures real Plaid Link modal in recordVideo
-- CSS viewport: `1440×900` — app designed for this layout
-- `deviceScaleFactor: 2` — physical pixels 2880×1800
-- `recordVideo.size: { width: 2880, height: 1800 }` — native 2× resolution output
+Pipeline defaults below are **load-bearing** — changing them requires a documented reason. Deep guidance lives in the dedicated skills; load them when editing the relevant stage:
 
-### Post-process encoding (post-process-recording.js)
-- VP8 codec, `-b:v 8000k` bitrate, `-crf 10` (near-lossless) — optimised for 2880×1800
-- Do not lower bitrate or raise CRF without explicit instruction
+- **Voiceover / audio sync / SSML / sync-map:** [`audio-sync-mastery`](.claude/skills/audio-sync-mastery/SKILL.md).
+- **Remotion composition, overlays, captions, audio playback, metadata:** [`remotion-best-practices`](.claude/skills/remotion-best-practices/SKILL.md) (and [`remotion-studio`](.claude/skills/remotion-studio/SKILL.md) when editing in Studio).
 
-### Voice / TTS quality (generate-voiceover.js)
-- Model: `eleven_multilingual_v2` (or override via `ELEVENLABS_MODEL_ID`)
-- Output format: `mp3_44100_192` — 192kbps 44.1kHz (highest MP3 quality ElevenLabs supports)
-- Voice settings: `stability: 0.75`, `similarity_boost: 0.90`, `use_speaker_boost: true`
-- Higher `stability` minimises stutter/freeze artefacts from the TTS model
+### Pipeline defaults (do not change casually)
 
-### Audio QA (orchestrator.js audio-qa stage)
-Per-clip stutter/freeze detection runs before render:
-- Uses `ffmpeg silencedetect noise=-40dB:d=0.15` on each individual `vo_*.mp3` clip
-- Any internal silence ≥ 0.15s (stutter) or ≥ 0.5s (freeze) → clip deleted and regenerated
-- The stitched `voiceover.mp3` is also deleted and rebuilt after regeneration
-- After per-clip pass: overall clipping / duration-desync checks run as before
-- Report written to `audio-qa-report.json` in the run directory
-
-## Remotion Overlay Conventions
-
-Rules for `ScratchComposition.jsx` overlays. Follow these in touchup requests and future agents.
-
-### Default mode: pointer-only (REQUIRED)
-- Pipeline default is `REMOTION_POINTER_ONLY=true` (unless explicitly overridden with `REMOTION_POINTER_ONLY=false`)
-- Do **not** auto-generate cinematic edits (zoom, lower-thirds, stat counters, cross-dissolve, spotlight/badge overlays) in normal runs
-- Keep post-record visuals minimal: only pointer guidance for main interaction moments
-
-### ClickRipple (allowed)
-- Teal concentric ring (`rgba(0,166,126,0.8)`) at the click element's center
-- Base size: 120px (in 2880×1800 render coords); visible for 45 frames
-- Fires at `step.startFrame + atFrame` (default `atFrame: 15`)
-- Auto-generated by `buildRemotionProps()` from `click-coords.json`
-
-### Optional enhanced mode (opt-in only)
-- Enhanced overlays are allowed only when explicitly requested and `REMOTION_POINTER_ONLY=false`
-- If enabled, keep overlays sparse and never mask or alter the core host app interaction flow
-
-### Data flow
-`record` stage → `click-coords.json` → `buildRemotionProps()` → `remotion-props.json` → Remotion render
-No manual editing of `remotion-props.json` needed for standard overlays.
+- **Screen recording** (`record-local.js`): `headless: false` (captures real Plaid Link modal), CSS viewport `1440×900`, `deviceScaleFactor: 2`, `recordVideo.size: { width: 2880, height: 1800 }`.
+- **Post-process encoding** (`post-process-recording.js`): VP8, `-b:v 8000k`, `-crf 10` (near-lossless). Do **not** lower bitrate / raise CRF without instruction.
+- **Voiceover defaults** (`generate-voiceover.js`): model `eleven_multilingual_v2` (or `ELEVENLABS_MODEL_ID`), output `mp3_44100_192`, voice settings **`stability: 0.75`**, **`similarity_boost: 0.90`**, **`use_speaker_boost: true`**. Do **not** lower `stability`.
+- **Audio QA** (`orchestrator.js` audio-qa stage): per-clip `ffmpeg silencedetect noise=-40dB:d=0.15`; stutter (≥0.15s) or freeze (≥0.5s) inside a clip → delete and regenerate that clip + rebuild stitched `voiceover.mp3`; report at `audio-qa-report.json`.
+- **Remotion overlays** (`ScratchComposition.jsx`): default `REMOTION_POINTER_ONLY=true` — only `ClickRipple` (teal ring, 120px @ 2880×1800, 45 frames) auto-generated from `click-coords.json` via `buildRemotionProps()` → `remotion-props.json`. Cinematic overlays (zoom, lower-thirds, stat counters, cross-dissolve, spotlights) are **off by default** and only allowed when explicitly requested with `REMOTION_POINTER_ONLY=false`, and must not mask or alter the host app flow.
 
 ---
 
@@ -411,12 +349,7 @@ Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `emb
 
 ### Claude Code / Cursor agents — long-running builds (heartbeat policy)
 
-**Duplicate of the REQUIRED section at the top of this file — kept here so searches land on one place.** Same rules apply whenever you **start or supervise** a command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, or tailing logs).
-
-1. **Visibility (MUST):** While a run is active, post a **short progress note at least every 5 minutes** in the **conversation**, not only when the user asks. Use `npm run pipe -- status` or `npm run pipe -- status --json` and summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and anything actionable from `nextRecoveryCommand`.
-2. **No silent waiting (MUST):** If there has been **no new stdout/stderr for ~5 minutes** and `pipe status` still shows an in-flight stage, **do not idle** — treat as possibly hung: check `activePid`, read the tail of `artifacts/logs/pipeline-build.log.md` under the run dir, and tell the user what you found (or run `npm run pipe -- stop <RUN_ID>` only if they want to kill it).
-3. **Avoid stdin stalls (SHOULD):** Prefer launching pipeline commands with **`--non-interactive`** (equivalent to `SCRATCH_AUTO_APPROVE=true`) so the orchestrator does not block on interactive **Press ENTER** gates. If you cannot use that flag, warn the user when a gate requires their terminal.
-4. **Optional helper (human or second shell):** `npm run pipe:status-loop` prints `pipe status` every **300s** (override with `PIPE_STATUS_INTERVAL_SEC`). Run it in parallel while a build runs if you want automatic timestamps in the terminal; the **agent** must still follow rules 1–2 in chat — **the loop is not a substitute for chat updates**.
+See **[REQUIRED — Pipeline heartbeat](#required--pipeline-heartbeat-supervising-long-running-builds)** at the top of this file. Same rules (5-minute chat updates, no silent waits, prefer `--non-interactive`, `npm run pipe:status-loop` does not replace chat). Cursor/Claude agents: [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
 
 ## Build mode (App-only vs App + Slides)
 

@@ -4303,11 +4303,40 @@ function tryServePlaidLogoFallback(req, res, scratchAppDir) {
 async function launchDemoAppServer(runId) {
   if (demoAppServers.has(runId)) return demoAppServers.get(runId);
 
-  const runDir = path.join(DEMOS_DIR, runId);
-  const scratchAppDir = path.join(DEMOS_DIR, runId, 'scratch-app');
+  let runDir = path.join(DEMOS_DIR, runId);
+  let scratchAppDir = path.join(DEMOS_DIR, runId, 'scratch-app');
+  let stagedFromRemote = false;
   if (!fs.existsSync(path.join(scratchAppDir, 'index.html'))) {
-    throw new Error(`No built app found for run: ${runId}`);
+    // Not present locally — try the artifact clone (remote-published demo).
+    // On first Launch of a remote demo, copy the bundle into `out/demos/<runId>/`
+    // so subsequent AI edits / rebuilds operate on a user-owned copy instead
+    // of mutating the shared `~/.plaid-demo-apps` clone.
+    const remote = findRemoteRunOnDisk(runId);
+    if (remote) {
+      try {
+        runDir = stageRemoteRunLocally(runId, remote.runDir);
+        scratchAppDir = path.join(runDir, 'scratch-app');
+        stagedFromRemote = true;
+        console.log(`[demo-apps] staged remote run ${runId} (owner=${remote.owner}) → ${runDir}`);
+      } catch (err) {
+        throw new Error(
+          `Failed to stage remote demo "${runId}" from ${remote.runDir}: ${err.message}. ` +
+          `Copy the directory into out/demos/ manually, or re-run \`npm run pipe -- pull\`.`
+        );
+      }
+    } else {
+      const artifactDir = resolveArtifactDirForDashboard();
+      throw new Error(
+        `No built app found for run: ${runId}. ` +
+        `Not present at out/demos/${runId}/scratch-app/index.html and not in the shared artifact clone ` +
+        `(${path.join(artifactDir, 'demos', '<owner>', runId)}). ` +
+        `Run \`npm run pipe -- pull\` to refresh the shared repo, then retry.`
+      );
+    }
   }
+  // Touch a ref to `stagedFromRemote` so the scratch-app server below can
+  // add a subtle header for observability without materially changing flow.
+  void stagedFromRemote;
   let runClientName = null;
   let runPlaidLinkMode = null;
   try {
@@ -5537,9 +5566,34 @@ app.get('/prompt', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'prompt-viewer.html'));
 });
 
+const stageRemoteRun = require(path.join(__dirname, 'utils', 'stage-remote-run.js'));
+
 function resolveArtifactDirForDashboard() {
-  return (process.env.PLAID_DEMO_APPS_DIR && process.env.PLAID_DEMO_APPS_DIR.trim())
-    || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.plaid-demo-apps');
+  return stageRemoteRun.resolveArtifactDir();
+}
+
+// Locate a published run inside the artifact clone (`~/.plaid-demo-apps/demos/<login>/<runId>/`).
+// Returns `{ runDir, owner }` or `null` if the runId is not present under any owner.
+function findRemoteRunOnDisk(runId) {
+  return stageRemoteRun.findRemoteRunOnDisk(runId, {
+    artifactDir: resolveArtifactDirForDashboard(),
+  });
+}
+
+// Copy a published bundle from the artifact clone into the local runs dir so
+// the existing `launchDemoAppServer` / AI-edit flow can treat it like any
+// other local run. The artifact clone stays untouched (read-only) — edits
+// and rebuilds happen against this copy. Wraps the pure helper so we can
+// invalidate dashboard caches as a side effect.
+function stageRemoteRunLocally(runId, remoteRunDir) {
+  const destDir = stageRemoteRun.stageRemoteRunLocally({
+    runId,
+    remoteRunDir,
+    demosDir: DEMOS_DIR,
+  });
+  invalidateDemoAppsCache();
+  invalidateRunsCache();
+  return destDir;
 }
 
 function readRemotePublishedApps() {

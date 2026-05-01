@@ -5843,7 +5843,7 @@
              style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer;text-decoration:none">Prompt</a>`
         : '';
       const publishBtn = app.source === 'remote'
-        ? `<span title="This demo lives in the shared plaid-demo-apps repo (someone else published it). Run \`pipe pull\` to refresh; only the owner can re-publish."
+        ? `<span title="This demo lives in the shared plaid-demo-apps repo (someone else published it). First Launch copies it into your local out/demos/ so AI edits and rebuilds don't touch the shared clone. Only the owner can re-publish."
                  style="font-size:10px;color:rgba(255,255,255,0.45);padding:4px 8px;background:rgba(96,165,250,0.10);border:1px solid rgba(96,165,250,0.3);border-radius:5px;flex-shrink:0">Remote</span>`
         : `<button class="demo-app-publish-btn" data-run="${esc(app.runId)}" type="button"
                    title="Package this demo (redact secrets, strip logs + research artifacts), push it to your namespace in plaid-demo-apps, and open an auto-merging PR. Teammates can then \`pipe pull\` to launch it locally."
@@ -5909,8 +5909,8 @@
                <button class="demo-app-stop-btn" data-run="${esc(app.runId)}"
                        title="Stop the local Express server serving this demo (frees the port). The demo's files on disk are NOT deleted; click Launch to start it again."
                        style="padding:5px 12px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.6);font-size:12px;cursor:pointer">Stop</button>`
-            : `<button class="demo-app-launch-btn" data-run="${esc(app.runId)}"
-                       title="Start a local Express server for this demo (auto-picks a free port from 3750+) and inject the AI-edit overlay. Returns a URL you can open in your browser."
+            : `<button class="demo-app-launch-btn" data-run="${esc(app.runId)}" data-source="${esc(app.source || 'local')}"
+                       title="Start a local Express server for this demo (auto-picks a free port from 3750+) and inject the AI-edit overlay. Returns a URL you can open in your browser.${app.source === 'remote' ? ' For Remote demos, first click stages a local copy from ~/.plaid-demo-apps into out/demos/.' : ''}"
                        style="padding:5px 14px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Launch</button>`
           }
         </div>
@@ -5951,15 +5951,28 @@
       });
     });
 
-    // Launch buttons
+    // Launch buttons. Remote-published demos get a heads-up toast on first
+    // click so the user knows the bundle was copied into their local
+    // out/demos/ before the server started.
     list.querySelectorAll('.demo-app-launch-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const runId = btn.dataset.run;
-        setBtnLoading(btn, true, 'Starting…');
+        const source = btn.dataset.source || 'local';
+        if (source === 'remote') {
+          setBtnLoading(btn, true, 'Staging…');
+          showToast('Staging remote demo locally — first Launch copies it into out/demos/', 'info');
+        } else {
+          setBtnLoading(btn, true, 'Starting…');
+        }
         try {
           const result = await apiPost('/api/demo-apps/launch', { runId });
           window.open(result.url, '_blank');
-          showToast(`App launched at ${result.url}`, 'success');
+          showToast(
+            source === 'remote'
+              ? `Staged and launched at ${result.url} — edits now write to out/demos/${runId}`
+              : `App launched at ${result.url}`,
+            'success'
+          );
           setTimeout(() => loadDemoApps(true), 400);
         } catch (err) {
           showToast(`Failed to launch: ${err.message}`, 'error');
