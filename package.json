@@ -6,6 +6,7 @@
     "dashboard": "node scripts/dashboard/server.js",
     "pipe": "node bin/pipe.js",
     "validate-env": "node bin/pipe.js validate-env",
+    "validate:plaid-skill": "node scripts/validate-plaid-integration-skill.js",
     "quickstart": "node bin/pipe.js quickstart",
     "qa-touchup": "node bin/pipe.js qa-touchup",
     "demo": "node scripts/scratch/orchestrator.js --to=build-qa",

@@ -263,6 +263,7 @@ Full list (plus optional flags) in [`.env.example`](.env.example).
 | `node is too old` | `nvm install 20 && nvm use 20`. |
 | `gh: command not found` or `ffmpeg: command not found` | `brew install gh ffmpeg`, then re-run `bash scripts/setup/install.sh`. |
 | `npm run pipe -- validate-env` flags `GOOGLE_APPLICATION_CREDENTIALS` | Path in `.env` does not match the JSON you saved under `~/.config/plaid-demo-recorder/`. Use the absolute path (§2b). |
+| `dotenv loaded (0) variables from .env` when running in **Claude Code / Cursor Agent mode from a git worktree** | Cursor worktrees share `.git` with the main repo but don't carry gitignored files (`.env`). The pipeline now auto-detects worktrees and loads `.env` from the main repo via `scripts/scratch/utils/dotenv-loader.js`. If it still fails, set **`PLAID_DEMO_RECORDER_ENV=/absolute/path/to/main-repo/.env`** in the worktree shell or ask Claude Code to run commands from the main repo root (`cd /path/to/main && npm run demo`). |
 | `pipe whoami` returns no login | `gh auth status --hostname github.plaid.com`; if not signed in, redo `gh auth login`. |
 | `Permission denied (publickey)` cloning `plaid-demo-apps` | Add SSH key to GHE **Settings → SSH keys**, or switch `PLAID_DEMO_APPS_REPO` to HTTPS and supply a PAT when Git prompts. |
 | Dashboard "Failed to launch: No built app found for run …" | Remote demo not yet staged locally. Click **Launch** again (it copies on first try), or `npm run pipe -- pull` to refresh the artifact clone. |

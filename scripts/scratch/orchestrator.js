@@ -22,14 +22,30 @@ const orchestratorPreservedEnv = {};
 for (const key of ORCHESTRATOR_PRESERVED_ENV_KEYS) {
   if (process.env[key] != null) orchestratorPreservedEnv[key] = process.env[key];
 }
-require('dotenv').config({ override: true });
+// Use the worktree-aware loader so Cursor / Claude Code git worktrees
+// (which don't carry gitignored files like .env) still see the main repo's
+// secrets. Falls back to a bare dotenv.config() if the helper is missing.
+const __orchestratorPath = require('path');
+const __orchestratorRoot = __orchestratorPath.resolve(__dirname, '../..');
+try {
+  const { loadRepoEnv } = require(__orchestratorPath.join(
+    __orchestratorRoot, 'scripts', 'scratch', 'utils', 'dotenv-loader.js'
+  ));
+  const __envResult = loadRepoEnv(__orchestratorRoot, { override: true });
+  if (__envResult.loaded) {
+    console.log(`[Orchestrator] ${__envResult.message}`);
+  } else {
+    console.warn(`[Orchestrator] ${__envResult.message}`);
+  }
+} catch (_) {
+  require('dotenv').config({ override: true });
+}
 for (const [key, value] of Object.entries(orchestratorPreservedEnv)) {
   process.env[key] = value;
 }
 
 const fs            = require('fs');
 const path          = require('path');
-const crypto        = require('crypto');
 const { execSync }  = require('child_process');
 const readline      = require('readline');
 const Anthropic     = require('@anthropic-ai/sdk');
@@ -40,6 +56,7 @@ const {
   snapshotRunInputs,
   writeRunDirMarker,
 } = require('./utils/run-io');
+const { fingerprintPrompt } = require('./utils/prompt-fingerprint');
 const {
   initPipelineBuildLog,
   appendPipelineLogSection,
@@ -117,9 +134,20 @@ function cleanupPipelinePidFile() {
   _pidFilePath = null;
 }
 
-process.on('exit', cleanupPipelinePidFile);
-process.on('SIGTERM', () => { cleanupPipelinePidFile(); process.exit(143); });
-process.on('SIGINT',  () => { cleanupPipelinePidFile(); process.exit(130); });
+function orchestratorCleanup() {
+  cleanupPipelinePidFile();
+  const rd = process.env.PIPELINE_RUN_DIR;
+  if (rd) {
+    try {
+      const { releasePipelineLock } = require('./utils/pipeline-lock');
+      releasePipelineLock(rd);
+    } catch (_) { /* ignore */ }
+  }
+}
+
+process.on('exit', orchestratorCleanup);
+process.on('SIGTERM', () => { orchestratorCleanup(); process.exit(143); });
+process.on('SIGINT',  () => { orchestratorCleanup(); process.exit(130); });
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -244,19 +272,6 @@ function loadPrompt() {
     return fs.readFileSync(promptFile, 'utf8').trim();
   }
   return null;
-}
-
-function normalizePromptForFingerprint(promptText) {
-  return String(promptText || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+/g, ' ')
-    .trim();
-}
-
-function fingerprintPrompt(promptText) {
-  const normalized = normalizePromptForFingerprint(promptText);
-  if (!normalized) return null;
-  return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
 function loadPromptRegistry() {
@@ -1138,6 +1153,22 @@ function readJsonSafe(filePath) {
   }
 }
 
+/**
+ * Skip agentic research when RESEARCH_REUSE is enabled, artifacts exist, and the prompt
+ * fingerprint matches product-research.json. Never applies when explicitly restarting from research.
+ */
+function shouldReuseExistingResearch(versionedDir, promptText, effectiveFromStage) {
+  if (!parseBoolEnv(process.env.RESEARCH_REUSE, false)) return false;
+  if (effectiveFromStage === 'research') return false;
+  const prPath = path.join(versionedDir, 'product-research.json');
+  if (!fs.existsSync(prPath)) return false;
+  const fp = fingerprintPrompt(promptText || '');
+  if (!fp) return false;
+  const data = readJsonSafe(prPath);
+  if (!data || typeof data.inputPromptFingerprint !== 'string') return false;
+  return data.inputPromptFingerprint === fp;
+}
+
 function parseColorLuminance(input) {
   const c = String(input || '').trim().toLowerCase();
   if (!c) return null;
@@ -2010,6 +2041,7 @@ async function runScratchPipeline({
   qaThresholdOverride,
   maxRefinementIterationsOverride,
   buildFixModeOverride,
+  effectiveFromStage,
 }) {
   const shouldRun = (stageName) => {
     const idx = STAGES.indexOf(stageName);
@@ -2034,6 +2066,17 @@ async function runScratchPipeline({
 
   // Stage 0: research
   await stageRunner('research', async () => {
+    if (shouldReuseExistingResearch(versionedDir, promptText, effectiveFromStage)) {
+      cliLog(
+        '[Orchestrator] RESEARCH_REUSE — skipping research.main(); using existing product-research.json ' +
+        '(inputPromptFingerprint matches current prompt).'
+      );
+      appendPipelineLogSection('[RESEARCH] Skipped', [
+        'reason=reuse',
+        `runDir=${versionedDir}`,
+      ], { runDir: versionedDir });
+      return;
+    }
     await require('./research').main();
   });
 
@@ -3959,6 +4002,19 @@ async function main() {
   // Ensure run directory exists
   fs.mkdirSync(versionedDir, { recursive: true });
 
+  const { acquirePipelineLock } = require('./utils/pipeline-lock');
+  const lockResult = acquirePipelineLock(versionedDir, {
+    force: parseBoolEnv(process.env.PIPELINE_FORCE, false),
+    log: cliLog,
+  });
+  if (!lockResult.acquired) {
+    cliError(
+      `[Orchestrator] Run directory is locked by another orchestrator (pid=${lockResult.previousPid ?? '?'}). ` +
+      'Wait for it to finish, use `npm run pipe -- stop <RUN_ID>`, or set PIPELINE_FORCE=1 if the process is gone.'
+    );
+    process.exit(4);
+  }
+
   // Dispatch to the correct pipeline
   const pipelineArgs = {
     startIdx,
@@ -3971,6 +4027,7 @@ async function main() {
     qaThresholdOverride,
     maxRefinementIterationsOverride,
     buildFixModeOverride,
+    effectiveFromStage,
   };
 
   if (recordMode === 'studio') {
@@ -4014,7 +4071,7 @@ if (require.main === module) {
     cliError(`[Orchestrator] Fatal error: ${err.message}`);
     emitPipeEvent('pipeline_end', { status: 'failed', message: err.message });
     if (err.stack) console.error(err.stack);
-    cleanupPipelinePidFile();
+    orchestratorCleanup();
     process.exit(1);
   });
 }

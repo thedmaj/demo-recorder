@@ -9,7 +9,7 @@
  * Sub-commands:
  *   pipe                              interactive menu
  *   pipe new        [--prompt=PATH] [--with-slides|--app-only]
- *                   [--research=gapfill|deep] [--to=STAGE] [--qa-threshold=N]
+ *                   [--research=gapfill|deep] [--reuse-research] [--to=STAGE] [--qa-threshold=N]
  *                   [--max-refinement-iterations=N] [--build-fix-mode=MODE]
  *                   [--no-touchup]
  *   pipe resume     [RUN_ID] [--from=STAGE] [--to=STAGE] [--override-with-slides]
@@ -40,22 +40,18 @@ const { spawn, spawnSync } = require('child_process');
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // Load .env so PLAID_DEMO_APPS_REPO and other vars are available without
-// requiring the caller to export them in the shell first.
+// requiring the caller to export them in the shell first. Uses the shared
+// worktree-aware loader so Cursor / Claude Code git worktrees (which share
+// `.git` with the main repo but don't carry gitignored files like .env)
+// still pick up the main repo's secrets. Stays non-fatal: `pipe help`,
+// `pipe list`, etc. are useful even without secrets.
 try {
-  const dotenvPath = path.join(PROJECT_ROOT, '.env');
-  if (fs.existsSync(dotenvPath)) {
-    const lines = fs.readFileSync(dotenvPath, 'utf8').split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      const val = trimmed.slice(eq + 1).trim();
-      if (!(key in process.env)) process.env[key] = val;
-    }
+  const { loadRepoEnv } = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'dotenv-loader.js'));
+  const result = loadRepoEnv(PROJECT_ROOT, { override: false });
+  if (result.loaded && result.source && result.source !== 'project_root' && !process.env.PIPE_QUIET_ENV) {
+    console.error(`[pipe] ${result.message}`);
   }
-} catch (_) { /* non-fatal */ }
+} catch (_) { /* non-fatal — helper missing or dotenv unavailable */ }
 const INPUTS_DIR = path.join(PROJECT_ROOT, 'inputs');
 const OUT_DIR = path.join(PROJECT_ROOT, 'out');
 const DEMOS_DIR = path.join(OUT_DIR, 'demos');
@@ -486,6 +482,7 @@ async function cmdNew({ flags }) {
     }
     env.RESEARCH_MODE = String(flags.research).toLowerCase();
   }
+  if (flags['reuse-research']) env.RESEARCH_REUSE = 'true';
   if (flags['non-interactive']) env.SCRATCH_AUTO_APPROVE = 'true';
 
   console.log(c.bold('[pipe] starting new pipeline'));
@@ -514,6 +511,7 @@ async function cmdResume({ positional, flags }) {
   if (flags['no-touchup']) args.push('--no-touchup');
 
   const env = { PIPELINE_RUN_DIR: runDirFromId(runId) };
+  if (flags['reuse-research']) env.RESEARCH_REUSE = 'true';
   if (flags['non-interactive']) env.SCRATCH_AUTO_APPROVE = 'true';
 
   console.log(c.bold(`[pipe] resuming ${runId}`));

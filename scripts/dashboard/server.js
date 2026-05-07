@@ -1,6 +1,25 @@
 'use strict';
 
-require('dotenv').config({ override: true });
+// Worktree-aware .env loader — see scripts/scratch/utils/dotenv-loader.js
+// for the fallback order. Required so the dashboard picks up the main
+// repo's secrets when launched from a Cursor / Claude Code git worktree.
+(() => {
+  const pathModule = require('path');
+  const dashboardRoot = pathModule.resolve(__dirname, '../..');
+  try {
+    const { loadRepoEnv } = require(pathModule.join(
+      dashboardRoot, 'scripts', 'scratch', 'utils', 'dotenv-loader.js'
+    ));
+    const result = loadRepoEnv(dashboardRoot, { override: true });
+    if (result.loaded && result.source && result.source !== 'project_root') {
+      console.log(`[dashboard] ${result.message}`);
+    } else if (!result.loaded) {
+      console.warn(`[dashboard] ${result.message}`);
+    }
+  } catch (_) {
+    require('dotenv').config({ override: true });
+  }
+})();
 
 const express = require('express');
 const fs = require('fs');

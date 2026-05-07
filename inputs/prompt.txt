@@ -1,172 +1,111 @@
-WIZARD-COLLECTED INPUT (do not delete — research task reads these)
-===============================================================================
-Brand: American Express
-Brand domain: americanexpress.com
-Industry: Lending / consumer credit (id: lending)
-Products: Plaid CRA Base Report, Plaid Income Insights
-Per-product KB: inputs/products/plaid-cra-base-report.md, inputs/products/plaid-income-insights.md
-Plaid Link mode: embedded (in-page tile)
-Persona: Jane Foreman
-Use case (user pitch): Jane wants to apply for a Credit Card, is a thin file applicant (credit bureau), is unable to get a credit card without verifying her Income with Plaid CRA. She links her account via Plaid and is able to get approved.
-Research depth: gapfill
-Suggested run id: 2026-04-29-American-Express-Lending-consumer-credit-CRA-Base-Report-Income-Insights-v1
-===============================================================================
-
-
 
 
 ================================================================================
-PLAID DEMO PIPELINE — PROMPT TEMPLATE (APP + NARRATIVE ONLY, NO SLIDES)
+MyKidsSpending — Trusted bank linking for tuition and campus spending
 ================================================================================
 
-PURPOSE
--------
-This is an **app-only** demo for American Express showing how Plaid CRA Base Report +
-Income Insights unlocks credit card approval for thin-file applicants by verifying
-cash-flow income directly from their bank account.
+Brand URL: https://mykidsspending.com
+Canonical URL: https://mykidsspending.com/Logon
 
-The pipeline loads technical rules automatically from:
+If brand-extract fails the logo contrast gate (light logo on light host), run the pipeline with `BRAND_LOGO_CONTRAST_STRICT=false` or darkening the logo shell in the generated brand JSON.
 
-  - `CLAUDE.md`
-  - `skills/plaid-integration.skill`
-  - `skills/plaid-link-prelink-ui-skill.md`
-  - `inputs/plaid-link-sandbox.md`
-  - `inputs/products/plaid-cra-base-report.md`
-  - `inputs/products/plaid-income-insights.md`
-
-HOW TO RUN (APP-ONLY / NO-SLIDE)
---------------------------------
-1. Save this as `inputs/prompt.txt`
-2. Run the pipeline:
-
-   ```bash
-   npm run demo
-   ```
-
-   App-only is the pipeline default — no env flags required.
-
-RESEARCH DEPTH
---------------
 Research depth: gapfill
 
-================================================================================
-American Express — CRA Base Report + Income Insights — Thin-file credit card approval for Jane Foreman
-================================================================================
+-------------------------------------------------------------------------------
+HOST & PROBLEM
+-------------------------------------------------------------------------------
 
-Host: American Express — Lending / consumer credit
-Canonical URL: https://americanexpress.com
-Brand URL (optional): https://americanexpress.com
+Host: **MyKidsSpending** (Odin, Inc.) — K–12 school spending & tuition funding portal used by independent schools and families.
 
 User journey (one sentence):
-Jane Foreman, a freelance graphic designer with limited credit history, applies for
-an American Express card; when the bureau check is inconclusive, AmEx uses Plaid CRA
-to verify her cash-flow income and approves her for a $5,000 credit line.
+A parent signs into their school-branded MyKidsSpending dashboard, replaces clunky e-check and stored-bank-detail flows with a guided bank connection, verifies identity for ownership, and sees risk-aware settlement readiness so schools get paid with fewer ACH returns.
 
 Story arc (short prose):
-Jane lands on the AmEx credit card application page and fills in her details —
-income, address, SSN. Because she's a thin-file applicant, the bureau check alone
-can't support an approval. AmEx surfaces an income-verification step powered by
-Plaid: Jane links her primary checking account inside the embedded Plaid widget.
-Plaid generates a CRA consumer report and returns Income Insights showing consistent
-bi-weekly salary deposits averaging $4,200/month — exactly the ability-to-pay signal
-AmEx needs. The screen flips to an approval: $5,000 credit limit, card offered.
-
-From a Gong call on a similar gig-economy thin-file use case: "We're still able to
-calculate their income through the CRA Base Report and Income Insights product…
-based on their inflows coming directly into their bank account."
-(Resolve Advocates + Plaid: Intro)
+Families and schools lose time to manual bank verification and returned ACH debits. Odin is modernizing funding by routing parents through **modal Plaid Link** for **Plaid Instant Auth** (verified account and routing numbers), **Plaid Identity Verification (IDV)** with a clear manual-entry fallback path when automated verification cannot complete in one pass, **Plaid Assets** for real-time balance context that informs payout timing, and **Plaid Signal** for ACH risk scoring so settlement policies favor low-return, faster-money paths to schools. The demo ends with an ACCEPT-grade Signal outcome and a clear “ready to fund” state; narration may mention that Odin can later adopt **Plaid Transfer** for end-to-end ACH orchestration (future-looking beat only — no Transfer UI in scope).
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 Products featured (approved names only):
-Plaid CRA Base Report, Plaid Income Insights
+**Plaid Instant Auth**, **Plaid Identity Verification (IDV)**, **Plaid Assets**, **Plaid Signal**
 
-Solutions supported (used to query Solutions Master):
-Consumer Report Underwriting, Income Verification, Credit Card Underwriting
+Solutions supported:
+Funding
 
-Primary product family (pick one):
-cra_base_report
+Primary product family:
+funding
 
-Primary messaging file for this demo (pick one to own stats):
-inputs/products/plaid-cra-base-report.md
+Primary messaging file for this demo:
+inputs/products/plaid-auth.md (primary); inputs/products/plaid-signal.md for Signal ACH narrative
 
-Research depth:
-gapfill
+-------------------------------------------------------------------------------
+VISUAL & UX CONTRACT (FROM REFERENCE)
+-------------------------------------------------------------------------------
+
+**Dashboard mock inspiration (must inform layout, typography, and color — not copy proprietary logos verbatim if unclear):**
+- Reference screenshot: `inputs/brand-references/mykidsspending-dashboard-reference.png`
+- **Chrome:** Deep navy sidebar + top header; light gray page canvas; white rounded cards; generous whitespace.
+- **Sidebar:** School lockup area at top (“Asgard Academy” style label + crest placeholder), vertical nav: Homepage, Account activity, Fund accounts, Purchases, User settings, Contact us; subtle “Switch to old site” at bottom optional.
+- **Header:** “MyKidsSpending” wordmark area (text acceptable), school selector, Test badge, user initials avatar, Sign out.
+- **Main:** Top strip — home icon, “Homepage,” greeting “Hello, [FirstName]. Welcome to your dashboard.” Right side: Change School / compact selector.
+- **Hero account card:** Large white card with blue accent border; circular initials avatar; student name; ID and PIN labels; **balance** large with green for positive / red for negative; Autofunding row with status dot.
+- **Quick actions:** Grid of **six equal navy buttons** with white labels (examples: Fund account, Autofunding, **Bank account setup**, Purchase meal, Account activity, Order meals). **Bank account setup** is the Plaid entry — primary CTA for this demo.
+- **Student row:** Horizontal row of smaller student cards (initials, name, ID, PIN, balance coloring, autofunding).
+- **Footer zone:** Thin “Recent activity” disclosure row + FAQ teaser section title.
+
+**Host canvas:** Light neutral backgrounds for parent-facing school portal screens (per repo UX rule); reserve dark surfaces for Plaid-branded insight panels if needed.
+
+Viewport: 1440×900
+
+Plaid Link mode: **modal** (standard Link — single `plaidPhase: "launch"` step; narrator never opens Link inside the Link step — previous step ends on the button that launches Link).
 
 -------------------------------------------------------------------------------
 CONNECTION & RECORDING (CHECKLIST)
 -------------------------------------------------------------------------------
 
-[x] Live Plaid Link — single `plaidPhase: "launch"` embedded step
-[x] Link products: `cra_base_report`, `cra_income_insights`
-[x] Sandbox persona: `user_credit_profile_good` / `pass_good` at First Platypus Bank (ins_109508)
+[x] Live Plaid Link (single `plaidPhase: "launch"` step)
+[x] Products on link token include paths needed for Auth + IDV + Assets + Signal as appropriate for sandbox
+[x] Sandbox: First Platypus Bank / default persona per `inputs/plaid-link-sandbox.md`
 
 -------------------------------------------------------------------------------
-STORYBOARD BEATS (ORDER = SCRIPT ORDER, NO SLIDES)
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, APP ONLY — NO SLIDES)
 -------------------------------------------------------------------------------
-
-List screens in order. Use only host/link/insight scenes.
 
 | # | Beat Type | What the viewer sees | Narration focus | Reveal / CTA |
 |---|-----------|----------------------|-----------------|--------------|
-| 1 | host | AmEx card application landing — "Blue Cash Everyday® Card" hero, "Apply Now" CTA | Jane wants a card with real rewards. She starts the application. | She taps Apply Now. |
-| 2 | host | Application form — name, address, annual income ($52,000), SSN (last 4) pre-filled for Jane Foreman | Standard application fields; bureau is thin — income self-report alone won't clear underwriting. | She submits the form. |
-| 3 | host | "We need a bit more information" screen — AmEx explains income verification is required; embedded Plaid widget appears | Thin-file context: bureau can't confirm income, so AmEx requests bank-level verification via Plaid. | Jane links her account right here — no redirects. |
-| 4 | link | Embedded Plaid CRA/Check Link flow — Jane links First Platypus Bank checking account | (Single `plaidPhase: "launch"` step) Consent → credentials → account select — all inside the embedded widget. Narration covers entire flow in ≤35 words starting from first visible modal content. | Link complete — report generating. |
-| 5 | host | "Verifying your income…" interstitial — AmEx shows async report-ready progress indicator | CRA report generates asynchronously after Link; the lender's system waits for CHECK_REPORT_READY. | Report ready — reviewing now. |
-| 6 | host | CRA Base Report panel — account balance $3,847.22, 90-day avg inflows $4,320, avg outflows $2,910, primary account: Yes, account ownership: Verified. API endpoint: `/cra/check_report/base_report/get` shown in api-response-panel. | Base Report surfaces balances, cash-flow summary, and ownership — the underwriting foundation. | Stable cash flow confirmed. |
-| 7 | host | Income Insights panel — Income type: Salary, Employer: Creative Studio Co., Avg monthly income: $4,200, Pay frequency: Bi-weekly, Next payment: May 2, Stability: High. API endpoint: `/cra/check_report/income_insights/get` shown in api-response-panel. | Income Insights classifies salary streams, frequency, and forecasted pay — ability-to-pay in one view. | $4,200/month salary, high stability — APPROVED. |
-| 8 | host | Approval screen — "Congratulations, Jane!" — Blue Cash Everyday® Card approved, $5,000 credit limit, 3% cash back on groceries | The outcome: thin-file applicant approved with confidence because Plaid verified what the bureau couldn't. | Apply for your card today. |
+| 1 | host | Navy sidebar + header MyKidsSpending; Homepage active; greeting strip | Busy parents need one trusted place to fund campus spending without fragile bank forms | Establishes Odin’s modern portal |
+| 2 | host | Primary student card (large) with balance and Autofunding row | Legacy flows tied up tuition dollars in micro-deposits and stored credentials | Problem: friction + returns hurt schools |
+| 3 | host | Row of smaller student cards with mixed balances | Schools need confidence that funding accounts are verified and owned by the right parent | Sets stakes before bank setup |
+| 4 | host | Quick actions grid visible; hover/attention on **Bank account setup** | Odin chose Plaid to verify accounts instantly and apply risk-aware settlement rules | Transition to verification story |
+| 5 | host | Bank account setup intro panel: benefits bullets (verify ownership, reduce returns, faster settlement) — ends with user tapping **Bank account setup** | Parent chooses to connect her bank securely instead of e-check | Pre-Link narration ends on button tap |
+| 6 | link | Real Plaid Link modal (sandbox): institution → credentials → success | Returning sandbox user flow: confirms with OTP, selects checking, connects quickly — narrate **inside modal only** | Link success fires host advance |
+| 7 | host | Post-Link: masked institution + last-4 account; “Verified for payouts” state | **Plaid Instant Auth** returned verified routing and account numbers | Trust established |
+| 8 | insight | Split or card: IDV status **success** (or completed path) with key attributes listed; note manual fallback exists for edge cases | **Plaid Identity Verification (IDV)** confirms the parent against verified signals | Ownership gate cleared |
+| 9 | insight | Balances / available funds panel sourced from **Plaid Assets** context for the linked account | Schools see when money is actually available to move | Timing vs risk |
+| 10 | insight | Signal evaluation panel: ACH debit scenario; **Signal score in low-risk band — ACCEPT**; copy ties policy to fewer returns | **Plaid Signal** enables smarter settlement policy | Quantified risk outcome |
+| 11 | host | Dashboard return: Autofunding or funding CTA now **eligible** / “Ready to fund” with timestamp | Cash can move faster to the school with fewer ACH surprises | Outcome + forward-looking one-liner on future **Plaid Transfer** as Odin’s next chapter |
 
 Product-specific reminders:
-- CRA: real embedded Link; async report-ready beat (step 5) before report steps (steps 6–7).
-- Steps 6 and 7 are `host` sceneType (app-only mode forbids `insight` sceneType) but MUST set `apiResponse.endpoint` to `/cra/check_report/base_report/get` and `/cra/check_report/income_insights/get` respectively, and show the api-response-panel with realistic JSON.
-- Link pre-step (step 3) ends narration with the action that triggers the modal ("Jane links her account right here — no redirects.").
-- Link step (step 4) narrates content visible inside the modal — never the act of opening it.
-- Do NOT replace CRA Link with a simulated host form.
-- `/link/token/create` products: `cra_base_report`, `cra_income_insights`.
-- `consumer_report_permissible_purpose`: `EXTENSION_OF_CREDIT` (for credit card underwriting).
+- Signal: use realistic **low** scores for happy-path ACCEPT (e.g., single-digit to low teens); never label “Trust Index”; never show scores 82–97 as ACCEPT.
+- Link: exactly one Link launch step; modal `data-testid` contract per CLAUDE.md.
 
 Compliance / user data:
-CRA permissible purpose required: set `consumer_report_permissible_purpose` = `CREDIT_CARD_ELIGIBILITY_DETERMINATION`
-on `/link/token/create`. Call `/user/create` before token creation to establish identity context for Jane Foreman.
-CRA consumer report is FCRA-compliant — do not mix with traditional Bank Income or Payroll Income endpoints.
+School payments context — show consumer-appropriate consent copy on host screens only at a high level; no CRA permissible-purpose flow unless explicitly added later. N/A for CRA.
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-Name / role: Jane Foreman, 28, freelance graphic designer
-Company / context: Creative Studio Co. — full-time salaried role, 2 years tenure; thin credit file
-                   (no mortgage, no auto loan, 1 credit card opened 8 months ago)
-Sample on-screen fields:
-  - Annual income (self-reported): $52,000
-  - Account balance: $3,847.22
-  - 90-day avg monthly inflows: $4,320
-  - 90-day avg monthly outflows: $2,910
-  - Income type: Salary (primary)
-  - Employer: Creative Studio Co.
-  - Avg monthly income (CRA): $4,200
-  - Pay frequency: Bi-weekly
-  - Next payment date: May 2, 2026
-  - Income stability: High
-  - Approved credit limit: $5,000
-  - Card: Blue Cash Everyday® Card
+Name / role: Taylor Amon, parent / payer  
+Company / context: Asgard Academy via MyKidsSpending (Odin)  
+Sample on-screen fields: Student Albina Amon ID 30711; primary card balance about $842.50 positive (green); secondary students Hanna Abbruzzese ($18.40 overdraft red), Grace Abel $214.30, Jenna Abu-khraybeh $63.15; Signal score example 12 — ACCEPT for ACH debit scenario; institution label from Link metadata (no hardcoded bank name before Link completes).
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-American Express host app: clean white canvas, AmEx blue (#016FD0) accent,
-Helvetica Neue typography. Nav shows "americanexpress.com" wordmark top-left,
-"Sign In" top-right. Application progress stepper (3 steps: About You → Finances
-→ Decision) sits below the nav. CTA buttons use AmEx blue fill, white text.
-Keep host background white throughout — AmEx brand identity through accent color
-and typography, not dark surfaces.
-
-Viewport: 1440x900
+Follow `inputs/brand-references/mykidsspending-dashboard-reference.png` for spacing, card hierarchy, and navy `#1a2b4a`-style primary (approximate — pick accessible navy/blue accessible pair). Sans-serif UI type; rounded cards; green `#1e8e3e` positive balance red `#c5221f` negative; quick-action buttons filled navy with white label text. Single scroll column content with sidebar fixed.
 
 -------------------------------------------------------------------------------
 NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
@@ -174,18 +113,15 @@ NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
 
 This demo is APP-ONLY. Do not generate `sceneType: "slide"` steps.
 Do not add a final value-summary slide.
-End on a host outcome step (step 8 — approval screen) with clear CTA/result.
+End on a host or insight outcome step with clear CTA/result.
 
 -------------------------------------------------------------------------------
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-[x] One primary source for stats: inputs/products/plaid-cra-base-report.md
-[x] Product names and family match `CLAUDE.md`
+[x] One primary source for stats (product KB + value props as needed)
+[x] Product names match CLAUDE.md approved list
 [x] Storyboard order matches intended `goToStep` flow
 [x] No slide beats included
-[x] App-only env flags used in run command above
 
-================================================================================
 END OF SPECIFICATION
-================================================================================

@@ -10,7 +10,7 @@ use_cases:
   - "instant-account-verification"
   - "external-account-verification"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-04-27T19:52:38.282Z"
+last_ai_update: "2026-05-07T19:31:59.153Z"
 needs_review: true
 approved: true
 version: 1
@@ -135,6 +135,15 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-07 — Run: 2026-05-07-Asgard-Academy-Via-Mykidsspending-Auth-Identity-Signal-Assets-Transfer-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage (10,000+ FIs) including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs legacy matching","source":"Plaid internal"}
+- [high] {"claim":"Signal analyzes 1,000+ risk factors and surfaces 80+ predictive insights per transaction, scored on Plaid's network","source":"Integration Skill — Signal reference"}
 
 ### 2026-04-27 — Run: 2026-04-27-Chase-Bank-Retail-Online-Auth-Identity-Signal-Transfer-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**
