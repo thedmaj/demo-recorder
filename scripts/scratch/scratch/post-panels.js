@@ -414,6 +414,77 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     if (existing) existing.addEventListener('load', rerenderCurrentApiJson, { once: true });
   }
 
+  // v7: capture the REAL Plaid Link onSuccess(public_token, metadata) callback
+  // args at runtime so the JSON panel shows the actual SDK session payload —
+  // not the synthesized sandbox defaults that ship in _stepApiResponses.
+  //
+  // We monkey-patch window.Plaid.create so that ANY host app using the SDK
+  // gets its onSuccess wrapped. The original handler is still invoked
+  // identically; we just capture the args first.
+  //
+  // The synthesized panel data remains as a build-time fallback (used by
+  // build-qa / vision QA which never actually completes a real Link session,
+  // and visible if a viewer navigates to the post-link step before the SDK
+  // has fired its callback).
+  function isOnSuccessEndpoint(label) {
+    return /onSuccess|on[\\\s_-]?success/i.test(String(label || ''));
+  }
+  function refreshPanelForCurrentStep() {
+    try {
+      if (typeof window.getCurrentStep !== 'function') return;
+      var cur = (window.getCurrentStep() || '').replace(/^step-/, '');
+      if (!cur) return;
+      var ep = _eps[cur] || '';
+      if (!isOnSuccessEndpoint(ep)) return;
+      if (!window._plaidLinkOnSuccess) return;
+      var panel = document.getElementById('api-response-panel');
+      var content = document.getElementById('api-response-content');
+      var endpoint = document.getElementById('api-panel-endpoint');
+      if (!panel || !content) return;
+      // Live onSuccess: append a " — live" suffix to the endpoint label so the
+      // operator can see at a glance that the panel is showing the real SDK
+      // capture (vs the build-time sandbox fallback).
+      if (endpoint) endpoint.textContent = ep.replace(/\\s—\\s+live$/, '') + ' — live';
+      window.__lastApiJsonData = window._plaidLinkOnSuccess;
+      renderApiJson(content, window._plaidLinkOnSuccess);
+    } catch (_) {}
+  }
+  function installPlaidOnSuccessHook() {
+    if (typeof window.Plaid !== 'object' || !window.Plaid || typeof window.Plaid.create !== 'function') return false;
+    if (window.__plaidOnSuccessHookInstalled) return true;
+    window.__plaidOnSuccessHookInstalled = true;
+    var origCreate = window.Plaid.create;
+    window.Plaid.create = function(opts) {
+      try {
+        if (opts && typeof opts === 'object' && typeof opts.onSuccess === 'function') {
+          var userOnSuccess = opts.onSuccess;
+          opts.onSuccess = function(public_token, metadata) {
+            try {
+              window._plaidLinkOnSuccess = {
+                public_token: public_token,
+                metadata: metadata,
+                captured_at: new Date().toISOString(),
+              };
+              // If we are already on the post-link step (the SDK auto-advanced
+              // host UI but the panel still shows synthesized data), live-refresh.
+              refreshPanelForCurrentStep();
+            } catch (_) {}
+            return userOnSuccess.apply(this, arguments);
+          };
+        }
+      } catch (_) {}
+      return origCreate.apply(this, arguments);
+    };
+    return true;
+  }
+  // Plaid SDK script may load asynchronously; retry every 100ms for up to 15s.
+  if (!installPlaidOnSuccessHook()) {
+    var hookAttempts = 0;
+    var hookInterval = setInterval(function() {
+      if (installPlaidOnSuccessHook() || ++hookAttempts > 150) clearInterval(hookInterval);
+    }, 100);
+  }
+
   var _origGoToStep = window.goToStep;
   if (typeof _origGoToStep !== 'function') return;
   window.goToStep = function(id) {
@@ -424,13 +495,28 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     var endpoint = document.getElementById('api-panel-endpoint');
     var stepData = window._stepApiResponses && window._stepApiResponses[id];
     if (stepData) {
-      if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
-      // Unwrap so we render the response payload, not the wrapper { endpoint, response }
-      // object. Previously the wrapped goToStep rendered the full wrapper, double-printing
-      // the endpoint field and confusing the JSON layout.
-      var renderData = (stepData && typeof stepData === 'object' && stepData.response)
-        ? stepData.response
-        : stepData;
+      var endpointLabel = _eps[id] || '';
+      // v7: if this step is the synthesized onSuccess panel AND the real SDK
+      // callback has already fired, prefer the captured live payload over the
+      // build-time sandbox fallback. Operators see the real public_token,
+      // institution, account_id, mask, link_session_id that came back from
+      // the actual Plaid session.
+      var renderData;
+      var liveEndpointSuffix = '';
+      if (isOnSuccessEndpoint(endpointLabel) && window._plaidLinkOnSuccess) {
+        renderData = window._plaidLinkOnSuccess;
+        liveEndpointSuffix = ' — live';
+      } else {
+        // Unwrap so we render the response payload, not the wrapper
+        // { endpoint, response } object. Previously the wrapped goToStep
+        // rendered the full wrapper, double-printing the endpoint field.
+        renderData = (stepData && typeof stepData === 'object' && stepData.response)
+          ? stepData.response
+          : stepData;
+      }
+      if (endpoint && endpointLabel) {
+        endpoint.textContent = endpointLabel.replace(/\\s—\\s+live$/, '') + liveEndpointSuffix;
+      }
       window.__lastApiJsonData = renderData;
       // v6: respect __API_PANEL_CONFIG.collapsedByDefault (default true) so new
       // step navigation lands with the panel CHROME visible but the JSON body
@@ -613,7 +699,17 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     not already declare its own apiResponse. The payload mirrors what
   //     Plaid SDK delivers to onSuccess(public_token, metadata) and is
   //     parameterized from demo-script.plaidSandboxConfig.
-  const POST_PANELS_PATCH_VERSION = 'v6';
+  //   v7 changes vs v6:
+  //   - Live capture of the real Plaid SDK onSuccess(public_token, metadata)
+  //     callback. The patch IIFE monkey-patches window.Plaid.create so any
+  //     host app using the SDK gets its onSuccess wrapped: args are saved to
+  //     window._plaidLinkOnSuccess BEFORE the original handler runs, and the
+  //     current panel re-renders if the user is already on the post-link
+  //     step. Synthesized sandbox payload remains the fallback (build-qa
+  //     token-only mode, pre-link manual nav). When live data is present,
+  //     the panel header label gets a " — live" suffix so operators can
+  //     visually distinguish real vs synthesized in screen recordings.
+  const POST_PANELS_PATCH_VERSION = 'v7';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);

@@ -355,21 +355,31 @@ async function createLinkToken(opts = {}) {
     !legacyUserToken &&
     productListRequiresUserToken(products)
   ) {
-    const clientUserIdForBootstrap = userId;
+    // Use a unique client_user_id per bootstrap so repeated link-token calls
+    // (e.g., page reloads in the demo, or multiple build-qa probes in the
+    // same Plaid sandbox) do not collide with Plaid's "a user already exists
+    // for this client_user_id" rejection. The user-id in our internal
+    // logging stays as the supplied value; only the Plaid /user/create
+    // bootstrap call gets the suffix.
+    const bootstrapClientUserId = `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    console.log(
+      `[plaid-backend] Attempting /user/create bootstrap (client_user_id=${bootstrapClientUserId}) ` +
+      `for income-family products: ${products.filter((p) => PRODUCTS_REQUIRING_USER_TOKEN.has(String(p).toLowerCase())).join(', ')}`
+    );
     try {
       const result = await plaidPost('/user/create', {
-        client_user_id: clientUserIdForBootstrap,
+        client_user_id: bootstrapClientUserId,
       });
       plaidCheckUserId = result?.user_id || null;
       legacyUserToken = result?.user_token || null;
       console.log(
         `[plaid-backend] Bootstrapped Plaid user for income-family products ` +
-        `(user_id=${plaidCheckUserId || 'n/a'}, user_token=${legacyUserToken ? 'present' : 'absent'}). ` +
-        `Triggering products: ${products.filter((p) => PRODUCTS_REQUIRING_USER_TOKEN.has(String(p).toLowerCase())).join(', ')}.`
+        `(user_id=${plaidCheckUserId || 'n/a'}, user_token=${legacyUserToken ? 'present (' + String(legacyUserToken).slice(0, 24) + '…)' : 'absent'}, bootstrap_client_user_id=${bootstrapClientUserId}).`
       );
     } catch (e) {
       console.warn(
-        `[plaid-backend] /user/create bootstrap for income-family products failed: ${e && e.message || e}. ` +
+        `[plaid-backend] /user/create bootstrap for income-family products failed ` +
+        `(attempted client_user_id=${bootstrapClientUserId}): ${e && e.message || e}. ` +
         `Falling back to legacy /link/token/create — Plaid will likely return a "user_token required" error.`
       );
     }
@@ -390,7 +400,24 @@ async function createLinkToken(opts = {}) {
   };
   console.log(`[plaid-backend] Using client_name: "${clientName}"`);
 
-  if (plaidCheckUserId) {
+  // user_id vs user_token: which field /link/token/create accepts depends on
+  // which product path the token will exercise:
+  //   - CRA products (cra_base_report, cra_income_insights) → new `user_id`
+  //     (format `usr_xxx`), created via /user/create with a Plaid Check user.
+  //   - Non-CRA Income products (bank_income, payroll_income, document_income,
+  //     income_verification) → LEGACY `user_token` field. These products
+  //     pre-date the new Plaid Users API and Plaid rejects the new user_id
+  //     here with "user_id is not of the expected format".
+  // /user/create returns BOTH fields when called without a consumer-report
+  // identity payload, so we have to pick the right one based on the products
+  // mix. When in doubt (e.g., a legitimate CRA+Bank-Income combo if/when
+  // Plaid allows that), prefer user_token for the non-CRA income path because
+  // CRA paths can typically accept either, while income_verification cannot
+  // accept user_id.
+  const needsLegacyUserTokenField = productListRequiresUserToken(products);
+  if (needsLegacyUserTokenField && legacyUserToken) {
+    body.user_token = legacyUserToken;
+  } else if (plaidCheckUserId) {
     body.user_id = plaidCheckUserId;
   } else if (legacyUserToken) {
     body.user_token = legacyUserToken;
