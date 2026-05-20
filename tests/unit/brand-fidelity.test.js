@@ -106,6 +106,105 @@ describe('checkNavLabels', () => {
   });
 });
 
+// ─── Marketing-site IA detection (BVNK / fintech-infra false-positive fix) ──
+
+// Real-world BVNK brand profile shape — marketing-site mega-menu items glued
+// to descriptions. None of these are nav items inside the customer dashboard.
+function bvnkProfile() {
+  return {
+    name: 'BVNK',
+    slug: 'bvnk',
+    nav: {
+      _source: 'brandfetch',
+      items: [
+        { label: 'Changelog' },
+        { label: 'ReceiveGet paid in stablecoins.' },
+        { label: 'ConvertOn and offramp in one platform.' },
+        { label: 'StoreManage funds in stablecoin wallets.' },
+        { label: 'SecurityWe’re ISO 27001:2022 certified' },
+        { label: 'FintechLaunch stablecoin products' },
+        { label: 'TradingAccept crypto deposits' },
+        { label: 'GamingAccept crypto deposits' },
+        { label: 'Global payrollPay employees globally' },
+        { label: 'Digital assetsAccess virtual accounts' },
+        { label: 'API referenceStart building here' },
+        { label: 'API statusCheck out our status page' },
+        { label: 'Payments' },
+      ],
+    },
+  };
+}
+
+describe('looksLikeMarketingNav heuristic', () => {
+  test('BVNK marketing mega-menu is detected as marketing IA', () => {
+    assert.equal(BF.looksLikeMarketingNav(bvnkProfile().nav.items), true);
+  });
+
+  test('BofA customer-app dashboard nav is NOT marketing IA', () => {
+    assert.equal(BF.looksLikeMarketingNav(bofaProfile().nav.items), false);
+  });
+
+  test('typical SaaS top bar (Pricing/Docs/Sign in) is detected as marketing', () => {
+    const items = [
+      { label: 'Product' },
+      { label: 'Pricing' },
+      { label: 'Docs' },
+      { label: 'Customers' },
+      { label: 'Sign in' },
+      { label: 'Get started' },
+    ];
+    assert.equal(BF.looksLikeMarketingNav(items), true);
+  });
+
+  test('empty / missing items array returns false', () => {
+    assert.equal(BF.looksLikeMarketingNav([]), false);
+    assert.equal(BF.looksLikeMarketingNav(null), false);
+    assert.equal(BF.looksLikeMarketingNav(undefined), false);
+  });
+});
+
+describe('checkNavLabels — marketing-site IA downgrade', () => {
+  test('BVNK profile produces a single advisory warning, never critical', () => {
+    const html = '<nav>Home Virtual accounts Payouts Reports Settings</nav>';
+    const out = BF.checkNavLabels(html, bvnkProfile());
+    assert.equal(out.length, 1);
+    assert.equal(out[0].category, BF.BRAND_FIDELITY_CATEGORIES.NAV_LABEL_MISSING);
+    assert.equal(out[0].severity, 'warning');
+    assert.equal(out[0].deterministicBlocker, false);
+    assert.equal(out[0]._kind, 'marketing');
+    assert.equal(out[0]._kindSource, 'heuristic');
+    assert.match(out[0].issue, /marketing\/product IA/);
+  });
+
+  test('explicit _kind: "marketing" forces the marketing branch', () => {
+    const profile = bofaProfile();
+    profile.nav._kind = 'marketing';
+    const out = BF.checkNavLabels('<nav>Foo Bar</nav>', profile);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].severity, 'warning');
+    assert.equal(out[0].deterministicBlocker, false);
+    assert.equal(out[0]._kindSource, 'explicit');
+  });
+
+  test('explicit _kind: "customer-app" overrides the marketing heuristic', () => {
+    const profile = bvnkProfile();
+    profile.nav._kind = 'customer-app';
+    const html = '<nav>Foo Bar Baz</nav>'; // misses every label
+    const out = BF.checkNavLabels(html, profile);
+    assert.equal(out.length, 1);
+    assert.equal(out[0].severity, 'critical');
+    assert.notEqual(out[0]._kind, 'marketing');
+    assert.notEqual(out[0].deterministicBlocker, false);
+  });
+
+  test('BofA customer-app profile still flags critical at ≥60% missing', () => {
+    const html = '<nav>Foo Bar Baz</nav>';
+    const out = BF.checkNavLabels(html, bofaProfile());
+    assert.equal(out.length, 1);
+    assert.equal(out[0].severity, 'critical');
+  });
+});
+
 // ─── checkFooterDisclosures ─────────────────────────────────────────────────
 
 describe('checkFooterDisclosures', () => {

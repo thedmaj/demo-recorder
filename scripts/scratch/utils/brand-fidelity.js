@@ -52,6 +52,53 @@ function normalizeForCompare(s) {
     .trim();
 }
 
+// ─── Nav-IA classification (marketing site vs customer app) ────────────────
+
+// Common top-bar / mega-menu labels seen on B2B SaaS, fintech infrastructure,
+// and product-marketing sites. These are NOT customer-app nav items, so when a
+// brand profile is dominated by labels like these the deterministic nav-fidelity
+// check should be skipped — the demo's host UI is a customer dashboard, not a
+// reproduction of the host's marketing site.
+const MARKETING_NAV_TERMS = /^(pricing|docs|developers?|customers?|company|blog|careers|partners|contact|sign\s?in|sign\s?up|log\s?in|login|get started|start free|try (it )?free|book a demo|request a demo|changelog|api reference|api status|trust|security|enterprise|solutions|use cases|industries|resources|about|why\s+\w+|platform|products?|payments?|gaming|trading|fintech|payroll|compliance)$/i;
+
+/**
+ * Heuristic: does this nav.items[] array look like a marketing-site IA rather
+ * than a customer-app dashboard nav?
+ *
+ * Customer-app navs are short, single-word, action/object nouns
+ * ("Home", "Accounts", "Transfers", "Bill Pay"). Marketing-site navs are full
+ * of multi-word CTAs ("Get started"), product categories ("Trading", "Gaming"),
+ * sentence-style mega-menu entries ("ReceiveGet paid in stablecoins."), and
+ * site-utility links ("Pricing", "Docs", "Sign in").
+ *
+ * Returns true when at least ~60% of labels exhibit a marketing tell.
+ */
+function looksLikeMarketingNav(items) {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  let signals = 0;
+  const total = items.length;
+  for (const item of items) {
+    const label = String((item && item.label) || '').trim();
+    if (!label) continue;
+    let labelSignals = 0;
+    // Concatenated label+description (mega-menu scrape failure).
+    // e.g. "ReceiveGet paid in stablecoins." — lower-then-upper letter
+    // boundary plus terminal punctuation.
+    if (/[a-z][A-Z]/.test(label) && /[.!?]/.test(label)) labelSignals += 2;
+    // Sentence-length labels (a real customer-app nav item is rarely > 20 chars).
+    if (label.length > 24) labelSignals++;
+    // Embedded sentence punctuation (CTA / description copy).
+    if (/[.!?]/.test(label)) labelSignals++;
+    // High word count (CTA / sentence).
+    const wordCount = label.split(/\s+/).length;
+    if (wordCount >= 4) labelSignals++;
+    // Known marketing/site-utility term.
+    if (MARKETING_NAV_TERMS.test(label)) labelSignals++;
+    if (labelSignals > 0) signals++;
+  }
+  return signals >= Math.ceil(total * 0.6);
+}
+
 // ─── Check: nav labels ──────────────────────────────────────────────────────
 
 /**
@@ -63,11 +110,49 @@ function normalizeForCompare(s) {
  * Nav-label matching is case-insensitive + punctuation-tolerant. We require
  * AT LEAST 60% of the expected labels to appear in the rendered HTML's
  * text — anything below that suggests the LLM invented a different nav.
+ *
+ * Marketing-site IA detection: when the brand profile's nav looks like a
+ * marketing/product site (multi-word CTAs, sentence-style mega-menu entries,
+ * "Pricing"/"Docs"/etc.) the demo's customer-app dashboard nav will not
+ * match by design, so the check is downgraded to an advisory warning that
+ * does NOT trip the deterministic blocker gate. Operators can opt into a
+ * specific behavior via `brandProfile.nav._kind`:
+ *   - 'marketing'     → always skip deterministic enforcement
+ *   - 'customer-app'  → always enforce (overrides heuristic)
  */
 function checkNavLabels(html, brandProfile, opts = {}) {
   if (!brandProfile || !brandProfile.nav || !Array.isArray(brandProfile.nav.items)) return [];
   const expected = brandProfile.nav.items.map(it => (it && it.label) || '').filter(Boolean);
   if (expected.length === 0) return [];
+
+  const explicitKind = String((brandProfile.nav && brandProfile.nav._kind) || '').toLowerCase().trim();
+  const isExplicitlyMarketing = explicitKind === 'marketing';
+  const isExplicitlyCustomerApp = explicitKind === 'customer-app' || explicitKind === 'app';
+  const isMarketingNav = isExplicitlyMarketing
+    || (!isExplicitlyCustomerApp && looksLikeMarketingNav(brandProfile.nav.items));
+
+  if (isMarketingNav) {
+    const sample = expected.slice(0, 3).map(l => `"${l}"`).join(', ');
+    return [{
+      stepId: opts.stepId || 'host-app',
+      category: BRAND_FIDELITY_CATEGORIES.NAV_LABEL_MISSING,
+      severity: 'warning',
+      // Explicit override: never let this trip the deterministic blocker gate.
+      // The brand profile is reflecting a marketing site, not a customer app.
+      deterministicBlocker: false,
+      issue:
+        `Brand-extract harvested ${expected.length} nav label(s) from ${brandProfile.name || brandProfile.slug || 'brand'}'s public site that look like marketing/product IA, not a customer-app nav. Skipping deterministic nav-fidelity enforcement for this run.`,
+      suggestion:
+        `Sample labels: ${sample}${expected.length > 3 ? '...' : ''}. ` +
+        `These appear to be marketing-site mega-menu entries; demanding the customer-app demo render them is wrong. ` +
+        `If you want to enforce a customer-app nav contract, either (a) curate brandProfile.nav.items to dashboard labels, ` +
+        `(b) set brandProfile.nav._kind = "customer-app", or (c) define the nav inline in the demo prompt.`,
+      expectedLabels: expected,
+      _kind: 'marketing',
+      _kindSource: isExplicitlyMarketing ? 'explicit' : 'heuristic',
+      _severityDowngradedFrom: 'critical',
+    }];
+  }
 
   const text = normalizeForCompare(htmlToText(html));
   const missing = [];
@@ -179,6 +264,7 @@ module.exports = {
   runBrandFidelityChecks,
   checkNavLabels,
   checkFooterDisclosures,
+  looksLikeMarketingNav,
   htmlToText,
   normalizeForCompare,
   BRAND_FIDELITY_CATEGORIES,
