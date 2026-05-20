@@ -139,57 +139,60 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '#api-response-panel{overflow:visible !important;}',
       '#api-response-panel.api-panel-collapsed{width:48px !important;min-width:48px !important;max-width:48px !important;}',
       '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}',
-      // Edge toggle pill — large enough to read, hugs the panel's left edge,
-      // labeled with "JSON" so its purpose is obvious in a screen recording.
+      // Edge toggle — vertically centered on the panel, icon-only. The arrow
+      // points in the direction the panel will MOVE on click (right when open
+      // because the panel will collapse rightward; left when closed because
+      // the panel will expand leftward). Anchored to the panel\\'s left edge so
+      // it sits visually attached to the panel regardless of viewport width.
       '#api-response-panel .api-panel-edge-toggle{',
       '  position:absolute !important;',
-      '  left:-44px !important;',
-      '  top:24px !important;',
+      '  left:-36px !important;',
+      '  top:50% !important;',
+      '  transform:translateY(-50%) !important;',
       '  display:inline-flex !important;',
-      '  align-items:center;justify-content:center;gap:6px;',
-      '  padding:8px 10px;',
-      '  min-width:44px;',
-      '  height:auto;',
+      '  align-items:center;justify-content:center;',
+      '  width:36px;height:60px;',
+      '  padding:0;',
       '  border-radius:10px 0 0 10px;',
       '  border:1px solid rgba(0,166,126,0.6);border-right:none;',
       '  background:rgba(0,166,126,0.22);',
       '  color:#9cf8df;',
-      '  font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;',
-      '  letter-spacing:0.04em;text-transform:uppercase;',
       '  cursor:pointer;',
       '  box-shadow:0 8px 24px rgba(0,0,0,0.28);',
       '  z-index:2001;',
-      '  white-space:nowrap;',
       '  user-select:none;',
+      '  transition:background 0.16s ease,color 0.16s ease;',
       '}',
       '#api-response-panel .api-panel-edge-toggle:hover{background:rgba(0,166,126,0.34);color:#c6ffef;}',
       '#api-response-panel .api-panel-edge-toggle:focus-visible{outline:2px solid #00a67e;outline-offset:2px;}',
-      '#api-response-panel .api-panel-toggle-label{display:inline-block;vertical-align:middle;}',
+      // Directional chevron. CSS-only — drawn from two borders rotated to form
+      // an arrowhead. is-open class signals the panel is currently expanded;
+      // in that state, a click will collapse (panel moves right) so the chevron
+      // points right. Otherwise it points left (panel will expand leftward).
       '#api-response-panel .api-panel-toggle-icon{',
-      '  width:8px;height:8px;',
+      '  width:10px;height:10px;',
       '  border-top:2px solid currentColor;border-right:2px solid currentColor;',
-      '  transform:rotate(-135deg);',
-      '  display:inline-block;vertical-align:middle;',
+      '  transform:rotate(-135deg);', // default: points LEFT (collapsed state)
+      '  display:inline-block;',
       '  transition:transform 0.18s ease;',
       '}',
-      '#api-response-panel .api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}',
-      // Collapsed panel: shrink the toggle target slightly and offset left so
-      // it does not overlap the host content while the panel is a thin strip.
-      '#api-response-panel.api-panel-collapsed .api-panel-edge-toggle{left:-44px !important;top:24px !important;}',
+      '#api-response-panel .api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}', // points RIGHT
+      // Collapsed panel: keep the toggle pinned outside the thin strip and
+      // centered vertically so it remains discoverable while the panel is hidden.
+      '#api-response-panel.api-panel-collapsed .api-panel-edge-toggle{left:-36px !important;top:50% !important;transform:translateY(-50%) !important;}',
       '',
     ].join('\\n');
     document.head.appendChild(st);
   }
   ensureEdgeToggleStyles();
 
-  function renderToggleContent(open) {
-    // v3: labeled pill so the affordance reads obviously in screenshots.
-    // "Hide JSON" when open, "Show JSON" when collapsed. Chevron rotates via CSS.
-    var label = open ? 'Hide' : 'Show';
-    return (
-      '<span class="api-panel-toggle-label" aria-hidden="true">' + label + ' JSON</span>' +
-      '<span class="api-panel-toggle-icon" aria-hidden="true"></span>'
-    );
+  function renderToggleContent(/* open */) {
+    // v5: icon-only. The chevron's rotation (driven by the .is-open class on the
+    // parent button) communicates direction: arrow points RIGHT when open
+    // (panel will collapse right) and LEFT when collapsed (panel will expand
+    // left). Screen readers still get a directional aria-label via the
+    // ensurePanelToggle attributes below.
+    return '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
   }
   function ensurePanelToggle(panel) {
     if (!panel) return null;
@@ -489,7 +492,17 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     no visible toggle).
   //   - The button stores `data-post-panels-toggle-version` so re-renders on
   //     goToStep do not re-clone unnecessarily.
-  const POST_PANELS_PATCH_VERSION = 'v4';
+  //   v5 changes vs v4:
+  //   - Toggle is now centered vertically on the panel (top:50%; translateY(-50%))
+  //     so it visually anchors to the panel's geometry instead of floating at the
+  //     top corner where it can be confused with header content.
+  //   - Replaced the "Show JSON / Hide JSON" pill label with a single directional
+  //     arrow icon. The arrow points in the direction the panel will MOVE on click:
+  //       - Panel open  → click collapses it (panel moves right) → arrow points RIGHT (›)
+  //       - Panel closed → click expands it (panel moves left)  → arrow points LEFT  (‹)
+  //   - Same accessible aria-label / title text is preserved for screen readers; only
+  //     the visible affordance is now icon-only and direction-correct.
+  const POST_PANELS_PATCH_VERSION = 'v5';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);

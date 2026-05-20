@@ -39,17 +39,18 @@ const PATCHES = [
   {
     name: 'api-panel-toggle-latest',
     description:
-      'Re-runs post-panels to apply the latest JSON panel patch (v4 as of ' +
+      'Re-runs post-panels to apply the latest JSON panel patch (v5 as of ' +
       '2026-05-20). Cumulative fixes since v1: renders apiData.response (not ' +
       'the {endpoint,response} wrapper), sets __apiPanelUserOpen=true before ' +
       'renderApiJson so applyPanelSize() sizes the panel to fit content, uses ' +
       'a versioned __buildApiPanelPatchVersion flag so stale build-app IIFEs ' +
-      'no longer short-circuit the new patch, renders a labeled "Show JSON / ' +
-      'Hide JSON" pill toggle so the affordance is discoverable, and clones ' +
-      'the existing toggle node before re-binding to STRIP stale click ' +
-      'listeners (v4 — fixes the double-toggle no-op bug observed in screen ' +
-      'recordings). post-panels also strips the build-app legacy IIFE so only ' +
-      'one live patch script remains in the HTML.',
+      'no longer short-circuit the new patch, clones the existing toggle node ' +
+      'before re-binding to STRIP stale click listeners (v4 — fixes the ' +
+      'double-toggle no-op bug), and (v5) renders a vertically centered ' +
+      'icon-only chevron whose direction signals the next action: arrow points ' +
+      'RIGHT when open (panel will collapse rightward) and LEFT when collapsed ' +
+      '(panel will expand leftward). post-panels also strips the build-app ' +
+      'legacy IIFE so only one live patch script remains in the HTML.',
     matchCategories: ['panel-visibility', 'missing-panel'],
     matchIssuePatterns: [
       /api[^a-z]?(json[^a-z]?)?panel[^.]*?(clipped|cut[\s-]?off|truncated|hidden|partially obscured)/i,

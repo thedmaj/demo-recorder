@@ -220,6 +220,27 @@ When the build injects the Layer mobile mock template (`LAYER_MOCK_TEMPLATE.md` 
 All interactive elements must have `data-testid` attributes in kebab-case matching the
 `interaction.target` field in `demo-script.json`.
 
+### JSON Panel Expand/Collapse Toggle Contract (REQUIRED)
+
+The `#api-response-panel` exposes a single, deterministic expand/collapse control. The
+canonical implementation is the `post-panels` stage's `buildPanelPatchScript()` (see
+[`scripts/scratch/scratch/post-panels.js`](scripts/scratch/scratch/post-panels.js)) and
+the `api-panel-toggle-latest` patch in
+[`scripts/scratch/utils/qa-patch-library.js`](scripts/scratch/utils/qa-patch-library.js).
+**Do not hand-author a different toggle inside generated HTML** — it will be stripped
+and replaced by the post-panels stage.
+
+Visual + behavior contract (enforced by post-panels patch `v5+`):
+
+- **Single toggle node**: `<button id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle">` rendered exactly once inside `#api-response-panel`. No "Show JSON" / "Hide JSON" text label — icon-only.
+- **Position**: vertically centered on the panel via `top:50%; transform:translateY(-50%)`, anchored to the panel's left outer edge at `left:-36px`. Width 36px, height 60px. `z-index:2001` on top of host content. `!important` selectors scoped to `#api-response-panel` so LLM-generated host CSS cannot override.
+- **Icon**: a single CSS-only chevron (`.api-panel-toggle-icon` — two-border arrowhead). **Direction signals the next action**:
+  - Panel open (`.is-open` class on the button) → arrow points **RIGHT** (clicking will collapse the panel rightward).
+  - Panel collapsed → arrow points **LEFT** (clicking will expand the panel leftward).
+- **Behavior**: clicking calls `window.toggleApiPanel()`. `aria-expanded` / `aria-label` / `title` flip accordingly for screen readers ("Expand API JSON panel" ↔ "Collapse API JSON panel").
+- **Single source of truth**: `build-app.js` delegates to `post-panels.buildPanelPatchScript()` at build time. Both stages emit the same versioned IIFE, identified by `data-post-panels-patch="vN"`. The patch IIFE writes `window.__buildApiPanelPatchVersion = 'vN'` and short-circuits only on the exact same version — never on the older boolean `__buildApiPanelPatchApplied`. Older patch IIFEs and the legacy build-app unmarked emission are stripped automatically when post-panels re-runs on an existing scratch-app, so re-running the `post-panels` stage on any old run upgrades the toggle in <1s without a full rebuild.
+- **Hard contract enforcement**: a host app's panel toggle that violates this contract (text label visible, off-center vertically, missing arrow direction, hand-bound click listener) is patched by post-panels on the next run. The QA patch library entry `api-panel-toggle-latest` re-runs post-panels automatically when build-qa flags panel-visibility or panel-toggle issues.
+
 ### Manual Navigation (REQUIRED in every generated app)
 
 Every demo app must include keyboard and click-to-advance navigation so a human can drive
