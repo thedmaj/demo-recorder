@@ -3306,7 +3306,26 @@ async function main(opts = {}) {
     // Do not infer or inject ad-hoc visual styles here.
   }
   if (Object.keys(stepApiResponses).length > 0 && html.includes('</body>')) {
-    const apiPatch = `<script>
+    // Single source of truth for the panel-viewer IIFE lives in post-panels.js;
+    // build-app's own emission used to duplicate that code and drift over time
+    // (the v5 toggle-bug regression was caused by a stale build-app IIFE
+    // beating post-panels' newer patch to the `__buildApiPanelPatchApplied`
+    // flag). We now delegate to post-panels' buildPanelPatchScript at build
+    // time. post-panels still runs later as its own stage and is idempotent
+    // (versioned via __buildApiPanelPatchVersion), so a single live IIFE
+    // remains in the HTML.
+    let apiPatch;
+    try {
+      delete require.cache[require.resolve('./post-panels')];
+      const postPanels = require('./post-panels');
+      const buildPanelPatchScript = postPanels.buildPanelPatchScript;
+      if (typeof buildPanelPatchScript === 'function') {
+        apiPatch = buildPanelPatchScript(stepApiResponses, stepApiEndpoints, 'build-app');
+      }
+    } catch (e) {
+      console.warn(`[Build] Could not delegate to post-panels.buildPanelPatchScript: ${e.message}. Falling back to inline IIFE.`);
+    }
+    if (!apiPatch) apiPatch = `<script>
 (function() {
   if (window.__buildApiPanelPatchApplied) return;
   window.__buildApiPanelPatchApplied = true;

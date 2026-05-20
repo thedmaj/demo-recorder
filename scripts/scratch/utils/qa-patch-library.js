@@ -37,17 +37,26 @@ const path = require('path');
 
 const PATCHES = [
   {
-    name: 'api-panel-toggle-v2',
+    name: 'api-panel-toggle-latest',
     description:
-      'Re-runs post-panels to apply the v2 JSON panel patch ' +
-      '(unwraps `.response`, sets `__apiPanelUserOpen=true` before render so ' +
-      'applyPanelSize() can size the panel to fit content instead of clipping).',
+      'Re-runs post-panels to apply the latest JSON panel patch (v4 as of ' +
+      '2026-05-20). Cumulative fixes since v1: renders apiData.response (not ' +
+      'the {endpoint,response} wrapper), sets __apiPanelUserOpen=true before ' +
+      'renderApiJson so applyPanelSize() sizes the panel to fit content, uses ' +
+      'a versioned __buildApiPanelPatchVersion flag so stale build-app IIFEs ' +
+      'no longer short-circuit the new patch, renders a labeled "Show JSON / ' +
+      'Hide JSON" pill toggle so the affordance is discoverable, and clones ' +
+      'the existing toggle node before re-binding to STRIP stale click ' +
+      'listeners (v4 — fixes the double-toggle no-op bug observed in screen ' +
+      'recordings). post-panels also strips the build-app legacy IIFE so only ' +
+      'one live patch script remains in the HTML.',
     matchCategories: ['panel-visibility', 'missing-panel'],
     matchIssuePatterns: [
       /api[^a-z]?(json[^a-z]?)?panel[^.]*?(clipped|cut[\s-]?off|truncated|hidden|partially obscured)/i,
       /json[^a-z]?panel[^.]*?(clipped|cut[\s-]?off|truncated)/i,
-      /(expand|collapse|toggle)[^.]*?(broken|wrong|not work|missing|render)/i,
-      /panel[^a-z]?toggle[^.]*?(missing|wrong|broken|not (rendered|render))/i,
+      /(expand|collapse|toggle)[^.]*?(broken|wrong|not work|missing|render|visible|invisible)/i,
+      /panel[^a-z]?toggle[^.]*?(missing|wrong|broken|not (rendered|render|visible))/i,
+      /toggle\s+button[^.]*?(not (visible|render)|missing|invisible)/i,
     ],
     apply: async ({ runDir }) => {
       const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
@@ -70,15 +79,16 @@ const PATCHES = [
         return { applied: false, error: e.message };
       }
       const after = fs.readFileSync(htmlPath, 'utf8');
-      const hasV2 = /data-post-panels-patch="v2"/.test(after);
+      const currentVersionMatch = after.match(/data-post-panels-patch="(v[0-9]+)"/);
+      const currentVersion = currentVersionMatch ? currentVersionMatch[1] : null;
       const changed = before !== after;
       return {
-        applied: changed && hasV2,
+        applied: changed && !!currentVersion,
         summary: changed
-          ? `Re-ran post-panels; HTML updated, v2 patch present: ${hasV2}`
-          : hasV2
-            ? 'Re-ran post-panels; HTML already at v2 — no changes needed'
-            : 'Re-ran post-panels; v2 patch not detected (may be app-only or missing apiResponse)',
+          ? `Re-ran post-panels; HTML updated, current patch version: ${currentVersion || 'none'}`
+          : currentVersion
+            ? `Re-ran post-panels; HTML already at ${currentVersion} — no changes needed`
+            : 'Re-ran post-panels; no patch script detected (may be app-only or missing apiResponse)',
       };
     },
   },

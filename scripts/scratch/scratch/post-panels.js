@@ -96,7 +96,14 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
   const vTag = (typeof versionTag === 'string' && versionTag) ? versionTag : 'v1';
   return `<script data-post-panels-patch="${vTag}">
 (function() {
-  if (window.__buildApiPanelPatchApplied) return;
+  // Versioned-idempotency: re-run when the embedded patch is older than this
+  // version. The legacy build-app patch sets __buildApiPanelPatchApplied=true
+  // (boolean) which is NOT equal to 'v3'/etc., so we run anyway and overwrite
+  // its state. This is the fix for the "v2 never ran because v1 set the flag"
+  // bug observed in 2026-05-20-Buying-A-Lucid-Air-Auth-Identity-Income-v1.
+  if (window.__buildApiPanelPatchVersion === '${vTag}') return;
+  window.__buildApiPanelPatchVersion = '${vTag}';
+  // Preserve compatibility with code paths that check the old boolean flag.
   window.__buildApiPanelPatchApplied = true;
   var _resp = ${respJson};
   var _eps  = ${epsJson};
@@ -112,43 +119,124 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     window.__apiPanelUserOpen = !window.__API_PANEL_CONFIG.collapsedByDefault;
   }
   function ensureEdgeToggleStyles() {
-    if (document.getElementById('api-panel-edge-toggle-style')) return;
+    // Re-inject styles when the version changes so the v3 styles override the
+    // older small-chevron design from v1/v2. Remove the old style block first.
+    var existing = document.getElementById('api-panel-edge-toggle-style');
+    if (existing && existing.getAttribute('data-version') === '${vTag}') return;
+    if (existing) { try { existing.remove(); } catch (_) {} }
     var st = document.createElement('style');
     st.id = 'api-panel-edge-toggle-style';
-    st.textContent =
-      '.api-panel-edge-toggle{position:absolute;left:-20px;top:50%;transform:translateY(-50%);width:20px;height:64px;border-radius:10px 0 0 10px;border:1px solid rgba(0,166,126,0.55);border-right:none;background:rgba(0,166,126,0.22);color:#9cf8df;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.28);z-index:6;}' +
-      '.api-panel-edge-toggle:hover{background:rgba(0,166,126,0.30);color:#c6ffef;}' +
-      '.api-panel-toggle-icon{width:8px;height:8px;border-top:2px solid currentColor;border-right:2px solid currentColor;transform:rotate(-135deg);display:block;}' +
-      '.api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}' +
-      '#api-response-panel.api-panel-collapsed{width:22px !important;min-width:22px !important;max-width:22px !important;}' +
-      '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}' +
-      '#api-response-panel{overflow:visible;}';
+    st.setAttribute('data-version', '${vTag}');
+    // v3 styling: pill-shaped, labeled toggle attached to the panel's outer
+    // edge. Visible at a glance, clearly clickable, with a readable label so
+    // build-qa / vision QA recognizes it as an affordance. Uses very high
+    // specificity (#api-response-panel scope) and !important on layout
+    // properties so LLM-generated host CSS cannot accidentally hide it.
+    st.textContent = [
+      // Base panel rules — re-asserted at high specificity so they win over
+      // any LLM-generated CSS that may have set overflow:hidden or width
+      // constraints on .side-panel.
+      '#api-response-panel{overflow:visible !important;}',
+      '#api-response-panel.api-panel-collapsed{width:48px !important;min-width:48px !important;max-width:48px !important;}',
+      '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}',
+      // Edge toggle pill — large enough to read, hugs the panel's left edge,
+      // labeled with "JSON" so its purpose is obvious in a screen recording.
+      '#api-response-panel .api-panel-edge-toggle{',
+      '  position:absolute !important;',
+      '  left:-44px !important;',
+      '  top:24px !important;',
+      '  display:inline-flex !important;',
+      '  align-items:center;justify-content:center;gap:6px;',
+      '  padding:8px 10px;',
+      '  min-width:44px;',
+      '  height:auto;',
+      '  border-radius:10px 0 0 10px;',
+      '  border:1px solid rgba(0,166,126,0.6);border-right:none;',
+      '  background:rgba(0,166,126,0.22);',
+      '  color:#9cf8df;',
+      '  font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;',
+      '  letter-spacing:0.04em;text-transform:uppercase;',
+      '  cursor:pointer;',
+      '  box-shadow:0 8px 24px rgba(0,0,0,0.28);',
+      '  z-index:2001;',
+      '  white-space:nowrap;',
+      '  user-select:none;',
+      '}',
+      '#api-response-panel .api-panel-edge-toggle:hover{background:rgba(0,166,126,0.34);color:#c6ffef;}',
+      '#api-response-panel .api-panel-edge-toggle:focus-visible{outline:2px solid #00a67e;outline-offset:2px;}',
+      '#api-response-panel .api-panel-toggle-label{display:inline-block;vertical-align:middle;}',
+      '#api-response-panel .api-panel-toggle-icon{',
+      '  width:8px;height:8px;',
+      '  border-top:2px solid currentColor;border-right:2px solid currentColor;',
+      '  transform:rotate(-135deg);',
+      '  display:inline-block;vertical-align:middle;',
+      '  transition:transform 0.18s ease;',
+      '}',
+      '#api-response-panel .api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}',
+      // Collapsed panel: shrink the toggle target slightly and offset left so
+      // it does not overlap the host content while the panel is a thin strip.
+      '#api-response-panel.api-panel-collapsed .api-panel-edge-toggle{left:-44px !important;top:24px !important;}',
+      '',
+    ].join('\\n');
     document.head.appendChild(st);
   }
   ensureEdgeToggleStyles();
 
+  function renderToggleContent(open) {
+    // v3: labeled pill so the affordance reads obviously in screenshots.
+    // "Hide JSON" when open, "Show JSON" when collapsed. Chevron rotates via CSS.
+    var label = open ? 'Hide' : 'Show';
+    return (
+      '<span class="api-panel-toggle-label" aria-hidden="true">' + label + ' JSON</span>' +
+      '<span class="api-panel-toggle-icon" aria-hidden="true"></span>'
+    );
+  }
   function ensurePanelToggle(panel) {
     if (!panel) return null;
-    var btn = panel.querySelector('#api-panel-toggle, [data-testid="api-panel-toggle"]');
-    if (!btn) {
+    var existing = panel.querySelector('#api-panel-toggle, [data-testid="api-panel-toggle"]');
+    var btn;
+    if (existing) {
+      // CRITICAL: clone-and-replace to STRIP any stale listeners attached by
+      // the original LLM-generated HTML's DOMContentLoaded handler (or by an
+      // older v1/v2 post-panels patch). Without this, the original listener
+      // and our v3 listener both fire on click and the state toggles twice
+      // (net effect: no visible change). Clone preserves all attributes and
+      // innerHTML but drops all event listeners — exactly what we want.
+      if (existing.dataset.postPanelsToggleVersion !== '${vTag}') {
+        btn = existing.cloneNode(true);
+        if (existing.parentNode) existing.parentNode.replaceChild(btn, existing);
+        else { existing.remove(); panel.appendChild(btn); }
+      } else {
+        btn = existing;
+      }
+    } else {
       btn = document.createElement('button');
       btn.id = 'api-panel-toggle';
       btn.setAttribute('data-testid', 'api-panel-toggle');
       btn.className = 'api-panel-edge-toggle';
       btn.type = 'button';
-      btn.innerHTML = '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
+      panel.appendChild(btn);
+    }
+    // Always rewrite className + innerHTML so older v1/v2 buttons get the v3
+    // pill chrome (label + icon). Idempotent — re-renders to the same DOM.
+    if (!String(btn.className || '').split(/\\s+/).includes('api-panel-edge-toggle')) {
+      btn.classList.add('api-panel-edge-toggle');
+    }
+    var desiredHtml = renderToggleContent(!!window.__apiPanelUserOpen);
+    if (btn.innerHTML !== desiredHtml) btn.innerHTML = desiredHtml;
+    // Bind the v3 click listener exactly once. The version marker on the
+    // dataset prevents the clone+rebind cycle from running on every goToStep.
+    if (btn.dataset.postPanelsToggleVersion !== '${vTag}') {
       btn.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
         window.toggleApiPanel();
       });
-      panel.appendChild(btn);
-    }
-    if (!btn.querySelector('.api-panel-toggle-icon')) {
-      btn.innerHTML = '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
+      btn.dataset.postPanelsToggleVersion = '${vTag}';
     }
     btn.setAttribute('aria-expanded', window.__apiPanelUserOpen ? 'true' : 'false');
     btn.setAttribute('aria-label', window.__apiPanelUserOpen ? 'Collapse API JSON panel' : 'Expand API JSON panel');
+    btn.setAttribute('title', window.__apiPanelUserOpen ? 'Collapse API JSON panel' : 'Expand API JSON panel');
     if (window.__apiPanelUserOpen) btn.classList.add('is-open');
     else btn.classList.remove('is-open');
     return btn;
@@ -386,23 +474,47 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   }
 
   // Version stamp so we can rewrite older buggy patches in already-built scratch-apps.
-  // Bump when the embedded patch script is updated (e.g., the v2 fix that rendered
-  // `data` instead of `data.response` and swapped the apiPanelUserOpen / render order).
-  const POST_PANELS_PATCH_VERSION = 'v2';
+  // Bump when the embedded patch script is updated.
+  //   v3 changes vs v2:
+  //   - Versioned `__buildApiPanelPatchVersion` flag (not the old plain boolean
+  //     `__buildApiPanelPatchApplied`) so a stale v1 IIFE from build-app no
+  //     longer short-circuits the post-panels patch.
+  //   - Labeled "Show JSON / Hide JSON" pill toggle instead of a tiny chevron.
+  //   - Stripper also removes the build-app legacy IIFE.
+  //   v4 changes vs v3:
+  //   - ensurePanelToggle now clones-and-replaces the existing toggle button to
+  //     STRIP stale click listeners attached by the original LLM-generated
+  //     DOMContentLoaded handler. Without the clone, that listener and the v3
+  //     listener both fired on every click, flipping state twice (net effect:
+  //     no visible toggle).
+  //   - The button stores `data-post-panels-toggle-version` so re-renders on
+  //     goToStep do not re-clone unnecessarily.
+  const POST_PANELS_PATCH_VERSION = 'v4';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
-  const hasAnyPatch =
-    /data-post-panels-patch/.test(html) || /window\.__buildApiPanelPatchApplied/.test(html);
+  const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);
+  // build-app.js emits a near-identical patch IIFE without a data attribute.
+  // Recognize it via its stable opener so post-panels can strip the duplicate.
+  const buildAppPatchRegex =
+    /<script>\s*\(function\(\)\s*\{\s*if\s*\(window\.__buildApiPanelPatchApplied\)\s*return;\s*window\.__buildApiPanelPatchApplied\s*=\s*true;[\s\S]*?<\/script>/g;
+  const hasBuildAppLegacyPatch = buildAppPatchRegex.test(html);
+  buildAppPatchRegex.lastIndex = 0; // reset for the replace pass below
+  const hasAnyPatch = hasAnyPostPanelsPatch || hasBuildAppLegacyPatch;
 
   if (hasAnyApiData && html.includes('</body>') && !hasCurrentPatch) {
-    // If an OLDER version of the patch is present, strip it before injecting the new one.
-    // This lets older runs pick up fixes when post-panels is re-run on their scratch-app.
-    if (hasAnyPatch) {
+    // Strip stale post-panels patches AND the build-app legacy duplicate so
+    // the new patch can run cleanly. Both are idempotent and inject the same
+    // step-API data, so dropping them is safe.
+    if (hasAnyPostPanelsPatch) {
       html = html.replace(
         /<script data-post-panels-patch[\s\S]*?<\/script>\s*/g,
         ''
       );
       changes.replacedStalePatch = true;
+    }
+    if (hasBuildAppLegacyPatch) {
+      html = html.replace(buildAppPatchRegex, '');
+      changes.replacedBuildAppLegacyPatch = true;
     }
     const patch = buildPanelPatchScript(responses, endpoints, POST_PANELS_PATCH_VERSION);
     html = html.replace('</body>', `${patch}\n</body>`);

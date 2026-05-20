@@ -10,7 +10,7 @@ const lib = require(path.join(__dirname, '../../scripts/scratch/utils/qa-patch-l
 // ─── findApplicablePatches ──────────────────────────────────────────────────
 
 describe('findApplicablePatches', () => {
-  test('matches api-panel-toggle-v2 on panel-visibility category', () => {
+  test('matches api-panel-toggle-latest on panel-visibility category', () => {
     const report = {
       steps: [
         {
@@ -22,13 +22,13 @@ describe('findApplicablePatches', () => {
       ],
     };
     const matches = lib.findApplicablePatches(report);
-    assert.ok(matches.find((m) => m.patch.name === 'api-panel-toggle-v2'));
-    const m = matches.find((m) => m.patch.name === 'api-panel-toggle-v2');
+    assert.ok(matches.find((m) => m.patch.name === 'api-panel-toggle-latest'));
+    const m = matches.find((m) => m.patch.name === 'api-panel-toggle-latest');
     assert.deepEqual(m.matchedCategories, ['panel-visibility']);
     assert.deepEqual(m.matchedSteps, ['bank-income-review']);
   });
 
-  test('matches api-panel-toggle-v2 on "JSON panel clipped" issue text', () => {
+  test('matches api-panel-toggle-latest on "JSON panel clipped" issue text', () => {
     const report = {
       steps: [
         {
@@ -42,7 +42,23 @@ describe('findApplicablePatches', () => {
       ],
     };
     const matches = lib.findApplicablePatches(report);
-    assert.ok(matches.find((m) => m.patch.name === 'api-panel-toggle-v2'));
+    assert.ok(matches.find((m) => m.patch.name === 'api-panel-toggle-latest'));
+  });
+
+  test('matches api-panel-toggle-latest on "toggle button not visible" issue text', () => {
+    // The exact phrasing from the user report that drove the v3 patch.
+    const report = {
+      steps: [
+        {
+          stepId: 'bank-income-review',
+          score: 80,
+          categories: [],
+          issues: ['Expand / collapse toggle button on JSON panel is not visible.'],
+        },
+      ],
+    };
+    const matches = lib.findApplicablePatches(report);
+    assert.ok(matches.find((m) => m.patch.name === 'api-panel-toggle-latest'));
   });
 
   test('matches plaid-launch-cta-icon-ratio on category + issue', () => {
