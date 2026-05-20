@@ -1298,6 +1298,15 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
     : qaReport?.deterministicPassed != null
       ? !!qaReport.deterministicPassed
       : true;
+  // Honor BUILD_QA_DETERMINISTIC_GATE=false so the gate's iteration trigger
+  // turns off everywhere, not just inside the QA report writer. Source of truth
+  // is qaResult/qaReport.deterministicGateEnabled (set by build-qa from env).
+  const deterministicGateEnabled = qaResult?.deterministicGateEnabled != null
+    ? !!qaResult.deterministicGateEnabled
+    : qaReport?.deterministicGateEnabled != null
+      ? !!qaReport.deterministicGateEnabled
+      : true;
+  const deterministicBlockerEffective = !deterministicPassed && deterministicGateEnabled;
   const deterministicBlockerCount = Number(
     qaResult?.deterministicBlockerCount ??
     qaResult?.deterministicCriticalCount ??
@@ -1325,8 +1334,10 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
     if (qaReport && typeof qaReport.overrideReason === 'string' && qaReport.overrideReason.trim()) {
       reasons.push('advisory:build_qa_guardrail_override');
     }
-    if (!deterministicPassed) {
+    if (deterministicBlockerEffective) {
       reasons.push('advisory:deterministic_blocker_gate');
+    } else if (!deterministicPassed && !deterministicGateEnabled) {
+      reasons.push('advisory:deterministic_blockers_present_gate_disabled');
     }
     const failingDistinctSteps = new Set(
       stepsWithIssues.map((s) => s?.stepId).filter(Boolean)
@@ -1347,9 +1358,15 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
       evaluatedMode = 'fullbuild';
       reasons.push('build_qa_guardrail_override');
     }
-    if (!deterministicPassed) {
+    if (deterministicBlockerEffective) {
       evaluatedMode = 'fullbuild';
       reasons.push('deterministic_blocker_gate');
+    } else if (!deterministicPassed && !deterministicGateEnabled) {
+      // Deterministic blockers exist but the gate is explicitly disabled via
+      // BUILD_QA_DETERMINISTIC_GATE=false. Do NOT promote to fullbuild on this
+      // signal alone — log the bypass for audit and continue with the
+      // requested fix mode (smart-patch can still address the issues).
+      reasons.push('deterministic_blockers_present_gate_disabled');
     }
     const failingDistinctSteps = new Set(
       stepsWithIssues.map((s) => s?.stepId).filter(Boolean)
@@ -2561,9 +2578,19 @@ async function runScratchPipeline({
         }
       } catch (_) {}
       const qaScore = Number(phaseQaResult?.overallScore || 0);
+      // Honor BUILD_QA_DETERMINISTIC_GATE=false: when the gate is explicitly
+      // disabled, do not require deterministicPassed for the iteration to be
+      // considered passed. The QA report's `passed` field already reflects the
+      // gate state, but we intentionally re-check `deterministicPassed` here as
+      // a defense-in-depth signal — and that secondary check must also honor
+      // the gate flag, otherwise BUILD_QA_DETERMINISTIC_GATE=false has no
+      // effect on the orchestrator's iteration loop.
+      const phaseDeterministicGateEnabled = phaseQaResult?.deterministicGateEnabled !== false;
+      const phaseDeterministicOk =
+        !phaseDeterministicGateEnabled || phaseQaResult?.deterministicPassed !== false;
       const phasePassed =
         phaseQaResult?.passed === true &&
-        phaseQaResult?.deterministicPassed !== false &&
+        phaseDeterministicOk &&
         qaScore >= phaseQaThreshold;
       if (phasePassed) {
         cliLog(
@@ -2573,9 +2600,12 @@ async function runScratchPipeline({
         break;
       }
       if (iter < phaseIterationCap) {
+        const deterministicNote = phaseDeterministicGateEnabled
+          ? `deterministicPassed=${phaseQaResult?.deterministicPassed !== false}`
+          : `deterministicPassed=${phaseQaResult?.deterministicPassed !== false} (gate disabled)`;
         cliWarn(
           `[Orchestrator] Build phase "${phaseMode}" iteration ${iter} did not pass ` +
-          `(score=${qaScore}, deterministicPassed=${phaseQaResult?.deterministicPassed !== false}).`
+          `(score=${qaScore}, ${deterministicNote}).`
         );
       }
     }
