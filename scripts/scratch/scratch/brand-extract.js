@@ -95,16 +95,38 @@ function writeRunMeta(payload) {
   }
 }
 
+// Pulls a clean host-brand name out of a `Host:` line in the prompt body.
+// Patterns we recognize (case-insensitive):
+//   Host: Bank of America — consumer auto lending
+//   **Host:** **U.S. Bank** - banking / small business
+//   Host: "BVNK" — fintech / stablecoin
+// Returns the trimmed brand name (stripped of markdown bold + surrounding quotes),
+// or null if no `Host:` line is found.
+function extractHostBrandFromPrompt(promptText) {
+  if (!promptText || typeof promptText !== 'string') return null;
+  const m = promptText.match(/^\s*\**\s*Host\s*\**\s*:\s*\**\s*([^\n]+)/im);
+  if (!m) return null;
+  let line = String(m[1] || '').trim();
+  // Drop everything after the first em-dash / en-dash / hyphen used as a
+  // separator (which typically introduces the industry / segment qualifier).
+  line = line.split(/\s+[—–\-]\s+/, 1)[0];
+  // Strip markdown bold, surrounding quotes, and a trailing colon.
+  line = line.replace(/\*\*/g, '').replace(/^[`"'“”]+|[`"'“”]+$/g, '').replace(/[:;]\s*$/, '').trim();
+  return line || null;
+}
+
 function loadContext(options) {
   const quiet = options && options.quiet === true;
   let company = null;
+  let personaCompany = null;
+  let hostBrand = null;
   let brandUrl = null;
   let promptText = '';
 
   if (fs.existsSync(SCRIPT_FILE)) {
     try {
       const script = JSON.parse(fs.readFileSync(SCRIPT_FILE, 'utf8'));
-      company = script.persona?.company || null;
+      personaCompany = script.persona?.company || null;
     } catch (_) {}
   }
 
@@ -115,7 +137,23 @@ function loadContext(options) {
         (ingest.texts || []).map(t => t.content || '').join('\n');
       const urlMatch = promptText.match(/Brand\s+URL\s*:\s*(https?:\/\/\S+)/i);
       if (urlMatch) brandUrl = urlMatch[1].replace(/[.,;]+$/, '');
+      hostBrand = extractHostBrandFromPrompt(promptText);
     } catch (_) {}
+  }
+
+  // Prefer the explicit `Host:` line from the prompt over persona.company,
+  // because the script generator sometimes invents persona.company as
+  // "<Host> (<Sub-vertical detail>)" e.g.
+  //   "Bank of America (Auto Lending — Lucid captive program)"
+  // which then becomes the brand-profile slug + asset key. Using the bare
+  // host name ("Bank of America") keeps Brandfetch lookups, profile filenames,
+  // and downstream nav-fidelity expectations stable across runs.
+  company = hostBrand || personaCompany || null;
+  if (hostBrand && personaCompany && hostBrand !== personaCompany && !quiet) {
+    console.log(
+      `[BrandExtract] Host-brand resolution: using prompt Host="${hostBrand}" ` +
+      `over persona.company="${personaCompany}".`
+    );
   }
 
   if (!brandUrl) {
@@ -126,7 +164,7 @@ function loadContext(options) {
     }
   }
 
-  return { company, brandUrl };
+  return { company, brandUrl, hostBrand, personaCompany };
 }
 
 // ── Brandfetch API lookup ─────────────────────────────────────────────────────

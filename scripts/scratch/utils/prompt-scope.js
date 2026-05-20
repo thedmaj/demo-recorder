@@ -5,7 +5,40 @@
  * keyword rules so disclaimers ("no CRA consumer report …") do not select CRA.
  */
 
-const KNOWN_FAMILIES = new Set(['funding', 'cra_base_report', 'income_insights']);
+// Known product-family slugs the explicit "Primary product family" prompt field
+// may reference. Mirrors PRODUCT_FAMILIES keys in product-profiles.js. When a
+// new family is added there, add it here too so prompts can opt into it
+// explicitly. The keyword-inference heuristic below intentionally still maps
+// most prompts to the legacy `funding | cra_base_report | income_insights` set
+// for back-compat; new families only fire when authors set them explicitly.
+const KNOWN_FAMILIES = new Set([
+  // Legacy / heuristic-mapped:
+  'funding',
+  'cra_base_report',
+  'income_insights',
+  // 2026 expansion:
+  'bank_income',
+  'assets',
+  'cra_underwriting',
+  'cra_lend_score',
+  'cra_network_insights',
+  'cra_cashflow_insights',
+  'cra_partner_insights',
+  'cra_cashflow_updates',
+  'cra_home_lending',
+  'investments_move',
+  'investments',
+  'liabilities',
+  'transactions',
+  'recurring_transactions',
+  'enrich',
+  'identity_verification',
+  'transfer',
+  'guaranteed_ach',
+  'monitor',
+  'plaid_protect',
+  'cash_advance_score',
+]);
 
 /**
  * @param {string} line
@@ -80,16 +113,25 @@ function normalizeFamilyCandidate(raw) {
   const lower = s.toLowerCase();
   if (/pick one|aligns with pipeline|pipeline profiles/i.test(lower) && /\|/.test(s)) return null;
   if (/^other\b/.test(lower)) return null;
+  // Template placeholder list like "funding | cra_base_report | income_insights | other"
+  // — when multiple legacy-family slugs appear with pipes, treat as unfilled.
   if (/\|/.test(s) && /(funding|cra_base_report|income_insights)/i.test(s)) return null;
-  const m = lower.match(/^(funding|cra_base_report|income_insights)\b/);
-  if (m && KNOWN_FAMILIES.has(m[1])) return m[1];
+  // Match any known family slug from KNOWN_FAMILIES (longest-first so e.g.
+  // `cra_cashflow_insights` is not shadowed by `cra`). Slugs are case-insensitive
+  // and may use either underscore or hyphen separators in author prose.
+  const normalized = lower.replace(/[-\s]/g, '_');
+  const sortedFamilies = [...KNOWN_FAMILIES].sort((a, b) => b.length - a.length);
+  for (const fam of sortedFamilies) {
+    const re = new RegExp(`^${fam}\\b`);
+    if (re.test(normalized)) return fam;
+  }
   return null;
 }
 
 /**
  * Read **Primary product family** from a story-first prompt.
  * @param {string} promptText
- * @returns {'funding'|'cra_base_report'|'income_insights'|null}
+ * @returns {string|null}  Any slug from KNOWN_FAMILIES, or null when none matches.
  */
 function parseExplicitPrimaryProductFamily(promptText) {
   const t = String(promptText || '');
@@ -112,14 +154,38 @@ function parseExplicitPrimaryProductFamily(promptText) {
 /**
  * Legacy ordered keyword inference (full string, no template / negation). For short fragments
  * (e.g. demoScript fields) where compliance sections do not apply.
+ *
+ * The order matters — specific endpoint and product names are checked first so a
+ * non-CRA Bank Income prompt that mentions "income" doesn't get routed to the
+ * `income_insights` (CRA) family by accident. Returns `'generic'` when nothing
+ * matches.
+ *
  * @param {string} text
- * @returns {'funding'|'cra_base_report'|'income_insights'|'generic'}
+ * @returns {string}
  */
 function inferProductFamilyFromKeywordsOnly(text = '') {
   const lower = String(text || '').toLowerCase();
-  if (/\b(cra income insights|income insights|cra_income_insights)\b/.test(lower)) {
+
+  // Non-CRA Bank Income FIRST: the /credit/bank_income/get endpoint is the
+  // canonical signal. We check this before the generic "income insights" rule
+  // so prompts mentioning "bank income" or that endpoint do not accidentally
+  // get routed to the CRA income_insights family (which has a different setup
+  // contract and would fail validation).
+  if (/\bbank[\s_-]?income\b/.test(lower) || /\/credit\/bank_income\/get\b/.test(lower)) {
+    return 'bank_income';
+  }
+
+  // CRA Income Insights requires the CRA qualifier or the CRA endpoint to fire.
+  // Bare "income insights" without CRA framing is ambiguous and should NOT
+  // route to CRA; let the explicit "Primary product family" prompt field win
+  // when the author intends CRA.
+  if (/\b(cra income insights|cra_income_insights)\b/.test(lower)) {
     return 'income_insights';
   }
+  if (/\/cra\/check_report\/income_insights\/get\b/.test(lower)) {
+    return 'income_insights';
+  }
+
   if (/\b(base report|consumer report|check base report|cra base report)\b/.test(lower)) {
     return 'cra_base_report';
   }
@@ -164,11 +230,12 @@ function textHasPositiveIncomeInsightsKeywordSignal(promptText) {
  * Effective product family for a full author prompt: explicit Primary product family wins;
  * otherwise negation-safe keyword pass on text with Compliance section stripped.
  * @param {string} promptText
- * @returns {'funding'|'cra_base_report'|'income_insights'|'generic'}
+ * @returns {string}  Any KNOWN_FAMILIES slug, or 'generic'.
  */
 function getEffectiveProductFamily(promptText) {
   const explicit = parseExplicitPrimaryProductFamily(promptText);
-  if (explicit === 'funding' || explicit === 'cra_base_report' || explicit === 'income_insights') {
+  // Any explicitly declared known family wins — including the new 2026 families.
+  if (explicit && KNOWN_FAMILIES.has(explicit)) {
     return explicit;
   }
 

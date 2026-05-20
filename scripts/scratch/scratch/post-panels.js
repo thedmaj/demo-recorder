@@ -90,10 +90,11 @@ function collectStepApiResponses(demoScript, { onlyStepIds } = {}) {
   return { responses, endpoints };
 }
 
-function buildPanelPatchScript(responses, endpoints) {
+function buildPanelPatchScript(responses, endpoints, versionTag) {
   const respJson = JSON.stringify(responses).replace(/</g, '\\u003c');
   const epsJson = JSON.stringify(endpoints).replace(/</g, '\\u003c');
-  return `<script data-post-panels-patch>
+  const vTag = (typeof versionTag === 'string' && versionTag) ? versionTag : 'v1';
+  return `<script data-post-panels-patch="${vTag}">
 (function() {
   if (window.__buildApiPanelPatchApplied) return;
   window.__buildApiPanelPatchApplied = true;
@@ -240,13 +241,24 @@ function buildPanelPatchScript(responses, endpoints) {
     if (!panel) return;
     var content = document.getElementById('api-response-content');
     var endpoint = document.getElementById('api-panel-endpoint');
-    var data = window._stepApiResponses && window._stepApiResponses[id];
-    if (data) {
+    var stepData = window._stepApiResponses && window._stepApiResponses[id];
+    if (stepData) {
       if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
-      window.__lastApiJsonData = data;
-      if (content) renderApiJson(content, data);
+      // Unwrap so we render the response payload, not the wrapper { endpoint, response }
+      // object. Previously the wrapped goToStep rendered the full wrapper, double-printing
+      // the endpoint field and confusing the JSON layout.
+      var renderData = (stepData && typeof stepData === 'object' && stepData.response)
+        ? stepData.response
+        : stepData;
+      window.__lastApiJsonData = renderData;
+      // CRITICAL ORDER: set __apiPanelUserOpen=true BEFORE renderApiJson — applyPanelSize()
+      // early-returns when __apiPanelUserOpen is false, so doing this in the previous order
+      // left the panel clipped (the bug v5 surfaced: bank_income_id / institution_name /
+      // employer fields cut off mid-string). Open the panel via setPanelVisibility, then
+      // render — applyPanelSize will now size to fit the JSON content.
       window.__apiPanelUserOpen = true;
       setPanelVisibility(panel, true);
+      if (content) renderApiJson(content, renderData);
     } else {
       panel.style.setProperty('display', 'none', 'important');
       panel.classList.remove('api-panel-collapsed');
@@ -373,14 +385,30 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
     }
   }
 
-  const alreadyHasPatch =
+  // Version stamp so we can rewrite older buggy patches in already-built scratch-apps.
+  // Bump when the embedded patch script is updated (e.g., the v2 fix that rendered
+  // `data` instead of `data.response` and swapped the apiPanelUserOpen / render order).
+  const POST_PANELS_PATCH_VERSION = 'v2';
+  const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
+  const hasCurrentPatch = html.includes(patchMarker);
+  const hasAnyPatch =
     /data-post-panels-patch/.test(html) || /window\.__buildApiPanelPatchApplied/.test(html);
-  if (hasAnyApiData && html.includes('</body>') && !alreadyHasPatch) {
-    const patch = buildPanelPatchScript(responses, endpoints);
+
+  if (hasAnyApiData && html.includes('</body>') && !hasCurrentPatch) {
+    // If an OLDER version of the patch is present, strip it before injecting the new one.
+    // This lets older runs pick up fixes when post-panels is re-run on their scratch-app.
+    if (hasAnyPatch) {
+      html = html.replace(
+        /<script data-post-panels-patch[\s\S]*?<\/script>\s*/g,
+        ''
+      );
+      changes.replacedStalePatch = true;
+    }
+    const patch = buildPanelPatchScript(responses, endpoints, POST_PANELS_PATCH_VERSION);
     html = html.replace('</body>', `${patch}\n</body>`);
     changes.addedPatchScript = true;
     changes.stepsHydrated = Object.keys(responses).length;
-  } else if (hasAnyApiData && alreadyHasPatch) {
+  } else if (hasAnyApiData && hasCurrentPatch) {
     changes.alreadyNormalized = true;
     changes.stepsHydrated = Object.keys(responses).length;
   }

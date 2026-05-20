@@ -2557,6 +2557,20 @@ async function runScratchPipeline({
       // surgical StrReplace edits to the existing scratch-app and resumes
       // the orchestrator with `pipe continue <RUN_ID>`.
       const isAgentTouchupIter = fixModeDecision.executedMode === 'agent-touchup' && iter > 1;
+      // When the QA patch library applied deterministic patches on the prior
+      // iteration, skip the LLM build — the patches mutated the existing
+      // scratch-app, so we just want to re-walk build-qa to see if findings
+      // cleared. This avoids a costly fullbuild when a tiny code-level fix
+      // would do.
+      const skipBuildForPatch =
+        iter > 1 && process.env.__ORCH_SKIP_NEXT_BUILD === 'true';
+      if (skipBuildForPatch) {
+        cliLog(
+          `[Orchestrator] Iteration ${iter}: skipping build stage — ` +
+          `deterministic patches applied on prior iteration. Re-running build-qa on patched HTML.`
+        );
+        delete process.env.__ORCH_SKIP_NEXT_BUILD;
+      }
       if (isAgentTouchupIter) {
         const gateResult = await runAgentTouchupGate({
           runDir: versionedDir,
@@ -2570,7 +2584,7 @@ async function runScratchPipeline({
         }
         // After the gate releases (agent edited + ran `pipe continue`),
         // fall through to the build-qa step below to re-score the run.
-      } else if (shouldRun('build')) {
+      } else if (!skipBuildForPatch && shouldRun('build')) {
         let buildError = null;
         await runStage('build', async () => {
           try {
@@ -2696,6 +2710,45 @@ async function runScratchPipeline({
           `[Orchestrator] Build phase "${phaseMode}" iteration ${iter} did not pass ` +
           `(score=${qaScore}, ${deterministicNote}).`
         );
+
+        // ── Deterministic QA patch library ──────────────────────────────
+        // Before the LLM iterates, see if any known deterministic patches
+        // (e.g., api-panel-toggle-v2, plaid-launch-cta-icon-ratio) can fix
+        // the QA findings without a rebuild. Patches are tiny, idempotent,
+        // and tracked in qa-patch-history.json for audit. If at least one
+        // patch is applied, the next iteration's `build` stage is skipped
+        // for non-fullbuild fix-modes — we just re-run build-qa on the
+        // patched HTML to see if it cleared the findings.
+        try {
+          const patchLib = require('./utils/qa-patch-library');
+          const matches = patchLib.findApplicablePatches(phaseQaResult);
+          if (matches.length > 0) {
+            cliLog(
+              `[Orchestrator] QA patch library: ${matches.length} candidate(s) ` +
+              `(${matches.map((m) => m.patch.name).join(', ')})`
+            );
+            const patchOut = await patchLib.applyPatches({
+              runDir: versionedDir,
+              matches,
+              iteration: `${phaseMode}-${iter}`,
+            });
+            if (patchOut.applied > 0) {
+              cliLog(
+                `[Orchestrator] Applied ${patchOut.applied} deterministic patch(es): ` +
+                patchOut.results.filter((r) => r.applied).map((r) => r.name).join(', ')
+              );
+              // Mark that the next iteration's build stage should be skipped.
+              process.env.__ORCH_SKIP_NEXT_BUILD = 'true';
+            } else {
+              cliLog(
+                `[Orchestrator] QA patch library: no patches applied this iteration ` +
+                `(${patchOut.results.map((r) => `${r.name}=${r.applied ? 'ok' : 'noop'}`).join(', ')})`
+              );
+            }
+          }
+        } catch (patchErr) {
+          cliWarn(`[Orchestrator] QA patch library failed: ${patchErr && patchErr.message || patchErr}`);
+        }
       }
     }
   };

@@ -306,6 +306,30 @@ function resolveLinkMode(opts = {}) {
   return resolveMode({ explicitMode: opts.linkMode || opts.link_mode, promptText: '' });
 }
 
+// Products that require a Plaid user_token (from /user/create) before
+// /link/token/create. CRA / Plaid Check products have their own dedicated
+// `createCraLinkToken` path; the products listed here are NON-CRA flows that
+// still require user_token plumbing — most notably the modern Bank Income and
+// Payroll Income paths (Income product family, FCRA-compliant flow).
+//
+// When createLinkToken sees one of these products in opts.products WITHOUT an
+// existing user_token / user_id, it bootstraps a Plaid user inline and passes
+// the resulting user_token through.
+const PRODUCTS_REQUIRING_USER_TOKEN = new Set([
+  'bank_income',
+  'payroll_income',
+  'document_income',
+  'income_verification',
+]);
+
+function productListRequiresUserToken(products) {
+  if (!Array.isArray(products)) return false;
+  for (const p of products) {
+    if (PRODUCTS_REQUIRING_USER_TOKEN.has(String(p).toLowerCase())) return true;
+  }
+  return false;
+}
+
 async function createLinkToken(opts = {}) {
   const products = opts.products ?? ['auth', 'identity'];
   const promptClientName = resolvePromptDerivedClientName(opts);
@@ -317,8 +341,39 @@ async function createLinkToken(opts = {}) {
   const credentialScope = opts.credentialScope ?? opts.credential_scope ?? null;
   const linkMode = resolveLinkMode(opts);
   const linkModeAdapter = getLinkModeAdapter(linkMode);
-  const plaidCheckUserId = opts.plaidCheckUserId ?? opts.plaid_check_user_id ?? null;
-  const legacyUserToken = opts.userToken ?? opts.user_token ?? null;
+  let plaidCheckUserId = opts.plaidCheckUserId ?? opts.plaid_check_user_id ?? null;
+  let legacyUserToken = opts.userToken ?? opts.user_token ?? null;
+
+  // Auto-bootstrap a Plaid user when the requested products require user_token
+  // (Bank Income / Payroll Income / Document Income / Income Verification) and
+  // the caller did not supply one. Without this, /link/token/create returns
+  // HTTP 400: "user_token is required for income_verification product." and
+  // plaid-link-qa fails. CRA products run through `createCraLinkToken` instead,
+  // which has its own (richer) user-create flow with consumer report identity.
+  if (
+    !plaidCheckUserId &&
+    !legacyUserToken &&
+    productListRequiresUserToken(products)
+  ) {
+    const clientUserIdForBootstrap = userId;
+    try {
+      const result = await plaidPost('/user/create', {
+        client_user_id: clientUserIdForBootstrap,
+      });
+      plaidCheckUserId = result?.user_id || null;
+      legacyUserToken = result?.user_token || null;
+      console.log(
+        `[plaid-backend] Bootstrapped Plaid user for income-family products ` +
+        `(user_id=${plaidCheckUserId || 'n/a'}, user_token=${legacyUserToken ? 'present' : 'absent'}). ` +
+        `Triggering products: ${products.filter((p) => PRODUCTS_REQUIRING_USER_TOKEN.has(String(p).toLowerCase())).join(', ')}.`
+      );
+    } catch (e) {
+      console.warn(
+        `[plaid-backend] /user/create bootstrap for income-family products failed: ${e && e.message || e}. ` +
+        `Falling back to legacy /link/token/create — Plaid will likely return a "user_token required" error.`
+      );
+    }
+  }
 
   let user = { client_user_id: userId };
   if (phoneNumber) user.phone_number = phoneNumber;
