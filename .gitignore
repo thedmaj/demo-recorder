@@ -22,3 +22,8 @@ inputs/* copy.*
 
 # Safe-to-commit: inputs/_archive/ (intentional archive of retired monoliths)
 # — no .gitignore entry is needed since it's a tracked directory.
+
+# Demoland / Plaiderdays event media — large binaries (PPTX, PNG, audio scripts)
+# kept locally for personal workstreams, not part of the demo-recorder pipeline.
+Demoland-*
+demoland-*
