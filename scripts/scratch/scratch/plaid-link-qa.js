@@ -14,7 +14,7 @@
  * and exits non-zero so the pipeline halts before build-qa/record.
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');

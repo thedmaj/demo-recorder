@@ -15,7 +15,7 @@
  *   SCRATCH_AUTO_APPROVE     — set to 'true' to skip the ENTER pause
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 const Anthropic  = require('@anthropic-ai/sdk');
 const fs         = require('fs');
 const path       = require('path');

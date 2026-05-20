@@ -11,7 +11,7 @@
  * Writes: {runDir}/coverage-report.json
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 
 const fs   = require('fs');
 const path = require('path');

@@ -28,7 +28,7 @@
  *   ANTHROPIC_API_KEY        — required for vision QA
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 const { chromium } = require('playwright');
 const fs           = require('fs');
 const path         = require('path');

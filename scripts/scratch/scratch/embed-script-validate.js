@@ -37,7 +37,7 @@
  *   SCRIPT_VALIDATE_LLM_THRESHOLD   — Haiku 0-100 threshold (default 75)
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 
 const fs   = require('fs');
 const path = require('path');

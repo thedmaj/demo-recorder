@@ -32,7 +32,7 @@
  *   DATA_REALISM_HAIKU          — set to "0" to disable the Haiku grader
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 
 const fs   = require('fs');
 const path = require('path');

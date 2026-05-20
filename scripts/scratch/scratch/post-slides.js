@@ -35,7 +35,7 @@
  *   POST_SLIDES_MAX_TOKENS    default 6000
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 const fs = require('fs');
 const path = require('path');
 

@@ -19,7 +19,7 @@ const preservedEnv = {};
 for (const key of PRESERVED_ENV_KEYS) {
   if (process.env[key] != null) preservedEnv[key] = process.env[key];
 }
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 for (const [key, value] of Object.entries(preservedEnv)) {
   process.env[key] = value;
 }

@@ -15,7 +15,7 @@
  *   PIPELINE_RUN_DIR=out/demos/... node scripts/scratch/scratch/ai-suggest-overlays.js
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 
 const fs   = require('fs');
 const path = require('path');

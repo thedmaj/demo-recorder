@@ -10,7 +10,7 @@
  *   PIPELINE_RUN_DIR=out/demos/2026-03-14-layer-v4 node scripts/scratch/scratch/gemini-narration-qa.js
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 
 const fs   = require('fs');
 const path = require('path');

@@ -20,7 +20,7 @@
  *                           model focuses on those steps only (full HTML still emitted).
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 const Anthropic  = require('@anthropic-ai/sdk');
 const fs         = require('fs');
 const path       = require('path');

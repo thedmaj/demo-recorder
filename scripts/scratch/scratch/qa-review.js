@@ -23,7 +23,7 @@
  *   QA_PASS_THRESHOLD      — default 80
  */
 
-require('dotenv').config({ override: true });
+require('../utils/load-env').loadEnv();
 const Anthropic         = require('@anthropic-ai/sdk');
 const fs                = require('fs');
 const path              = require('path');
