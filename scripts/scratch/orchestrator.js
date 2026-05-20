@@ -1205,15 +1205,29 @@ function runBrandLogoContrastGate(versionedDir) {
   if (!profile) return;
 
   const mode = String(profile?.mode || '').toLowerCase();
-  const imageUrl = String(profile?.logo?.imageUrl || '').toLowerCase();
+  const imageUrlRaw = String(profile?.logo?.imageUrl || '');
+  const imageUrl = imageUrlRaw.toLowerCase();
   const shellBg = String(profile?.logo?.shellBg || '');
   const shellLum = parseColorLuminance(shellBg);
   const isLightThemeAsset = /\/theme\/light\//.test(imageUrl);
   const shellIsTooLight = shellLum == null || shellLum > 0.55;
   if (mode === 'light' && isLightThemeAsset && shellIsTooLight) {
+    // Auto-recovery: Brandfetch publishes both `/theme/light/` and `/theme/dark/`
+    // logo variants for most brands; the harvest is non-deterministic and may
+    // pick whichever variant is unsuited for the host's mode. Try the alternate
+    // path before failing the gate so a stochastic harvest result doesn't block
+    // the run when a viable variant exists right alongside the bad one.
+    const recovered = tryRecoverWithDarkLogoVariant(profile, profilePath);
+    if (recovered) {
+      cliLog(
+        `[BrandExtract] Logo contrast auto-recovery: swapped light → dark theme variant ` +
+        `(was ${imageUrlRaw}, now ${recovered.imageUrl}). Profile rewritten.`
+      );
+      return;
+    }
     const msg =
       `[BrandExtract] Logo contrast gate failed: light-theme logo asset on light host mode ` +
-      `(logo=${profile?.logo?.imageUrl || 'n/a'}, shellBg=${shellBg || 'n/a'}).`;
+      `(logo=${imageUrlRaw || 'n/a'}, shellBg=${shellBg || 'n/a'}).`;
     if (strict) {
       throw new Error(
         `${msg} Update brand profile to a dark logo variant or darken logo shell. ` +
@@ -1222,6 +1236,46 @@ function runBrandLogoContrastGate(versionedDir) {
     }
     cliWarn(msg);
   }
+}
+
+/**
+ * Mutate the brand profile in place to swap the light-theme Brandfetch logo
+ * URL for the dark-theme one and persist the result. Returns the new
+ * `{ imageUrl, iconUrl }` on success or null if no swap was possible.
+ *
+ * Brandfetch URL pattern: `https://cdn.brandfetch.io/{id}/theme/{light|dark}/logo.svg?...`.
+ * Other CDN patterns are ignored (we don't try to invent URLs).
+ */
+function tryRecoverWithDarkLogoVariant(profile, profilePath) {
+  if (!profile || !profile.logo) return null;
+  const original = String(profile.logo.imageUrl || '');
+  if (!/\bcdn\.brandfetch\.io\/.+\/theme\/light\//.test(original)) return null;
+  const swap = (url) => String(url || '').replace(/\/theme\/light\//g, '/theme/dark/');
+  const candidate = swap(original);
+  if (!candidate || candidate === original) return null;
+
+  // We don't HEAD-check the URL — Brandfetch reliably serves both variants
+  // when one exists, and a downstream 404 on the dark variant will surface
+  // through the existing brand-asset checks. Cheap optimistic swap.
+  const newProfile = {
+    ...profile,
+    logo: {
+      ...profile.logo,
+      imageUrl: candidate,
+      iconUrl: profile.logo.iconUrl ? swap(profile.logo.iconUrl) : profile.logo.iconUrl,
+    },
+    _logoContrastRecovery: {
+      at: new Date().toISOString(),
+      reason: 'light-theme asset on light host mode — swapped to dark variant',
+      previousImageUrl: original,
+    },
+  };
+  try {
+    fs.writeFileSync(profilePath, JSON.stringify(newProfile, null, 2), 'utf8');
+  } catch (_) {
+    return null;
+  }
+  return newProfile.logo;
 }
 
 function detectPlaywrightAlignmentMismatch(versionedDir) {
@@ -2546,6 +2600,41 @@ async function runScratchPipeline({
           delete require.cache[require.resolve('./scratch/plaid-link-qa')];
           await require('./scratch/plaid-link-qa').main({ mode: plaidLinkQaMode });
         });
+      }
+
+      // In app+slides mode, run post-slides + post-panels INLINE here so the
+      // upcoming build-qa pass actually walks slide steps and scores them.
+      // The canonical post-slides/post-panels stages still run later (after
+      // the full build phase loop completes) and are idempotent, so this
+      // inline pass is purely additive and does not break --from / --to
+      // semantics. App-only runs skip this entirely.
+      if (
+        phaseMode === 'app' &&
+        String(process.env.PIPELINE_WITH_SLIDES || '').trim().toLowerCase() === 'true'
+      ) {
+        const inlineSlidesStrategy = String(process.env.BUILD_SLIDES_STRATEGY || 'post-agent').toLowerCase();
+        if (inlineSlidesStrategy !== 'inline' && shouldRun('post-slides')) {
+          await stageRunner('post-slides', async () => {
+            try {
+              delete require.cache[require.resolve('./scratch/post-slides')];
+              const mod = require('./scratch/post-slides');
+              if (typeof mod.main === 'function') await mod.main();
+            } catch (e) {
+              cliWarn(`[Orchestrator] post-slides (inline-pre-buildqa) failed: ${e.message}`);
+            }
+          });
+        }
+        if (shouldRun('post-panels')) {
+          await stageRunner('post-panels', async () => {
+            try {
+              delete require.cache[require.resolve('./scratch/post-panels')];
+              const mod = require('./scratch/post-panels');
+              if (typeof mod.main === 'function') await mod.main();
+            } catch (e) {
+              cliWarn(`[Orchestrator] post-panels (inline-pre-buildqa) failed: ${e.message}`);
+            }
+          });
+        }
       }
 
       if (!shouldRun('build-qa')) break;
@@ -3939,16 +4028,35 @@ async function main() {
     } catch (_) {}
     return null;
   })();
+  // "Explicit" means the operator on THIS invocation either passed --with-slides
+  // / --app-only on the CLI or the dashboard injected a runtime override. A
+  // PIPELINE_WITH_SLIDES value loaded from .env or the shell environment is NOT
+  // explicit enough to overwrite a prior run's manifest — that scenario produces
+  // silent mode flips on every resume, which has burned us before.
+  const _modeSourceTag = String(process.env.PIPELINE_WITH_SLIDES_SOURCE || '').trim().toLowerCase();
+  const _modeFromAuthoritativeOverride =
+    _modeSourceTag.startsWith('cli') || _modeSourceTag === 'dashboard';
   const explicitWithSlidesProvided =
-    process.env.PIPELINE_WITH_SLIDES != null && String(process.env.PIPELINE_WITH_SLIDES).trim() !== '';
+    process.env.PIPELINE_WITH_SLIDES != null &&
+    String(process.env.PIPELINE_WITH_SLIDES).trim() !== '' &&
+    _modeFromAuthoritativeOverride;
   if (
     existingManifestForMode &&
     typeof existingManifestForMode.buildMode === 'string' &&
     !explicitWithSlidesProvided
   ) {
     const inheritedWithSlides = existingManifestForMode.buildMode === 'app+slides';
+    const previousValue = String(process.env.PIPELINE_WITH_SLIDES || '').trim().toLowerCase();
+    const previousMatches = previousValue === (inheritedWithSlides ? 'true' : 'false');
     process.env.PIPELINE_WITH_SLIDES = inheritedWithSlides ? 'true' : 'false';
     process.env.PIPELINE_WITH_SLIDES_SOURCE = 'inherited from run-manifest';
+    if (!previousMatches && previousValue) {
+      cliLog(
+        `[Orchestrator] Inherited buildMode=${existingManifestForMode.buildMode} from run-manifest ` +
+        `(overrode .env/shell PIPELINE_WITH_SLIDES=${previousValue}). ` +
+        `Pass --with-slides or --app-only on the CLI to override.`
+      );
+    }
   }
   const buildModeInfo = resolveBuildMode();
   cliLog(`[Orchestrator] Mode: ${buildModeInfo.label}  (source: ${buildModeInfo.source})`);

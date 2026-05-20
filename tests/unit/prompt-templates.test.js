@@ -530,3 +530,74 @@ describe('prompt-templates', () => {
     assert.ok(fullText.includes('"categories"'), 'QA review prompt should request issue categories');
   });
 });
+
+describe('stripPromptLevelNoSlidesDirectives', () => {
+  const strip = templates.stripPromptLevelNoSlidesDirectives;
+
+  test('strips a NO-SLIDE REQUIREMENT block with rule lines', () => {
+    const prompt = `# Demo title
+
+Some scenario context.
+
+-------------------------------------------------------------------------------
+NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+-------------------------------------------------------------------------------
+
+This demo is APP-ONLY. Do not generate \`sceneType: "slide"\` steps.
+Do not add a final value-summary slide.
+End on a host or insight outcome step with clear CTA/result.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Live Link vs mock consistent`;
+    const out = strip(prompt);
+    assert.ok(!/NO-SLIDE REQUIREMENT/i.test(out), 'NO-SLIDE heading must be removed');
+    assert.ok(!/This demo is APP-ONLY/i.test(out), 'APP-ONLY directive must be removed');
+    assert.ok(!/Do not generate `?sceneType.*slide/i.test(out), 'sceneType:slide directive must be removed');
+    assert.ok(!/Do not add a final value-summary slide/i.test(out), 'final value-summary directive must be removed');
+    assert.ok(/PRE-FLIGHT/.test(out), 'unrelated headings must be preserved');
+    assert.ok(/Live Link vs mock consistent/.test(out), 'unrelated body lines must be preserved');
+    assert.ok(/Some scenario context/.test(out), 'pre-block content must be preserved');
+  });
+
+  test('strips a pre-flight checkbox like "[x] No slide beats included"', () => {
+    const prompt = [
+      '  [x] One primary source for stats',
+      '  [x] No slide beats included',
+      '  [x] App-only env flags used in run command above',
+      '  [x] Storyboard order matches intended goToStep flow',
+    ].join('\n');
+    const out = strip(prompt);
+    assert.ok(!/No slide beats included/i.test(out));
+    assert.ok(!/App-only env flags used/i.test(out));
+    assert.ok(/One primary source for stats/.test(out));
+    assert.ok(/Storyboard order matches/.test(out));
+  });
+
+  test('idempotent — running twice yields the same result', () => {
+    const prompt = 'NO-SLIDE REQUIREMENT (must remove)\nThis demo is APP-ONLY.\n\nKeep me.';
+    assert.equal(strip(strip(prompt)), strip(prompt));
+  });
+
+  test('returns empty / non-strings unchanged', () => {
+    assert.equal(strip(''), '');
+    assert.equal(strip(null), null);
+    assert.equal(strip(undefined), undefined);
+  });
+
+  test('leaves slide-friendly prompts untouched', () => {
+    const prompt = [
+      'Demo title',
+      '',
+      'STORYBOARD BEATS',
+      '| 1 | host | dashboard | intro |',
+      '| 6 | slide | value summary | wrap |',
+      '',
+      'PRE-FLIGHT',
+      '  [x] Storyboard order matches intended goToStep flow',
+    ].join('\n');
+    assert.equal(strip(prompt), prompt);
+  });
+});

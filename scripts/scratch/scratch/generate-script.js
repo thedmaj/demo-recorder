@@ -790,6 +790,26 @@ async function main() {
   );
   if (pipelineAppOnlyHostUi) {
     console.log('[Script] App-only run: script prompt forbids sceneType "insight" and "slide"');
+  } else {
+    // Detect prompt-level "no slides" directives that are stripped automatically
+    // by buildScriptGenerationPrompt when --with-slides is on. Log a single
+    // visible warning so operators know their prompt was overridden by the flag.
+    const promptEntry = Array.isArray(ingestedInputs?.texts)
+      ? ingestedInputs.texts.find((t) => t && typeof t === 'object' && t.filename === 'prompt.txt')
+      : null;
+    const rawPrompt = promptEntry?.content || promptEntry?.text || '';
+    const noSlideHit =
+      /NO[-\s]?SLIDE\s+REQUIREMENT/i.test(rawPrompt) ||
+      /This demo is APP[- ]ONLY/i.test(rawPrompt) ||
+      /Do not generate\s+`?sceneType[^`]*`?\s*[:=]?\s*['"]?slide/i.test(rawPrompt) ||
+      /Do not add a final value[- ]summary slide/i.test(rawPrompt);
+    if (noSlideHit) {
+      console.warn(
+        '[Script] App+slides run: prompt contains no-slides directives that were ' +
+        'auto-stripped (NO-SLIDE REQUIREMENT / APP-ONLY / sceneType:"slide" forbids). ' +
+        'Slide steps will be generated per --with-slides.'
+      );
+    }
   }
 
   // NOTE: The Anthropic API does NOT allow combining extended thinking with

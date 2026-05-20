@@ -657,6 +657,56 @@ function buildResearchPrompt(config) {
  * @param {boolean} [opts.requireFinalValueSummarySlide] Enforce final value-summary slide when true (default)
  * @returns {{ system: string, userMessages: Array }}
  */
+/**
+ * Strip prompt-level "no slides / app-only" directives from a user prompt body.
+ *
+ * Used when the orchestrator is running with --with-slides but the user prompt
+ * was authored from the app-only template and still contains directives like
+ * "NO-SLIDE REQUIREMENT" or "Do not generate `sceneType: 'slide'` steps".
+ * Without this strip, the script generator obeys the prompt-level instruction
+ * (more specific) and silently produces an app-only script even though slides
+ * were requested.
+ *
+ * Returns the cleaned content. Idempotent and safe — leaves prompts that don't
+ * contain these patterns untouched.
+ */
+function stripPromptLevelNoSlidesDirectives(content) {
+  if (typeof content !== 'string' || !content) return content;
+  let out = content;
+
+  // 1. Block-headed sections like:
+  //      NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+  //      ----------
+  //      This demo is APP-ONLY...
+  //    ...up to the next section heading (a line of '-' or '=' or a new ALL-CAPS heading).
+  out = out.replace(
+    /^[-=]{3,}\s*\n\s*NO[-\s]?SLIDE[^\n]*\n[-=]{3,}\s*\n[\s\S]*?(?=\n[-=]{3,}\s*\n[A-Z]|\n={3,}\s*$|$)/gmi,
+    ''
+  );
+  // 2. Inline ALL-CAPS heading without surrounding rule lines.
+  out = out.replace(
+    /^NO[-\s]?SLIDE\s+REQUIREMENT[^\n]*\n[\s\S]*?(?=\n[A-Z][A-Z\s]+\n[-=]{3,}|\n[-=]{3,}\s*\n|\n##|$)/gmi,
+    ''
+  );
+  // 3. Standalone directive lines (case-insensitive). These are surgical removals
+  //    that keep surrounding bullet/checkbox lists intact.
+  const directivePatterns = [
+    /^\s*This demo is APP-ONLY\.?[^\n]*\n?/gmi,
+    /^\s*Do NOT generate\s+`?sceneType[^`]*`?\s*[:=]?\s*['"]?slide['"]?[^\n]*\n?/gmi,
+    /^\s*Do not generate\s+`?sceneType[^`]*`?\s*[:=]?\s*['"]?slide['"]?[^\n]*\n?/gmi,
+    /^\s*Do NOT add a final value[- ]summary slide[^\n]*\n?/gmi,
+    /^\s*Do not add a final value[- ]summary slide[^\n]*\n?/gmi,
+    /^\s*End on a host (or insight )?outcome step[^\n]*\n?/gmi,
+    /^\s*[-*]?\s*\[[xX ]\]\s*No slide beats included[^\n]*\n?/gmi,
+    /^\s*[-*]?\s*\[[xX ]\]\s*App[- ]only env flags used[^\n]*\n?/gmi,
+  ];
+  for (const re of directivePatterns) out = out.replace(re, '');
+
+  // Collapse the blank lines we just created (≥3 newlines → 2).
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+  return out;
+}
+
 function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {}) {
   const requireFinalValueSummarySlide = opts.requireFinalValueSummarySlide !== false;
   const pipelineAppOnlyHostUi = opts.pipelineAppOnlyHostUi === true;
@@ -929,6 +979,15 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       // so the script model sees one authoritative slide instruction block instead of two.
       if (t.filename === 'prompt.txt') {
         content = content.replace(/\[\[SLIDE_OUTPUT_BEGIN\]\][\s\S]*?\[\[SLIDE_OUTPUT_END\]\]/, '').trim();
+        // When the orchestrator is running in app+slides mode (--with-slides set),
+        // strip prompt-level "no slides" directives so the script generator obeys
+        // the orchestrator's slide intent rather than a stale "NO-SLIDE REQUIREMENT"
+        // section the operator forgot to remove. The model gets conflicting signal
+        // otherwise and the prompt-level instruction always wins (more specific).
+        // App-only runs leave these directives in place.
+        if (!pipelineAppOnlyHostUi) {
+          content = stripPromptLevelNoSlidesDirectives(content);
+        }
       }
       return label + content;
     }).join('\n\n---\n\n');
@@ -2742,6 +2801,7 @@ function buildPanelPayloadPrompt({ step, existingPayload = '', narrationHint = '
 module.exports = {
   buildResearchPrompt,
   buildScriptGenerationPrompt,
+  stripPromptLevelNoSlidesDirectives,
   buildAppArchitectureBriefPrompt,
   buildAppFrameworkPlanPrompt,
   buildAppGenerationPrompt,
