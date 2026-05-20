@@ -134,3 +134,109 @@ describe('post-panels', () => {
     assert.equal(extractJsonFromLlmText('no json here'), null);
   });
 });
+
+// ─── v6: onSuccess synthesis for post-link host step ─────────────────────────
+
+describe('onSuccess panel synthesis (v6)', () => {
+  test('auto-injects onSuccess apiResponse on the step right after plaidPhase:"launch"', () => {
+    const script = {
+      plaidSandboxConfig: {
+        institutionId: 'ins_109508',
+        institutionName: 'First Platypus Bank',
+      },
+      steps: [
+        { id: 'intro', sceneType: 'host' },
+        { id: 'plaid-link-launch', sceneType: 'link', plaidPhase: 'launch' },
+        // No apiResponse on this step — should be auto-injected.
+        { id: 'link-success', sceneType: 'host', stepKind: 'app' },
+      ],
+    };
+    const { responses, endpoints } = collectStepApiResponses(script);
+    assert.ok(responses['link-success'], 'link-success should have a synthesized response');
+    assert.equal(endpoints['link-success'], 'Plaid Link onSuccess (callback)');
+    const resp = responses['link-success'];
+    assert.ok(typeof resp.public_token === 'string' && resp.public_token.startsWith('public-sandbox-'));
+    assert.equal(resp.metadata.institution.name, 'First Platypus Bank');
+    assert.equal(resp.metadata.institution.institution_id, 'ins_109508');
+    assert.ok(Array.isArray(resp.metadata.accounts) && resp.metadata.accounts.length === 1);
+    assert.equal(resp.metadata.accounts[0].mask, '0211');
+    assert.ok(typeof resp.metadata.link_session_id === 'string');
+  });
+
+  test('does NOT override an existing apiResponse on the post-link step', () => {
+    const script = {
+      steps: [
+        { id: 'plaid-link-launch', sceneType: 'link', plaidPhase: 'launch' },
+        {
+          id: 'bank-income-review',
+          sceneType: 'host',
+          apiResponse: {
+            endpoint: 'POST /credit/bank_income/get',
+            response: { bank_income: [{ bank_income_id: 'abc' }] },
+          },
+        },
+      ],
+    };
+    const { responses, endpoints } = collectStepApiResponses(script);
+    // The existing Bank Income response wins; no onSuccess synthesis.
+    assert.deepEqual(responses['bank-income-review'].bank_income, [{ bank_income_id: 'abc' }]);
+    assert.equal(endpoints['bank-income-review'], 'POST /credit/bank_income/get');
+  });
+
+  test('skips synthesis when the post-link step is itself a link or slide', () => {
+    const script = {
+      steps: [
+        { id: 'plaid-link-launch', sceneType: 'link', plaidPhase: 'launch' },
+        { id: 'value-summary', sceneType: 'slide', stepKind: 'slide' },
+      ],
+    };
+    const { responses } = collectStepApiResponses(script);
+    assert.ok(!responses['value-summary'], 'slide step must not get synthesized response');
+  });
+
+  test('skips synthesis when no plaidPhase:"launch" step exists', () => {
+    const script = {
+      steps: [
+        { id: 'intro', sceneType: 'host' },
+        { id: 'outro', sceneType: 'host' },
+      ],
+    };
+    const { responses } = collectStepApiResponses(script);
+    assert.equal(Object.keys(responses).length, 0);
+  });
+
+  test('skips synthesis when the launch step is the last step', () => {
+    const script = {
+      steps: [
+        { id: 'intro', sceneType: 'host' },
+        { id: 'plaid-link-launch', sceneType: 'link', plaidPhase: 'launch' },
+      ],
+    };
+    const { responses } = collectStepApiResponses(script);
+    assert.equal(Object.keys(responses).length, 0);
+  });
+
+  test('uses sandbox account overrides from plaidSandboxConfig when provided', () => {
+    const script = {
+      plaidSandboxConfig: {
+        institutionName: 'Tartan Bank',
+        institutionId: 'ins_117650',
+        accountName: 'Savings Account',
+        accountMask: '4321',
+        accountType: 'depository',
+        accountSubtype: 'savings',
+      },
+      steps: [
+        { id: 'plaid-link-launch', sceneType: 'link', plaidPhase: 'launch' },
+        { id: 'connected', sceneType: 'host' },
+      ],
+    };
+    const { responses } = collectStepApiResponses(script);
+    const m = responses['connected'].metadata;
+    assert.equal(m.institution.name, 'Tartan Bank');
+    assert.equal(m.institution.institution_id, 'ins_117650');
+    assert.equal(m.accounts[0].name, 'Savings Account');
+    assert.equal(m.accounts[0].mask, '4321');
+    assert.equal(m.accounts[0].subtype, 'savings');
+  });
+});

@@ -39,18 +39,21 @@ const PATCHES = [
   {
     name: 'api-panel-toggle-latest',
     description:
-      'Re-runs post-panels to apply the latest JSON panel patch (v5 as of ' +
+      'Re-runs post-panels to apply the latest JSON panel patch (v6 as of ' +
       '2026-05-20). Cumulative fixes since v1: renders apiData.response (not ' +
-      'the {endpoint,response} wrapper), sets __apiPanelUserOpen=true before ' +
-      'renderApiJson so applyPanelSize() sizes the panel to fit content, uses ' +
-      'a versioned __buildApiPanelPatchVersion flag so stale build-app IIFEs ' +
-      'no longer short-circuit the new patch, clones the existing toggle node ' +
-      'before re-binding to STRIP stale click listeners (v4 — fixes the ' +
-      'double-toggle no-op bug), and (v5) renders a vertically centered ' +
-      'icon-only chevron whose direction signals the next action: arrow points ' +
-      'RIGHT when open (panel will collapse rightward) and LEFT when collapsed ' +
-      '(panel will expand leftward). post-panels also strips the build-app ' +
-      'legacy IIFE so only one live patch script remains in the HTML.',
+      'the {endpoint,response} wrapper), sizes the panel to fit content, ' +
+      'uses a versioned __buildApiPanelPatchVersion flag so stale build-app ' +
+      'IIFEs no longer short-circuit the new patch, clones the existing ' +
+      'toggle node before re-binding to STRIP stale click listeners ' +
+      '(v4 — fixes the double-toggle no-op bug), renders a vertically ' +
+      'centered icon-only chevron whose direction signals the next action ' +
+      '(v5 — right when open, left when collapsed), and (v6) defaults the ' +
+      'panel to COLLAPSED on every step navigation while pre-rendering the ' +
+      'JSON content so expanding is instant. v6 also auto-injects a ' +
+      '"Plaid Link onSuccess (callback)" apiResponse panel on the host step ' +
+      'immediately after a plaidPhase:"launch" step when that step lacks an ' +
+      'apiResponse of its own. post-panels also strips the build-app legacy ' +
+      'IIFE so only one live patch script remains in the HTML.',
     matchCategories: ['panel-visibility', 'missing-panel'],
     matchIssuePatterns: [
       /api[^a-z]?(json[^a-z]?)?panel[^.]*?(clipped|cut[\s-]?off|truncated|hidden|partially obscured)/i,

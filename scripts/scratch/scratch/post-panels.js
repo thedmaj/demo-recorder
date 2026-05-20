@@ -87,7 +87,97 @@ function collectStepApiResponses(demoScript, { onlyStepIds } = {}) {
     responses[step.id] = step.apiResponse.response;
     if (step.apiResponse.endpoint) endpoints[step.id] = step.apiResponse.endpoint;
   }
+
+  // Auto-inject an onSuccess metadata panel for the step immediately after a
+  // plaidPhase:"launch" step when that step does not already declare its own
+  // apiResponse. The post-link host page is where the demo announces "Plaid
+  // Link succeeded — here's the public_token and account metadata we got
+  // back" before any server-side product call (Bank Income, Identity Match,
+  // Auth, etc.). When the LLM-generated demo-script does include a server
+  // call there, we respect it and skip the synthesis (the existing panel
+  // takes precedence).
+  const synthesized = synthesizeLinkOnSuccessResponse(demoScript);
+  if (synthesized) {
+    const targetId = synthesized.stepId;
+    if (!filterSet || filterSet.has(targetId)) {
+      if (!responses[targetId]) {
+        responses[targetId] = synthesized.response;
+        endpoints[targetId] = synthesized.endpoint;
+      }
+    }
+  }
+
   return { responses, endpoints };
+}
+
+/**
+ * Synthesize an onSuccess callback apiResponse for the host step immediately
+ * after a plaidPhase:"launch" step, parameterized from demoScript metadata
+ * (plaidSandboxConfig, persona, products). Returns
+ *
+ *   { stepId, endpoint, response }
+ *
+ * or null when no synthesis applies (no launch step found, no following step,
+ * or following step is itself a link / slide).
+ *
+ * The shape mirrors what Plaid SDK delivers to onSuccess(public_token, metadata):
+ *   metadata = { institution, accounts[], link_session_id, transfer_status }
+ */
+function synthesizeLinkOnSuccessResponse(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return null;
+  const steps = demoScript.steps;
+  const launchIdx = steps.findIndex(
+    (s) => s && String(s.plaidPhase || '').toLowerCase() === 'launch'
+  );
+  if (launchIdx < 0 || launchIdx >= steps.length - 1) return null;
+  const successStep = steps[launchIdx + 1];
+  if (!successStep || !successStep.id) return null;
+  // Skip if the following step is itself a link / slide tier — those are not
+  // host pages where a callback panel belongs.
+  const succSceneType = String(successStep.sceneType || '').toLowerCase();
+  if (succSceneType === 'link' || succSceneType === 'slide') return null;
+  const succStepKind = String(successStep.stepKind || '').toLowerCase();
+  if (succStepKind === 'slide') return null;
+
+  // Sandbox defaults — overridable by demo-script.plaidSandboxConfig.
+  const sandboxCfg = demoScript.plaidSandboxConfig || {};
+  const institutionId = sandboxCfg.institutionId || 'ins_109508';
+  const institutionName = sandboxCfg.institutionName || 'First Platypus Bank';
+  const accountId = sandboxCfg.accountId || 'BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp';
+  const accountName = sandboxCfg.accountName || 'Plaid Checking';
+  const accountMask = sandboxCfg.accountMask || '0211';
+  const accountType = sandboxCfg.accountType || 'depository';
+  const accountSubtype = sandboxCfg.accountSubtype || 'checking';
+
+  const linkSessionId = '7e2d2a3a-c7bc-4a3c-9f87-' + (successStep.id || 'demo').slice(0, 12);
+  const publicToken = 'public-sandbox-' + linkSessionId;
+
+  return {
+    stepId: successStep.id,
+    endpoint: 'Plaid Link onSuccess (callback)',
+    response: {
+      public_token: publicToken,
+      metadata: {
+        institution: {
+          name: institutionName,
+          institution_id: institutionId,
+        },
+        accounts: [
+          {
+            id: accountId,
+            name: accountName,
+            mask: accountMask,
+            type: accountType,
+            subtype: accountSubtype,
+            verification_status: null,
+            class_type: null,
+          },
+        ],
+        link_session_id: linkSessionId,
+        transfer_status: null,
+      },
+    },
+  };
 }
 
 function buildPanelPatchScript(responses, endpoints, versionTag) {
@@ -342,13 +432,20 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
         ? stepData.response
         : stepData;
       window.__lastApiJsonData = renderData;
-      // CRITICAL ORDER: set __apiPanelUserOpen=true BEFORE renderApiJson — applyPanelSize()
-      // early-returns when __apiPanelUserOpen is false, so doing this in the previous order
-      // left the panel clipped (the bug v5 surfaced: bank_income_id / institution_name /
-      // employer fields cut off mid-string). Open the panel via setPanelVisibility, then
-      // render — applyPanelSize will now size to fit the JSON content.
-      window.__apiPanelUserOpen = true;
-      setPanelVisibility(panel, true);
+      // v6: respect __API_PANEL_CONFIG.collapsedByDefault (default true) so new
+      // step navigation lands with the panel CHROME visible but the JSON body
+      // hidden. The user can click the toggle arrow to expand and inspect the
+      // payload. This matches operator expectations: "JSON should be available
+      // on insight steps, but not autoplay-in-your-face on every navigation."
+      // Build-QA / vision-QA that needs to validate JSON content can override
+      // by setting window.__API_PANEL_CONFIG.collapsedByDefault = false before
+      // walking the steps.
+      var openByDefault =
+        window.__API_PANEL_CONFIG && window.__API_PANEL_CONFIG.collapsedByDefault === false;
+      window.__apiPanelUserOpen = !!openByDefault;
+      setPanelVisibility(panel, !!openByDefault);
+      // Always render the JSON into the (possibly collapsed) body so that
+      // expanding the panel later is instant — the data is already in the DOM.
       if (content) renderApiJson(content, renderData);
     } else {
       panel.style.setProperty('display', 'none', 'important');
@@ -502,7 +599,21 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //       - Panel closed → click expands it (panel moves left)  → arrow points LEFT  (‹)
   //   - Same accessible aria-label / title text is preserved for screen readers; only
   //     the visible affordance is now icon-only and direction-correct.
-  const POST_PANELS_PATCH_VERSION = 'v5';
+  //   v6 changes vs v5:
+  //   - Panels are now DEFAULT-COLLAPSED on every step navigation (respects
+  //     __API_PANEL_CONFIG.collapsedByDefault, which is already true). Previous
+  //     versions force-opened the panel on every step, which made screen
+  //     recordings feel auto-expanded and noisy. JSON content is still
+  //     rendered immediately into the (collapsed) body so expanding is instant.
+  //     Build-QA can opt into expanded panels by setting
+  //     window.__API_PANEL_CONFIG.collapsedByDefault = false before walking.
+  //   - synthesizeLinkOnSuccessResponse(demoScript) auto-injects an
+  //     "Plaid Link onSuccess (callback)" apiResponse panel for the host step
+  //     immediately AFTER the plaidPhase:"launch" step when that step does
+  //     not already declare its own apiResponse. The payload mirrors what
+  //     Plaid SDK delivers to onSuccess(public_token, metadata) and is
+  //     parameterized from demo-script.plaidSandboxConfig.
+  const POST_PANELS_PATCH_VERSION = 'v6';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);
