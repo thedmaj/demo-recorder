@@ -2224,7 +2224,11 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
     prevStep   = null,
     nextStep   = null,
     narrationStrict = false,
+    buildMode = 'app+slides',
   } = demoContext;
+
+  const isAppOnlyRun = String(buildMode).toLowerCase() === 'app-only';
+  const isAppTierStep = String(step.stepKind || '').toLowerCase() !== 'slide';
 
   // Detect whether this step is intentionally Plaid-branded
   const isPlaidBrandedStep = /^plaid-/.test(step.id);
@@ -2268,6 +2272,20 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
       ? `\n\nAPI JSON RAIL CONTRACT: This step includes apiResponse in the demo script. The global right-hand API / JSON side panel (#api-response-panel) should be visible with plausible sample JSON — not only narrative UI in the main slide. If the JSON rail is missing, empty, or raw JSON is only inside the slide body, treat that as a significant defect (deduct materially and list in issues).`
       : '';
 
+  // App-only host/link steps explicitly bind QA to visualState only.
+  // In app-only builds the customer-branded UI is the entire deliverable; concrete
+  // narration values (scores, decisions, dollar amounts) are intentionally carried
+  // by voiceover unless the visualState description explicitly puts them on screen.
+  const appOnlyContractNote = (isAppOnlyRun && isAppTierStep)
+    ? `\n\nAPP-ONLY HOST STEP CONTRACT: This step renders the customer's host UI; it is NOT a Plaid-branded insight slide. ` +
+      `Narration may reference concrete values (scores, decisions, dollar amounts, percentages) that are intentionally carried by voiceover only. ` +
+      `Do NOT deduct points for missing on-screen numbers, JSON readouts, or score values UNLESS the Expected visual state above explicitly describes them as visible. ` +
+      `The visualState description is the sole contract for what must appear on screen. ` +
+      `Continue to deduct points for: missing/incorrect host brand wordmark, navigation drift, missing or incorrect testids, ` +
+      `Plaid Link CTA icon size, asset-authenticity violations (inline SVG where library asset is required), animation or ` +
+      `state-progression drift when visualState describes them, and any other deviation explicitly required by the visualState.`
+    : '';
+
   const system =
     `You are a QA engineer reviewing a Plaid product demo recording. ` +
     `${productLine} ${personaLine} ${stepPosition}\n\n` +
@@ -2277,8 +2295,14 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
     `Be specific and actionable in your feedback.` +
     plaidBrandingNote +
     plaidLaunchCtaNote +
-    apiJsonRailNote;
-  const narrationStrictNote = narrationStrict
+    apiJsonRailNote +
+    appOnlyContractNote;
+
+  // Narration-strict only fires when there's a slide tier expected to show the
+  // value, i.e. full builds OR slide-tier steps in any build. App-tier steps in
+  // app-only demos carry the value via narration only — that is by design.
+  const effectiveNarrationStrict = narrationStrict && !(isAppOnlyRun && isAppTierStep);
+  const narrationStrictNote = effectiveNarrationStrict
     ? `\n\nIMPORTANT — NARRATION-CHECK MODE: This step narration contains concrete anchors (metrics, decisions, or critical outcomes). ` +
       `If narration claims a concrete value/outcome (e.g., ACCEPT/REVIEW, score, amount, percentage, timing), verify that evidence is visible in at least one frame. ` +
       `If not visible, report it as an issue and deduct points.`

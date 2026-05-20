@@ -380,21 +380,34 @@ async function main(opts = {}) {
     stepMap[step.id] = step;
   }
 
+  // Resolve the run's build mode once per QA review. This drives whether the
+  // narration-strict QA clause fires for app-tier steps. In app-only builds the
+  // host UI is the entire deliverable; concrete narration values (scores,
+  // decisions, dollar amounts) are voiceover-only unless visualState explicitly
+  // puts them on screen. In app+slides builds the slide tier renders those values
+  // and narration-strict is enforced as before.
+  const runBuildMode =
+    String(process.env.PIPELINE_WITH_SLIDES || '').trim().toLowerCase() === 'true'
+      ? 'app+slides'
+      : 'app-only';
+
   // Demo-level context shared across all step reviews
   const demoMeta = {
     product:    demoScript.product || '',
     persona:    demoScript.persona || {},
     totalSteps: stepIds.length,
+    buildMode:  runBuildMode,
   };
 
   console.log(`[QA] Starting QA review (iteration ${iteration})${buildOnly ? ' [build-only — no recording]' : ''}`);
-  console.log(`[QA] Product: ${demoMeta.product || '(unknown)'} | ${timing.steps.length} steps | threshold: ${qaPassThreshold}/100`);
+  console.log(`[QA] Product: ${demoMeta.product || '(unknown)'} | ${timing.steps.length} steps | threshold: ${qaPassThreshold}/100 | buildMode: ${runBuildMode}`);
   appendPipelineLogSection('[QA] Review started', [
     `iteration=${iteration}`,
     `qaSource=${buildOnly ? 'build-walkthrough' : 'recording'}`,
     `product=${demoMeta.product || 'unknown'}`,
     `stepCount=${timing.steps.length}`,
     `threshold=${qaPassThreshold}`,
+    `buildMode=${runBuildMode}`,
   ], { runDir: OUT_DIR });
 
   // ── Step 1: Extract frames ─────────────────────────────────────────────────
@@ -499,9 +512,15 @@ async function main(opts = {}) {
       nextStep: nextStepObj ? { id: nextStepObj.id, label: nextStepObj.label } : null,
     };
     const narrationCritical = hasNarrationCriticalMarkers(step);
+    const stepKindLower = String(step.stepKind || '').toLowerCase();
+    const isSlideTier = stepKindLower === 'slide';
+    // App-tier steps in app-only builds are scored strictly against visualState —
+    // concrete narration values are carried by voiceover by design. Slide-tier
+    // steps and full (app+slides) builds keep the legacy narration-strict gate.
+    const narrationStrict = narrationCritical && (runBuildMode === 'app+slides' || isSlideTier);
     const stepReviewContext = {
       ...demoContext,
-      narrationStrict: narrationCritical,
+      narrationStrict,
     };
 
     // ── LIVE Plaid auto-score ─────────────────────────────────────────────────
