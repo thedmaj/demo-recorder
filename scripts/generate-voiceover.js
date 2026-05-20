@@ -12,7 +12,7 @@
  * Usage: node scripts/generate-voiceover.js
  */
 
-require('dotenv').config({ override: true });
+require('./scratch/utils/load-env').loadEnv();
 const fs   = require('fs');
 const path = require('path');
 const crypto = require('crypto');

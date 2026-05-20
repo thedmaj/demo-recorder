@@ -16,7 +16,7 @@
  * Usage: node scripts/scratch/research.js
  */
 
-require('dotenv').config({ override: true });
+require('./utils/load-env').loadEnv();
 const fs   = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');

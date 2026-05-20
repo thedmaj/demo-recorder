@@ -17,7 +17,7 @@
  *   node scripts/scratch/pipeline-watchdog.js --daemon # loop every 15 min
  */
 
-require('dotenv').config({ override: true });
+require('./utils/load-env').loadEnv();
 
 const fs           = require('fs');
 const path         = require('path');

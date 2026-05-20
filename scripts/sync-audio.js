@@ -19,7 +19,7 @@
  *   node scripts/sync-audio.js --restitch               # re-stitch voiceover.mp3
  */
 
-require('dotenv').config({ override: true });
+require('./scratch/utils/load-env').loadEnv();
 const Anthropic     = require('@anthropic-ai/sdk');
 const fs            = require('fs');
 const path          = require('path');
