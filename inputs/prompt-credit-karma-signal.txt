@@ -1,0 +1,109 @@
+================================================================================
+Credit Karma — ACH funding risk with Plaid Signal
+================================================================================
+
+**Host:** **Credit Karma** — personal financial management / marketplace
+**Canonical URL:** https://www.creditkarma.com/
+**Brand URL** (for `brand-extract`): https://www.creditkarma.com/
+
+**Opportunity context (Salesforce — open):**
+- Opportunity: `ENT | Credit Karma | Upsell | Signal; IDM` (`006UV00000Loig5YAB`)
+- Stage: `Evaluation`  •  Close Date: `2026-05-18`
+- Primary product (SFDC): `Signal Transaction Scores`
+- Account: `Credit Karma` — Personal Financial Management, US
+- Website: `creditkarma.com`
+
+**Business objectives (Gong + marketplace context):**
+- Credit Karma surfaces financial product offers to millions of members; when members fund accounts or move money via ACH, return risk erodes conversion and partner economics.
+- Upsell evaluates **Plaid Signal** to score ACH debit risk at transfer time (0–99, higher = higher return risk) and route low-risk users to faster funding.
+- Pair with existing Plaid Link + Auth footprint; happy path shows **ACCEPT** with a low Signal score (5–20 range per pipeline rules).
+
+**User journey (one sentence):**
+A Credit Karma member links her checking account to fund a new savings goal, Plaid Signal scores the ACH transfer as low risk, and she sees funds available in seconds instead of waiting for settlement uncertainty.
+
+**Story arc (short prose):**
+Jordan checks her Credit Karma dashboard and starts a transfer to fund a high-yield savings bucket. She taps Link Your Bank on the pre-Link screen. Inside Plaid Link she confirms with OTP, selects First Platypus Bank checking, and connects. On the transfer review screen, Credit Karma calls Signal: score **14 — ACCEPT**, bank balance sufficient, rules engine green-lights instant availability. She sees "Available now" with a collapsed API panel showing `signal/evaluate` attributes. A closing beat quantifies fewer ACH returns and higher funded conversion for CK's money-movement flows.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Auth**, **Plaid Signal**
+
+**Solutions supported:**
+Fraud & Risk Prevention, Inbound Bank Payments: Account Funding
+
+**Primary product family:**
+`funding`
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-signal.md`
+
+**Research depth:** messaging
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, modal mode, single `plaidPhase: "launch"` step
+  [ ] **Plaid Layer** / OAuth / IDV — not in scope
+  [x] **Sandbox / persona** — First Platypus Bank, `user_good` / `pass_good` per `inputs/plaid-link-sandbox.md`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, 10 BEATS)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | CK-style dashboard — member overview, "Move money" entry | Jordan wants to fund her savings goal from checking without worrying about failed ACH. | `Move money` |
+| 2 | host | Transfer setup — amount $2,500, from Checking ••0211, to High-Yield Savings | Amount and accounts visible; end on bank-link CTA. | `Link your bank` |
+| 3 | host | Pre-Link explainer — secure connection copy, Plaid branding | Explain CK uses Plaid to verify the account and assess transfer risk. End on CTA. | `Connect bank` |
+| 4 | link | Real Plaid Link (Remember Me → OTP → institution → account → success) | Narrate only inside modal: returning user, OTP, bank, account, connected. | `onSuccess` |
+| 5 | host | "Reviewing transfer" with API panel — `POST /signal/evaluate` response: scores in low-risk band, `ACCEPT`, key attributes (balance, tenure, NSF history) | Signal scores ACH return risk in real time; low score means low return likelihood. | `Continue` |
+| 6 | host | Transfer approved UI — "Available now", amount $2,500, Signal score **14** badge | Quantified reveal: Signal score 14 — ACCEPT; funds available immediately. | `Done` |
+| 7 | slide | `signal-value-prop-slide` — network-powered ACH risk, 40%+ return loss reduction (from product KB) | Reinforce Signal value prop for marketplace-scale money movement. | — |
+| 8 | slide | `ck-plaid-recap-slide` — CK + Plaid: Link once, score every transfer | Consolidation message. Do **not** use id `value-summary-slide` here (pipeline adds final summary). | — |
+
+**Product-specific reminders:**
+- **Signal**: demo score **14**, decision **ACCEPT**; never use "Trust Index"; never show high-risk scores (82–97).
+- **Link narration boundary**: beat 3 ends on Connect; beat 4 narrates inside modal only.
+- Happy path only — no declines, no REROUTE in main flow.
+
+**Compliance / user data (one line):**
+Member-consented bank link; Signal used for ACH risk decisioning only on this transfer; no error states in main demo.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Jordan Lee, 32, marketing manager checking Credit Karma weekly
+**Company / context:** Uses CK for credit monitoring and savings recommendations; funding $2,500 into CK savings product
+**Sample fields on screen:** $2,500, First Platypus Bank, mask ••0211, Signal score 14, ACCEPT, Available now
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Credit Karma–inspired light UI: green accent (#3EE581 family), clean nav, "Money" section. Mobile-friendly card layout at 1440×900. Primary CTA for Link: `data-testid="link-external-account-btn"`.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+2 slides after transfer success: (1) Signal ACH risk value prop with one stat from plaid-signal.md, (2) CK partnership recap. JSON on slides optional.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Stats from `inputs/products/plaid-signal.md` only
+  [x] Product names match CLAUDE.md
+  [x] Live Link single launch step
+
+================================================================================
+END OF SPECIFICATION

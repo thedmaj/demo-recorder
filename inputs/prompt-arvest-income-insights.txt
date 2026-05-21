@@ -1,0 +1,31 @@
+================================================================================
+Arvest Bank — Income Insights (VOI) for community bank lending
+================================================================================
+
+**Host:** **Arvest Bank**
+**Canonical URL:** https://www.arvest.com/
+**Brand URL:** https://www.arvest.com/
+
+**Opportunity:** Arvest Bank | CBA Live | VOI (`006UV00000ZLd75YAD`) — Discovery
+**Primary product:** Income Insights
+
+**Story:** Loan officer pulls Income Insights from CRA check report after member consents via Link.
+
+**Products:** Plaid Link, **Plaid Income Insights** (CRA path)
+**Family:** `income_insights`
+**Messaging:** `inputs/products/plaid-income-insights.md`
+**Research depth:** gapfill
+
+**CRA:** real Link, async report-ready, user_credit_profile sandbox persona
+
+| 1 | host | Arvest loan application | |
+| 2 | host | Pre-Link — ends narration on **Verify with Plaid** CTA | |
+| 3 | link | CRA Link — narration ONLY inside modal (OTP, bank, account) | |
+| 4 | host | Report generating spinner | |
+| 5 | insight | Income Insights — MUST include `apiResponse` for `/cra/check_report/income_insights/get` | |
+| 6 | host | APPROVED decision | |
+| 7 | slide | `arvest-voi-slide` | not value-summary-slide |
+
+**Link narration:** pre-Link step ends on button tap; Link step never says "she taps" or "opens Plaid".
+
+END OF SPECIFICATION

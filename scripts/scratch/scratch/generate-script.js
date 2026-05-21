@@ -185,7 +185,10 @@ function waitForApproval(message) {
 }
 
 function isInsightLikeStep(step) {
-  if (String(step?.sceneType || '').toLowerCase() === 'insight') return true;
+  if (isValueSummaryStep(step)) return false;
+  const sceneType = String(step?.sceneType || '').toLowerCase();
+  if (sceneType === 'slide') return false;
+  if (sceneType === 'insight') return true;
   const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
   return /\binsight\b|\bapi insight\b|\bplaid insight\b/.test(haystack);
 }
@@ -458,27 +461,36 @@ function ensureFinalValueSummarySlide(demoScript, productResearch) {
     visualState: `.slide-root final summary with top value propositions: ${visualBullets}. Emphasize user outcomes and next-step confidence.`,
   };
 
-  const idx = demoScript.steps.findIndex((s) => isValueSummaryStep(s));
+  const existingSummaries = demoScript.steps.filter((s) => isValueSummaryStep(s));
+  const withoutSummaries = demoScript.steps.filter((s) => !isValueSummaryStep(s));
   let action = 'inserted';
-  if (idx >= 0) {
-    const existing = demoScript.steps[idx] || {};
-    const merged = {
-      ...existing,
-      ...normalized,
-      narration: typeof existing.narration === 'string' && existing.narration.trim()
-        ? existing.narration
-        : normalized.narration,
-      visualState: typeof existing.visualState === 'string' && existing.visualState.trim()
-        ? existing.visualState
-        : normalized.visualState,
-    };
-    delete merged.apiResponse;
-    delete merged.plaidPhase;
-    demoScript.steps.splice(idx, 1);
-    demoScript.steps.push(merged);
-    action = idx === demoScript.steps.length - 1 ? 'normalized' : 'moved-to-final';
-  } else {
-    demoScript.steps.push(normalized);
+  const pickNarration = (steps) => {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const n = steps[i]?.narration;
+      if (typeof n === 'string' && n.trim()) return n;
+    }
+    return null;
+  };
+  const pickVisual = (steps) => {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const v = steps[i]?.visualState;
+      if (typeof v === 'string' && v.trim()) return v;
+    }
+    return null;
+  };
+  const merged = {
+    ...normalized,
+    narration: pickNarration(existingSummaries) || normalized.narration,
+    visualState: pickVisual(existingSummaries) || normalized.visualState,
+  };
+  delete merged.apiResponse;
+  delete merged.plaidPhase;
+  demoScript.steps = withoutSummaries;
+  demoScript.steps.push(merged);
+  if (existingSummaries.length > 1) action = 'deduped-to-final';
+  else if (existingSummaries.length === 1) {
+    const wasLast = demoScript.steps.indexOf(merged) === demoScript.steps.length - 1;
+    action = wasLast ? 'normalized' : 'moved-to-final';
   }
   return { action, id: normalized.id };
 }
@@ -620,6 +632,37 @@ function validateDemoScript(demoScript, opts = {}) {
     });
     if (!hasReadyBeat) {
       warnings.push('CRA Base Report demos usually need a report-ready or report-available beat before reviewing the Base Report.');
+    }
+  }
+
+  if (productFamily === 'cash_advance_score') {
+    const hasEwaEvaluate = steps.some((step) => {
+      const ep = step.apiResponse?.endpoint || '';
+      const body = JSON.stringify(step.apiResponse?.response || step.apiResponse || '');
+      return /\/signal\/evaluate\b/i.test(ep) || /\bcash_advance_score\b/i.test(body);
+    });
+    if (!hasEwaEvaluate) {
+      (pipelineAppOnlyHostUi ? warnings : errors).push(
+        'EWA Score demos should include an insight step using POST /signal/evaluate with cash_advance_score in the response.'
+      );
+    }
+  }
+
+  if (productFamily === 'cra_cashflow_insights') {
+    const hasCashflowEndpoint = steps.some((step) =>
+      /\/cra\/check_report\/cashflow_insights\/get\b/i.test(step.apiResponse?.endpoint || '')
+    );
+    if (!hasCashflowEndpoint) {
+      (pipelineAppOnlyHostUi ? warnings : errors).push(
+        'CRA Cash Flow Insights demos should include an insight step using /cra/check_report/cashflow_insights/get.'
+      );
+    }
+    const hasReadyBeat = steps.some((step) => {
+      const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+      return /\bready\b|\breport ready\b|\breport available\b|\bprocessing\b|\bgenerating\b/.test(haystack);
+    });
+    if (!hasReadyBeat) {
+      warnings.push('CRA Cash Flow Insights demos usually need a report-ready beat before showing cashflow_insights/get.');
     }
   }
 

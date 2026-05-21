@@ -1,0 +1,82 @@
+================================================================================
+Bright Money — Plaid Layer instant onboarding for PFM signup
+================================================================================
+
+**Host:** **Bright Money** — personal financial management / credit builder
+**Canonical URL:** https://brightmoney.co/
+**Brand URL:** https://brightmoney.co/
+
+**Opportunity context (Salesforce — open):**
+- Opportunity: `Bright Money - Layer` (`006UV00000PAO5wYAH`)
+- Stage: `Evaluation`  •  Amount: ~$216K
+- Primary product: `Layer`
+- Account: Bright Capital Inc. dba Bright Money — PFM, US
+
+**Business objectives (analogous Gong: Enova/Kikoff Layer — funnel drop-off after email/phone):**
+- Bright Money loses members on early KYC screens after email and phone capture.
+- Layer offers phone-first eligibility: returning Plaid users confirm prefilled identity instead of retyping PII.
+- Demo shows **eligible** path (`415-555-1111`) through Layer to onboarding complete — mobile shell per pipeline Layer contract.
+
+**User journey (one sentence):**
+Maya opens Bright Money on her phone, enters the eligible test phone, confirms Layer-prefilled identity in seconds, and lands on her personalized savings plan without the long manual form.
+
+**Story arc:**
+Maya downloads Bright Money to automate savings toward debt payoff. She hits signup, enters phone `415-555-1111`, and Layer recognizes her as a returning Plaid user. A bottom-sheet Layer flow confirms name, address, and linked checking — no SSN re-entry on this template. She accepts sharing, lands on Bright Money home with goals prefilled, and sees how Layer cut minutes off onboarding.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured:** Plaid Link, **Plaid Layer**
+
+**Solutions supported:** Instant Onboarding & Verification
+
+**Primary product family:** `generic` (Layer onboarding — use Layer mobile mock)
+
+**Primary messaging file:** `inputs/products/plaid-layer.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING
+-------------------------------------------------------------------------------
+
+  [x] **Plaid Layer mobile mock** — use `LAYER_MOCK_TEMPLATE.md` + layer-mobile-skeleton; eligible phone `415-555-1111`
+  [x] Helper text below frame: `415-555-1111` eligible · `415-555-0011` ineligible
+  [ ] Standard modal Link-only — not for this demo
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal |
+|---|------|----------------------|-----------------|--------|
+| 1 | host | Mobile Bright Money splash — "Build a brighter financial life" | Maya wants to start saving without a 20-field signup. | `Get started` |
+| 2 | host | Phone entry — `415-555-1111` pre-filled, helper routing legend visible | She enters her mobile number; Layer checks Plaid network eligibility. | `Continue` |
+| 3 | link | Layer bottom sheet — returning user, confirm PII, share account (mock phases) | Inside Layer she confirms identity in one tap — no manual address form. | Confirm |
+| 4 | host | Bright Money home — savings plan card, linked account mask | Onboarding complete in under a minute versus multi-screen KYC. | — |
+| 5 | slide | `layer-value-slide` — onboarding friction reduction | Layer value for PFM growth teams. | — |
+
+**Layer rules:** eligible path only; no fallback PII collection in main demo.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Chen, 28, marketing coordinator building emergency fund
+**Sample on screen:** phone 415-555-1111, checking ••4821, goal "Pay off card" $200/mo
+
+-------------------------------------------------------------------------------
+HOST CHROME
+-------------------------------------------------------------------------------
+
+Bright Money mobile app: purple/teal fintech aesthetic, light background inside phone frame. Global Layer routing helper under device frame.
+
+**Viewport:** 1440×900 (desktop canvas with centered mobile shell).
+
+[[SLIDE_OUTPUT_BEGIN]]
+1 slide: Layer onboarding ROI for PFM. Do not use id `value-summary-slide`.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION

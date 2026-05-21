@@ -346,6 +346,58 @@ async function getDomStepInventory(page) {
   );
 }
 
+/** First demo-script step id — used when the host app loads with no visible .step.active. */
+function resolveInitialStepId(demoScript) {
+  const steps = demoScript?.steps;
+  if (!Array.isArray(steps) || !steps.length) return null;
+  return steps[0]?.id || null;
+}
+
+async function hasVisibleActiveStep(page) {
+  return page.evaluate(() => {
+    const active = document.querySelector('.step.active');
+    if (!active) return false;
+    const st = window.getComputedStyle(active);
+    if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
+    const rect = active.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+}
+
+/**
+ * Demos often list a marketing slide first; generated HTML may omit .active on load so every
+ * .step stays display:none and Playwright's visible wait fails before the walkthrough starts.
+ */
+async function ensureInitialStepVisible(page, demoScript) {
+  if (await hasVisibleActiveStep(page)) {
+    const stepId = await page.evaluate(() => {
+      const tid = document.querySelector('.step.active')?.getAttribute('data-testid') || '';
+      return tid.replace(/^step-/, '');
+    });
+    return { activated: false, stepId, reason: null };
+  }
+
+  const stepId = resolveInitialStepId(demoScript);
+  if (!stepId) {
+    return { activated: false, stepId: null, reason: 'no-script-steps' };
+  }
+
+  const firstStep = (demoScript.steps || [])[0];
+  const reason = isSlideLikeStep(firstStep)
+    ? 'slide-first-no-visible-active-on-load'
+    : 'no-visible-active-on-load';
+
+  const forceResult = await forceStepActive(page, stepId);
+  if (!forceResult.ok) {
+    throw new Error(
+      `Could not activate initial step "${stepId}" (${reason}): ${forceResult.reason || 'forceStepActive failed'}`
+    );
+  }
+
+  await page.waitForSelector('.step.active', { state: 'visible', timeout: 8000 });
+  return { activated: true, stepId, reason, forceResult };
+}
+
 async function evaluateStepState(page, stepId) {
   return page.evaluate((id) => {
     const stepEl = document.querySelector(`[data-testid="step-${id}"]`);
@@ -561,8 +613,23 @@ function evaluateApiStoryAlignment(step) {
 
   const checks = [
     {
+      key: 'cashflowInsights',
+      storyPattern: /\bcash[\s_-]?flow[\s_-]?insights|cashflow_insights|cash.?flow attributes\b/i,
+      endpointPattern: /cashflow[_\s-]?insights/,
+      responseHints: ['attributes', 'report_id', 'generated_time', 'income_volatility', 'nsf', 'discretionary', 'essential', 'loan_payment'],
+      label: 'cash-flow-insights context',
+    },
+    {
+      key: 'checkReportCreate',
+      storyPattern: /\breport ready|user_check_report_ready|check_report\/create|report_id\b/i,
+      endpointPattern: /check_report\/create/,
+      responseHints: ['report_id', 'status', 'ready', 'webhook'],
+      label: 'check-report-create context',
+    },
+    {
       key: 'income',
-      storyPattern: /\bincome|income[_\s-]?insights|stream|payroll|next payment\b/i,
+      // Avoid bare `\bincome` — it false-positives on cash-flow attribute names like income_volatility_low.
+      storyPattern: /\b(cra income insights|income insights|income_insights|payroll income|bank income)\b|\/credit\/bank_income\b/i,
       endpointPattern: /income[_\s-]?insights/,
       responseHints: ['income', 'income_stream', 'predicted_next_payment', 'historical_average_monthly_income', 'forecasted_average_monthly_income'],
       label: 'income-insights context',
@@ -2103,7 +2170,14 @@ async function main(opts = {}) {
   const expectedStepTestids = new Set(demoStepIds.map((id) => `step-${id}`));
   let domStepIds = [];
   try {
-    await page.waitForSelector('.step[data-testid]', { timeout: 12000 });
+    await page.waitForSelector('.step[data-testid]', { state: 'attached', timeout: 12000 });
+    const initialBoot = await ensureInitialStepVisible(page, demoScript);
+    if (initialBoot.activated) {
+      console.warn(
+        `[build-qa] No visible active step on load — activated "${initialBoot.stepId}" ` +
+        `(${initialBoot.reason}). Host apps should set .active or call goToStep(firstStepId) on init.`
+      );
+    }
     domStepIds = await getDomStepInventory(page);
     const overlap = domStepIds.filter((id) => expectedStepTestids.has(id));
     if (!domStepIds.length || overlap.length === 0) {
@@ -2961,6 +3035,10 @@ module.exports = {
   isSlideLikeStep,
   buildPlaidLaunchCtaIconDiagnostics,
   waitForLoadingToClear,
+  evaluateApiStoryAlignment,
+  resolveInitialStepId,
+  ensureInitialStepVisible,
+  hasVisibleActiveStep,
 };
 
 if (require.main === module) {

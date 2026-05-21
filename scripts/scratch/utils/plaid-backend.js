@@ -428,6 +428,16 @@ async function createLinkToken(opts = {}) {
     console.log(`[plaid-backend] Using Link customization: "${linkCustomizationName}"`);
   }
 
+  if (hasCraProducts(products)) {
+    if (!opts.consumer_report_permissible_purpose) {
+      body.consumer_report_permissible_purpose = 'EXTENSION_OF_CREDIT';
+    } else {
+      body.consumer_report_permissible_purpose = opts.consumer_report_permissible_purpose;
+    }
+    if (opts.cra_options) body.cra_options = opts.cra_options;
+    else if (!body.cra_options) body.cra_options = { days_requested: 180 };
+  }
+
   const modeBody = linkModeAdapter.prepareCreateLinkTokenBody(body);
   const bodyForCreate = { ...modeBody };
   if (linkMode === 'embedded') console.log('[plaid-backend] Link mode: embedded (in-page widget)');
@@ -767,8 +777,10 @@ async function createConsumerReportLinkToken(flat = {}) {
     productFamily: flat.productFamily ?? flat.product_family ?? null,
     credentialScope: flat.credentialScope ?? flat.credential_scope ?? null,
     linkMode: flat.linkMode ?? flat.link_mode ?? null,
-    consumer_report_permissible_purpose: flat.consumer_report_permissible_purpose,
-    cra_options: flat.cra_options,
+    consumer_report_permissible_purpose:
+      flat.consumer_report_permissible_purpose ||
+      (hasCraProducts(requestedProducts) ? 'EXTENSION_OF_CREDIT' : undefined),
+    cra_options: flat.cra_options || (hasCraProducts(requestedProducts) ? { days_requested: 180 } : undefined),
     plaidCheckUserId: plaidUserId || undefined,
     userToken: plaidUserId ? undefined : legacyToken || undefined,
     runDir: flat.runDir || undefined,

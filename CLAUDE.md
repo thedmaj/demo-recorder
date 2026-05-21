@@ -37,8 +37,9 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 
 Pipeline-specific reminders kept here (because build/QA agents sometimes don't load the skill):
 
-- Approved product names (use verbatim): **Plaid Identity Verification (IDV)**, **Plaid Instant Auth**, **Plaid Layer**, **Plaid Monitor**, **Plaid Signal**, **Plaid Assets**.
-- Quantify outcomes where possible: *Signal score 12 — ACCEPT*, *verified in 2.4 seconds*. Never use the term **Trust Index**.
+- Approved product names (use verbatim): **Plaid Identity Verification (IDV)**, **Plaid Instant Auth**, **Plaid Layer**, **Plaid Monitor**, **Plaid Signal**, **Plaid Assets**, **Plaid Protect**.
+- Quantify outcomes where possible: *Signal score 12 — ACCEPT*, *verified in 2.4 seconds*.
+- **Trust Index / Ti2** is **scoped**: allowed in **Plaid Protect demos only** (its current public marketing term — verified via Plaid GTM Playbook 2026 + Ti2 blog Oct 2025). Forbidden in non-Protect demos (Auth, Signal-only, Bank Income, CRA, etc.) because it confuses with Signal score branding. When used, demos must mark **Limited Availability** if disclosing GA status, and must NOT fabricate `/protect/*` endpoints or Ti2 response field shapes — those are NDA / private docs. See `inputs/products/plaid-protect.md` for the full rule.
 - Active voice. No apologetic / filler words (*simply*, *just*, *unfortunately*, *robust*, *seamless*).
 - Main demo = happy path only: no error / declined / edge-case flows.
 
@@ -67,6 +68,125 @@ Quick reference for all pipeline agents:
 ---
 
 ## Plaid Link & API Requirements (verify on every Mode A demo build)
+
+### /link/token/create products[] — research-driven, never hardcoded (REQUIRED)
+
+The `products[]` array passed to Plaid `/link/token/create` is **resolved by the research stage**, never invented by the build LLM:
+
+1. **Source of truth:** `link-token-create-config.json` in the run directory, written by the `research` stage via `scripts/scratch/utils/link-token-create-config.js`. The resolver derives `products` from:
+   - The free-text prompt (`inputs/prompt.txt`)
+   - `requiredApiSignals` from the demo-script
+   - AskBill (Plaid docs MCP)
+   - Indexed product knowledge in `inputs/products/*.md`
+2. **Product-mix sanitization** runs inside the resolver before `link-token-create-config.json` is written. Two rules:
+   - **Layer 1 — CRA vs non-CRA Income mutual exclusion.** `cra_base_report` / `cra_income_insights` cannot share a Link token with `income_verification`. Tiebreaker: when `productFamily ∈ {cra_base_report, income_insights}` the CRA path wins; otherwise the non-CRA Income path wins.
+   - **Layer 2 — `income_verification` compatibility.** Plaid only accepts `{income_verification, employment}` together. Anything else (`auth`, `identity`, `transactions`, etc.) is dropped whenever `income_verification` is in the list.
+3. **Backend authority at request time.** `app-server.js`'s `/api/create-link-token` handler re-reads `link-token-create-config.json` from `PIPELINE_RUN_DIR` and uses its `products[]` over anything the HTML body sent. Drift is logged with a warning. This is belt-and-suspenders for legacy/patched scratch-apps and ad-hoc edits.
+4. **Build prompt contract.** LLMs generating the host app HTML MUST use the `linkTokenCreate.suggestedClientRequest` body from research verbatim. They must NOT invent or "complete" a `products[]` list. This is documented in the `## LINK TOKEN CREATE (dynamic — research-driven)` block in `scripts/scratch/utils/prompt-templates.js`.
+5. **Self-heal patch.** `scripts/scratch/utils/qa-patch-library.js` ships a `plaid-link-token-products-prune` patch for legacy `scratch-app/index.html` files that pre-date the resolver sanitizer. Modern builds never need it; it remains for retro-active fixes during `pipe resume`.
+
+Pure helpers exported for tests: `sanitizeProductsForLinkTokenMix` in `link-token-create-config.js` and `resolveCreateLinkTokenProducts` / `loadResearchLinkTokenConfig` in `app-server.js`. See `tests/unit/link-token-create-config.test.js` and `tests/unit/app-server-link-token-resolution.test.js`.
+
+### Plaid Liabilities — non-FCRA, daily-cached, federal student loans gone (REQUIRED)
+
+**Verified via AskBill + Glean (Financial Management Playbook Mar 2026; Liabilities FAQ Aug 2024; SoFi Account Plan Q1 2026) on 2026-05-21.** Liabilities is the read-only debt-data product for PFM, debt-paydown, and net-worth dashboards. It is **non-FCRA** and cannot be used for underwriting / lending decisioning — use CRA Base Report (`inputs/products/plaid-cra-base-report.md`) for those flows.
+
+Family routing: prompts mentioning `liabilities`, `/liabilities/get`, `debt consolidation/paydown/payoff/management`, `credit card APR(s)`, `mortgage refi/escrow/amortization`, `student loan refi/consolidation/payoff`, `balance transfer eligibility`, `net worth view/dashboard/tracker`, `LIT bundle` route to family `liabilities` and product knowledge file `inputs/products/plaid-liabilities.md`. Enforced in `scripts/scratch/utils/prompt-scope.js`; tested in `tests/unit/prompt-scope.test.js`.
+
+Hard rules for Liabilities demos:
+
+- **Link products:** `["liabilities"]` standalone, or **`["liabilities", "transactions", "investments"]`** for the canonical **LIT bundle** (PFM / net-worth dashboards). One Item, one access_token. Add `'identity'` if name/email/phone on the linked account are needed. Add `'auth'` if account/routing numbers are needed for an ACH-funding outcome. **Do NOT mix with `cra_*` products** — CRA is FCRA-compliant and sold separately; combining loses Plaid's positioning rule and breaks downstream sanitization.
+- **Retrieval endpoints:**
+  - Liabilities → `POST /liabilities/get`
+  - Transactions (in LIT bundle) → **`/transactions/sync`** (cursor-based, webhook-driven via `SYNC_UPDATES_AVAILABLE`). Prefer over `/transactions/get` (legacy date-range) in all new integrations.
+  - Investments (in LIT bundle) → `/investments/holdings/get` + `/investments/transactions/get`. See `inputs/products/plaid-investments.md` for that product's rules.
+- **Response shape (literal field names):** `{ accounts, liabilities: { credit[], student[], mortgage[] }, item, request_id }`. Per-array field lists are documented in `inputs/products/plaid-liabilities.md`. Never invent fields or reason-code arrays.
+- **Webhook (literal name):** `LIABILITIES:DEFAULT_UPDATE`. Payload includes `account_ids_with_new_liabilities[]` and `account_ids_with_updated_liabilities` (object mapping account_id → array of changed field names). Never paraphrase as `LIABILITIES_UPDATE_AVAILABLE` or similar.
+- **Refresh model — NOT live.** `/liabilities/get` returns a cached snapshot refreshed about once per day. Demos must NOT promise real-time freshness for Liabilities — if the narrative needs "we just saw your payment land," source that signal from `/transactions/sync` in the LIT bundle.
+- **⚠ STOP ACT — federal student loans are NOT available.** Since Aug 23, 2024, Plaid has lost access to Mohela, Aidvantage, EdFinancial, Nelnet, and CRI. Plaid stopped billing customers for those items. Demos must **never reference federal-servicer data** — the demo will not work in production. Use private servicers only (Sallie Mae, Discover, Wells Fargo Education, PHEAA, CornerStone/UHEAA) or stay in credit cards + mortgages.
+- **Non-FCRA boundary:** Liabilities data must not drive automated underwriting / approval-decision narratives. Internal positioning rule (Oct 2025, David Majetic): *"Use Transactions, Investments, and Liabilities for personal finance and money management use cases (non-lending); CRA products are for FCRA-regulated credit decisioning."*
+- **Data quirks to acknowledge when present:** Sallie Mae (`ins_116944`) `balance.current` includes interest (not just principal), `outstanding_interest_amount` is null. Great Lakes / Firstmark / Commonbond / Granite State / Oklahoma share a single `minimum_payment_amount` across all loans on the same account. Chase / PNC / US Bank return `persistent_account_id` (May 2025) — useful for de-duping across Items.
+
+Regression tests: `tests/unit/prompt-scope.test.js` (Liabilities routing block + don't-route-CRA-to-Liabilities).
+
+### Plaid Investments vs Plaid Investments Move — never confuse these (REQUIRED)
+
+**Verified via AskBill + Glean (Feb 2026 GTM Playbook) on 2026-05-21.** These are two distinct products in the `investments` family that share the word "investments" but use different Link products, different endpoints, different webhooks, and serve different use cases. Misrouting causes the generated app to call the wrong endpoint after Link completes and breaks the demo.
+
+| | **Plaid Investments** (data access) | **Plaid Investments Move** (transfer initiation) |
+|---|---|---|
+| Family | `investments` | `investments_move` |
+| Link product string | `investments` | **`investments_auth`** |
+| Endpoint(s) | `POST /investments/holdings/get`, `POST /investments/transactions/get` | `POST /investments/auth/get` |
+| Use case | PFM, wealth tracking, portfolio analytics | ACATS (US) / ATON (Canada) brokerage transfer initiation |
+| Returns account # / DTC codes | No | **Yes** (`numbers.acats[]`) |
+| Webhooks | `HOLDINGS:DEFAULT_UPDATE`, `INVESTMENTS_TRANSACTIONS:DEFAULT_UPDATE`, `INVESTMENTS_TRANSACTIONS:HISTORICAL_UPDATE` | Generic Item webhooks only |
+| Status | GA | Early Availability (Sales-gated; ATON Canada not GA, target June 2027) |
+| Pricing | Per-Item subscription | Per-call ($20 rack / $8–13 typical); manual fallback not billed |
+| Flagship customer reference | Empower ($1.999M ACV Yodlee replacement, Dec 2025) | Robinhood (90% ACATS-failure reduction, 3× successful transfers) |
+
+Family routing enforced in `scripts/scratch/utils/prompt-scope.js`:
+- `investments_move` matches first on keywords `ACATS`, `ATON`, `investments_auth`, `/investments/auth/get`, `Investments Move`, `broker-sourced`, `held-away`, `brokerage transfer`, `portfolio transfer`.
+- `investments` matches on `investment holdings`, `/investments/holdings/get`, `/investments/transactions/get`, `portfolio (view|allocation|performance)`, `PFM`, and bare `investments` (when "Move" is not present).
+- Move family wins when both signal sets are present in the prompt — explicit signals (`ACATS` / `/investments/auth/get`) are decisive.
+
+Wire-format enforcement in `scripts/scratch/utils/link-token-create-config.js`:
+- `'investments_auth'` is in `ALLOWED_LINK_PRODUCTS` (added 2026-05-21 — was missing, would have been silently filtered).
+- `inferPlaidLinkProductsFromPrompt()` emits `'investments_auth'` for Move prompts and `'investments'` for data-access prompts. Never both for the same demo.
+- `inferProductsFromApiSignals()` maps `investments/auth` → `investments_auth` and `investments/holdings` / `investments/transactions` → `investments`.
+
+Hard rules for builds:
+
+- **Move demos must emit `products: ["investments_auth"]`**, narrate the transfer-form autofill outcome, and show `/investments/auth/get` in the API panel with `numbers.acats[]` + `dtc_numbers` + `owners`. They must NOT call `/investments/holdings/get`.
+- **Investments (data-access) demos must emit `products: ["investments"]`**, narrate portfolio / wealth tracking, and show `/investments/holdings/get` or `/investments/transactions/get`. They must NOT call `/investments/auth/get` and must NOT show account numbers or DTC codes (not in that response).
+- **Webhook names are literal** — never `INVESTMENTS_AUTH_READY` or other paraphrases.
+- **Cost basis is aggregate only** in the documented Investments response — tax-prep demos must disclose the no-per-lot caveat.
+
+Regression tests: `tests/unit/prompt-scope.test.js` (Investments vs Investments Move routing block) and `tests/unit/link-token-create-config.test.js` (`'investments_auth'` allowed, resolver emits correct product per intent).
+
+### Plaid Protect — anti-fraud umbrella, never a single 'protect' product string (REQUIRED)
+
+**Verified via AskBill 2026-05-21 + Glean (GTM Playbook 2026, Ti2 Deep Dive).** Plaid Protect is the umbrella solution that packages Plaid Signal, Identity Verification (IDV), Monitor, Trust Index / Ti2, and Dashboard-configured rulesets into one decisioning surface. It is **NOT** a single API and must NEVER appear as a `products[]` string in `/link/token/create`.
+
+Family routing: prompts mentioning **Plaid Protect**, **Trust Index**, **Ti2**, **protect ruleset**, `protect_transactions`, or `protect_linked_bank` route to family `plaid_protect` and product knowledge file `inputs/products/plaid-protect.md`. Enforced in `scripts/scratch/utils/prompt-scope.js`; tested in `tests/unit/prompt-scope.test.js`.
+
+Hard rules for Plaid Protect demos:
+
+- **Link products:** use component strings only — `['signal']`, `['signal', 'identity_verification']`, `['monitor']`, etc. Never `['protect']`. `protect_linked_bank` / `protect_transactions` appear in some private docs; do NOT put them on the wire without confirmed Sales enablement.
+- **Score retrieval:** `POST /signal/evaluate` (same endpoint as standalone Signal). Documented response fields: `scores.bank_initiated_return_risk.score`, `scores.customer_initiated_return_risk.score`, `scores.cash_advance.score` (when provisioned), `scores.pre_auth_confidence` (beta, INVERTED direction). All ranges 1–99.
+- **Decision feedback:** `POST /signal/decision/report` with `{ client_transaction_id, initiated, days_funds_on_hold? }`. The ONLY documented feedback endpoint.
+- **`ruleset.result` values:** `ACCEPT`, `REROUTE`, `REVIEW`. `REJECT` is NOT documented — use `REROUTE` or render the decline outside the API panel.
+- **Webhooks (literal names):** `SIGNAL_SCORE_READY`, `SIGNAL_RULE_TRIGGERED`, `PROTECT_TX_MONITOR_RULE_TRIGGERED` (when Protect Transaction Monitoring is enabled). Never paraphrase as `SCORE_READY` / `RULESET_TRIGGERED`.
+- **Explainability:** use `core_attributes` (80+ documented key/value signals) and `ruleset.triggered_rule_details.internal_note`. NEVER fabricate a top-level `reason_codes: [...]` array — that field is not documented.
+- **Trust Index / Ti2:** Limited Availability (March 2026 cohort). Range 1–100, higher = SAFER user (opposite direction from Signal scores). Demos may reference Trust Index by name + score but must NOT fabricate `/protect/event/send`, `/protect/user/insights/get`, or `trust_index.*` API field shapes — those are NDA / private docs. When showing an API panel for the underlying call, use the documented `/signal/evaluate` response.
+
+Regression tests: `tests/unit/prompt-scope.test.js` (Plaid Protect routing block) and `tests/unit/link-token-create-config.test.js` (`'protect'` NOT in `ALLOWED_LINK_PRODUCTS`).
+
+### Plaid Cash Advance Score / EWA Score is its own family — not standard Signal (REQUIRED)
+
+**Verified via AskBill 2026-05-21.** Plaid Cash Advance Score (aka EWA Score) is a **Plaid Protect** product delivered through the same `/signal/evaluate` endpoint as standard Signal, but it is a **distinct product** with different score semantics, different on-screen narrative, and Sales-side enablement. The pipeline must route EWA demos to family `cash_advance_score` and product knowledge `inputs/products/plaid-ewa-score.md` — NEVER to `funding` / `inputs/products/plaid-signal.md`.
+
+End-to-end API pattern:
+
+| Step | Endpoint | Notes |
+|---|---|---|
+| Link token | `POST /link/token/create` with `products: ["auth", "signal"]` | `'signal'` is a valid Link product as of Oct 2024 — present in `ALLOWED_LINK_PRODUCTS`. No `/user/create` bootstrap required. |
+| Token exchange | `POST /item/public_token/exchange` | Standard. |
+| Score retrieval | `POST /signal/evaluate` | Body: `{ access_token, account_id, client_transaction_id, amount, user?, device?, ruleset_key? }`. |
+| Decision feedback | `POST /signal/decision/report` | Same endpoint as standard Signal: `{ client_transaction_id, initiated }`. |
+
+Response shape (when provisioned by Plaid Sales):
+- **Primary score:** `response.scores.cash_advance.score` (1–99, **higher = higher risk** — same direction as standard Signal). Approve at low scores.
+- **Fallback** (when `cash_advance` is absent because the account isn't provisioned): `response.scores.bank_initiated_return_risk.score`. Narration must say so honestly.
+- **Explainability:** `core_attributes` (key/value) and `ruleset.triggered_rule_details.internal_note` / `ruleset.result`. There is **NO documented `reason_codes[]` array** — demos must NOT show one.
+
+Family routing is enforced in `scripts/scratch/utils/prompt-scope.js`:
+- `inferProductFamilyFromKeywordsOnly()` and `getEffectiveProductFamily()` detect EWA keywords (`ewa`, `earned wage access`, `cash advance score`, `plaid protect cash advance`, `scores.cash_advance`) BEFORE the legacy `signal` / `funding` rule.
+- `detectProductSlugFromPrompt()` returns `'ewa-score'` (loading `inputs/products/plaid-ewa-score.md`) BEFORE the generic `'signal'` slug check.
+
+Regression tests: `tests/unit/prompt-scope.test.js` (EWA routing block) and `tests/unit/link-token-create-config.test.js` (`'signal'` in `ALLOWED_LINK_PRODUCTS`, `[auth, signal]` survives sanitization).
+
+Build-time enforcement: the build prompt for EWA demos must reference `scores.cash_advance.score` (or the documented `bank_initiated_return_risk` fallback) and 2–3 `core_attributes` / ruleset rule names — never a fabricated `reason_codes[]`.
 
 ### Plaid Link Event Names (use these exactly — do NOT invent event names)
 ```
@@ -178,7 +298,8 @@ When the build injects the Layer mobile mock template (`LAYER_MOCK_TEMPLATE.md` 
 
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
-- Plaid Signal ACH transaction risk scores: 0–99 (higher = HIGHER return risk — higher score means more likely to result in ACH return/failure). Realistic demo values for ACCEPT scenarios: 5–20 (low risk). Do NOT use scores 82–97 — those represent high-risk transactions that should receive REVIEW or REROUTE, not ACCEPT. Do NOT use the term "Trust Index" — it is not a Plaid product name.
+- Plaid Signal ACH transaction risk scores: 1–99 (higher = HIGHER return risk — higher score means more likely to result in ACH return/failure). Realistic demo values for ACCEPT scenarios: 5–20 (low risk). Do NOT use scores 82–97 — those represent high-risk transactions that should receive REVIEW or REROUTE, not ACCEPT. **`REJECT` is not a documented `ruleset.result` value** — use `REROUTE` or render the host-app decision outside the API panel.
+- **Trust Index** is a real Plaid product (Limited Availability since March 2026; Ti2 shipped Oct 2025). Use the term ONLY in Plaid Protect demos, and never fabricate `/protect/*` endpoints or `trust_index.*` field shapes (NDA / private docs).
 - Identity verification statuses: `active`, `success`, `failed`, `pending_review`
 - Never show API error responses in main demo flows
 - Realistic but idealized data only (no 100/100 scores, no instant < 1s responses)

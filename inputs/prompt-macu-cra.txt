@@ -1,0 +1,67 @@
+================================================================================
+Mountain America Credit Union — CRA Base Report for consumer lending
+================================================================================
+
+**Host:** **Mountain America Credit Union (MACU)** — community credit union
+**Canonical URL:** https://www.macu.com/
+**Brand URL:** https://www.macu.com/
+
+**Opportunity context (Salesforce):**
+- `B&W | New Business | MACU - CRA` (`006UV00000M3TATYA3`) — Mutual Alignment, ~$1.53M
+- Primary product: `Base Report` (Consumer Report)
+- GTM: Community Banks
+
+**Business objectives (Gong: Kikoff CRA retro — report append, async lifecycle):**
+- MACU evaluates loan applicants with CRA Base Report + permissible purpose before underwriting.
+- Demo shows `/user/create`, Link CRA consent, async report-ready beat, then Base Report insights on screen.
+
+**User journey:** Member applies for auto loan; links via Plaid CRA Link; report returns; underwriter sees cash-flow and risk attributes.
+
+**Story arc:** Problem: slow manual underwriting → Plaid CRA Link consent → report ready → quantified insight reveal → approved path.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products:** Plaid Link, **Plaid CRA Base Report** (Consumer Report)
+**Solutions supported:** Credit Scoring & Underwriting, Consumer Report Underwriting
+**Primary product family:** `cra_base_report`
+**Primary messaging file:** `inputs/products/plaid-cra-base-report.md`
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING
+-------------------------------------------------------------------------------
+
+  [x] Live Plaid Link CRA — single `plaidPhase: "launch"`
+  [x] Sandbox: `user_credit_profile_*` / `pass_good` per plaid-link-sandbox.md
+  [x] Async report-ready lifecycle step before retrieval
+
+-------------------------------------------------------------------------------
+STORYBOARD (8 beats)
+-------------------------------------------------------------------------------
+
+| # | Beat | Viewer sees | Narration |
+|---|------|-------------|-----------|
+| 1 | host | MACU loan application — auto pre-qual | Member starts auto loan |
+| 2 | host | Pre-Link — verify income & cash flow via CRA | Ends on Link CTA |
+| 3 | link | Real CRA Plaid Link flow | Inside modal only |
+| 4 | host | "Generating your report" progress | Async wait |
+| 5 | host | Report ready + API panel Base Report JSON | Reveal key attributes |
+| 6 | host | Underwriting decision APPROVED | Happy path |
+| 7 | slide | `cra-value-slide` — underwriting speed | Stat from product KB |
+| 8 | slide | `macu-outcome-slide` — member outcome | No `value-summary-slide` id |
+
+**Compliance:** Permissible purpose + user/create before report; CRA real Link only.
+
+-------------------------------------------------------------------------------
+PERSONA
+-------------------------------------------------------------------------------
+
+**Name:** Jordan Ellis, 34, MACU member, $28K auto loan
+**On screen:** loan amount, report status, 2–3 CRA attribute labels, APPROVED
+
+**Viewport:** 1440×900, light host chrome.
+
+[[SLIDE_OUTPUT_BEGIN]] 2 slides. [[SLIDE_OUTPUT_END]]
+END OF SPECIFICATION

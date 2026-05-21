@@ -1,0 +1,96 @@
+================================================================================
+Current — Earned Wage Access Score for advance underwriting
+================================================================================
+
+**Host:** **Current** — consumer neobank / fintech
+**Canonical URL:** https://current.com/
+**Brand URL:** https://current.com/
+
+**Opportunity context (Salesforce — open):**
+- Opportunity: `Current - EWA Score` (`006UV00000ZdL3dYAF`)
+- Stage: `Discovery`  •  Close Date: `2026-07-01`
+- Primary product (SFDC): `EWA Score`
+- Use case: Earned Wage Access
+- Account: Current (Fintech, US)
+
+**Business objectives (SFDC + EWA GTM):**
+- Current is adding **EWA Score** to improve advance approval quality and advance-amount calibration vs. generic in-house or vendor scores.
+- Value prop: network + cash-flow signals across the EWA ecosystem (repeat borrowers, cross-app behavior) without bureau lag.
+- Happy path: evaluate at disbursement request → `scores.cash_advance.score = 27` (1–99, **higher = higher risk**, low score = approve) with 2–3 named ruleset rule outcomes / core_attributes → **APPROVE** $150 advance. Not ACH Signal return-risk framing, not an invented `reason_codes[]` array.
+
+**User journey (one sentence):**
+A Current member requests a paycheck advance; Plaid Cash Advance Score runs at decision time via `/signal/evaluate` and instantly approves a right-sized amount with explainable ruleset rules + core_attributes.
+
+**Story arc (short prose):**
+Maya opens Current and taps Get paid early. She confirms her linked checking account. On the advance review screen, Current calls `/signal/evaluate` and reads `scores.cash_advance.score = 27` (low = good). Two named core_attributes (stable inflows, low cross-EWA churn) plus a ruleset rule fire — **Approved $150**. Funds land in her Current balance. A closing beat ties the score to fewer defaults and higher safe approval rates for EWA cohorts.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Auth** (linked account context), EWA Score (Protect / evaluate)
+
+**Solutions supported:**
+Fraud & Risk Prevention, Credit Scoring & Underwriting
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+cash_advance_score
+
+**CRITICAL — NOT CRA:** Do **not** use Plaid Check / CRA (`cra_base_report`, `cra_income_insights`, LendScore). EWA Score is **Plaid Protect** cash-advance scoring via **Auth + Signal evaluate** — not consumer reports.
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-ewa-score.md`
+
+**Research depth:** messaging
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — **required** single step with `plaidPhase: "launch"` (modal); member links checking before first advance
+  [ ] **CRA / Layer / IDV** — not in scope
+  [x] **Sandbox** — First Platypus Bank defaults per `inputs/plaid-link-sandbox.md` if Link shown
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Current-style home — Payday / Get paid early entry | Maya needs cash before payday without a long wait. | `Get paid early` |
+| 2 | host | Advance amount selector — $50 / $100 / $150 | She picks $150; next she must link checking. | `Link your bank` |
+| 3 | **link** | **Plaid Link modal** — OTP, First Platypus Bank, checking ••0211 (`plaidPhase: "launch"`) | Inside modal: confirms OTP, selects checking, connects. | HANDOFF |
+| 4 | host | Advance review — Checking ••0211 linked | Account linked; ready for EWA score. | `Request advance` |
+| 5 | insight | /signal/evaluate panel — `scores.cash_advance.score: 27`, 2–3 core_attributes / ruleset rule names, `ruleset.result: APPROVE` | Score (low = good) and named attributes visible; not generic "approved." | **27 — APPROVE** |
+| 6 | host | Success — $150 available now in Current balance | Funds available; member sees confirmation. | — |
+| 7 | slide | Plaid-branded value summary — network + cash-flow intelligence | Quantify safer approvals / right-sized amounts. | CTA |
+
+**Compliance / user data:** EWA underwriting notices on host; no raw PII in JSON panel body by default.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Chen — hourly retail worker, Current member  
+**Company / context:** Uses Current for daily banking + early wage access  
+**Sample fields on screen:** `scores.cash_advance.score: 27` (1–99 higher = higher risk), 2–3 named core_attributes (e.g. stable_inflows, low_cross_ewa_churn) or ruleset rule names, `ruleset.result: APPROVE`, advance **$150**
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Neobank mobile-first layout on 1440×900 desktop frame: Current wordmark, teal accent, light background per host-app rule. Primary CTA "Get paid early" → advance flow. API panel collapsed by default on score step.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+2 slides: (1) Problem — generic scores miss EWA network behavior; (2) Outcome — score + reason codes → approve more qualified users. JSON on slide: no.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION

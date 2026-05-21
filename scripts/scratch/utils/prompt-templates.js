@@ -1665,9 +1665,16 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     contentBlocks.push({
       type: 'text',
       text:
-        `## LINK TOKEN CREATE (dynamic — prompt.txt + AskBill)\n\n` +
-        `Research derived POST /api/create-link-token fields from **products named in the prompt** and ` +
-        `AskBill (Plaid docs MCP). The app MUST fetch the Link token using this body (replace <BrandName> with the host brand):\n\n` +
+        `## LINK TOKEN CREATE (dynamic — research-driven)\n\n` +
+        `The /link/token/create products[] list is **resolved by the research stage** ` +
+        `(link-token-create-config.json) using prompt.txt + AskBill (Plaid docs MCP) + ` +
+        `indexed product knowledge in inputs/products/, then sanitized against Plaid's ` +
+        `product-mix rules (CRA vs non-CRA Income, income_verification compatibility).\n\n` +
+        `**HARD RULE — do NOT hardcode a products[] array of your own choosing.** Use the ` +
+        `EXACT body shown below for the /api/create-link-token fetch (replace <BrandName> ` +
+        `with the host brand). The backend will additionally re-read the research config ` +
+        `and override any drifted products[] at request time, so deviating here only ` +
+        `creates a confusing mismatch between HTML and the wire request:\n\n` +
         `\`\`\`javascript\n` +
         `body: ${linkTokenFetchBodySnippet}\n` +
         `\`\`\`\n\n` +

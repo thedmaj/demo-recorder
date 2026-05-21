@@ -17,8 +17,10 @@ const ALLOWED_LINK_PRODUCTS = new Set([
   'identity',
   'income_verification',
   'investments',
+  'investments_auth',
   'liabilities',
   'payment_initiation',
+  'signal',
   'standing_orders',
   'transactions',
   'transfer',
@@ -74,6 +76,87 @@ function uniqLowerProducts(arr) {
   return out;
 }
 
+// Plaid /link/token/create product-mix constraints. The Plaid API rejects
+// certain product combinations with HTTP 400. We enforce them here, in the
+// research/resolver layer, so the config file written to disk is always a
+// valid /link/token/create body. The same rules are duplicated in
+// qa-patch-library.js's `plaid-link-token-products-prune` patch for healing
+// already-built scratch-apps that pre-date this sanitizer.
+//
+// Layer 1: CRA + non-CRA Income are mutually exclusive. CRA mints a Plaid
+//   Check user_id (usr_xxx); non-CRA Income wants a legacy user_token. A
+//   single token cannot carry both.
+//
+// Layer 2: income_verification is exclusive of identity / auth / transactions
+//   / liabilities / assets / investments. Plaid responds:
+//   "only income_verification and employment may be configured." The Income
+//   product family pre-dates the modular Link product mix.
+const CRA_LINK_PRODUCTS = new Set(['cra_base_report', 'cra_income_insights']);
+const NON_CRA_INCOME_LINK_PRODUCTS = new Set(['income_verification']);
+const INCOME_VERIFICATION_COMPATIBLE_LINK_PRODUCTS = new Set([
+  'income_verification',
+  'employment',
+]);
+
+/**
+ * Sanitize a products[] list so it satisfies Plaid /link/token/create's
+ * product-mix rules. `intent` ('cra' | 'non-cra' | 'auto') controls which
+ * side of a Layer-1 conflict wins. When `auto`, the demo-script signals are
+ * the tiebreaker (favoring non-CRA Income when ambiguous).
+ *
+ * @param {string[]} products
+ * @param {'cra'|'non-cra'|'auto'} [intent='auto']
+ * @returns {{ products: string[], droppedCra: string[], droppedNonCraIncomeIncompatible: string[] }}
+ */
+function sanitizeProductsForLinkTokenMix(products, intent = 'auto') {
+  const droppedCra = [];
+  const droppedNonCraIncomeIncompatible = [];
+  if (!Array.isArray(products) || products.length === 0) {
+    return { products: products || [], droppedCra, droppedNonCraIncomeIncompatible };
+  }
+  let result = [...products];
+
+  const hasCra = result.some((p) => CRA_LINK_PRODUCTS.has(p));
+  const hasNonCraIncome = result.some((p) => NON_CRA_INCOME_LINK_PRODUCTS.has(p));
+
+  // Layer 1: CRA vs non-CRA Income mutual exclusion.
+  if (hasCra && hasNonCraIncome) {
+    // 'auto' default — favor non-CRA Income, because mis-routing into the
+    // CRA scope on a Bank Income demo causes harder-to-debug auth failures
+    // (different credentials, different /user/create flow). Operators that
+    // genuinely want CRA can pass intent='cra'.
+    const keep = intent === 'cra' ? 'cra' : 'non-cra';
+    result = result.filter((p) => {
+      if (keep === 'non-cra' && CRA_LINK_PRODUCTS.has(p)) {
+        droppedCra.push(p);
+        return false;
+      }
+      if (keep === 'cra' && NON_CRA_INCOME_LINK_PRODUCTS.has(p)) {
+        droppedNonCraIncomeIncompatible.push(p);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Layer 2: when keeping non-CRA Income, also drop anything not in the
+  // compatible set. Plaid only allows {income_verification, employment} in
+  // the same link token.
+  if (result.some((p) => NON_CRA_INCOME_LINK_PRODUCTS.has(p))) {
+    const filtered = [];
+    for (const p of result) {
+      if (INCOME_VERIFICATION_COMPATIBLE_LINK_PRODUCTS.has(p)) {
+        filtered.push(p);
+      } else {
+        droppedNonCraIncomeIncompatible.push(p);
+      }
+    }
+    result = filtered;
+  }
+
+  return { products: result, droppedCra, droppedNonCraIncomeIncompatible };
+}
+
 function normalizePathSlashes(text) {
   return String(text || '').replace(/\\/g, '/').toLowerCase();
 }
@@ -111,17 +194,41 @@ function inferPlaidLinkProductsFromPrompt(promptText = '') {
     if (ALLOWED_LINK_PRODUCTS.has(p)) found.add(p);
   };
 
-  if (
-    /\binvestments move\b/.test(text) ||
-    /\binvestments\b/.test(text) ||
+  // Investments Move (ACATS / ATON brokerage transfer initiation) and
+  // standard Plaid Investments (holdings + transactions data access) are
+  // DIFFERENT products with different Plaid Link product strings:
+  //   Investments Move    → products: ['investments_auth'], endpoint
+  //                         POST /investments/auth/get
+  //   Plaid Investments   → products: ['investments'],      endpoints
+  //                         POST /investments/holdings/get and
+  //                         POST /investments/transactions/get
+  // Verified via AskBill + Glean (GTM Playbook Feb 2026) on 2026-05-21.
+  //
+  // Detect Move-specific signals FIRST so a prompt mentioning ACATS or
+  // /investments/auth/get doesn't degrade to 'investments' and silently
+  // call the wrong endpoint after Link completes.
+  const isInvestmentsMove =
+    /\binvestments\s+move\b/.test(text) ||
     /\bacats\b/.test(text) ||
+    /\baton\b/.test(text) ||
     /\bbroker-?sourced\b/.test(text) ||
     /\bheld-?away\b/.test(text) ||
-    /\bportfolio transfer\b/.test(text) ||
+    /\bportfolio\s+transfer\b/.test(text) ||
     /\bbrokerage\b.*\btransfer\b/.test(text) ||
-    /\binvestment holdings\b/.test(text) ||
-    /\/investments\//.test(text)
-  ) {
+    /\binvestments_auth\b/.test(text) ||
+    /\/investments\/auth\/get\b/.test(text);
+  const isInvestmentsDataAccess =
+    !isInvestmentsMove &&
+    (
+      /\binvestments\b/.test(text) ||
+      /\binvestment\s+holdings\b/.test(text) ||
+      /\/investments\/holdings\/get\b/.test(text) ||
+      /\/investments\/transactions\/get\b/.test(text) ||
+      /\bportfolio\s+(view|allocation|performance|holdings)\b/.test(text)
+    );
+  if (isInvestmentsMove) {
+    add('investments_auth');
+  } else if (isInvestmentsDataAccess) {
     add('investments');
   }
   if (/\bidentity\b/.test(text) && (/\bmatch\b/.test(text) || /\/identity\//.test(text))) add('identity');
@@ -135,6 +242,21 @@ function inferPlaidLinkProductsFromPrompt(promptText = '') {
   if (/\bcra\b/.test(text) && /\bbase report\b/.test(text)) add('cra_base_report');
   if (/\bcra\b/.test(text) && /\bincome insights\b/.test(text)) add('cra_income_insights');
 
+  // Plaid Protect Cash Advance Score / EWA Score is surfaced via
+  // /signal/evaluate, so 'signal' is the correct Link product. We add it for
+  // EWA / cash-advance prompts in addition to whatever the prompt already
+  // implies (typically 'auth' for the account-level context). 'signal' was
+  // added to Plaid's Link products list in Oct 2024 — verified via AskBill.
+  if (
+    /\bewa\b/.test(text) ||
+    /\bearned[\s_-]?wage[\s_-]?access\b/.test(text) ||
+    /\bcash[\s_-]?advance\s+score\b/.test(text) ||
+    /\bplaid\s+protect\s+cash[\s_-]?advance\b/.test(text)
+  ) {
+    add('auth');
+    add('signal');
+  }
+
   return [...found];
 }
 
@@ -142,10 +264,25 @@ function inferProductsFromApiSignals(signals = []) {
   const out = [];
   for (const s of signals || []) {
     const c = String(s || '').toLowerCase();
-    if (c.includes('investments')) out.push('investments');
+    // Investments Move endpoint must take precedence over the generic
+    // 'investments' substring match. Both endpoint paths contain
+    // 'investments', but only /investments/auth/get is the Move flow and
+    // requires the 'investments_auth' Link product.
+    if (c.includes('investments/auth')) {
+      out.push('investments_auth');
+    } else if (c.includes('investments/holdings') || c.includes('investments/transactions')) {
+      out.push('investments');
+    } else if (c.includes('investments')) {
+      // Ambiguous bare 'investments' signal — assume the data-access flow;
+      // Move flows should be explicit (investments/auth in the signal).
+      out.push('investments');
+    }
     if (c.includes('identity')) out.push('identity');
-    if (c.includes('auth')) out.push('auth');
-    if (c.includes('transactions')) out.push('transactions');
+    // Plain 'auth' here means /auth/get (the Plaid Auth product for ACH
+    // routing/account numbers), NOT the Investments Move /investments/auth/get
+    // path which is handled above and routes to 'investments_auth'.
+    if (/(^|\W)auth($|\W)/.test(c) && !c.includes('investments/auth')) out.push('auth');
+    if (c.includes('transactions') && !c.includes('investments/transactions')) out.push('transactions');
     if (c.includes('liabilities')) out.push('liabilities');
     if (c.includes('cra/check_report/base')) out.push('cra_base_report');
     if (c.includes('cra/check_report/income')) out.push('cra_income_insights');
@@ -175,8 +312,14 @@ function sanitizeClientRequest(obj) {
 
 function defaultProductsForFamily(productFamily) {
   const f = String(productFamily || '').toLowerCase();
+  if (f === 'cra_cashflow_insights' || f === 'cra_lend_score' || f === 'cra_network_insights' || f === 'cra_partner_insights') {
+    return ['cra_base_report'];
+  }
   if (f === 'cra_base_report' || f === 'income_insights') {
     return ['cra_base_report', 'cra_income_insights'];
+  }
+  if (f === 'cash_advance_score') {
+    return ['auth', 'signal'];
   }
   return ['auth', 'identity'];
 }
@@ -248,7 +391,20 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
     products = defaultProductsForFamily(productFamily);
   }
 
-  const isCraFamily = productFamily === 'cra_base_report' || productFamily === 'income_insights';
+  const CRA_TOKEN_FAMILIES = new Set([
+    'cra_base_report',
+    'income_insights',
+    'cra_underwriting',
+    'cra_lend_score',
+    'cra_network_insights',
+    'cra_cashflow_insights',
+    'cra_partner_insights',
+    'cra_cashflow_updates',
+    'cra_home_lending',
+  ]);
+  const isCraFamily =
+    CRA_TOKEN_FAMILIES.has(productFamily) ||
+    (Array.isArray(products) && products.some((p) => CRA_LINK_PRODUCTS.has(p)));
   let askBillAnswer = '';
   let askBillJson = null;
 
@@ -294,6 +450,32 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   merged = sanitizeClientRequest(merged);
   if (!merged.products || !merged.products.length) merged.products = defaultProductsForFamily(productFamily);
 
+  // Enforce Plaid product-mix rules before persisting. The merge pass above
+  // can produce illegal combinations (e.g. cra_income_insights +
+  // income_verification when prompt language mentions both). Intent is
+  // derived from productFamily: CRA families win when explicit, otherwise
+  // 'auto' favors the non-CRA Income path.
+  const intentForMix = isCraFamily ? 'cra' : 'auto';
+  const mix = sanitizeProductsForLinkTokenMix(merged.products, intentForMix);
+  const sanitizedProducts = mix.products;
+  const mixWarnings = [];
+  if (mix.droppedCra.length) {
+    mixWarnings.push(
+      `dropped CRA products to keep non-CRA Income path: ${mix.droppedCra.join(', ')}`
+    );
+  }
+  if (mix.droppedNonCraIncomeIncompatible.length) {
+    mixWarnings.push(
+      `dropped products incompatible with income_verification: ${mix.droppedNonCraIncomeIncompatible.join(', ')}`
+    );
+  }
+  if (mixWarnings.length) {
+    console.warn(
+      `[link-token-create-config] product-mix sanitization for family=${productFamily} → [${sanitizedProducts.join(', ')}] (${mixWarnings.join('; ')})`
+    );
+  }
+  merged.products = sanitizedProducts;
+
   return {
     products: merged.products,
     suggestedClientRequest: merged,
@@ -304,6 +486,13 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
     askBillOnlyInvestmentsMoveAuthGet: false,
     askBillAvailable: Boolean(askBillJson && typeof askBillJson === 'object'),
     askBillAnswerPreview: String(askBillAnswer || '').slice(0, 2000),
+    productMixSanitization: mixWarnings.length
+      ? {
+          droppedCra: mix.droppedCra,
+          droppedNonCraIncomeIncompatible: mix.droppedNonCraIncomeIncompatible,
+          intent: intentForMix,
+        }
+      : null,
     resolvedAt: new Date().toISOString(),
   };
 }
@@ -313,5 +502,9 @@ module.exports = {
   inferProductsFromApiSignals,
   resolveLinkTokenCreateConfig,
   detectInvestmentsMoveInvestmentsAuthGetAskBillOnly,
+  sanitizeProductsForLinkTokenMix,
   ALLOWED_LINK_PRODUCTS,
+  CRA_LINK_PRODUCTS,
+  NON_CRA_INCOME_LINK_PRODUCTS,
+  INCOME_VERIFICATION_COMPATIBLE_LINK_PRODUCTS,
 };

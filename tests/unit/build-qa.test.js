@@ -11,6 +11,7 @@ const {
   isSlideLikeStep,
   buildPlaidLaunchCtaIconDiagnostics,
   waitForLoadingToClear,
+  resolveInitialStepId,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/build-qa'));
 
 describe('build-qa helpers', () => {
@@ -37,6 +38,20 @@ describe('build-qa helpers', () => {
     assert.equal(isSlideLikeStep({ id: 'auth-slide' }), true);
     assert.equal(isSlideLikeStep({ visualState: 'Technical slide showing API summary' }), true);
     assert.equal(isSlideLikeStep({ id: 'amount-entry', visualState: 'Bank amount entry form' }), false);
+  });
+
+  test('resolveInitialStepId returns first demo-script step (slide-first CarMax pattern)', () => {
+    assert.equal(
+      resolveInitialStepId({
+        steps: [
+          { id: 'bureau-blind-spot-slide', stepKind: 'slide' },
+          { id: 'carmax-application', stepKind: 'app' },
+        ],
+      }),
+      'bureau-blind-spot-slide'
+    );
+    assert.equal(resolveInitialStepId({ steps: [] }), null);
+    assert.equal(resolveInitialStepId(null), null);
   });
 
   test('buildPlaidLaunchCtaIconDiagnostics skips non-launch steps', () => {

@@ -1,0 +1,35 @@
+================================================================================
+ClarityPay — Plaid Auth for digital lending account verification
+================================================================================
+
+**Host:** **ClarityPay** — digital lending / BNPL-style financing
+**Canonical URL:** https://claritypay.com/
+**Brand URL:** https://claritypay.com/
+
+**Opportunity:** `SMB | OB | ClarityPay - Auth, Balance` (`006UV00000XRxllYAD`) — Discovery
+**Primary product:** Auth
+
+**Story:** Applicant finances a purchase; ClarityPay verifies checking via Instant Auth before first payment.
+
+**Products:** Plaid Link, **Plaid Auth**, **Plaid Identity Match**
+**Family:** `funding`
+**Messaging:** `inputs/products/plaid-auth.md`
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+BEATS (7)
+-------------------------------------------------------------------------------
+
+| 1 | host | Checkout — finance $1,200 purchase | CTA Link bank |
+| 2 | host | Pre-Link explainer | Connect bank |
+| 3 | link | Plaid Link modal | Inside modal narration |
+| 4 | host | **Identity Match** panel first (name/address match scores) | Ownership confirmed |
+| 5 | host | **Auth** panel — verified routing ••1234 | Account verified |
+| 6 | host | Payment schedule unlocked | Happy path |
+| 7 | slide | `auth-value-slide` | |
+| 8 | slide | `claritypay-recap-slide` | not value-summary-slide |
+
+**Step order rule:** Identity Match step MUST appear immediately after Link success and BEFORE any Auth/`/auth/get` insight step.
+
+**Sandbox:** First Platypus Bank, user_good/pass_good
+END OF SPECIFICATION

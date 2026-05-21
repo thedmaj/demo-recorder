@@ -680,6 +680,60 @@ const BUILD_MAX_TOKENS   = Math.max(
   parseInt(process.env.BUILD_MAX_TOKENS_OVERRIDE || '32000', 10) || 32000
 );
 
+// Anthropic overloaded_error — transient capacity; retry with exponential backoff.
+const BUILD_OVERLOADED_MAX_RETRIES = Math.max(
+  0,
+  parseInt(process.env.BUILD_OVERLOADED_MAX_RETRIES || '3', 10) || 3
+);
+const BUILD_OVERLOADED_BASE_MS = Math.max(
+  1000,
+  parseInt(process.env.BUILD_OVERLOADED_BASE_MS || '8000', 10) || 8000
+);
+const BUILD_OVERLOADED_MAX_MS = Math.max(
+  BUILD_OVERLOADED_BASE_MS,
+  parseInt(process.env.BUILD_OVERLOADED_MAX_MS || '90000', 10) || 90000
+);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAnthropicOverloadedError(err) {
+  if (!err) return false;
+  const errType = err?.error?.type || err?.type;
+  if (errType === 'overloaded_error') return true;
+  if (Number(err?.status) === 529) return true;
+  const msg = String(err?.message || err?.error?.message || '');
+  return /overloaded_error/i.test(msg);
+}
+
+/**
+ * Retry fn on Anthropic overloaded_error only (exponential backoff, capped).
+ * @param {string} label - Log context (e.g. "Call 2 full HTML")
+ * @param {() => Promise<*>} fn
+ */
+async function withAnthropicOverloadedRetry(label, fn) {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isAnthropicOverloadedError(err) || attempt >= BUILD_OVERLOADED_MAX_RETRIES) {
+        throw err;
+      }
+      const delayMs = Math.min(
+        BUILD_OVERLOADED_BASE_MS * Math.pow(2, attempt),
+        BUILD_OVERLOADED_MAX_MS
+      );
+      attempt += 1;
+      console.warn(
+        `[Build] ${label}: Anthropic overloaded_error — retry ${attempt}/${BUILD_OVERLOADED_MAX_RETRIES} in ${Math.round(delayMs / 1000)}s`
+      );
+      await sleep(delayMs);
+    }
+  }
+}
+
 // ── Live Plaid Link flag ──────────────────────────────────────────────────────
 const PLAID_LINK_LIVE = process.env.PLAID_LINK_LIVE === 'true';
 const LAYERED_BUILD_ENABLED = process.env.LAYERED_BUILD_ENABLED === 'true' || process.env.LAYERED_BUILD_ENABLED === '1';
@@ -1913,7 +1967,11 @@ function extractRunIdsFromText(text) {
 function scanArtifactForForeignRunIds(filePath, currentRunId) {
   if (!filePath || !fs.existsSync(filePath)) return [];
   try {
-    const raw = fs.readFileSync(filePath, 'utf8');
+    let raw = fs.readFileSync(filePath, 'utf8');
+    // Ignore run-id mentions in comments only (often QA notes), not in executable paths.
+    if (/\.html?$/i.test(filePath)) {
+      raw = raw.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    }
     return extractRunIdsFromText(raw).filter((id) => id !== currentRunId);
   } catch (_) {
     return [];
@@ -1965,12 +2023,14 @@ async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
     pipelineAppOnlyHostUi: !!briefOpts.pipelineAppOnlyHostUi,
   });
 
-  const response = await client.messages.create({
-    model:      ARCH_MODEL,
-    max_tokens: ARCH_MAX_TOKENS,
-    system,
-    messages:   userMessages,
-  });
+  const response = await withAnthropicOverloadedRetry('Call 1 architecture brief', () =>
+    client.messages.create({
+      model:      ARCH_MODEL,
+      max_tokens: ARCH_MAX_TOKENS,
+      system,
+      messages:   userMessages,
+    })
+  );
 
   const brief = extractText(response.content);
   console.log('[Build] Architecture brief received');
@@ -1987,12 +2047,14 @@ async function getFrameworkPlan(client, demoScript, architectureBrief, framework
     buildViewMode: frameworkOpts.buildViewMode || 'desktop',
     pipelineAppOnlyHostUi: !!frameworkOpts.pipelineAppOnlyHostUi,
   });
-  const response = await client.messages.create({
-    model: FRAMEWORK_MODEL,
-    max_tokens: FRAMEWORK_MAX_TOKENS,
-    system,
-    messages: userMessages,
-  });
+  const response = await withAnthropicOverloadedRetry('Call 1b framework plan', () =>
+    client.messages.create({
+      model: FRAMEWORK_MODEL,
+      max_tokens: FRAMEWORK_MAX_TOKENS,
+      system,
+      messages: userMessages,
+    })
+  );
   const raw = extractText(response.content);
   try {
     const parsed = JSON.parse(raw);
@@ -2178,37 +2240,39 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
     }
   );
 
-  const stream = await client.messages.stream({
-    model:      BUILD_MODEL,
-    max_tokens: BUILD_MAX_TOKENS,
-    thinking: {
-      type: 'adaptive',
-    },
-    output_config: {
-      effort: 'high',
-    },
-    system:   buildSystem,
-    messages: buildMessages,
-  });
+  return withAnthropicOverloadedRetry('Call 2 full HTML', async () => {
+    const stream = await client.messages.stream({
+      model:      BUILD_MODEL,
+      max_tokens: BUILD_MAX_TOKENS,
+      thinking: {
+        type: 'adaptive',
+      },
+      output_config: {
+        effort: 'high',
+      },
+      system:   buildSystem,
+      messages: buildMessages,
+    });
 
-  let fullText = '';
-  let chunkCount = 0;
+    let fullText = '';
+    let chunkCount = 0;
 
-  for await (const event of stream) {
-    if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-      fullText += event.delta.text;
-      chunkCount++;
-      // Print a dot every 10 chunks to show progress without flooding stdout
-      if (chunkCount % 10 === 0) {
-        process.stdout.write('.');
+    for await (const event of stream) {
+      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+        fullText += event.delta.text;
+        chunkCount++;
+        // Print a dot every 10 chunks to show progress without flooding stdout
+        if (chunkCount % 10 === 0) {
+          process.stdout.write('.');
+        }
       }
     }
-  }
 
-  process.stdout.write('\n');
-  console.log(`[Build] Generation complete (${fullText.length} chars)`);
+    process.stdout.write('\n');
+    console.log(`[Build] Generation complete (${fullText.length} chars)`);
 
-  return fullText;
+    return fullText;
+  });
 }
 
 /**

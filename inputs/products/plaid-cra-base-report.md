@@ -11,7 +11,7 @@ use_cases:
   - "cash-flow-underwriting"
   - "account-stability-review"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-04-13T05:01:48.560Z"
+last_ai_update: "2026-05-21T13:36:13.138Z"
 needs_review: true
 approved: true
 version: 1
@@ -169,6 +169,24 @@ Official list: [Plaid Sandbox test credentials — Credit and income testing](ht
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-21 — Run: 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
+- [high] {"claim":"Mortgage-specific: Plaid CRA VOA enables Fannie Mae Day 1 Certainty reps-and-warrants relief.","source":"GTM Guide: Home Lending Report, 2026-03-26","status":"DRAFT"}
+- [high] {"claim":"Nubank chose Plaid CRA over Prism, Experian, and Nova Credit for best UX (existing US bank flow), comprehensive products under one contract, and competitive pricing.","source":"Nubank SFDC opp, 2026-03-10","status":"DRAFT"}
+
+### 2026-05-21 — Run: 2026-05-21-Demo-CRA-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of Assets — FCRA-compliant with underwriting scores and insights.","status":"DRAFT","source":"Plaid Assets docs, 2026-03-05"}
+- [high] {"claim":"Under Plaid CRA, Plaid transforms raw data into a consumer report with derived calculations, insights, and cashflow transaction categorizations.","status":"DRAFT","source":"PNC CRA FAQ Slack thread, 2026-02-12"}
+- [high] {"claim":"Mortgage-specific: Plaid CRA VOA enables lenders to qualify for reps and warrants relief via Fannie Mae Day 1 Certainty.","status":"DRAFT","source":"GTM Guide: Home Lending Report, 2026-03-26"}
+- [high] {"claim":"Nubank chose Plaid CRA over Prism, Experian, and Nova Credit for best UX (existing US bank flow), comprehensive products under one contract, and competitive pricing.","status":"DRAFT","source":"Nubank SFDC opp, 2026-03-10"}
 
 ### 2026-04-13 — Run: 2026-04-13-Demo-CRA-Auth-Identity-Signal-Layer-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

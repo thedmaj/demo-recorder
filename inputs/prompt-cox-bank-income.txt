@@ -1,0 +1,23 @@
+================================================================================
+Cox Automotive — Plaid Bank Income for auto financing verification
+================================================================================
+
+**Host:** **Cox Automotive** (dealer / lender workflow)
+**Canonical URL:** https://www.coxautoinc.com/
+**Brand URL:** https://www.coxautoinc.com/
+
+**Opportunity:** Cox - ENT - Reseller - Income Verification (`006UV00000YKIBiYAP`) — Discovery
+**Primary product:** Income (Bank Income)
+
+**Story:** Dealer finance manager verifies buyer income via bank link instead of paystub upload.
+
+**Products:** Plaid Link, **Plaid Bank Income**, Identity Match
+**Family:** `funding` (Bank Income NOT CRA Income Insights)
+**Messaging:** `inputs/products/plaid-bank-income.md`
+**Research depth:** gapfill
+
+**Sandbox:** user_bank_income / pass_good — NOT user_credit_profile (CRA)
+
+| beats | dealer app → pre-Link → Link → income panel → approved → 2 slides |
+
+END OF SPECIFICATION

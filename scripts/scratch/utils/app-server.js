@@ -26,6 +26,152 @@ const http = require('http');
 const fs   = require('fs');
 const path = require('path');
 const { resolveMode, getLinkModeAdapter } = require('./link-mode');
+const {
+  sanitizeProductsForLinkTokenMix,
+  ALLOWED_LINK_PRODUCTS,
+} = require('./link-token-create-config');
+
+// In-memory cache so we don't re-read link-token-create-config.json on every
+// /api/create-link-token call. Keyed by absolute path. Invalidated by mtime.
+const _linkTokenConfigCache = new Map();
+
+/**
+ * Load the research-phase `link-token-create-config.json` from the active run
+ * directory, if present. Returns null when the file is missing or unreadable
+ * (this is normal for ad-hoc apps run outside the orchestrator).
+ *
+ * @param {string|null} runDir Absolute path to PIPELINE_RUN_DIR.
+ * @returns {{ products?: string[], suggestedClientRequest?: object, productFamily?: string }|null}
+ */
+function loadResearchLinkTokenConfig(runDir) {
+  if (!runDir) return null;
+  const cfgPath = path.join(runDir, 'link-token-create-config.json');
+  try {
+    const stat = fs.statSync(cfgPath);
+    const cached = _linkTokenConfigCache.get(cfgPath);
+    if (cached && cached.mtimeMs === stat.mtimeMs) return cached.config;
+    const raw = fs.readFileSync(cfgPath, 'utf8');
+    const config = JSON.parse(raw);
+    _linkTokenConfigCache.set(cfgPath, { mtimeMs: stat.mtimeMs, config });
+    return config;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Resolve the products[] list that the Plaid /link/token/create call should
+ * use, in priority order:
+ *   1. Research stage's link-token-create-config.json (authoritative).
+ *   2. HTML request body's products[] (only when no research config exists).
+ *   3. Safe default ['auth', 'identity'].
+ *
+ * The resolved list is then sanitized against Plaid's product-mix rules. This
+ * enforces the contract documented at /api/create-link-token in CLAUDE.md:
+ *   "the pipeline build should not hardcode Plaid Products but leverage the
+ *    proper and recommended parameters based on the research phase or indexed
+ *    product knowledge."
+ *
+ * @param {{
+ *   bodyProducts?: any[],
+ *   researchConfig?: object|null,
+ *   productFamilyHint?: string,
+ * }} input
+ * @returns {{
+ *   products: string[],
+ *   source: 'research-config'|'request-body'|'fallback-default',
+ *   sanitization: { droppedCra: string[], droppedNonCraIncomeIncompatible: string[] }|null,
+ *   driftDetected: boolean,
+ * }}
+ */
+function resolveCreateLinkTokenProducts({ bodyProducts, researchConfig, productFamilyHint } = {}) {
+  const bodyClean = Array.isArray(bodyProducts)
+    ? bodyProducts
+        .map((p) => String(p || '').trim().toLowerCase())
+        .filter((p) => p && ALLOWED_LINK_PRODUCTS.has(p))
+    : [];
+  const researchClean =
+    researchConfig && Array.isArray(researchConfig.products) && researchConfig.products.length
+      ? researchConfig.products
+          .map((p) => String(p || '').trim().toLowerCase())
+          .filter((p) => p && ALLOWED_LINK_PRODUCTS.has(p))
+      : [];
+
+  let products;
+  let source;
+  let driftDetected = false;
+  if (researchClean.length) {
+    products = researchClean;
+    source = 'research-config';
+    if (bodyClean.length) {
+      const same =
+        bodyClean.length === researchClean.length &&
+        bodyClean.every((p) => researchClean.includes(p));
+      driftDetected = !same;
+    }
+  } else if (bodyClean.length) {
+    products = bodyClean;
+    source = 'request-body';
+  } else {
+    products = ['auth', 'identity'];
+    source = 'fallback-default';
+  }
+
+  const family = String(
+    productFamilyHint || (researchConfig && researchConfig.productFamily) || ''
+  ).toLowerCase();
+  const intent = /cra|consumer[_\s-]?report|income[_\s-]?insights/.test(family) ? 'cra' : 'auto';
+  const mix = sanitizeProductsForLinkTokenMix(products, intent);
+  const sanitization =
+    mix.droppedCra.length || mix.droppedNonCraIncomeIncompatible.length
+      ? {
+          droppedCra: mix.droppedCra,
+          droppedNonCraIncomeIncompatible: mix.droppedNonCraIncomeIncompatible,
+        }
+      : null;
+
+  return { products: mix.products, source, sanitization, driftDetected };
+}
+
+/**
+ * Merge research `suggestedClientRequest` fields into the live token request.
+ * Products[] are handled separately by resolveCreateLinkTokenProducts.
+ * @param {object} baseOpts
+ * @param {object|null} researchConfig
+ */
+function mergeResearchLinkTokenRequest(baseOpts, researchConfig) {
+  const suggested =
+    researchConfig &&
+    researchConfig.suggestedClientRequest &&
+    typeof researchConfig.suggestedClientRequest === 'object'
+      ? researchConfig.suggestedClientRequest
+      : null;
+  if (!suggested) return baseOpts;
+
+  const merged = { ...baseOpts };
+  if (!merged.consumer_report_permissible_purpose && suggested.consumer_report_permissible_purpose) {
+    merged.consumer_report_permissible_purpose = suggested.consumer_report_permissible_purpose;
+  }
+  if (!merged.cra_options && suggested.cra_options) {
+    merged.cra_options = suggested.cra_options;
+  }
+  if (!merged.credentialScope && !merged.credential_scope && suggested.credentialScope) {
+    merged.credentialScope = suggested.credentialScope;
+  }
+  if (!merged.productFamily && !merged.product_family && suggested.productFamily) {
+    merged.productFamily = suggested.productFamily;
+  }
+  if (!merged.country_codes && suggested.country_codes) {
+    merged.country_codes = suggested.country_codes;
+  }
+  if (!merged.language && suggested.language) {
+    merged.language = suggested.language;
+  }
+  if (!merged.user && suggested.user) {
+    merged.user = suggested.user;
+  }
+  return merged;
+}
 
 // ── MIME type map (common assets used in demo apps) ──────────────────────────
 const MIME_TYPES = {
@@ -146,25 +292,52 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
           promptText: JSON.stringify(body || {}),
         });
         const linkModeAdapter = getLinkModeAdapter(resolvedLinkMode);
-        const products = body.products;
+
+        // Research-driven products: prefer the products[] resolved by the
+        // research stage (link-token-create-config.json) over whatever the
+        // generated HTML hardcoded. This implements the contract:
+        //   "the pipeline build should not hardcode Plaid Products but
+        //    leverage the proper and recommended parameters based on the
+        //    research phase or indexed product knowledge."
+        const runDir = context.runDir || process.env.PIPELINE_RUN_DIR || null;
+        const researchConfig = loadResearchLinkTokenConfig(runDir);
+        const productsResolution = resolveCreateLinkTokenProducts({
+          bodyProducts: body.products,
+          researchConfig,
+          productFamilyHint: body.productFamily || body.product_family,
+        });
+        if (productsResolution.driftDetected) {
+          console.warn(
+            `[app-server] /api/create-link-token: hardcoded HTML products [${(body.products || []).join(', ')}] differ from research config [${(researchConfig && researchConfig.products || []).join(', ')}] — using research config.`
+          );
+        }
+        if (productsResolution.sanitization) {
+          const s = productsResolution.sanitization;
+          console.warn(
+            `[app-server] /api/create-link-token: product-mix sanitization → [${productsResolution.products.join(', ')}] ` +
+            `(source=${productsResolution.source}, dropped=${[...s.droppedCra, ...s.droppedNonCraIncomeIncompatible].join(', ')})`
+          );
+        }
+        const products = productsResolution.products;
+
         const isCra = (
-          (Array.isArray(products) && products.some((p) => /cra|consumer_report/i.test(String(p)))) ||
+          products.some((p) => /cra|consumer_report/i.test(String(p))) ||
           /cra|consumer[_\s-]?report|income[_\s-]?insights|check/i.test(String(body.productFamily || body.product_family || '')) ||
           String(body.credentialScope || body.credential_scope || '').toLowerCase() === 'cra'
         );
-        const baseOpts = {
+        const baseOpts = mergeResearchLinkTokenRequest({
           ...body,
-          products:             body.products,
+          products,
           clientName:           body.clientName || body.client_name,
           userId:               body.userId || body.user_id,
           phoneNumber:          body.phoneNumber || body.phone_number || null,
           checkUserIdentity:    body.checkUserIdentity || body.check_user_identity || body.consumer_report_user_identity || null,
           linkCustomizationName: body.linkCustomizationName || body.link_customization_name,
-          productFamily:        body.productFamily || body.product_family || null,
+          productFamily:        body.productFamily || body.product_family || (researchConfig && researchConfig.productFamily) || null,
           credentialScope:      body.credentialScope || body.credential_scope || null,
           linkMode:             resolvedLinkMode,
-          runDir:               context.runDir || process.env.PIPELINE_RUN_DIR || null,
-        };
+          runDir,
+        }, researchConfig);
         const modeScopedOpts = linkModeAdapter.prepareCreateLinkTokenBody(baseOpts);
         modeScopedOpts.linkMode = resolvedLinkMode;
         if (body.plaid_user_id || body.plaidUserId) {
@@ -414,4 +587,12 @@ async function startServer(port = 3737, rootDir) {
   );
 }
 
-module.exports = { startServer };
+module.exports = {
+  startServer,
+  // Exported for unit testing. These pure helpers encode the
+  // "research-driven products, not LLM-hardcoded products" contract
+  // implemented by /api/create-link-token.
+  loadResearchLinkTokenConfig,
+  mergeResearchLinkTokenRequest,
+  resolveCreateLinkTokenProducts,
+};

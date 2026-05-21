@@ -135,7 +135,7 @@ function normalizeFamilyCandidate(raw) {
  */
 function parseExplicitPrimaryProductFamily(promptText) {
   const t = String(promptText || '');
-  const hm = t.match(/\*\*Primary product family\*\*[^\n]*/i);
+  const hm = t.match(/\*\*Primary product family\*\*:?[^\n]*/i);
   if (!hm) return null;
   const headingLine = hm[0];
   const afterHeading = t.slice(hm.index + headingLine.length);
@@ -173,6 +173,97 @@ function inferProductFamilyFromKeywordsOnly(text = '') {
   // contract and would fail validation).
   if (/\bbank[\s_-]?income\b/.test(lower) || /\/credit\/bank_income\/get\b/.test(lower)) {
     return 'bank_income';
+  }
+
+  // Plaid Protect Cash Advance Score (EWA Score) — surfaced via
+  // /signal/evaluate as `scores.cash_advance.score`, but it is a DISTINCT
+  // product from standard Plaid Signal ACH return-risk scoring. We detect
+  // EWA-specific keywords BEFORE the generic 'signal'/'funding' rule so
+  // EWA demos don't get misclassified as Signal demos (which would load
+  // the wrong product knowledge file and use the wrong score field).
+  // Verified via AskBill 2026-05-21: Cash Advance Score is Plaid Protect
+  // / Signal-family, NOT a CRA Consumer Report.
+  if (
+    /\bewa\b/.test(lower) ||
+    /\bearned[\s_-]?wage[\s_-]?access\b/.test(lower) ||
+    /\bcash[\s_-]?advance\s+score\b/.test(lower) ||
+    /\bcash[_-]advance[_-]score\b/.test(lower) ||
+    /\bplaid\s+protect\s+cash[\s_-]?advance\b/.test(lower) ||
+    /\bscores\.cash_advance(\.score)?\b/.test(lower)
+  ) {
+    return 'cash_advance_score';
+  }
+
+  // Plaid Protect (anti-fraud / Trust Index / ruleset decisioning umbrella).
+  // Must be checked AFTER cash_advance_score (EWA demos sometimes name-drop
+  // "Plaid Protect" as the parent solution but are tactically EWA, not the
+  // bundled Protect story) and BEFORE the generic 'signal'/'funding' rule.
+  // Trust Index keywords (including Ti2) route here. Verified via AskBill +
+  // Glean (GTM Playbook 2026) on 2026-05-21. See inputs/products/plaid-protect.md.
+  if (
+    /\bplaid\s+protect\b/.test(lower) ||
+    /\btrust\s+index\b/.test(lower) ||
+    /\bti2?\b/.test(lower) ||
+    /\bprotect\s+ruleset\b/.test(lower) ||
+    /\bprotect_transactions\b/.test(lower) ||
+    /\bprotect_linked_bank\b/.test(lower)
+  ) {
+    return 'plaid_protect';
+  }
+
+  // Plaid Investments Move (ACATS / ATON brokerage transfer initiation) is a
+  // DIFFERENT product from standard Plaid Investments (holdings / transactions
+  // data access). Move uses the 'investments_auth' Link product and the
+  // /investments/auth/get endpoint; Investments uses 'investments' and the
+  // /investments/holdings/get + /investments/transactions/get endpoints.
+  // Move detection MUST run before the standard Investments check below so
+  // ACATS prompts don't degrade to the data-access family. Verified via
+  // AskBill + Glean GTM Playbook (Feb 2026) on 2026-05-21.
+  if (
+    /\binvestments\s+move\b/.test(lower) ||
+    /\bacats\b/.test(lower) ||
+    /\baton\b/.test(lower) ||
+    /\binvestments_auth\b/.test(lower) ||
+    /\/investments\/auth\/get\b/.test(lower) ||
+    /\bbroker-?sourced\b/.test(lower) ||
+    /\bheld-?away\b/.test(lower) ||
+    /\bbrokerage\s+transfer\b/.test(lower) ||
+    /\bportfolio\s+transfer\b/.test(lower)
+  ) {
+    return 'investments_move';
+  }
+  // Plaid Liabilities (read-only debt data — credit cards / private student
+  // loans / mortgages). Non-FCRA. Detection runs AFTER cra_base_report
+  // (lending narratives must win) and AFTER investments_move (ACATS-specific)
+  // but BEFORE the generic 'investments' check below — because LIT-bundle
+  // prompts mention "investments" alongside Liabilities and Liabilities is
+  // the more specific intent. Also runs BEFORE the 'funding'/'signal' fallback.
+  // Verified via AskBill + Glean (Financial Management Playbook Mar 2026,
+  // Liabilities One-Pager Oct 2025) on 2026-05-21.
+  // See inputs/products/plaid-liabilities.md.
+  if (
+    /\bliabilities\b/.test(lower) ||
+    /\/liabilities\/get\b/.test(lower) ||
+    /\bdebt[\s_-]?(consolidation|paydown|payoff|management)\b/.test(lower) ||
+    /\b(credit[\s_-]?card)[\s_-]?(apr|aprs)\b/.test(lower) ||
+    /\bmortgage[\s_-]?(refi|refinance|amortization|escrow)\b/.test(lower) ||
+    /\b(student[\s_-]?loan)[\s_-]?(refi|refinance|consolidation|payoff)\b/.test(lower) ||
+    /\bbalance[\s_-]?transfer[\s_-]?eligibility\b/.test(lower) ||
+    /\bnet[\s_-]?worth\s+(view|dashboard|tracker|calculator)\b/.test(lower) ||
+    /\blit[\s_-]?bundle\b/.test(lower)
+  ) {
+    return 'liabilities';
+  }
+
+  if (
+    /\binvestment\s+holdings\b/.test(lower) ||
+    /\/investments\/holdings\/get\b/.test(lower) ||
+    /\/investments\/transactions\/get\b/.test(lower) ||
+    /\bportfolio\s+(view|allocation|performance)\b/.test(lower) ||
+    /\bpfm\b/.test(lower) ||
+    (/\binvestments\b/.test(lower) && !/\bmove\b/.test(lower))
+  ) {
+    return 'investments';
   }
 
   // CRA Income Insights requires the CRA qualifier or the CRA endpoint to fire.
@@ -253,6 +344,36 @@ function getEffectiveProductFamily(promptText) {
       return 'cra_base_report';
     }
   }
+  // EWA / Cash Advance Score must be checked BEFORE the generic 'signal' /
+  // 'funding' fallback so a prompt mentioning "Plaid Signal" only as a
+  // comparative ("EWA Score, not standard Signal ACH return-risk") doesn't
+  // get routed to the funding family. See inferProductFamilyFromKeywordsOnly
+  // for the canonical EWA pattern list.
+  if (inferProductFamilyFromKeywordsOnly(scoped) === 'cash_advance_score') {
+    return 'cash_advance_score';
+  }
+  // Plaid Protect (umbrella) — checked before plain 'signal'/'funding' so the
+  // bundled Protect demo doesn't degrade to a standard Signal-only flow.
+  if (inferProductFamilyFromKeywordsOnly(scoped) === 'plaid_protect') {
+    return 'plaid_protect';
+  }
+  // Investments Move (ACATS / ATON) before plain 'investments' — the Move
+  // flow uses a different Link product string (investments_auth) and a
+  // different endpoint (/investments/auth/get). Misrouting causes the
+  // generated app to call /investments/holdings/get after Link completes,
+  // which has nothing to do with brokerage transfer initiation.
+  if (inferProductFamilyFromKeywordsOnly(scoped) === 'investments_move') {
+    return 'investments_move';
+  }
+  // Liabilities BEFORE the generic 'investments' check — LIT-bundle prompts
+  // mention "investments" alongside Liabilities and Liabilities is the more
+  // specific intent. Also before the 'funding' fallback.
+  if (inferProductFamilyFromKeywordsOnly(scoped) === 'liabilities') {
+    return 'liabilities';
+  }
+  if (inferProductFamilyFromKeywordsOnly(scoped) === 'investments') {
+    return 'investments';
+  }
   if (inferProductFamilyFromKeywordsOnly(scoped) === 'funding') {
     return 'funding';
   }
@@ -297,6 +418,15 @@ function detectProductSlugFromPrompt(promptContent) {
 
   if (explicit === 'cra_base_report') return 'cra-base-report';
   if (explicit === 'income_insights') return 'income-insights';
+  if (explicit === 'cash_advance_score') return 'ewa-score';
+  if (explicit === 'plaid_protect') return 'plaid-protect';
+  if (explicit === 'investments_move') return 'investments-move';
+  if (explicit === 'investments') return 'investments';
+  if (explicit === 'liabilities') return 'liabilities';
+  if (explicit === 'cra_cashflow_insights') return 'cra-cashflow-insights';
+  if (explicit === 'cra_lend_score') return 'cra-base-report';
+  if (explicit === 'cra_network_insights') return 'cra-base-report';
+  if (explicit === 'cra_partner_insights') return 'cra-base-report';
 
   const slugChecks = [
     {
@@ -308,6 +438,56 @@ function detectProductSlugFromPrompt(promptContent) {
       slug: 'cra-base-report',
       pattern: /\b(base report|consumer report|check base report|cra base report|cra_base_report|cra_income_insights)\b|\bcra\b/i,
       inScope: () => textHasPositiveCraKeywordSignal(pc),
+    },
+    // EWA / Cash Advance Score MUST be checked before the generic 'signal'
+    // slug below — EWA prompts naturally mention "Plaid Signal" (the
+    // underlying delivery endpoint) and would otherwise load
+    // inputs/products/plaid-signal.md instead of plaid-ewa-score.md.
+    // The response-field path `scores.cash_advance.score` is also a strong
+    // EWA signal that we honor here.
+    {
+      slug: 'ewa-score',
+      pattern:
+        /\b(ewa|earned[\s_-]?wage[\s_-]?access|cash[\s_-]?advance\s+score|cash[_-]advance[_-]score|plaid\s+protect\s+cash[\s_-]?advance)\b|scores\.cash_advance(\.score)?\b/i,
+      inScope: () => true,
+    },
+    // Plaid Protect (umbrella) must be checked before the generic 'signal'
+    // slug — bundled Protect demos mention "Plaid Signal" as a component but
+    // load the broader plaid-protect.md knowledge file (Trust Index, IDV,
+    // Monitor, ruleset semantics) instead of just plaid-signal.md.
+    {
+      slug: 'plaid-protect',
+      pattern:
+        /\b(plaid\s+protect|trust\s+index|ti2|protect\s+ruleset|protect_transactions|protect_linked_bank)\b/i,
+      inScope: () => true,
+    },
+    // Investments Move (ACATS / ATON brokerage transfer initiation) MUST be
+    // checked before the standard 'investments' slug — Move uses a different
+    // Link product string and a different endpoint. The generic 'transfer'
+    // slug also has to come AFTER this so a 'brokerage transfer' prompt
+    // doesn't accidentally load plaid-transfer.md.
+    {
+      slug: 'investments-move',
+      pattern:
+        /\b(investments\s+move|acats|aton|investments_auth|broker-?sourced|held-?away|brokerage\s+transfer|portfolio\s+transfer)\b|\/investments\/auth\/get\b/i,
+      inScope: () => true,
+    },
+    // Plaid Liabilities — must be checked BEFORE the generic 'investments'
+    // and 'auth' slugs. LIT-bundle prompts (Liabilities + Investments +
+    // Transactions) mention "investments" / "auth" alongside Liabilities;
+    // Liabilities is the more specific intent for PFM / debt-paydown demos.
+    // Verified via AskBill + Glean GTM.
+    {
+      slug: 'liabilities',
+      pattern:
+        /\b(liabilities|debt[\s_-]?(consolidation|paydown|payoff|management)|credit[\s_-]?card[\s_-]?aprs?|mortgage[\s_-]?(refi|refinance|amortization|escrow)|student[\s_-]?loan[\s_-]?(refi|refinance|consolidation|payoff)|balance[\s_-]?transfer[\s_-]?eligibility|net[\s_-]?worth[\s_-]?(view|dashboard|tracker|calculator)|lit[\s_-]?bundle)\b|\/liabilities\/get\b/i,
+      inScope: () => true,
+    },
+    {
+      slug: 'investments',
+      pattern:
+        /\b(investments|investment\s+holdings|portfolio\s+(view|allocation|performance|holdings)|pfm)\b|\/investments\/(holdings|transactions)\/get\b/i,
+      inScope: () => true,
     },
     { slug: 'auth', pattern: /\bauth\b|\baccount.verif|\bIAV\b|\bEAV\b/i, inScope: () => true },
     { slug: 'signal', pattern: /\bsignal\b|\bach.risk\b/i, inScope: () => true },
