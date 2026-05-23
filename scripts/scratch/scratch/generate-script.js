@@ -193,6 +193,143 @@ function isInsightLikeStep(step) {
   return /\binsight\b|\bapi insight\b|\bplaid insight\b/.test(haystack);
 }
 
+/**
+ * Deterministic auto-corrections applied AFTER the LLM produces a demo-script
+ * but BEFORE `validateDemoScript` runs. Each fix has a single, narrow,
+ * safe-by-construction rule. The goal is to keep the pipeline running without
+ * an extra LLM round-trip when the LLM's mistake is unambiguous.
+ *
+ * Mutates `demoScript` in place. Returns `{ fixed, fixes: [{ stepId, rule, before, after }] }`.
+ *
+ * Rules:
+ *   - **orphan-insight-to-slide**: a step is marked `sceneType: "insight"` but
+ *     has no `apiResponse.endpoint` (or no `apiResponse.response`) → demote to
+ *     `sceneType: "slide"` and strip any half-built `apiResponse` stub. This
+ *     is what the LLM does when it labels a marketing slide an "insight" by
+ *     accident. Demoting is safer than failing the run: the slide still
+ *     renders, just without a JSON panel.
+ *   - **value-summary-strip-apiresponse**: the final value-summary slide must
+ *     not carry an `apiResponse` (the validator forbids it). Strip if present.
+ *   - **insight-with-empty-apiresponse**: an insight step that has an
+ *     `apiResponse` object but missing `endpoint` or `response` → if the body
+ *     is empty (no meaningful payload), demote to slide; otherwise leave it
+ *     for the validator to flag explicitly.
+ */
+function autoFixDemoScript(demoScript) {
+  const fixes = [];
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const sceneType = String(step.sceneType || '').toLowerCase();
+    const ar = step.apiResponse || null;
+    const hasEndpoint = !!(ar && typeof ar.endpoint === 'string' && ar.endpoint.trim());
+    const hasResponse = !!(ar && ar.response && typeof ar.response === 'object'
+      && Object.keys(ar.response).length > 0);
+
+    if (sceneType === 'insight' && (!hasEndpoint || !hasResponse)) {
+      const before = sceneType;
+      step.sceneType = 'slide';
+      const beforeAr = ar ? JSON.stringify(ar).slice(0, 80) : null;
+      if (ar && (!hasEndpoint || !hasResponse)) {
+        delete step.apiResponse;
+      }
+      fixes.push({
+        stepId: step.id || '(no-id)',
+        rule: 'orphan-insight-to-slide',
+        before: `sceneType=${before}` + (beforeAr ? ` apiResponse=${beforeAr}` : ''),
+        after: 'sceneType=slide; apiResponse stripped',
+      });
+      continue;
+    }
+
+    if (isValueSummaryStep(step) && step.apiResponse) {
+      fixes.push({
+        stepId: step.id || '(no-id)',
+        rule: 'value-summary-strip-apiresponse',
+        before: 'apiResponse present on value-summary',
+        after: 'apiResponse removed',
+      });
+      delete step.apiResponse;
+    }
+  }
+
+  // Collapse mistaken plaidPhase:"launch" on marketing/technical slides — keep one
+  // real Link beat (sceneType link or host embedded container), never a slide.
+  const launchSteps = steps.filter((s) => s && s.plaidPhase === 'launch');
+  if (launchSteps.length > 1) {
+    const scoreLaunchCandidate = (step) => {
+      const scene = String(step?.sceneType || '').toLowerCase();
+      if (scene === 'slide') return -1;
+      if (scene === 'link') return 100;
+      const text = [step.id, step.label, step.visualState].filter(Boolean).join(' ').toLowerCase();
+      if (/plaid-embedded-link-container|embed(?:ded)?\s+plaid\s+link|wf-link/.test(text)) return 90;
+      if (scene === 'host') return 50;
+      return 10;
+    };
+    const keeper = launchSteps.reduce((best, s) =>
+      scoreLaunchCandidate(s) > scoreLaunchCandidate(best) ? s : best
+    );
+    if (scoreLaunchCandidate(keeper) < 0) {
+      for (const step of launchSteps) {
+        fixes.push({
+          stepId: step.id || '(no-id)',
+          rule: 'dedupe-plaid-launch-phase',
+          before: 'plaidPhase:"launch" on slide-only set',
+          after: 'plaidPhase removed (infer will re-assign)',
+        });
+        delete step.plaidPhase;
+      }
+    } else {
+      for (const step of launchSteps) {
+        if (step === keeper) continue;
+        fixes.push({
+          stepId: step.id || '(no-id)',
+          rule: 'dedupe-plaid-launch-phase',
+          before: 'plaidPhase:"launch" on non-Link step',
+          after: 'plaidPhase removed',
+        });
+        delete step.plaidPhase;
+      }
+      if (keeper && String(keeper.sceneType || '').toLowerCase() !== 'link') {
+        keeper.sceneType = 'link';
+      }
+    }
+  }
+
+  // Infer missing plaidPhase:"launch" on the obvious Link step — the LLM often
+  // emits sceneType:"link" (or an embedded-link beat) without plaidPhase when
+  // Plaid Link mode is embedded.
+  if (!steps.some((s) => s && s.plaidPhase === 'launch') && !isLayerUseCase(demoScript)) {
+    let candidate = steps.find((s) => s && String(s.sceneType || '').toLowerCase() === 'link');
+    if (!candidate) {
+      candidate = steps.find((s) => {
+        if (!s || String(s.sceneType || '').toLowerCase() === 'slide') return false;
+        const text = [s.id, s.label, s.visualState, s.narration].filter(Boolean).join(' ').toLowerCase();
+        return /\b(embed(?:ded)?\s+plaid\s+link|plaid\s+link|link-launch|wf-link|link embedded|plaid-embedded-link-container|connect (?:your )?(?:bank|account)|link (?:your )?(?:bank|account|checking)|external account)\b/.test(text);
+      });
+    }
+    if (!candidate) {
+      candidate = steps.find((s) => {
+        if (!s || String(s.sceneType || '').toLowerCase() === 'slide') return false;
+        const hay = String(s.visualState || '').toLowerCase();
+        return hay.includes('plaid-embedded-link-container') || hay.includes('data-testid="step-') && /\blink\b/.test(String(s.id || '').toLowerCase());
+      });
+    }
+    if (candidate) {
+      candidate.plaidPhase = 'launch';
+      candidate.sceneType = 'link';
+      fixes.push({
+        stepId: candidate.id || '(no-id)',
+        rule: 'infer-plaid-launch-phase',
+        before: 'missing plaidPhase:"launch"',
+        after: 'plaidPhase:"launch" sceneType:"link"',
+      });
+    }
+  }
+
+  return { fixed: fixes.length, fixes };
+}
+
 function isAmountEntryStep(step) {
   const haystack = [step?.id, step?.label, step?.visualState, step?.narration].filter(Boolean).join(' ').toLowerCase();
   return /\bamount\b|\bfunding amount\b|\btransfer amount\b/.test(haystack);
@@ -229,11 +366,19 @@ function enforceCanonicalLaunchInteraction(demoScript) {
   if (!demoScript || !Array.isArray(demoScript.steps)) return null;
   const launchStep = demoScript.steps.find((s) => s && s.plaidPhase === 'launch');
   if (!launchStep) return null;
+  if (String(launchStep.sceneType || '').toLowerCase() === 'slide') return null;
   launchStep.sceneType = 'link';
   launchStep.interaction = launchStep.interaction || {};
-  launchStep.interaction.action = 'click';
-  launchStep.interaction.target = 'link-external-account-btn';
-  launchStep.interaction.waitMs = 120000;
+  const embedded = String(demoScript.plaidLinkMode || '').toLowerCase() === 'embedded';
+  if (embedded) {
+    launchStep.interaction.action = 'goToStep';
+    launchStep.interaction.target = launchStep.id;
+    launchStep.interaction.waitMs = 120000;
+  } else {
+    launchStep.interaction.action = 'click';
+    launchStep.interaction.target = 'link-external-account-btn';
+    launchStep.interaction.waitMs = 120000;
+  }
   return launchStep.id || null;
 }
 
@@ -912,6 +1057,14 @@ async function main() {
   }
   demoScript.plaidLinkMode = embeddedLinkSkillBundle.mode;
 
+  const preLaunchAutoFix = autoFixDemoScript(demoScript);
+  if (preLaunchAutoFix.fixed > 0) {
+    console.warn(`[Script] Auto-fixed ${preLaunchAutoFix.fixed} script issue(s) before launch normalization:`);
+    for (const f of preLaunchAutoFix.fixes) {
+      console.warn(`  · ${f.stepId} — ${f.rule}: ${f.before} → ${f.after}`);
+    }
+  }
+
   const mergedLaunch = mergeAllPreLinkExplainersBeforeLaunch(demoScript);
   if (mergedLaunch) {
     console.log(
@@ -988,29 +1141,6 @@ async function main() {
     }
   }
 
-  // ── Required Plaid Link launch step ───────────────────────────────────────
-  // When PLAID_LINK_LIVE=true, at least one step must have plaidPhase:"launch".
-  // record-local.js uses this to run the full CDP Plaid Link automation and wait
-  // for _plaidLinkComplete without an overrun timer killing the step early.
-  //
-  // The script agent should produce a SINGLE Plaid Link step (e.g. "wf-link-launch")
-  // with plaidPhase:"launch" — NOT four separate link-consent/otp/account/success sub-steps.
-  // The no-capture build mode renders the real Plaid iframe (visible in headless:false).
-  if (process.env.PLAID_LINK_LIVE === 'true') {
-    const launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
-    if (!launchStep) {
-      if (isLayerUseCase(demoScript)) {
-        console.log('[Script] No plaidPhase:"launch" step found; allowing Layer-native flow without launch step.');
-      } else {
-        console.error('[Script] No step with plaidPhase:"launch" found in demo-script.json.');
-        console.error('[Script] Add plaidPhase:"launch" to the step that opens Plaid Link.');
-        process.exit(1);
-      }
-    } else {
-      console.log(`[Script] Plaid launch step: "${launchStep.id}" (plaidPhase: launch) ✓`);
-    }
-  }
-
   // Auto-repair narrations that violate the Plaid Link boundary rule BEFORE
   // validation runs. CLAUDE.md requires the Plaid Link launch step to narrate
   // what is visible inside the modal (institution picker / account select /
@@ -1068,6 +1198,43 @@ async function main() {
     }
   }
 
+  // Deterministic auto-fix pass — catches the LLM's most common slide vs.
+  // insight mis-classification (e.g. a marketing slide labelled
+  // `sceneType: "insight"` without any `apiResponse`). Runs BEFORE validation
+  // so unambiguous LLM mistakes don't kill the orchestrator. Anything that
+  // can't be auto-fixed (multiple steps with the same id, unknown product
+  // family endpoints, etc.) still falls through to validateDemoScript's
+  // error path.
+  const autoFix = autoFixDemoScript(demoScript);
+  if (autoFix.fixed > 0) {
+    console.warn(`[Script] Auto-fixed ${autoFix.fixed} script issue(s) before validation:`);
+    for (const f of autoFix.fixes) {
+      console.warn(`  · ${f.stepId} — ${f.rule}: ${f.before} → ${f.after}`);
+    }
+  }
+
+  const launchIdAfterFix = enforceCanonicalLaunchInteraction(demoScript);
+  if (launchIdAfterFix) {
+    const mode = String(demoScript.plaidLinkMode || '').toLowerCase() === 'embedded' ? 'goToStep' : 'click';
+    console.log(`[Script] Normalized launch interaction for "${launchIdAfterFix}" (${mode}).`);
+  }
+
+  // ── Required Plaid Link launch step ───────────────────────────────────────
+  if (process.env.PLAID_LINK_LIVE === 'true') {
+    const launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
+    if (!launchStep) {
+      if (isLayerUseCase(demoScript)) {
+        console.log('[Script] No plaidPhase:"launch" step found; allowing Layer-native flow without launch step.');
+      } else {
+        console.error('[Script] No step with plaidPhase:"launch" found in demo-script.json.');
+        console.error('[Script] Add plaidPhase:"launch" to the step that opens Plaid Link.');
+        process.exit(1);
+      }
+    } else {
+      console.log(`[Script] Plaid launch step: "${launchStep.id}" (plaidPhase: launch) ✓`);
+    }
+  }
+
   const scriptValidation = validateDemoScript(demoScript, {
     plaidLinkLive: process.env.PLAID_LINK_LIVE === 'true',
     productFamily,
@@ -1075,8 +1242,16 @@ async function main() {
     pipelineAppOnlyHostUi,
   });
   if (scriptValidation.errors.length > 0) {
-    console.error('[Script] Demo script validation failed:');
+    // After auto-fix, any remaining errors are genuinely structural — log,
+    // surface to the orchestrator's recovery flow, and exit non-zero. The
+    // operator can re-run `npm run pipe -- stage script <RUN_ID>` to re-roll
+    // the LLM with the same prompt.
+    console.error('[Script] Demo script validation failed (after auto-fix pass):');
     scriptValidation.errors.forEach(e => console.error(`  ✗ ${e}`));
+    console.error(
+      '[Script] Hint: this is usually fixed by editing inputs/prompt.txt to be more ' +
+      'explicit about slide vs. insight beats, then re-running `npm run pipe -- stage script <RUN_ID>`.'
+    );
     process.exit(1);
   }
   if (scriptValidation.warnings.length > 0) {
@@ -1137,6 +1312,7 @@ async function main() {
 module.exports = {
   main,
   validateDemoScript,
+  autoFixDemoScript,
   isInsightLikeStep,
   isAmountEntryStep,
   normalizeSceneType,

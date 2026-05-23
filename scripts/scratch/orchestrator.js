@@ -113,6 +113,27 @@ function emitPipeEvent(event, fields = {}) {
 // clean exit; signal handlers best-effort clean up on SIGTERM/SIGINT too.
 
 let _pidFilePath = null;
+let _pipelineHeartbeatHandle = null;
+
+function startOrchestratorHeartbeat(runDir) {
+  try {
+    const { startPipelineHeartbeat } = require('./utils/pipeline-heartbeat');
+    if (_pipelineHeartbeatHandle) _pipelineHeartbeatHandle.stop();
+    _pipelineHeartbeatHandle = startPipelineHeartbeat({
+      runDir,
+      warn: (msg) => cliWarn(msg),
+    });
+  } catch (err) {
+    cliWarn(`[Orchestrator] Could not start pipeline heartbeat: ${err.message}`);
+  }
+}
+
+function stopOrchestratorHeartbeat() {
+  if (_pipelineHeartbeatHandle) {
+    try { _pipelineHeartbeatHandle.stop(); } catch (_) { /* ignore */ }
+    _pipelineHeartbeatHandle = null;
+  }
+}
 
 function writePipelinePidFile(runDir) {
   if (!runDir) return;
@@ -135,6 +156,7 @@ function cleanupPipelinePidFile() {
 }
 
 function orchestratorCleanup() {
+  stopOrchestratorHeartbeat();
   cleanupPipelinePidFile();
   const rd = process.env.PIPELINE_RUN_DIR;
   if (rd) {
@@ -180,6 +202,11 @@ const STAGES = [
   'build-qa',
   'post-slides',             // Agent-driven per-slide insertion (runs only when slide-kind steps exist)
   'post-panels',             // Deterministic JSON side-panel normalizer (idempotent)
+  'app-touchup',             // Tier-scoped app recovery lane — patches + post-panels +
+                             //   app-scoped build-qa + agent qa-app-touchup-task.md. No build-app.
+  'slide-fix',               // Tier-scoped slide recovery lane — patches + strip + post-slides
+                             //   --steps=… + post-panels + slides-scoped build-qa + agent
+                             //   qa-slide-fix-task.md. No build-app. App+slides only.
   'record',
   'qa',
   'figma-review',
@@ -1154,19 +1181,24 @@ function readJsonSafe(filePath) {
 }
 
 /**
- * Skip agentic research when RESEARCH_REUSE is enabled, artifacts exist, and the prompt
- * fingerprint matches product-research.json. Never applies when explicitly restarting from research.
+ * Skip agentic research when artifacts exist and the prompt fingerprint
+ * matches `product-research.json`. Delegates to
+ * `utils/research-reuse.shouldReuseExistingResearch` so the rule is testable
+ * and matched by a single source of truth. See that file for the full
+ * decision tree.
  */
 function shouldReuseExistingResearch(versionedDir, promptText, effectiveFromStage) {
-  if (!parseBoolEnv(process.env.RESEARCH_REUSE, false)) return false;
-  if (effectiveFromStage === 'research') return false;
-  const prPath = path.join(versionedDir, 'product-research.json');
-  if (!fs.existsSync(prPath)) return false;
-  const fp = fingerprintPrompt(promptText || '');
-  if (!fp) return false;
-  const data = readJsonSafe(prPath);
-  if (!data || typeof data.inputPromptFingerprint !== 'string') return false;
-  return data.inputPromptFingerprint === fp;
+  const { shouldReuseExistingResearch: shouldReuseImpl } = require('./utils/research-reuse');
+  const result = shouldReuseImpl({
+    runDir: versionedDir,
+    promptText,
+    effectiveFromStage,
+    fingerprintPrompt,
+  });
+  if (!result.shouldReuse && result.reason && result.reason !== 'no_existing_research_artifact') {
+    cliLog(`[Orchestrator] research-reuse: not reusing (reason=${result.reason})`);
+  }
+  return result.shouldReuse;
 }
 
 function parseColorLuminance(input) {
@@ -1496,6 +1528,73 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
  * logs the failure and returns `{ skipped: true }` so the caller can choose
  * to break the loop without crashing the whole pipeline.
  */
+/**
+ * Run the tier-scoped recovery lanes (app-touchup, slide-fix) instead of
+ * dispatching another full `build-app` pass. These lanes:
+ *   - apply deterministic patches scoped to the failing tier,
+ *   - re-run post-panels / post-slides as needed,
+ *   - re-run build-qa with the matching stepScope,
+ *   - and on residual failures, emit a tier-scoped agent task .md when
+ *     running under an agent context (Claude Code / Cursor with PIPE_AGENT_MODE).
+ *
+ * Returns `{ appPassed, slidePassed, agentGateRequested, taskFiles, failingTiers }`.
+ *
+ * The lanes never call `build-app` / `generateApp` — that is the orchestrator's
+ * legacy LLM regen path, which the tier matrix is explicitly trying to avoid.
+ */
+async function runTierRecoveryLanes({ runDir, tierRecovery, tierSummary }) {
+  const wantsApp = tierRecovery === 'app-touchup' || tierRecovery === 'app-touchup+slide-fix';
+  const wantsSlide = tierRecovery === 'slide-fix' || tierRecovery === 'app-touchup+slide-fix';
+  const taskFiles = [];
+  const failingTiers = [];
+  let appPassed = !wantsApp && tierSummary?.app?.passed !== false;
+  let slidePassed = !wantsSlide && (tierSummary?.slide?.passed !== false || tierSummary?.slide?.skipped === true);
+
+  // When both tiers need recovery on the same iteration, run app-touchup
+  // first — slide-fix refuses to run when the app tier hasn't passed (see
+  // requireAppPassed in slide-fix.main).
+  if (wantsApp) {
+    try {
+      delete require.cache[require.resolve('./scratch/app-touchup')];
+      const lane = require('./scratch/app-touchup');
+      cliLog('[Orchestrator] Dispatching tier-recovery lane: app-touchup');
+      const out = await lane.main({
+        runDir,
+        emitAgentTask: isAgentContext(),
+      });
+      appPassed = out.appPassed === true;
+      if (!appPassed) failingTiers.push('app');
+      if (out.agentTaskPath) taskFiles.push(path.relative(runDir, out.agentTaskPath));
+    } catch (err) {
+      cliWarn(`[Orchestrator] app-touchup lane failed: ${err.message}`);
+    }
+  }
+  if (wantsSlide) {
+    try {
+      delete require.cache[require.resolve('./scratch/slide-fix')];
+      const lane = require('./scratch/slide-fix');
+      cliLog('[Orchestrator] Dispatching tier-recovery lane: slide-fix');
+      const out = await lane.main({
+        runDir,
+        emitAgentTask: isAgentContext(),
+      });
+      slidePassed = out.slidePassed === true || out.skipped === true;
+      if (!slidePassed) failingTiers.push('slide');
+      if (out.agentTaskPath) taskFiles.push(path.relative(runDir, out.agentTaskPath));
+    } catch (err) {
+      cliWarn(`[Orchestrator] slide-fix lane failed: ${err.message}`);
+    }
+  }
+
+  return {
+    appPassed,
+    slidePassed,
+    agentGateRequested: taskFiles.length > 0 && isAgentContext(),
+    taskFiles,
+    failingTiers,
+  };
+}
+
 async function runAgentTouchupGate({ runDir, iteration, fixModeDecision, phaseMode }) {
   const { buildQaTouchupPrompt } = require('./utils/qa-touchup');
   let result;
@@ -2511,13 +2610,23 @@ async function runScratchPipeline({
 
   const runBuildPhase = async (phaseMode, phaseIndex) => {
     const remainingPhases = buildPhaseSequence.slice(phaseIndex + 1);
-    const willRunSlidesPhase = remainingPhases.includes('slides');
+    // Tier wiring: when BUILD_SLIDES_STRATEGY=post-agent (default) the inline
+    // 'slides' phase has been REMOVED from buildPhaseSequence above. So the
+    // legacy `remainingPhases.includes('slides')` always returns false even
+    // when post-slides WILL run as a separate stage. Derive willRunSlidesPhase
+    // from the actual signals (PIPELINE_WITH_SLIDES + BUILD_SLIDES_STRATEGY)
+    // so the app build prompt drops ~25-30k tokens of slide template context
+    // when post-slides will handle slide insertion.
+    const withSlidesEnv = String(process.env.PIPELINE_WITH_SLIDES || '').trim().toLowerCase() === 'true';
+    const inlineSlideStrategy = String(process.env.BUILD_SLIDES_STRATEGY || 'post-agent').toLowerCase() === 'inline';
+    const willRunInlineSlidesPhase = remainingPhases.includes('slides');
+    const willRunSlidesPhase = withSlidesEnv && (willRunInlineSlidesPhase || !inlineSlideStrategy);
     const slidePromptTier = phaseMode === 'slides'
       ? 'full'
       : (willRunSlidesPhase ? 'minimal' : 'full');
     cliLog(
       `[Orchestrator] Build phase "${phaseMode}" prompt tier: ${slidePromptTier}` +
-      (phaseMode === 'app' ? ` (slides-followup=${willRunSlidesPhase})` : '')
+      (phaseMode === 'app' ? ` (slides-followup=${willRunSlidesPhase}, inlineStrategy=${inlineSlideStrategy})` : '')
     );
     const phaseQaThreshold = phaseMode === 'app'
       ? Math.max(80, Number(resolvedBuildQaThreshold || 0))
@@ -2702,6 +2811,52 @@ async function runScratchPipeline({
         );
         break;
       }
+
+      // ── Tier-aware recovery routing ─────────────────────────────────────
+      // When the QA report carries a tierSummary (added by build-qa), prefer
+      // a surgical tier-scoped recovery lane over another full build-app /
+      // generateApp pass. This handles the common cases where:
+      //   - app-only build with a single failing host step → app-touchup
+      //   - app+slides build where app passed but slides regressed → slide-fix
+      //   - app+slides build where app failed but slides passed → app-touchup
+      // The lanes themselves NEVER call build-app. Systemic failures
+      // (recommendedRecovery: 'fullbuild') fall through to the LLM refinement
+      // path below.
+      const tierRecovery = phaseQaResult?.recommendedRecovery || null;
+      const tierSummary = phaseQaResult?.tierSummary || null;
+      const tierRecoveryUsable =
+        phaseMode === 'app' &&
+        tierSummary &&
+        (tierRecovery === 'app-touchup' ||
+          tierRecovery === 'slide-fix' ||
+          tierRecovery === 'app-touchup+slide-fix');
+      if (tierRecoveryUsable) {
+        const ranLanes = await runTierRecoveryLanes({
+          runDir: versionedDir,
+          tierRecovery,
+          tierSummary,
+        });
+        if (ranLanes.appPassed && ranLanes.slidePassed) {
+          cliLog(
+            `[Orchestrator] Tier-aware recovery cleared all failures on iteration ${iter} ` +
+            `(app=passed, slide=${tierSummary.slide.skipped ? 'skipped' : 'passed'}).`
+          );
+          break;
+        }
+        if (ranLanes.agentGateRequested) {
+          // The lane wrote a qa-{app-touchup,slide-fix}-task.md and we are
+          // running under an agent context — hand control to the agent.
+          // Skip the LLM build for the next iteration: the agent edits
+          // existing HTML and `pipe continue` re-runs build-qa.
+          process.env.__ORCH_SKIP_NEXT_BUILD = 'true';
+          await promptContinue(
+            `[Orchestrator] Tier-aware recovery (iter ${iter}): residual failures on ` +
+            `${ranLanes.failingTiers.join(' + ')} tier. Open ${ranLanes.taskFiles.join(' / ')} in your AI agent, ` +
+            `edit the failing step(s), then continue.`
+          );
+        }
+      }
+
       if (iter < phaseIterationCap) {
         const deterministicNote = phaseDeterministicGateEnabled
           ? `deterministicPassed=${phaseQaResult?.deterministicPassed !== false}`
@@ -2792,6 +2947,40 @@ async function runScratchPipeline({
         if (typeof mod.main === 'function') await mod.main();
       } catch (e) {
         cliWarn(`[Orchestrator] post-panels stage failed: ${e.message}`);
+      }
+    }, timer).catch(() => {});
+  }
+
+  // ── Tier-scoped recovery lanes (app-touchup, slide-fix) ─────────────────
+  // These stages are only invoked when explicitly targeted via --from / --to
+  // / stage, because the inline tier-aware routing inside `runBuildPhase`
+  // already runs them between build-qa iterations. Outside of that loop they
+  // are useful for hand-driven recovery (e.g. after `npm run pipe -- stage
+  // build-qa <RUN_ID>` reveals a residual app or slide failure).
+  if (shouldRun('app-touchup')) {
+    await runStage('app-touchup', async () => {
+      try {
+        delete require.cache[require.resolve('./scratch/app-touchup')];
+        const mod = require('./scratch/app-touchup');
+        if (typeof mod.main === 'function') {
+          await mod.main({ runDir: versionedDir, emitAgentTask: isAgentContext() });
+        }
+      } catch (e) {
+        cliWarn(`[Orchestrator] app-touchup stage failed: ${e.message}`);
+      }
+    }, timer).catch(() => {});
+  }
+
+  if (shouldRun('slide-fix')) {
+    await runStage('slide-fix', async () => {
+      try {
+        delete require.cache[require.resolve('./scratch/slide-fix')];
+        const mod = require('./scratch/slide-fix');
+        if (typeof mod.main === 'function') {
+          await mod.main({ runDir: versionedDir, emitAgentTask: isAgentContext() });
+        }
+      } catch (e) {
+        cliWarn(`[Orchestrator] slide-fix stage failed: ${e.message}`);
       }
     }, timer).catch(() => {});
   }
@@ -4160,6 +4349,38 @@ async function main() {
   cliLog(`[Orchestrator] Run directory (isolated): ${versionedDir}`);
   cliLog(`[Orchestrator] Symlink: ${LATEST_LINK}`);
 
+  // ── Auto-detect first-incomplete stage on resume ────────────────────────
+  // When the operator invokes a resume against an existing run-id but does
+  // NOT pass --from, fall back to the first incomplete canonical stage
+  // (computed from stage-state). This avoids the common foot-gun of
+  // re-running long stages like `research` (200+ seconds, $$$) on a run
+  // that already has them completed.
+  //
+  // Only applies when:
+  //   - effectiveFromStage is not set (no --from)
+  //   - We targeted an explicit run-id or PIPELINE_RUN_DIR
+  //   - The run dir already has at least one completed stage sentinel
+  //   - We're NOT in fresh-cleanup mode (autoFresh / first-use prompt)
+  if (!effectiveFromStage && (explicitRunId || process.env.PIPELINE_RUN_DIR) && !autoFresh) {
+    try {
+      const { computeStageList } = require('./utils/stage-state');
+      const { stages, firstPending } = computeStageList(versionedDir);
+      const anyCompleted = stages.some((s) => s.status === 'completed');
+      if (anyCompleted && firstPending) {
+        cliLog(
+          `[Orchestrator] Resuming known run with no --from; auto-starting at first pending stage: ${firstPending}.`
+        );
+        cliLog(
+          `[Orchestrator]   Pass --from=research (or any earlier stage) to override; ` +
+          `set PIPELINE_FRESH_CLEANUP=1 to wipe artifacts and run from start.`
+        );
+        effectiveFromStage = firstPending;
+      }
+    } catch (err) {
+      cliWarn(`[Orchestrator] First-pending auto-detect failed: ${err && err.message || err}`);
+    }
+  }
+
   // Determine start index (for --from)
   const startIdx = resolveStartIndex(effectiveFromStage);
 
@@ -4205,6 +4426,9 @@ async function main() {
     );
     process.exit(4);
   }
+
+  // Periodic mid-stage heartbeat (default 5 min). Independent of stage completion.
+  startOrchestratorHeartbeat(versionedDir);
 
   // Dispatch to the correct pipeline
   const pipelineArgs = {

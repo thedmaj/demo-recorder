@@ -1,0 +1,2010 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>The AI foundation behind Plaid Transactions</title>
+<link rel="stylesheet" href="colors_and_type.css" />
+<script src="deck-stage.js"></script>
+<script type="application/json" id="speaker-notes">
+[
+  "Set the tone — this pitch is about the foundation, not just features. The opening line: 'What does it actually take to turn a bank string into financial intelligence?' That's the whole deck in one question.",
+  "Frame the shift. Recording transactions used to be enough; today, apps, consumers, and AI agents all need to act on transactions, which means understanding them. The agent point can feel abstract, so ground it: ChatGPT pulling a user's recent spending to answer 'can I afford this trip?', a Klarna or Cash App agent rebalancing autopay schedules, an SMB copilot pre-approving a vendor invoice off the company checking account, an EWA agent deciding whether a $200 advance is responsible based on next week's projected gig income. The pattern is the same — an agent reads transaction data and then moves money or blocks a transaction on the user's behalf. Land on: the cost of being wrong has gone up.",
+  "Make the case against the easy answer. People assume general LLMs can read bank descriptions. They can't, reliably. Bank strings are short, ambiguous, contextual. Layering a general model on top inherits the ambiguity. The takeaway box is the punchline: what's needed is a shared representation.",
+  "This is the baseline. Before AI even enters the conversation, this is what Plaid does for every transaction, on every connected account. Walk slowly through the right side — fifteen useful fields from one bank string. Pause on store_number and lat/lon; those usually surprise people.",
+  "Now the relationship story. A 'Burger King' charge is also a DoorDash transaction. The counterparties array surfaces both. This unlocks rewards optimization, partnership analytics, and granular spend categorization. It's not the merchant or the marketplace — it's both.",
+  "Pause here. This is the most quotable slide in the deck. Layla is a real customer composite. With v1, both deposits are 'Other Income.' With v2, they're 'Gig Income — DoorDash' and 'Gig Income — Lyft.' For an EWA app, that's the difference between guessing and forecasting.",
+  "Now zoom out. This is the architecture behind the previous three slides. Plaid built the first transaction foundation model for finance. Trained self-supervised on the Plaid Network. The 500 million number lands hard — this isn't a science experiment, it's running in production today.",
+  "Walk the diagram top to bottom. Two inputs feed the foundation model. On the left, the bank data — the same raw fields every aggregator has access to: transaction descriptions, amounts, dates, account metadata. On the right, the network data — and this is what only Plaid has: the counterparty entity graph that knows Burger King and DoorDash belong on the same transaction, the 100M+ Remember Me identity profiles, cross-institution merchant resolution so the same Walmart is one entity across every bank, and 500M+ daily training signals from the live Plaid Network. Both feeds train one shared transaction representation. Then lightweight adaptation layers below — PFC, business categories, LendScore, EWA Score, Protect, Signal. The punchline: general LLMs only see the left column. The right column is the moat. And the strategic point: turn on Transactions, and every downstream product gets smarter when the foundation does.",
+  "The 'how do we know it's better than what you'd build yourselves' answer. AI Annotator generates labels at network scale. Human reviewers build the golden datasets and spot-check edge cases. The model retrains. >95% alignment with humans, at a fraction of the cost and time of manual labeling. The data engine — not the model — is the moat. Next slide is what that actually means for you.",
+  "Five things you inherit by building on this. Walk them quickly; don't get bogged down. One — speed: new categories ship in months, not years. PFC v2's 12+ subcategories went from concept to production in a single release cycle. Two — cost: it's baked into Transactions, you never pay to train or maintain it. Three — the network effect: when one customer's feedback corrects an edge-case merchant or a misclassified income stream, every customer inherits the fix on the next retrain. Four — audit-ready: the golden datasets are a defensible benchmark behind every label, which matters for lending decisions, fraud blocking, ACH risk. Five — and this is the strategic one — the model you ship against today is measurably better in twelve months, and you will not have lifted a finger to make that happen. The closer line: 'you didn't build the data engine; you don't have to pay for it; you still get the upside.'",
+  "The numbers behind PFC v2. Don't read all three — point at them. +10% on primary categories, +20% on detailed sub-categories, 12+ new subcategories. The numbers are the proof; the next slide is where the audience feels the unlock.",
+  "Walk row by row. 'Other Income' becomes Gig Income, Tax Refund, Interest Income. 'Transfer' becomes Internal, Wire, P2P. 'Bank Fees' splits into Overdraft, ATM, Foreign Transaction. Each of these unlocks a specific product feature — call out one example per row for your audience.",
+  "For the risk-averse people in the room. v2 ships behind a version flag. Existing customers opt in. New customers get v2 by default. v1 stays supported. Zero migration risk — that's the message.",
+  "Now we're out of the AI section and into the broader Transactions story. 730 days of history, multiple syncs a day, on-demand refresh. The use case to anchor it: any underwriting model that needs 12+ months of cash flow can run today on Plaid, not after a 6-month wait.",
+  "Same intelligence — on your own data, too. Enrich lets customers send their non-Plaid transactions through the same pipeline. The takeaway: one categorization output across your in-house and Plaid-linked data. No reconciliation tax.",
+  "Better data is only valuable on items that link. This is the flywheel slide: 100M+ Remember Me profiles boost conversion up to 11% for returning users; 52% of broken links self-repair without re-auth. More items linked, more transactions, richer signal, better model.",
+  "We're returning to the same architecture diagram on purpose. The point: when you upgrade Transactions, Plaid Signal gets sharper on ACH risk. Protect gets sharper on fraud. LendScore gets sharper on underwriting. Point solutions can't do this. A foundation can.",
+  "First-class SMB data. The holder_category field already flags business vs consumer accounts. Coming soon: 13 purpose-built business categories under business_finance_category. Brex, Bluevine, Wave are already on Plaid Transactions for tens of millions of business accounts.",
+  "What we're shipping in 2026. Three lanes: reliability — the sync migration, item health prediction; intelligence — foundation model expansion, business GA, agentic fix workflows; speed — ML traffic optimization for the big banks, fresher data through smarter extraction timing.",
+  "Why now, in three forces. AI agents now act on financial data. Consumers expect personalization. Open finance regulation is locking in — your aggregator choice is a multi-year commitment. The punchline: pick the foundation that's going to keep getting smarter without a migration.",
+  "This is the deepest customer proof we have. Klover is a Chicago fintech serving millions of customers who don't have access to traditional banking benefits. They built Klover+ — their flagship PFM — on Plaid Transactions, and rebuilt it as our intelligence grew. The arc is the deck's thesis in customer form: measurement → categorization → anticipation. No re-architecture; the same Transactions integration, the model under it kept getting smarter. ~$1M/day in cash advances, 80%+ approval rate, ~20% savings returned to users, +58-point average credit-score lift versus an industry average of ~25. Dominic Bennett's quote — 'with the new categorization that's available, we'll be able to evolve it even further' — is the perfect bridge from this slide to the PFC v2 conversation. And just to ground the breadth: Drop, Brigit, Vola, SoFi, Steady all run on the same Transactions foundation.",
+  "The closer. Two columns. On the left: building on raw bank data. On the right: building on Plaid's foundation. Let the audience read it. The fourth row is the one to land on — one foundation, every Plaid product gets better.",
+  "Three CTAs based on where the customer is today. Existing Transactions customer? Flip on v2; we co-pilot the rollout. Adjacent product evaluation? 30-minute architecture review. New evaluation? Sandbox plus a 2-week pilot on your real institution mix."
+]
+</script>
+<style>
+  /* ─── Type & spacing scale for 1920×1080 ─── */
+  :root {
+    --type-mega:     180px;  /* hero numbers */
+    --type-display:  110px;  /* title cover, section starters */
+    --type-title:    72px;   /* slide titles */
+    --type-subtitle: 48px;   /* large body / accent */
+    --type-body:     30px;   /* slide body */
+    --type-small:    24px;   /* secondary body / captions */
+    --type-meta:     24px;   /* eyebrow / metadata */
+    --type-mono:     26px;   /* code blocks */
+    --type-mono-sm:  22px;
+
+    --pad-top:    100px;
+    --pad-bottom: 88px;
+    --pad-x:      120px;
+    --gap-title:  56px;
+    --gap-item:   28px;
+
+    --rail-blue:  #3A80E2;
+    --rail-mint:  #42F0CD;
+    --rail-lilac: #98A5FF;
+  }
+
+  body { margin: 0; background: #000; }
+
+  /* Slide base */
+  deck-stage > section {
+    box-sizing: border-box;
+    overflow: hidden;
+    position: relative;
+    color: var(--plaid-white);
+    background: var(--plaid-ink-900);
+  }
+  deck-stage > section.light {
+    color: var(--plaid-black);
+    background: var(--plaid-white);
+  }
+  deck-stage > section.holo {
+    color: var(--plaid-ink-900);
+    background:
+      radial-gradient(1200px 700px at 12% 18%, rgba(152,165,255,0.55), transparent 60%),
+      radial-gradient(1100px 800px at 88% 82%, rgba(255,192,255,0.45), transparent 55%),
+      radial-gradient(900px 600px at 78% 14%, rgba(255,246,216,0.55), transparent 60%),
+      radial-gradient(900px 700px at 18% 82%, rgba(216,254,243,0.55), transparent 55%),
+      linear-gradient(135deg, #E6E6FF 0%, #D8FEF3 50%, #FFF6D8 100%);
+  }
+  deck-stage > section.cream {
+    color: var(--plaid-ink-900);
+    background: #F4F0E6;
+  }
+
+  /* Slide frame (use as direct child of section) */
+  .frame {
+    width: 100%; height: 100%;
+    box-sizing: border-box;
+    padding: var(--pad-top) var(--pad-x) var(--pad-bottom);
+    display: flex; flex-direction: column;
+    position: relative;
+  }
+
+  /* Chrome: corner branding (only on certain slides) */
+  .chrome-logo {
+    position: absolute;
+    top: 60px; left: 120px;
+    height: 28px;
+    opacity: 0.85;
+  }
+  .chrome-foot {
+    position: absolute;
+    bottom: 48px; left: 120px; right: 120px;
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-family: var(--font-sans);
+    font-size: 24px; font-weight: 500;
+    color: rgba(255,255,255,0.45);
+    letter-spacing: 0.04em;
+  }
+  .light .chrome-foot, .cream .chrome-foot, .holo .chrome-foot { color: rgba(2,37,68,0.55); }
+  .chrome-foot .src { font-style: italic; font-weight: 400; max-width: 60%; text-align: right; }
+
+  /* Eyebrow */
+  .eyebrow-tag {
+    font-family: var(--font-sans);
+    font-size: var(--type-meta);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--plaid-teal-500);
+    margin-bottom: 32px;
+  }
+  .light .eyebrow-tag, .cream .eyebrow-tag, .holo .eyebrow-tag { color: var(--plaid-blue-600); }
+
+  /* Headlines */
+  .h-title {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: var(--type-title);
+    line-height: 1.08;
+    letter-spacing: -0.018em;
+    margin: 0 0 var(--gap-title) 0;
+    max-width: 1500px;
+  }
+  .h-display {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: var(--type-display);
+    line-height: 0.98;
+    letter-spacing: -0.025em;
+    margin: 0;
+  }
+  .h-display em {
+    font-style: italic;
+    font-weight: 400;
+  }
+  .h-sub {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: var(--type-subtitle);
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    color: rgba(255,255,255,0.78);
+    margin: 0;
+  }
+  .light .h-sub, .cream .h-sub, .holo .h-sub { color: rgba(2,37,68,0.74); }
+  .h-body {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: var(--type-body);
+    line-height: 1.42;
+    letter-spacing: -0.005em;
+    color: rgba(255,255,255,0.84);
+    margin: 0;
+  }
+  .light .h-body, .cream .h-body, .holo .h-body { color: rgba(2,37,68,0.82); }
+  .h-small {
+    font-family: var(--font-sans);
+    font-size: var(--type-small);
+    line-height: 1.4;
+    color: rgba(255,255,255,0.66);
+    margin: 0;
+  }
+  .light .h-small, .cream .h-small, .holo .h-small { color: rgba(2,37,68,0.66); }
+
+  .mono-block {
+    font-family: var(--font-mono);
+    font-size: var(--type-mono);
+    line-height: 1.5;
+    letter-spacing: 0;
+  }
+  .mono-sm { font-size: var(--type-mono-sm); }
+
+  /* Common helpers */
+  .row { display: flex; }
+  .col { display: flex; flex-direction: column; }
+  .grow { flex: 1; }
+  .stretch { align-items: stretch; }
+
+  .pill {
+    display: inline-flex; align-items: center;
+    height: 36px; padding: 0 16px;
+    border-radius: 999px;
+    background: rgba(66,240,205,0.14);
+    color: var(--plaid-teal-500);
+    font-family: var(--font-sans);
+    font-size: 18px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .light .pill, .holo .pill, .cream .pill {
+    background: rgba(11,123,188,0.1);
+    color: var(--plaid-blue-700);
+  }
+
+  /* Holo soft gradient block (for inset usage) */
+  .holo-block {
+    background:
+      linear-gradient(135deg, #E6E6FF 0%, #D8FEF3 50%, #FFF6D8 100%);
+  }
+</style>
+</head>
+<body>
+
+<deck-stage width="1920" height="1080">
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 1 — TITLE                                                -->
+  <!-- ============================================================ -->
+  <section class="holo" data-label="01 Title">
+    <div class="frame" style="padding-top:140px;">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="Plaid" style="opacity:0.9;" />
+
+      <div style="margin-top:120px;">
+        <div class="mono-block" style="font-size:30px; color:rgba(2,37,68,0.55); margin-bottom:64px; letter-spacing:0;">
+          PURCHASE WM SUPERCENTER #1700 POWAY CAUS
+        </div>
+
+        <h1 class="h-display" style="font-size:140px; font-weight:500; max-width:1500px;">
+          From bank data<br/>
+          to <em>financial intelligence.</em>
+        </h1>
+
+        <div style="margin-top:80px; max-width:1200px;">
+          <p class="h-sub" style="font-size:42px; color:rgba(2,37,68,0.76);">
+            The AI foundation behind Plaid Transactions.
+          </p>
+        </div>
+
+        <div style="margin-top:120px; display:flex; gap:64px; align-items:flex-end; justify-content:space-between;">
+          <div style="font-family:var(--font-mono); font-size:26px; color:rgba(2,37,68,0.78); line-height:1.6;">
+            <span style="color:#0B7BBC;">merchant_name:</span> "Walmart"<br/>
+            <span style="color:#0B7BBC;">store_number:</span> "1700"<br/>
+            <span style="color:#0B7BBC;">location.lat:</span> 32.959068
+          </div>
+          <div style="font-family:var(--font-sans); font-size:24px; color:rgba(2,37,68,0.55); letter-spacing:0.14em; text-transform:uppercase; font-weight:500;">
+            Plaid &nbsp;·&nbsp; 2026 &nbsp;·&nbsp; Pitch deck
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 2 — THE SHIFT                                            -->
+  <!-- ============================================================ -->
+  <section data-label="02 The shift">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 1 — The shift</div>
+
+      <h2 class="h-title">
+        Recording transactions isn't enough anymore.
+      </h2>
+
+      <div class="row" style="gap:48px; margin-top:24px;">
+        <div class="col" style="flex:1; gap:24px; padding:40px 40px 40px 0; border-top:1px solid rgba(255,255,255,0.18);">
+          <div class="mono-block" style="font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">01 — Apps</div>
+          <p class="h-body">Apps need to understand transactions well enough to <em>act</em> on them — approve a payment, set a credit limit, surface a real-time insight, flag a fraud event.</p>
+        </div>
+        <div class="col" style="flex:1; gap:24px; padding:40px 40px 40px 0; border-top:1px solid rgba(255,255,255,0.18);">
+          <div class="mono-block" style="font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">02 — Consumers</div>
+          <p class="h-body">Consumers expect personalization grounded in their actual money movement — not generic advice that ignores how they spend.</p>
+        </div>
+        <div class="col" style="flex:1; gap:24px; padding:40px 40px 40px 0; border-top:1px solid rgba(255,255,255,0.18);">
+          <div class="mono-block" style="font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">03 — Agents</div>
+          <p class="h-body">AI agents are moving money, blocking transactions, and making eligibility decisions. The cost of being wrong has gone up.</p>
+        </div>
+      </div>
+
+      <!-- Three-stage timeline -->
+      <div style="margin-top:auto; padding-top:48px;">
+        <div style="position:relative; height:140px;">
+          <!-- track -->
+          <div style="position:absolute; left:0; right:0; top:64px; height:2px; background:rgba(255,255,255,0.18);"></div>
+          <div style="position:absolute; left:0; width:66%; top:64px; height:2px; background:linear-gradient(90deg, var(--plaid-blue-500), var(--plaid-teal-500));"></div>
+
+          <div class="row" style="position:relative; justify-content:space-between; height:100%; align-items:flex-end;">
+            <div class="col" style="align-items:flex-start; gap:18px;">
+              <div style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.5);">1980 — 2000s</div>
+              <div style="width:18px; height:18px; border-radius:50%; background:rgba(255,255,255,0.5); border:3px solid var(--plaid-ink-900); outline:1px solid rgba(255,255,255,0.4); margin-bottom:-30px;"></div>
+              <div class="h-sub" style="font-size:32px; color:rgba(255,255,255,0.75);">Branches</div>
+            </div>
+            <div class="col" style="align-items:flex-start; gap:18px;">
+              <div style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.5);">2010 — 2024</div>
+              <div style="width:18px; height:18px; border-radius:50%; background:var(--plaid-blue-500); border:3px solid var(--plaid-ink-900); outline:1px solid rgba(58,128,226,0.5); margin-bottom:-30px;"></div>
+              <div class="h-sub" style="font-size:32px; color:rgba(255,255,255,0.75);">Apps</div>
+            </div>
+            <div class="col" style="align-items:flex-start; gap:18px;">
+              <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500);">2025 — &nbsp;→</div>
+              <div style="width:22px; height:22px; border-radius:50%; background:var(--plaid-teal-500); border:3px solid var(--plaid-ink-900); outline:1px solid rgba(66,240,205,0.5); margin-bottom:-32px; box-shadow:0 0 24px rgba(66,240,205,0.6);"></div>
+              <div class="h-sub" style="font-size:32px; color:var(--plaid-teal-500); font-weight:500;">Agents · Intelligent finance</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>02 / 23 &nbsp;·&nbsp; The shift</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 3 — WHY BOLTED-ON AI ISN'T ENOUGH                        -->
+  <!-- ============================================================ -->
+  <section data-label="03 Bolted-on AI">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 1 — The shift</div>
+
+      <h2 class="h-title" style="max-width:1500px;">
+        General-purpose LLMs don't speak bank.
+      </h2>
+
+      <div class="row" style="gap:64px; align-items:flex-start;">
+        <!-- Left column: ambiguity visual -->
+        <div class="col" style="flex:1.05; gap:28px;">
+          <p class="h-small" style="letter-spacing:0.14em; text-transform:uppercase; font-weight:600; color:var(--plaid-teal-500);">One string. Many meanings.</p>
+
+          <div class="col" style="gap:12px;">
+            <div class="mono-block" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); padding:18px 22px; border-radius:8px; font-size:24px;">SQ *COFFEE 12345 SAN FRA CA</div>
+            <div class="mono-block" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); padding:18px 22px; border-radius:8px; font-size:24px;">SQUARE COFFEE 12345*</div>
+            <div class="mono-block" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); padding:18px 22px; border-radius:8px; font-size:24px;">SQ Coffee #1 SF 4154...</div>
+            <div class="mono-block" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); padding:18px 22px; border-radius:8px; font-size:24px;">PURCHASE SQ COFFEE BAR</div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:18px; padding-top:8px;">
+            <div style="height:1px; background:rgba(255,255,255,0.2); flex:1;"></div>
+            <span style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.6);">resolves to →</span>
+            <div style="height:1px; background:rgba(255,255,255,0.2); flex:1;"></div>
+          </div>
+
+          <div class="mono-block" style="background:linear-gradient(135deg, rgba(66,240,205,0.16), rgba(58,128,226,0.12)); border:1px solid rgba(66,240,205,0.3); padding:22px 26px; border-radius:10px; font-size:24px; color:var(--plaid-teal-500);">
+            merchant: "Square (Coffee Bar)"  ·  category: FOOD_AND_DRINK_COFFEE
+          </div>
+        </div>
+
+        <!-- Right column: argument -->
+        <div class="col" style="flex:0.95; gap:36px; padding-top:8px;">
+          <div class="col" style="gap:14px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-blue-400); letter-spacing:0.16em; text-transform:uppercase;">01</div>
+            <p class="h-body">Bank descriptions appear in dozens of string variations — for the same merchant, the same charge.</p>
+          </div>
+          <div class="col" style="gap:14px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-blue-400); letter-spacing:0.16em; text-transform:uppercase;">02</div>
+            <p class="h-body">The same string can mean different things depending on context and shifting institutional metadata.</p>
+          </div>
+          <div class="col" style="gap:14px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-blue-400); letter-spacing:0.16em; text-transform:uppercase;">03</div>
+            <p class="h-body">Layering a general-purpose LLM on top doesn't fix the underlying ambiguity — it inherits it.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Big takeaway -->
+      <div style="margin-top:auto;">
+        <div style="background:linear-gradient(135deg, rgba(11,123,188,0.18), rgba(66,240,205,0.10)); border:1px solid rgba(66,240,205,0.28); border-radius:16px; padding:32px 44px;">
+          <p class="h-sub" style="font-size:34px; color:var(--plaid-white); line-height:1.25; max-width:1500px;">
+            What's needed is a <em style="color:var(--plaid-teal-500); font-style:normal; font-weight:600;">shared, scalable representation of financial activity</em> that works across institutions, products, and use cases.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 4 — EXAMPLE 1: WALMART                                   -->
+  <!-- ============================================================ -->
+  <section data-label="04 Walmart example">
+    <div class="frame" style="padding:80px 100px 80px;">
+      <div class="row" style="align-items:baseline; gap:24px;">
+        <img src="assets/logos/plaid-horizontal-white.png" alt="" style="height:24px; opacity:0.85;" />
+        <span style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.5); letter-spacing:0.16em; text-transform:uppercase;">Example 01 — Walmart</span>
+      </div>
+
+      <h2 class="h-title" style="margin-top:24px; margin-bottom:40px; max-width:1500px; font-size:64px;">
+        <span style="color:rgba(255,255,255,0.55);">What looks like a string </span><br/>
+        is actually fifteen useful fields.
+      </h2>
+
+      <!-- 2-up panels -->
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- LEFT: raw -->
+        <div class="col" style="flex:1; background:rgba(0,0,0,0.32); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:40px 40px 36px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
+            <span class="mono-block" style="font-size:24px; color:rgba(255,255,255,0.45); letter-spacing:0.14em; text-transform:uppercase;">Raw bank string</span>
+            <span style="display:inline-flex; gap:6px;">
+              <span style="width:10px; height:10px; border-radius:50%; background:#ff6b6b; opacity:0.65;"></span>
+              <span style="width:10px; height:10px; border-radius:50%; background:#ffd06b; opacity:0.65;"></span>
+              <span style="width:10px; height:10px; border-radius:50%; background:#7fff8f; opacity:0.65;"></span>
+            </span>
+          </div>
+
+          <div class="mono-block" style="font-size:38px; line-height:1.35; color:var(--plaid-white); letter-spacing:0;">
+            <span style="color:rgba(255,255,255,0.55);">PURCHASE</span> WM SUPERCENTER <span style="color:rgba(255,255,255,0.55);">#1700</span> POWAY CAUS
+          </div>
+
+          <div style="margin-top:auto; padding-top:48px;">
+            <div style="display:flex; align-items:center; gap:14px; color:rgba(255,255,255,0.5); font-family:var(--font-mono); font-size:18px;">
+              <span style="display:inline-block; width:12px; height:12px; border-radius:2px; background:rgba(255,255,255,0.18);"></span>
+              <span>40 chars · ambiguous · noisy</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center arrow -->
+        <div class="col" style="justify-content:center; align-items:center; width:64px; flex-shrink:0;">
+          <div style="display:flex; flex-direction:column; align-items:center; gap:12px;">
+            <span class="pill">Enrich</span>
+            <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+              <path d="M10 30 L48 30 M38 18 L50 30 L38 42" stroke="#42F0CD" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- RIGHT: structured -->
+        <div class="col" style="flex:1.15; background:#FFFFFF; color:var(--plaid-ink-900); border-radius:14px; padding:36px 40px;">
+          <div style="display:flex; align-items:center; gap:14px; margin-bottom:24px;">
+            <div style="width:48px; height:48px; border-radius:8px; background:#0B7BBC; color:white; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:22px; font-family:var(--font-sans);">W</div>
+            <div class="col" style="gap:2px;">
+              <div style="font-family:var(--font-sans); font-weight:600; font-size:24px;">Walmart</div>
+              <div style="font-family:var(--font-mono); font-size:16px; color:rgba(2,37,68,0.6);">entity_id: O5W5j4dN9OR3E6yp...</div>
+            </div>
+            <span style="margin-left:auto; font-family:var(--font-sans); font-size:14px; padding:6px 12px; background:#D8FEF3; color:#05565C; border-radius:999px; font-weight:600;">VERY_HIGH</span>
+          </div>
+
+          <div class="col mono-block" style="font-size:19px; line-height:1.7; color:#022544;">
+            <div><span style="color:#0B7BBC;">merchant_name:</span> <span>"Walmart"</span></div>
+            <div><span style="color:#0B7BBC;">website:</span> <span>"walmart.com"</span></div>
+            <div><span style="color:#0B7BBC;">logo_url:</span> <span style="color:rgba(2,37,68,0.55);">"plaid-merchant-logos.../walmart_1100.png"</span></div>
+            <div><span style="color:#0B7BBC;">store_number:</span> <span>"1700"</span></div>
+            <div><span style="color:#0B7BBC;">location:</span> <span>{</span></div>
+            <div style="padding-left:28px;"><span style="color:#0B7BBC;">address:</span> <span>"13425 Community Rd",</span></div>
+            <div style="padding-left:28px;"><span style="color:#0B7BBC;">city:</span> <span>"Poway",</span> <span style="color:#0B7BBC;">region:</span> <span>"CA"</span></div>
+            <div style="padding-left:28px;"><span style="color:#0B7BBC;">postal_code:</span> <span>"92064",</span></div>
+            <div style="padding-left:28px;"><span style="color:#0B7BBC;">lat:</span> <span>32.959068,</span> <span style="color:#0B7BBC;">lon:</span> <span>-117.037666</span></div>
+            <div>}</div>
+            <div><span style="color:#0B7BBC;">payment_channel:</span> <span>"in store"</span></div>
+            <div><span style="color:#0B7BBC;">personal_finance_category:</span></div>
+            <div style="padding-left:28px;color:#05565C;">GENERAL_MERCHANDISE → SUPERSTORES</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- footer strip -->
+      <div style="margin-top:36px; display:flex; justify-content:space-between; align-items:baseline; padding:0;">
+        <p class="h-sub" style="font-size:32px; color:var(--plaid-white);">
+          One API call. <span style="color:var(--plaid-teal-500);">Fifteen useful fields.</span>
+        </p>
+        <span style="font-family:var(--font-sans); font-size:24px; color:rgba(255,255,255,0.45); font-weight:500; letter-spacing:0.04em;">04 / 23 &nbsp;</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 5 — EXAMPLE 2: DOORDASH + BURGER KING                    -->
+  <!-- ============================================================ -->
+  <section data-label="05 DoorDash example">
+    <div class="frame" style="padding:80px 100px 80px;">
+      <div class="row" style="align-items:baseline; gap:24px;">
+        <img src="assets/logos/plaid-horizontal-white.png" alt="" style="height:24px; opacity:0.85;" />
+        <span style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.5); letter-spacing:0.16em; text-transform:uppercase;">Example 02 — DoorDash × Burger King</span>
+      </div>
+
+      <h2 class="h-title" style="margin-top:24px; margin-bottom:40px; max-width:1500px; font-size:64px;">
+        <span style="color:rgba(255,255,255,0.55);">…is actually </span>two relationships.
+      </h2>
+
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch;">
+        <!-- LEFT: raw -->
+        <div class="col" style="flex:1; background:rgba(0,0,0,0.32); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:40px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:32px;">
+            <span class="mono-block" style="font-size:24px; color:rgba(255,255,255,0.45); letter-spacing:0.14em; text-transform:uppercase;">Raw bank string</span>
+            <span style="display:inline-flex; gap:6px;">
+              <span style="width:10px; height:10px; border-radius:50%; background:#ff6b6b; opacity:0.65;"></span>
+              <span style="width:10px; height:10px; border-radius:50%; background:#ffd06b; opacity:0.65;"></span>
+              <span style="width:10px; height:10px; border-radius:50%; background:#7fff8f; opacity:0.65;"></span>
+            </span>
+          </div>
+
+          <div class="mono-block" style="font-size:54px; line-height:1.3; color:var(--plaid-white); letter-spacing:0;">
+            Dd Doordash<br/>Burgerkin
+          </div>
+
+          <div style="margin-top:auto; padding-top:48px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55); line-height:1.7;">
+              Is this DoorDash?<br/>
+              Is this Burger King?<br/>
+              <span style="color:var(--plaid-teal-500);">It's both.</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Center arrow -->
+        <div class="col" style="justify-content:center; align-items:center; width:64px; flex-shrink:0;">
+          <div style="display:flex; flex-direction:column; align-items:center; gap:12px;">
+            <span class="pill">Enrich</span>
+            <svg width="60" height="60" viewBox="0 0 60 60" fill="none">
+              <path d="M10 30 L48 30 M38 18 L50 30 L38 42" stroke="#42F0CD" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+
+        <!-- RIGHT: structured -->
+        <div class="col" style="flex:1.15; background:white; color:var(--plaid-ink-900); border-radius:14px; padding:36px 40px; gap:20px;">
+          <!-- Merchant card -->
+          <div class="col" style="background:#F9F9F9; border-radius:10px; padding:20px 22px; gap:8px;">
+            <div style="display:flex; align-items:center; gap:14px;">
+              <div style="width:42px; height:42px; border-radius:6px; background:#D62300; color:white; display:flex; align-items:center; justify-content:center; font-weight:700; font-family:var(--font-sans); font-size:18px;">BK</div>
+              <div style="flex:1;">
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px;">Burger King</div>
+                <div style="font-family:var(--font-mono); font-size:15px; color:rgba(2,37,68,0.6);">type: merchant</div>
+              </div>
+              <span style="font-family:var(--font-sans); font-size:13px; padding:5px 11px; background:#D8FEF3; color:#05565C; border-radius:999px; font-weight:600;">VERY_HIGH</span>
+            </div>
+          </div>
+
+          <!-- Counterparty card -->
+          <div class="col" style="background:#F9F9F9; border-radius:10px; padding:20px 22px; gap:8px;">
+            <div style="display:flex; align-items:center; gap:14px;">
+              <div style="width:42px; height:42px; border-radius:6px; background:#EB1700; color:white; display:flex; align-items:center; justify-content:center; font-weight:700; font-family:var(--font-sans); font-size:16px;">DD</div>
+              <div style="flex:1;">
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px;">DoorDash</div>
+                <div style="font-family:var(--font-mono); font-size:15px; color:rgba(2,37,68,0.6);">type: marketplace</div>
+              </div>
+              <span style="font-family:var(--font-sans); font-size:13px; padding:5px 11px; background:#D8FEF3; color:#05565C; border-radius:999px; font-weight:600;">VERY_HIGH</span>
+            </div>
+          </div>
+
+          <div class="col mono-block" style="font-size:18px; line-height:1.65; color:#022544; padding-top:6px;">
+            <div><span style="color:#0B7BBC;">merchant_name:</span> "Burger King"</div>
+            <div><span style="color:#0B7BBC;">counterparties[0]:</span> "DoorDash"</div>
+            <div><span style="color:#0B7BBC;">personal_finance_category:</span></div>
+            <div style="padding-left:28px; color:#05565C;">FOOD_AND_DRINK → FAST_FOOD</div>
+          </div>
+
+          <div style="margin-top:auto; background:linear-gradient(135deg, #E6E6FF, #D8FEF3); border-radius:10px; padding:18px 22px;">
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:19px; color:#022544;">Unlocks rewards optimization, partnership intelligence,<br/>and granular spend analytics — the full payment path.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:36px; display:flex; justify-content:space-between; align-items:baseline;">
+        <p class="h-sub" style="font-size:32px; color:var(--plaid-white);">
+          Not the merchant, not the marketplace. <span style="color:var(--plaid-teal-500);">Both.</span>
+        </p>
+        <span style="font-family:var(--font-sans); font-size:24px; color:rgba(255,255,255,0.45); font-weight:500; letter-spacing:0.04em;">05 / 23 &nbsp;</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 6 — EXAMPLE 3: LAYLA                                     -->
+  <!-- ============================================================ -->
+  <section class="cream" data-label="06 Layla example">
+    <div class="frame" style="padding:80px 100px 80px;">
+      <div class="row" style="align-items:baseline; gap:24px;">
+        <img src="assets/logos/plaid-horizontal-dark.png" alt="" style="height:24px; opacity:0.85;" />
+        <span style="font-family:var(--font-mono); font-size:24px; color:rgba(2,37,68,0.55); letter-spacing:0.16em; text-transform:uppercase;">Example 03 — Layla, gig worker</span>
+      </div>
+
+      <h2 class="h-title" style="color:var(--plaid-ink-900); margin-top:24px; margin-bottom:8px; font-size:96px; font-family:var(--font-display); font-weight:500; letter-spacing:-0.02em;">
+        Meet Layla.
+      </h2>
+      <p class="h-body" style="color:rgba(2,37,68,0.7); margin-bottom:48px; font-size:28px; max-width:1500px;">
+        Layla drives for DoorDash and Lyft. Two deposits land in her checking account each week.
+      </p>
+
+      <div class="row" style="gap:64px; flex:1; min-height:0; align-items:stretch; justify-content:center;">
+
+        <!-- BEFORE phone -->
+        <div class="col" style="flex:1; max-width:560px; align-items:center; gap:24px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:rgba(2,37,68,0.55); letter-spacing:0.14em; text-transform:uppercase;">Before — v1 categorization</div>
+
+          <div style="width:360px; height:560px; background:var(--plaid-ink-900); border-radius:36px; border:8px solid #0a0a0a; padding:24px; position:relative; box-shadow:0 30px 60px rgba(2,37,68,0.18);">
+            <!-- status bar -->
+            <div style="display:flex; justify-content:space-between; color:rgba(255,255,255,0.6); font-family:var(--font-sans); font-size:13px; margin-bottom:24px;">
+              <span>9:41</span><span>●●●●</span>
+            </div>
+            <div style="color:white; font-family:var(--font-sans); font-weight:600; font-size:20px; margin-bottom:8px;">This week</div>
+            <div style="color:rgba(255,255,255,0.55); font-family:var(--font-sans); font-size:14px; margin-bottom:24px;">2 deposits</div>
+
+            <!-- Deposit 1 -->
+            <div style="background:rgba(255,255,255,0.06); border-radius:12px; padding:18px; margin-bottom:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <div style="color:rgba(255,255,255,0.5); font-family:var(--font-mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase;">Other income</div>
+                <div style="color:white; font-family:var(--font-sans); font-weight:600; font-size:20px;">+$284.00</div>
+              </div>
+              <div style="color:rgba(255,255,255,0.4); font-family:var(--font-mono); font-size:13px; margin-top:8px;">DD DOORDASH DEPOSIT</div>
+            </div>
+
+            <!-- Deposit 2 -->
+            <div style="background:rgba(255,255,255,0.06); border-radius:12px; padding:18px; margin-bottom:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <div style="color:rgba(255,255,255,0.5); font-family:var(--font-mono); font-size:12px; letter-spacing:0.08em; text-transform:uppercase;">Other income</div>
+                <div style="color:white; font-family:var(--font-sans); font-weight:600; font-size:20px;">+$112.00</div>
+              </div>
+              <div style="color:rgba(255,255,255,0.4); font-family:var(--font-mono); font-size:13px; margin-top:8px;">LYFT DRIVER PAY</div>
+            </div>
+
+            <div style="position:absolute; bottom:24px; left:24px; right:24px; padding:14px; background:rgba(255,107,107,0.12); border-radius:10px; color:#ff9b9b; font-family:var(--font-sans); font-size:13px;">
+              ✕ &nbsp; No income forecast available
+            </div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div class="col" style="justify-content:center; align-items:center; gap:14px;">
+          <span class="pill" style="background:rgba(11,123,188,0.12); color:#07578D;">With PFC v2</span>
+          <svg width="50" height="50" viewBox="0 0 60 60" fill="none">
+            <path d="M10 30 L48 30 M38 18 L50 30 L38 42" stroke="#0B7BBC" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+
+        <!-- AFTER phone -->
+        <div class="col" style="flex:1; max-width:560px; align-items:center; gap:24px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:#07578D; letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">After — AI-enhanced v2</div>
+
+          <div style="width:360px; height:560px; background:white; border-radius:36px; border:8px solid #0a0a0a; padding:24px; position:relative; box-shadow:0 30px 60px rgba(2,37,68,0.18);">
+            <div style="display:flex; justify-content:space-between; color:rgba(2,37,68,0.55); font-family:var(--font-sans); font-size:13px; margin-bottom:24px;">
+              <span>9:41</span><span>●●●●</span>
+            </div>
+            <div style="color:#022544; font-family:var(--font-sans); font-weight:600; font-size:20px; margin-bottom:8px;">This week</div>
+            <div style="color:rgba(2,37,68,0.55); font-family:var(--font-sans); font-size:14px; margin-bottom:24px;">2 gig deposits · forecast ready</div>
+
+            <!-- Deposit 1 -->
+            <div style="background:linear-gradient(135deg, #E6E6FF, #D8FEF3); border-radius:12px; padding:18px; margin-bottom:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <div style="color:#022544; font-family:var(--font-sans); font-weight:600; font-size:14px;">Gig income · DoorDash</div>
+                <div style="color:#022544; font-family:var(--font-sans); font-weight:700; font-size:20px;">+$284.00</div>
+              </div>
+              <div style="color:rgba(2,37,68,0.55); font-family:var(--font-mono); font-size:13px; margin-top:8px;">GIG_INCOME_GIG_WORK</div>
+            </div>
+
+            <!-- Deposit 2 -->
+            <div style="background:linear-gradient(135deg, #D8FEF3, #FFF6D8); border-radius:12px; padding:18px; margin-bottom:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <div style="color:#022544; font-family:var(--font-sans); font-weight:600; font-size:14px;">Gig income · Lyft</div>
+                <div style="color:#022544; font-family:var(--font-sans); font-weight:700; font-size:20px;">+$112.00</div>
+              </div>
+              <div style="color:rgba(2,37,68,0.55); font-family:var(--font-mono); font-size:13px; margin-top:8px;">GIG_INCOME_GIG_WORK</div>
+            </div>
+
+            <div style="position:absolute; bottom:24px; left:24px; right:24px; padding:14px; background:#D8FEF3; border-radius:10px; color:#05565C; font-family:var(--font-sans); font-size:13px; font-weight:500;">
+              ✓ &nbsp; Next payout est. $310 · Thu Aug 14
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Caption strip -->
+      <div class="row" style="margin-top:48px; gap:48px;">
+        <div class="col" style="flex:1; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:16px; color:rgba(2,37,68,0.55); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">For an EWA provider</div>
+          <p class="h-body" style="font-size:24px;">Forecast payouts, adjust advance limits responsibly, surface savings opportunities.</p>
+        </div>
+        <div style="width:1px; background:rgba(2,37,68,0.18);"></div>
+        <div class="col" style="flex:1; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:16px; color:rgba(2,37,68,0.55); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">For a PFM app</div>
+          <p class="h-body" style="font-size:24px;">Automatic gig-income tracking, more accurate tax estimates, personalized insights.</p>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>06 / 23 &nbsp;·&nbsp; Examples</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 7 — TRANSACTION FOUNDATION MODEL                         -->
+  <!-- ============================================================ -->
+  <section data-label="07 Foundation model">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 3 — The foundation</div>
+
+      <h2 class="h-title" style="font-size:84px; max-width:1500px;">
+        We built the first transaction<br/>
+        foundation model <em style="font-family:var(--font-display); font-weight:400; font-style:italic;">for finance.</em>
+      </h2>
+
+      <div class="row" style="gap:80px; align-items:flex-start; margin-top:0;">
+
+        <div class="col" style="flex:1.1; gap:32px; max-width:920px;">
+          <div class="col" style="gap:14px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Trained at network scale</div>
+            <p class="h-body">On large-scale anonymized transaction data across the Plaid Network, using self-supervised learning.</p>
+          </div>
+          <div class="col" style="gap:14px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Deeper transaction understanding</div>
+            <p class="h-body">Merchant identity, payment context, and financial attributes — beyond the raw bank description.</p>
+          </div>
+          <div class="col" style="gap:14px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Built on years of iteration</div>
+            <p class="h-body">Plaid's enrichment pipeline laid the groundwork — moving from surface-level cleaning to deep financial reasoning.</p>
+          </div>
+        </div>
+
+        <!-- Big number block -->
+        <div class="col" style="flex:0.9; align-items:flex-start; justify-content:center; padding-top:0;">
+          <div style="background:linear-gradient(135deg, rgba(66,240,205,0.16), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.28); border-radius:18px; padding:56px 56px;">
+            <div style="font-family:var(--font-display); font-weight:500; font-size:200px; line-height:0.95; color:var(--plaid-teal-500); letter-spacing:-0.03em;">500M<span style="font-family:var(--font-sans); font-weight:600; font-size:80px; vertical-align:super;">+</span></div>
+            <div class="h-sub" style="font-size:30px; color:var(--plaid-white); margin-top:16px;">
+              transactions enriched <em style="font-family:var(--font-display); font-weight:400; font-style:italic;">daily</em>
+            </div>
+            <div style="margin-top:12px; font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55);">on the Plaid Network</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>07 / 23 &nbsp;·&nbsp; The foundation</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 8 — ARCHITECTURE                                         -->
+  <!-- ============================================================ -->
+  <section data-label="08 Architecture">
+    <div class="frame" style="padding-top:72px; padding-bottom:64px;">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:16px;">Section 3 — The foundation</div>
+
+      <h2 class="h-title" style="font-size:56px; max-width:1500px; margin-bottom:28px;">
+        Bank data <span style="color:rgba(255,255,255,0.55);">plus</span> network data. <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">One foundation.</em>
+      </h2>
+
+      <!-- INPUTS row: two data sources -->
+      <div class="row" style="gap:32px; align-items:stretch;">
+
+        <!-- Bank data -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); border-radius:14px; padding:22px 28px; gap:14px;">
+          <div class="row" style="align-items:center; justify-content:space-between;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.55); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Bank data</div>
+            <span style="font-family:var(--font-sans); font-size:18px; padding:6px 12px; background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.65); border-radius:999px; letter-spacing:0.06em;">every aggregator</span>
+          </div>
+          <div class="row" style="gap:10px; flex-wrap:wrap;">
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:rgba(255,255,255,0.85); padding:8px 14px; border-radius:8px;">PURCHASE WM SUPERCENTER #1700</span>
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:rgba(255,255,255,0.85); padding:8px 14px; border-radius:8px;">amount · date · balance</span>
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:rgba(255,255,255,0.85); padding:8px 14px; border-radius:8px;">account &amp; institution metadata</span>
+          </div>
+        </div>
+
+        <!-- Network data -->
+        <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.16), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.32); border-radius:14px; padding:22px 28px; gap:14px;">
+          <div class="row" style="align-items:center; justify-content:space-between;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Plaid Network data</div>
+            <span style="font-family:var(--font-sans); font-size:18px; padding:6px 12px; background:rgba(66,240,205,0.16); color:var(--plaid-teal-500); border-radius:999px; letter-spacing:0.06em; font-weight:600;">only at Plaid</span>
+          </div>
+          <div class="row" style="gap:10px; flex-wrap:wrap;">
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:white; padding:8px 14px; border-radius:8px; border:1px solid rgba(66,240,205,0.25);">Counterparty graph (Burger King ↔ DoorDash)</span>
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:white; padding:8px 14px; border-radius:8px; border:1px solid rgba(66,240,205,0.25);">100M+ Remember Me profiles</span>
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:white; padding:8px 14px; border-radius:8px; border:1px solid rgba(66,240,205,0.25);">Cross-institution merchant resolution</span>
+            <span class="mono-block" style="font-size:18px; background:rgba(0,0,0,0.25); color:white; padding:8px 14px; border-radius:8px; border:1px solid rgba(66,240,205,0.25);">500M+ daily training signals</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Confluence arrows down into FM -->
+      <svg width="100%" height="56" viewBox="0 0 1680 56" preserveAspectRatio="none" style="margin-top:6px;">
+        <path d="M 420 0 L 420 24 L 840 40" stroke="rgba(255,255,255,0.4)" stroke-width="2" fill="none" />
+        <path d="M 1260 0 L 1260 24 L 840 40" stroke="rgba(66,240,205,0.55)" stroke-width="2" fill="none" />
+        <polygon points="840,52 832,40 848,40" fill="rgba(66,240,205,0.7)" />
+      </svg>
+
+      <!-- Foundation model box -->
+      <div style="background:linear-gradient(135deg, #07578D, #0B7BBC 50%, #42F0CD); border-radius:16px; padding:22px 48px; box-shadow:0 16px 48px rgba(66,240,205,0.22); align-self:center; min-width:780px; text-align:center; margin-top:-4px;">
+        <div style="font-family:var(--font-mono); font-size:24px; color:rgba(255,255,255,0.85); letter-spacing:0.16em; text-transform:uppercase; margin-bottom:6px;">Core infrastructure</div>
+        <div style="font-family:var(--font-sans); font-weight:600; font-size:34px; color:white; letter-spacing:-0.01em;">Transaction Foundation Model</div>
+        <div style="font-family:var(--font-sans); font-size:24px; color:rgba(255,255,255,0.85); margin-top:4px;">Shared transaction representation, trained on the Plaid Network</div>
+      </div>
+
+      <!-- Lines from FM down to capabilities -->
+      <svg width="1400" height="60" viewBox="0 0 1400 60" style="align-self:center;">
+        <path d="M 700 0 L 700 22" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+        <text x="720" y="18" fill="rgba(255,255,255,0.6)" font-family="ui-monospace,SF Mono,Menlo,monospace" font-size="18" letter-spacing="2">lightweight adaptation ↓</text>
+        <path d="M 140 22 L 1260 22" stroke="rgba(66,240,205,0.35)" stroke-width="2" />
+        <path d="M 140 22 L 140 56" stroke="rgba(66,240,205,0.35)" stroke-width="2" />
+        <path d="M 420 22 L 420 56" stroke="rgba(66,240,205,0.35)" stroke-width="2" />
+        <path d="M 700 22 L 700 56" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+        <path d="M 980 22 L 980 56" stroke="rgba(66,240,205,0.35)" stroke-width="2" />
+        <path d="M 1260 22 L 1260 56" stroke="rgba(66,240,205,0.35)" stroke-width="2" />
+        <g fill="rgba(66,240,205,0.55)">
+          <polygon points="140,60 134,50 146,50" />
+          <polygon points="420,60 414,50 426,50" />
+          <polygon points="700,60 694,50 706,50" />
+          <polygon points="980,60 974,50 986,50" />
+          <polygon points="1260,60 1254,50 1266,50" />
+        </g>
+      </svg>
+
+      <!-- Capability cards (compact) -->
+      <div class="row" style="gap:20px; justify-content:space-between; align-self:center; width:1400px; margin-top:-6px;">
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:16px 18px; gap:4px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">PFC v2</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Categories</div>
+          <div style="font-family:var(--font-sans); font-size:18px; color:rgba(255,255,255,0.65); line-height:1.35;">16 primary · 104 detailed</div>
+        </div>
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:16px 18px; gap:4px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Business</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">SMB Categories</div>
+          <div style="font-family:var(--font-sans); font-size:18px; color:rgba(255,255,255,0.65); line-height:1.35;">13 purpose-built</div>
+        </div>
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:16px 18px; gap:4px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Credit</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">LendScore</div>
+          <div style="font-family:var(--font-sans); font-size:18px; color:rgba(255,255,255,0.65); line-height:1.35;">Cash flow underwriting</div>
+        </div>
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:16px 18px; gap:4px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Lending</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">EWA Score</div>
+          <div style="font-family:var(--font-sans); font-size:18px; color:rgba(255,255,255,0.65); line-height:1.35;">Advance risk</div>
+        </div>
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:16px 18px; gap:4px;">
+          <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Risk</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Protect · Signal</div>
+          <div style="font-family:var(--font-sans); font-size:18px; color:rgba(255,255,255,0.65); line-height:1.35;">Fraud · ACH risk</div>
+        </div>
+      </div>
+
+      <p class="h-sub" style="font-size:26px; max-width:1500px; margin-top:auto; padding-top:20px; color:rgba(255,255,255,0.78);">
+        General LLMs see only the left column. <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">The right column is the moat.</em>
+      </p>
+
+      <div class="chrome-foot">
+        <span>08 / 23 &nbsp;·&nbsp; The foundation</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 9 — DATA ENGINE                                          -->
+  <!-- ============================================================ -->
+  <section data-label="09 Data engine">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 3 — The foundation</div>
+
+      <h2 class="h-title" style="font-size:64px; max-width:1500px;">
+        AI labels at network scale.<br/>
+        <span style="color:rgba(255,255,255,0.55);">Human-quality precision.</span>
+      </h2>
+
+      <!-- Three-step flow -->
+      <div class="row" style="gap:24px; flex:1; min-height:0; align-items:stretch;">
+        <!-- Step 1 -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:36px 32px; gap:20px; position:relative;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:72px; color:rgba(66,240,205,0.4); line-height:1;">01</div>
+          <div class="col" style="gap:8px;">
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white;">AI Annotator</div>
+            <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.12em; text-transform:uppercase;">LLM-assisted labels</div>
+          </div>
+          <p class="h-body" style="font-size:22px;">Generates labels across millions of anonymized transactions — at a fraction of the cost and time of manual review.</p>
+
+          <!-- Mini viz -->
+          <div style="margin-top:auto; display:flex; flex-direction:column; gap:6px; padding-top:20px;">
+            <div style="display:flex; gap:6px;"><div style="height:8px; width:24%; background:var(--plaid-blue-500); border-radius:2px;"></div><div style="height:8px; width:38%; background:rgba(255,255,255,0.18); border-radius:2px;"></div><div style="height:8px; width:14%; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="height:8px; flex:1; background:rgba(255,255,255,0.18); border-radius:2px;"></div></div>
+            <div style="display:flex; gap:6px;"><div style="height:8px; width:18%; background:var(--plaid-blue-500); border-radius:2px;"></div><div style="height:8px; width:44%; background:rgba(255,255,255,0.18); border-radius:2px;"></div><div style="height:8px; width:22%; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="height:8px; flex:1; background:rgba(255,255,255,0.18); border-radius:2px;"></div></div>
+            <div style="display:flex; gap:6px;"><div style="height:8px; width:32%; background:var(--plaid-blue-500); border-radius:2px;"></div><div style="height:8px; width:28%; background:rgba(255,255,255,0.18); border-radius:2px;"></div><div style="height:8px; width:18%; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="height:8px; flex:1; background:rgba(255,255,255,0.18); border-radius:2px;"></div></div>
+          </div>
+        </div>
+
+        <!-- arrow -->
+        <div style="align-self:center; color:rgba(66,240,205,0.6); font-size:32px; padding:0 4px;">→</div>
+
+        <!-- Step 2 -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:36px 32px; gap:20px; position:relative;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:72px; color:rgba(66,240,205,0.4); line-height:1;">02</div>
+          <div class="col" style="gap:8px;">
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white;">Human validation</div>
+            <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.12em; text-transform:uppercase;">Golden datasets</div>
+          </div>
+          <p class="h-body" style="font-size:22px;">Reviewers build golden datasets for benchmarking and spot-check edge cases where AI labels disagree.</p>
+
+          <div style="margin-top:auto; padding-top:20px;">
+            <div style="display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:14px; color:rgba(255,255,255,0.55); margin-bottom:6px;">
+              <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--plaid-teal-500);"></span>
+              AI label
+              <span style="margin-left:18px; display:inline-block; width:8px; height:8px; border-radius:50%; background:#FFC0FF;"></span>
+              Human override
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(20,1fr); gap:4px;">
+              <!-- 60 dots, ~3 pink (5% override) -->
+              <div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:#FFC0FF; border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div>
+              <div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:#FFC0FF; border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div><div style="aspect-ratio:1; background:#FFC0FF; border-radius:2px;"></div><div style="aspect-ratio:1; background:var(--plaid-teal-500); border-radius:2px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="align-self:center; color:rgba(66,240,205,0.6); font-size:32px; padding:0 4px;">→</div>
+
+        <!-- Step 3 -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:36px 32px; gap:20px; position:relative;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:72px; color:rgba(66,240,205,0.4); line-height:1;">03</div>
+          <div class="col" style="gap:8px;">
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white;">Iterate</div>
+            <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.12em; text-transform:uppercase;">Loop tightens</div>
+          </div>
+          <p class="h-body" style="font-size:22px;">The model retrains. New categories ship. Edge cases shrink. The data engine is the moat — not just the model.</p>
+
+          <div style="margin-top:auto; padding-top:20px;">
+            <svg width="100%" height="80" viewBox="0 0 280 80" preserveAspectRatio="none">
+              <path d="M 0 65 Q 70 55, 140 35 T 280 12" stroke="#42F0CD" stroke-width="3" fill="none" stroke-linecap="round" />
+              <path d="M 0 70 Q 70 65, 140 50 T 280 28" stroke="rgba(66,240,205,0.4)" stroke-width="2" fill="none" stroke-linecap="round" />
+              <text x="6" y="78" fill="rgba(255,255,255,0.45)" font-family="ui-monospace,SF Mono,Menlo,monospace" font-size="10">v1.0</text>
+              <text x="252" y="78" fill="rgba(255,255,255,0.45)" font-family="ui-monospace,SF Mono,Menlo,monospace" font-size="10">v2.x</text>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Big number callout -->
+      <div style="margin-top:40px; display:flex; align-items:baseline; gap:24px;">
+        <div style="font-family:var(--font-display); font-weight:500; font-size:120px; color:var(--plaid-teal-500); line-height:0.9; letter-spacing:-0.03em;">&gt;95<span style="font-size:60px;">%</span></div>
+        <p class="h-sub" style="font-size:28px; color:var(--plaid-white); max-width:900px;">
+          human alignment on AI-generated labels — at a fraction of the cost and time of manual labeling.
+        </p>
+      </div>
+
+      <div class="chrome-foot">
+        <span>09 / 23 &nbsp;·&nbsp; The foundation</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 10 — WHAT IT MEANS FOR YOU (customer benefits)           -->
+  <!-- ============================================================ -->
+  <section data-label="10 What it means for you">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 3 — The foundation</div>
+
+      <h2 class="h-title" style="font-size:72px; max-width:1500px;">
+        What it means <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">for you.</em>
+      </h2>
+      <p class="h-body" style="font-size:28px; color:rgba(255,255,255,0.72); max-width:1500px; margin-top:-24px; margin-bottom:24px;">
+        You didn't build the data engine. You don't pay to maintain it. You still get the upside.
+      </p>
+
+      <div class="row" style="gap:20px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- 01 — Speed -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:30px 26px; gap:18px;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:rgba(66,240,205,0.5); line-height:0.95; letter-spacing:-0.02em;">01</div>
+          <div class="col" style="gap:6px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Speed</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">Months, not years.</div>
+          </div>
+          <p class="h-body" style="font-size:20px;">New categories ship in a single release cycle. PFC v2's 12+ subcategories went from concept to production while in-house teams would still be scoping.</p>
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid rgba(255,255,255,0.1); font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55);">Gig Income · Overdraft Fee · Wire · Mortgage</div>
+        </div>
+
+        <!-- 02 — Cost -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:30px 26px; gap:18px;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:rgba(66,240,205,0.5); line-height:0.95; letter-spacing:-0.02em;">02</div>
+          <div class="col" style="gap:6px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Cost</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">Zero training tax.</div>
+          </div>
+          <p class="h-body" style="font-size:20px;">Labeling pipelines, golden datasets, ongoing retrains — baked into Transactions. No separate line item, no internal headcount.</p>
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid rgba(255,255,255,0.1); font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55);">Pay per connected account · not per label</div>
+        </div>
+
+        <!-- 03 — Network effect -->
+        <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.14), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.3); border-radius:14px; padding:30px 26px; gap:18px;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:var(--plaid-teal-500); line-height:0.95; letter-spacing:-0.02em;">03</div>
+          <div class="col" style="gap:6px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Network</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">One fix → every customer.</div>
+          </div>
+          <p class="h-body" style="font-size:20px;">When one customer's feedback corrects an edge-case merchant or income stream, the fix lands for every Plaid customer on the next retrain.</p>
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid rgba(66,240,205,0.2); font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500);">You inherit improvements you didn't ask for</div>
+        </div>
+
+        <!-- 04 — Audit-ready -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:30px 26px; gap:18px;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:rgba(66,240,205,0.5); line-height:0.95; letter-spacing:-0.02em;">04</div>
+          <div class="col" style="gap:6px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Audit-ready</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">A benchmark behind every label.</div>
+          </div>
+          <p class="h-body" style="font-size:20px;">Golden datasets give your compliance, risk, and lending teams something defensible to point at — not a black-box AI categorization.</p>
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid rgba(255,255,255,0.1); font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55);">Lending · Fraud · ACH risk</div>
+        </div>
+
+        <!-- 05 — Compounding -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:30px 26px; gap:18px;">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:rgba(66,240,205,0.5); line-height:0.95; letter-spacing:-0.02em;">05</div>
+          <div class="col" style="gap:6px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Compounding</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">Smarter at 12 months.</div>
+          </div>
+          <p class="h-body" style="font-size:20px;">The model you ship against today is measurably better in twelve months — without a migration, without an engineering project on your side.</p>
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid rgba(255,255,255,0.1); font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55);">Same integration · better outputs</div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>10 / 23  ·  The foundation</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 11 — PFC v2 BY THE NUMBERS                               -->
+  <!-- ============================================================ -->
+  <section data-label="11 PFC v2 numbers">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 4 — What you get today</div>
+
+      <h2 class="h-title" style="font-size:72px; max-width:1500px;">
+        Smarter categories. <span style="color:rgba(255,255,255,0.55);">Sharper insights.</span>
+      </h2>
+
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch; margin-top:8px;">
+
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:48px 44px; justify-content:space-between;">
+          <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Primary categories</div>
+          <div style="font-family:var(--font-display); font-weight:500; font-size:200px; line-height:0.9; color:white; letter-spacing:-0.03em;">+10<span style="font-size:90px;">%</span></div>
+          <div class="col" style="gap:8px;">
+            <p class="h-body" style="font-size:24px;">Higher accuracy on the 16 top-level personal finance categories.</p>
+            <p class="h-small" style="color:rgba(255,255,255,0.55);">vs PFC v1 baseline</p>
+          </div>
+        </div>
+
+        <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.14), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.28); border-radius:18px; padding:48px 44px; justify-content:space-between;">
+          <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Detailed sub-categories</div>
+          <div style="font-family:var(--font-display); font-weight:500; font-size:200px; line-height:0.9; color:var(--plaid-teal-500); letter-spacing:-0.03em;">+20<span style="font-size:90px;">%</span></div>
+          <div class="col" style="gap:8px;">
+            <p class="h-body" style="font-size:24px;">Higher accuracy on 104 detailed sub-categories.</p>
+            <p class="h-small" style="color:rgba(255,255,255,0.55);">where the product unlocks live</p>
+          </div>
+        </div>
+
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:48px 44px; justify-content:space-between;">
+          <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">New subcategories</div>
+          <div style="font-family:var(--font-display); font-weight:500; font-size:200px; line-height:0.9; color:white; letter-spacing:-0.03em;">12<span style="font-size:90px;">+</span></div>
+          <div class="col" style="gap:8px;">
+            <p class="h-body" style="font-size:24px;">Income types, repayments, disbursements, bank fees, transfers.</p>
+            <p class="h-small" style="color:rgba(255,255,255,0.55);">shipped Dec 2025, expanding</p>
+          </div>
+        </div>
+      </div>
+
+      <p class="h-sub" style="font-size:26px; max-width:1500px; margin-top:36px; color:rgba(255,255,255,0.72);">
+        Trained with AI-assisted label generation and targeted human review — the same data engine you saw on the previous slide.
+      </p>
+
+      <div class="chrome-foot">
+        <span>11 / 23 &nbsp;·&nbsp; What you get today</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 12 — BEFORE / AFTER SUBCATEGORIES                        -->
+  <!-- ============================================================ -->
+  <section data-label="12 Subcategories before after">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 4 — What you get today</div>
+
+      <h2 class="h-title" style="font-size:64px;">
+        Cash flow you can actually <em style="font-family:var(--font-display); font-weight:400; font-style:italic;">act on.</em>
+      </h2>
+
+      <!-- Header row -->
+      <div class="row" style="gap:24px; padding-bottom:18px; border-bottom:1px solid rgba(255,255,255,0.2); margin-top:0;">
+        <div style="flex:0.9; font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.5); letter-spacing:0.14em; text-transform:uppercase;">v1 — Before</div>
+        <div style="width:80px;"></div>
+        <div style="flex:1.8; font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">v2 — After</div>
+      </div>
+
+      <!-- Rows -->
+      <div class="col" style="gap:0; flex:1; min-height:0; justify-content:space-around; padding:8px 0;">
+        <!-- Row 1 -->
+        <div class="row" style="gap:24px; align-items:center; padding:18px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+          <div style="flex:0.9;">
+            <span class="mono-block" style="font-size:28px; color:rgba(255,255,255,0.55); background:rgba(255,255,255,0.06); padding:10px 18px; border-radius:8px; border:1px dashed rgba(255,255,255,0.18);">Other Income</span>
+          </div>
+          <div style="width:80px; text-align:center; color:var(--plaid-teal-500); font-size:28px;">→</div>
+          <div style="flex:1.8; display:flex; gap:10px; flex-wrap:wrap;">
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#42F0CD; padding:10px 18px; border-radius:8px; font-weight:600;">Gig Income</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">Tax Refund</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">Interest Income</span>
+          </div>
+        </div>
+
+        <!-- Row 2 -->
+        <div class="row" style="gap:24px; align-items:center; padding:18px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+          <div style="flex:0.9;">
+            <span class="mono-block" style="font-size:28px; color:rgba(255,255,255,0.55); background:rgba(255,255,255,0.06); padding:10px 18px; border-radius:8px; border:1px dashed rgba(255,255,255,0.18);">Transfer</span>
+          </div>
+          <div style="width:80px; text-align:center; color:var(--plaid-teal-500); font-size:28px;">→</div>
+          <div style="flex:1.8; display:flex; gap:10px; flex-wrap:wrap;">
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#42F0CD; padding:10px 18px; border-radius:8px; font-weight:600;">Internal Transfer</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">Wire Transfer</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">P2P Transfer</span>
+          </div>
+        </div>
+
+        <!-- Row 3 -->
+        <div class="row" style="gap:24px; align-items:center; padding:18px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+          <div style="flex:0.9;">
+            <span class="mono-block" style="font-size:28px; color:rgba(255,255,255,0.55); background:rgba(255,255,255,0.06); padding:10px 18px; border-radius:8px; border:1px dashed rgba(255,255,255,0.18);">Bank Fees</span>
+          </div>
+          <div style="width:80px; text-align:center; color:var(--plaid-teal-500); font-size:28px;">→</div>
+          <div style="flex:1.8; display:flex; gap:10px; flex-wrap:wrap;">
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#42F0CD; padding:10px 18px; border-radius:8px; font-weight:600;">Overdraft Fee</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">ATM Fee</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">Foreign Transaction Fee</span>
+          </div>
+        </div>
+
+        <!-- Row 4 -->
+        <div class="row" style="gap:24px; align-items:center; padding:18px 0;">
+          <div style="flex:0.9;">
+            <span class="mono-block" style="font-size:28px; color:rgba(255,255,255,0.55); background:rgba(255,255,255,0.06); padding:10px 18px; border-radius:8px; border:1px dashed rgba(255,255,255,0.18);">Loan Payment</span>
+          </div>
+          <div style="width:80px; text-align:center; color:var(--plaid-teal-500); font-size:28px;">→</div>
+          <div style="flex:1.8; display:flex; gap:10px; flex-wrap:wrap;">
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#42F0CD; padding:10px 18px; border-radius:8px; font-weight:600;">Mortgage</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">Student Loan</span>
+            <span class="mono-block" style="font-size:24px; color:#022544; background:#D8FEF3; padding:10px 18px; border-radius:8px;">Auto Loan</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:24px; background:rgba(66,240,205,0.08); border-left:3px solid var(--plaid-teal-500); padding:20px 28px;">
+        <p class="h-sub" style="font-size:26px; color:var(--plaid-white);">
+          Each row is a product unlock — EWA forecasting, PFM budgeting, tax estimates, lending insights — <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">immediately</em> better.
+        </p>
+      </div>
+
+      <div class="chrome-foot">
+        <span>12 / 23 &nbsp;·&nbsp; What you get today</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 13 — VERSIONING                                          -->
+  <!-- ============================================================ -->
+  <section data-label="13 Versioning">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 4 — What you get today</div>
+
+      <h2 class="h-title" style="font-size:72px; max-width:1500px;">
+        Upgrade when you're ready.<br/>
+        <span style="color:rgba(255,255,255,0.55);">Never break what works.</span>
+      </h2>
+
+      <div class="row" style="gap:64px; flex:1; min-height:0; align-items:flex-start;">
+
+        <!-- Code block -->
+        <div class="col" style="flex:1.1; gap:24px;">
+          <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">One flag.</div>
+          <div style="background:#020F1E; border:1px solid rgba(66,240,205,0.25); border-radius:14px; padding:36px 40px; position:relative;">
+            <div style="position:absolute; top:14px; right:18px; font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.35);">POST /transactions/sync</div>
+            <div style="display:flex; gap:6px; margin-bottom:24px;">
+              <span style="width:11px; height:11px; border-radius:50%; background:#ff6b6b; opacity:0.65;"></span>
+              <span style="width:11px; height:11px; border-radius:50%; background:#ffd06b; opacity:0.65;"></span>
+              <span style="width:11px; height:11px; border-radius:50%; background:#7fff8f; opacity:0.65;"></span>
+            </div>
+            <pre class="mono-block" style="font-size:30px; line-height:1.6; margin:0; color:white;"><span style="color:rgba(255,255,255,0.45);">{</span>
+  <span style="color:var(--plaid-blue-400);">"personal_finance_category_version"</span>: <span style="color:var(--plaid-teal-500);">"v2"</span>
+<span style="color:rgba(255,255,255,0.45);">}</span></pre>
+          </div>
+          <p class="h-small" style="font-family:var(--font-mono); font-size:18px;">
+            Same flag works on <span style="color:var(--plaid-teal-500);">/transactions/sync</span>, <span style="color:var(--plaid-teal-500);">/transactions/get</span>, and <span style="color:var(--plaid-teal-500);">/transactions/enrich</span>.
+          </p>
+        </div>
+
+        <!-- Three bullets -->
+        <div class="col" style="flex:1; gap:32px; padding-top:36px;">
+          <div class="col" style="gap:10px; padding-left:20px; border-left:2px solid var(--plaid-teal-500);">
+            <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Existing customers</div>
+            <p class="h-body" style="font-size:24px;">Opt in by setting <span style="font-family:var(--font-mono); color:var(--plaid-teal-500);">v2</span> on your next call. v1 keeps working — no migration.</p>
+          </div>
+          <div class="col" style="gap:10px; padding-left:20px; border-left:2px solid var(--plaid-teal-500);">
+            <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">New customers (post Dec 2025)</div>
+            <p class="h-body" style="font-size:24px;">Receive v2 by default. Zero config.</p>
+          </div>
+          <div class="col" style="gap:10px; padding-left:20px; border-left:2px solid rgba(255,255,255,0.25);">
+            <div style="font-family:var(--font-mono); font-size:16px; color:rgba(255,255,255,0.65); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Legacy v1</div>
+            <p class="h-body" style="font-size:24px;">Supported indefinitely. No forced cutover, no breaking changes.</p>
+          </div>
+        </div>
+      </div>
+
+      <p class="h-sub" style="font-size:30px; max-width:1500px; margin-top:auto; color:var(--plaid-white);">
+        <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">Adopt AI</em> without taking a migration hit.
+      </p>
+
+      <div class="chrome-foot">
+        <span>13 / 23 &nbsp;·&nbsp; What you get today</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 14 — HISTORY DEPTH & BREADTH                             -->
+  <!-- ============================================================ -->
+  <section data-label="14 History">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 5 — Differentiators</div>
+
+      <h2 class="h-title" style="font-size:78px; max-width:1500px;">
+        4× the lookback.<br/>
+        <span style="color:rgba(255,255,255,0.55);">Multiple syncs per day.</span>
+      </h2>
+
+      <div class="row" style="gap:48px; flex:1; min-height:0; align-items:flex-start;">
+
+        <!-- Plaid bar -->
+        <div class="col" style="flex:1.4; gap:36px;">
+          <!-- Plaid -->
+          <div class="col" style="gap:14px;">
+            <div class="row" style="align-items:baseline; gap:14px;">
+              <span style="font-family:var(--font-sans); font-weight:600; font-size:28px; color:white;">Plaid Transactions</span>
+              <span class="pill">You get this</span>
+            </div>
+            <div style="position:relative; height:64px; background:rgba(255,255,255,0.05); border-radius:8px; overflow:hidden;">
+              <div style="position:absolute; inset:0; width:100%; background:linear-gradient(90deg, var(--plaid-blue-600), var(--plaid-teal-500)); border-radius:8px;"></div>
+              <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:flex-end; padding-right:24px; font-family:var(--font-sans); font-weight:700; font-size:24px; color:var(--plaid-ink-900);">730 days · up to 24 months</div>
+            </div>
+            <div class="row" style="gap:24px; font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.7);">
+              <span>1–4 syncs/day</span>
+              <span style="color:rgba(255,255,255,0.35);">·</span>
+              <span>On-demand Refresh</span>
+              <span style="color:rgba(255,255,255,0.35);">·</span>
+              <span>SYNC_UPDATES_AVAILABLE webhook</span>
+            </div>
+          </div>
+
+          <!-- Typical aggregator -->
+          <div class="col" style="gap:14px; opacity:0.78;">
+            <div class="row" style="align-items:baseline; gap:14px;">
+              <span style="font-family:var(--font-sans); font-weight:600; font-size:26px; color:rgba(255,255,255,0.8);">Typical aggregators</span>
+              <span style="font-family:var(--font-mono); font-size:14px; color:rgba(255,255,255,0.45); letter-spacing:0.12em; text-transform:uppercase;">capability comparison</span>
+            </div>
+            <div style="position:relative; height:50px; background:rgba(255,255,255,0.05); border-radius:8px; overflow:hidden;">
+              <div style="position:absolute; left:0; top:0; bottom:0; width:24.6%; background:rgba(255,255,255,0.28); border-radius:8px;"></div>
+              <div style="position:absolute; inset:0; display:flex; align-items:center; padding-left:calc(24.6% + 14px); font-family:var(--font-sans); font-weight:500; font-size:20px; color:rgba(255,255,255,0.65);">180 days default</div>
+            </div>
+            <div class="row" style="gap:24px; font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55);">
+              <span>Daily syncs</span>
+              <span style="color:rgba(255,255,255,0.25);">·</span>
+              <span>Limited or no real-time refresh</span>
+            </div>
+          </div>
+
+          <!-- Scale axis -->
+          <div style="position:relative; margin-top:12px; padding-top:18px; border-top:1px dashed rgba(255,255,255,0.18);">
+            <div class="row" style="font-family:var(--font-mono); font-size:14px; color:rgba(255,255,255,0.5); letter-spacing:0.08em;">
+              <div style="width:24.6%;">0d</div>
+              <div style="width:24.6%;">180d</div>
+              <div style="width:24.6%;">365d</div>
+              <div style="flex:1;">730d</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Use case sidebar -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:36px 36px; gap:20px;">
+          <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Practical use case</div>
+          <p class="h-body" style="font-size:26px;">
+            Underwriting models that need 12+ months of cash flow can run <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">today</em> — not after a six-month data accrual.
+          </p>
+          <div style="margin-top:auto; padding-top:24px; border-top:1px solid rgba(255,255,255,0.1); display:flex; align-items:center; gap:20px;">
+            <div style="font-family:var(--font-display); font-weight:500; font-size:76px; color:var(--plaid-teal-500); line-height:1; letter-spacing:-0.02em;">12<span style="font-size:36px;">+</span></div>
+            <div class="h-small" style="font-size:20px;">months of cash flow,<br/>available on day one</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>14 / 23 &nbsp;·&nbsp; Differentiators</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 15 — ENRICHMENT MOAT                                     -->
+  <!-- ============================================================ -->
+  <section data-label="15 Enrichment moat">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 5 — Differentiators</div>
+
+      <h2 class="h-title" style="font-size:64px; max-width:1500px;">
+        The same intelligence — <em style="font-family:var(--font-display); font-weight:400; font-style:italic;">on your own data, too.</em>
+      </h2>
+
+      <!-- Diagram -->
+      <div style="flex:1; min-height:0; display:flex; align-items:center; justify-content:center; gap:0; margin:24px 0;">
+        <div class="row" style="width:100%; align-items:center; gap:0;">
+
+          <!-- LEFT: sources -->
+          <div class="col" style="flex:1; gap:24px; padding-right:0;">
+            <div class="row" style="align-items:center; gap:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:22px 26px;">
+              <div style="width:42px; height:42px; border-radius:8px; background:var(--plaid-blue-500); display:flex; align-items:center; justify-content:center;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 9 L21 9 M3 12 L21 12 M3 15 L21 15 M6 5 V19" stroke="white" stroke-width="2" stroke-linecap="round" /></svg>
+              </div>
+              <div class="col" style="gap:4px; flex:1;">
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Plaid-linked accounts</div>
+                <div style="font-family:var(--font-mono); font-size:16px; color:rgba(255,255,255,0.55);">12,000+ institutions · 17 countries</div>
+              </div>
+            </div>
+
+            <div class="row" style="align-items:center; gap:18px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:22px 26px;">
+              <div style="width:42px; height:42px; border-radius:8px; background:var(--plaid-teal-600); display:flex; align-items:center; justify-content:center;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="6" width="18" height="13" rx="2" stroke="white" stroke-width="2" /><path d="M3 10 L21 10" stroke="white" stroke-width="2" /></svg>
+              </div>
+              <div class="col" style="gap:4px; flex:1;">
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Your card / bank data</div>
+                <div style="font-family:var(--font-mono); font-size:16px; color:rgba(255,255,255,0.55);">non-Plaid transactions via /enrich</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connecting paths -->
+          <div style="flex:0.4; height:160px; position:relative;">
+            <svg width="100%" height="100%" viewBox="0 0 200 160" preserveAspectRatio="none">
+              <path d="M 0 40 L 100 80 L 200 80" stroke="rgba(66,240,205,0.5)" stroke-width="2" fill="none" />
+              <path d="M 0 120 L 100 80 L 200 80" stroke="rgba(66,240,205,0.5)" stroke-width="2" fill="none" />
+              <polygon points="200,80 188,72 188,88" fill="rgba(66,240,205,0.7)" />
+            </svg>
+          </div>
+
+          <!-- CENTER: engine -->
+          <div class="col" style="flex:1; align-items:center; gap:12px; background:linear-gradient(160deg, rgba(11,123,188,0.32), rgba(66,240,205,0.16)); border:1px solid rgba(66,240,205,0.35); border-radius:16px; padding:36px 32px; box-shadow:0 16px 60px rgba(66,240,205,0.18);">
+            <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Plaid</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:32px; color:white; text-align:center; line-height:1.15;">Transaction<br/>Enrichment Engine</div>
+            <div style="margin-top:10px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.18); width:100%; text-align:center; font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.78);">500M+ txns/day · ML-powered</div>
+          </div>
+
+          <!-- arrow -->
+          <div style="flex:0.4; height:120px; position:relative;">
+            <svg width="100%" height="100%" viewBox="0 0 200 120" preserveAspectRatio="none">
+              <path d="M 0 60 L 180 60" stroke="rgba(66,240,205,0.5)" stroke-width="2" fill="none" />
+              <polygon points="200,60 188,52 188,68" fill="rgba(66,240,205,0.7)" />
+            </svg>
+          </div>
+
+          <!-- RIGHT: app -->
+          <div class="col" style="flex:1; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:28px 30px; align-items:center; gap:14px;">
+            <div style="width:48px; height:48px; border-radius:10px; background:white; display:flex; align-items:center; justify-content:center; color:#022544; font-family:var(--font-sans); font-weight:700; font-size:22px;">★</div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:24px; color:white;">Your app</div>
+            <div style="font-family:var(--font-mono); font-size:15px; color:rgba(255,255,255,0.55); text-align:center; line-height:1.5;">consistent enrichment<br/>across all sources</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Three bullets -->
+      <div class="row" style="gap:32px; padding-top:24px; border-top:1px solid rgba(255,255,255,0.12);">
+        <div class="col" style="flex:1; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Transactions</div>
+          <p class="h-small" style="font-size:20px; color:rgba(255,255,255,0.78);">Enrichment baked into every Plaid-linked Item.</p>
+        </div>
+        <div class="col" style="flex:1; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Enrich</div>
+          <p class="h-small" style="font-size:20px; color:rgba(255,255,255,0.78);">Send your non-Plaid transactions. Receive merchant, counterparty, category, location, logos.</p>
+        </div>
+        <div class="col" style="flex:1; gap:8px;">
+          <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">Consistent outputs</div>
+          <p class="h-small" style="font-size:20px; color:rgba(255,255,255,0.78);">Same fields across in-house and Plaid-linked data. No reconciliation tax.</p>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>15 / 23 &nbsp;·&nbsp; Differentiators</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 16 — CONVERSION                                          -->
+  <!-- ============================================================ -->
+  <section data-label="16 Conversion">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 5 — Differentiators</div>
+
+      <h2 class="h-title" style="font-size:72px; max-width:1500px;">
+        Better data is only valuable<br/>
+        <span style="color:rgba(255,255,255,0.55);">on items that link.</span>
+      </h2>
+
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- Big stat 1 -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:42px 38px; gap:16px;">
+          <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Remember Me network</div>
+          <div style="font-family:var(--font-display); font-weight:500; font-size:140px; line-height:0.95; color:white; letter-spacing:-0.03em;">100M<span style="font-size:60px;">+</span></div>
+          <p class="h-body" style="font-size:22px;">profiles in the network — <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">up to +11%</em> conversion for returning users.</p>
+        </div>
+
+        <!-- Big stat 2 -->
+        <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.14), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.28); border-radius:18px; padding:42px 38px; gap:16px;">
+          <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Broken-link self-repair</div>
+          <div style="font-family:var(--font-display); font-weight:500; font-size:140px; line-height:0.95; color:var(--plaid-teal-500); letter-spacing:-0.03em;">52<span style="font-size:60px;">%</span></div>
+          <p class="h-body" style="font-size:22px;">of broken links self-repair without user re-auth — your users never even know.</p>
+        </div>
+
+        <!-- Big stat 3 -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:18px; padding:42px 38px; gap:16px;">
+          <div style="font-family:var(--font-mono); font-size:16px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Head-to-head</div>
+          <div style="font-family:var(--font-display); font-weight:500; font-size:140px; line-height:0.95; color:white; letter-spacing:-0.03em;">#1</div>
+          <p class="h-body" style="font-size:22px;">Industry-leading Link conversion across head-to-head tests with major aggregators.</p>
+        </div>
+      </div>
+
+      <!-- Flywheel -->
+      <div style="margin-top:36px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:28px 36px;">
+        <div class="row" style="align-items:center; gap:18px; flex-wrap:wrap; font-family:var(--font-mono); font-size:22px; color:rgba(255,255,255,0.85);">
+          <span style="color:var(--plaid-teal-500);">More items linked</span>
+          <span style="color:rgba(255,255,255,0.45);">→</span>
+          <span>more transactions</span>
+          <span style="color:rgba(255,255,255,0.45);">→</span>
+          <span style="color:var(--plaid-teal-500);">richer training signal</span>
+          <span style="color:rgba(255,255,255,0.45);">→</span>
+          <span>better model</span>
+          <span style="color:rgba(255,255,255,0.45);">→</span>
+          <span style="color:var(--plaid-teal-500);">more items linked.</span>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>16 / 23 &nbsp;·&nbsp; Differentiators</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 17 — ONE FOUNDATION, MANY PRODUCTS                       -->
+  <!-- ============================================================ -->
+  <section data-label="17 One foundation">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 5 — Differentiators</div>
+
+      <h2 class="h-title" style="font-size:68px; max-width:1500px;">
+        Turn on Transactions. <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">Strengthen everything downstream.</em>
+      </h2>
+
+      <!-- Quote callout, full-width -->
+      <div style="margin:8px 0 24px; background:linear-gradient(135deg, rgba(11,123,188,0.18), rgba(66,240,205,0.08)); border-left:4px solid var(--plaid-teal-500); padding:24px 36px;">
+        <p class="h-sub" style="font-size:34px; color:white; font-family:var(--font-display); font-weight:400; font-style:italic; letter-spacing:-0.01em;">
+          "Point solutions don't talk to each other. <span style="color:var(--plaid-teal-500);">Plaid's foundation does.</span>"
+        </p>
+      </div>
+
+      <!-- Repeated architecture diagram, highlighting downstream lift -->
+      <div style="flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0;">
+
+        <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:18px 32px; min-width:780px; text-align:center;">
+          <div style="font-family:var(--font-mono); font-size:14px; color:rgba(255,255,255,0.55); letter-spacing:0.16em; text-transform:uppercase; margin-bottom:4px;">When this gets smarter…</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white;">Transactions Foundation</div>
+        </div>
+
+        <svg width="1400" height="80" viewBox="0 0 1400 80" style="margin-top:-2px;">
+          <path d="M 700 0 L 700 40" stroke="rgba(255,255,255,0.35)" stroke-width="2" />
+          <path d="M 140 40 L 1260 40" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+          <path d="M 140 40 L 140 76" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+          <path d="M 420 40 L 420 76" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+          <path d="M 700 40 L 700 76" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+          <path d="M 980 40 L 980 76" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+          <path d="M 1260 40 L 1260 76" stroke="rgba(66,240,205,0.55)" stroke-width="2" />
+          <text x="720" y="22" fill="rgba(66,240,205,0.85)" font-family="ui-monospace,SF Mono,Menlo,monospace" font-size="14" letter-spacing="2">…these silently get smarter too</text>
+        </svg>
+
+        <!-- Downstream cards with lift indicators -->
+        <div class="row" style="gap:24px; width:1400px; justify-content:space-between;">
+          <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.12), rgba(255,255,255,0.04)); border:1px solid rgba(66,240,205,0.3); border-radius:14px; padding:22px 22px; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Signal</div>
+              <span style="color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:18px; font-weight:600;">↑</span>
+            </div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">ACH payment risk</div>
+            <div style="font-family:var(--font-sans); font-size:14px; color:rgba(255,255,255,0.6); line-height:1.4;">Sharper return-risk scoring</div>
+          </div>
+          <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.12), rgba(255,255,255,0.04)); border:1px solid rgba(66,240,205,0.3); border-radius:14px; padding:22px 22px; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Protect</div>
+              <span style="color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:18px; font-weight:600;">↑</span>
+            </div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Fraud detection</div>
+            <div style="font-family:var(--font-sans); font-size:14px; color:rgba(255,255,255,0.6); line-height:1.4;">Cleaner signals into Trust Index 2</div>
+          </div>
+          <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.12), rgba(255,255,255,0.04)); border:1px solid rgba(66,240,205,0.3); border-radius:14px; padding:22px 22px; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Credit</div>
+              <span style="color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:18px; font-weight:600;">↑</span>
+            </div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">LendScore</div>
+            <div style="font-family:var(--font-sans); font-size:14px; color:rgba(255,255,255,0.6); line-height:1.4;">Cash flow underwriting</div>
+          </div>
+          <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.12), rgba(255,255,255,0.04)); border:1px solid rgba(66,240,205,0.3); border-radius:14px; padding:22px 22px; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Lending</div>
+              <span style="color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:18px; font-weight:600;">↑</span>
+            </div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">EWA Score</div>
+            <div style="font-family:var(--font-sans); font-size:14px; color:rgba(255,255,255,0.6); line-height:1.4;">Earned wage advance risk</div>
+          </div>
+          <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.12), rgba(255,255,255,0.04)); border:1px solid rgba(66,240,205,0.3); border-radius:14px; padding:22px 22px; gap:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-family:var(--font-mono); font-size:14px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Insights</div>
+              <span style="color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:18px; font-weight:600;">↑</span>
+            </div>
+            <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Cash Flow Insights</div>
+            <div style="font-family:var(--font-sans); font-size:14px; color:rgba(255,255,255,0.6); line-height:1.4;">PFM, EWA, lending unlocks</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>17 / 23 &nbsp;·&nbsp; Differentiators</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 18 — TRANSACTIONS FOR BUSINESS                           -->
+  <!-- ============================================================ -->
+  <section data-label="18 Business">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 5 — Differentiators</div>
+
+      <h2 class="h-title" style="font-size:64px; max-width:1500px;">
+        First-class SMB data. <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">No more hand-rolled categories.</em>
+      </h2>
+
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- Today -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:36px 36px; gap:20px;">
+          <div class="row" style="align-items:baseline; justify-content:space-between;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Today</div>
+            <span style="font-family:var(--font-sans); font-size:13px; padding:5px 11px; background:rgba(255,255,255,0.08); color:rgba(255,255,255,0.78); border-radius:999px; font-weight:600; letter-spacing:0.04em;">BETA → GA</span>
+          </div>
+          <p class="h-body" style="font-size:24px;">A <span style="font-family:var(--font-mono); color:var(--plaid-teal-500);">holder_category</span> flag on every account — flags business vs consumer surfaces at link time.</p>
+
+          <div class="mono-block" style="font-size:18px; line-height:1.7; background:rgba(0,0,0,0.32); padding:18px 22px; border-radius:8px; color:rgba(255,255,255,0.85);">
+            <div><span style="color:#0B7BBC;">account.holder_category:</span> <span style="color:var(--plaid-teal-500);">"business"</span></div>
+            <div><span style="color:rgba(255,255,255,0.5);">// GA on major institutions</span></div>
+          </div>
+
+          <div style="margin-top:auto; padding-top:18px; border-top:1px solid rgba(255,255,255,0.1);">
+            <p class="h-small" style="font-size:18px;">Distinguish SMB accounts before you touch a transaction.</p>
+          </div>
+        </div>
+
+        <!-- Coming soon -->
+        <div class="col" style="flex:1.1; background:linear-gradient(160deg, rgba(66,240,205,0.14), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.32); border-radius:16px; padding:36px 36px; gap:20px;">
+          <div class="row" style="align-items:baseline; justify-content:space-between;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Coming soon</div>
+            <span style="font-family:var(--font-sans); font-size:13px; padding:5px 11px; background:rgba(66,240,205,0.18); color:var(--plaid-teal-500); border-radius:999px; font-weight:600; letter-spacing:0.04em;">H2 2026 · GA</span>
+          </div>
+          <p class="h-body" style="font-size:24px;"><span style="color:var(--plaid-teal-500); font-weight:600;">13 purpose-built business categories</span> under a new <span style="font-family:var(--font-mono); color:var(--plaid-teal-500);">business_finance_category</span> object.</p>
+
+          <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px;">
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">PAYROLL</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">SOFTWARE</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">CONTRACTOR</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">RENT</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">UTILITIES</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">TAX_PAYMENT</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">INVENTORY</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">SHIPPING</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">PROF_SERVICES</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">MARKETING</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">TRAVEL</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">LOAN_REPAY</span>
+            <span style="background:rgba(255,255,255,0.08); border:1px solid rgba(66,240,205,0.2); padding:8px 12px; border-radius:6px; font-family:var(--font-mono); font-size:14px; color:white;">+ 1 more</span>
+          </div>
+
+          <div style="margin-top:auto; padding-top:14px; border-top:1px solid rgba(66,240,205,0.18);">
+            <p class="h-small" style="font-size:18px;">Only first-party SMB-native taxonomy among major aggregators.</p>
+          </div>
+        </div>
+
+        <!-- Customers using today -->
+        <div class="col" style="flex:0.7; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:36px 32px; gap:20px;">
+          <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Already on Plaid</div>
+          <p class="h-body" style="font-size:22px;">Serving tens of millions of business accounts today.</p>
+
+          <div class="col" style="gap:14px; margin-top:8px;">
+            <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:white; letter-spacing:-0.02em; line-height:1;">Brex</div>
+            <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:white; letter-spacing:-0.02em; line-height:1;">Bluevine</div>
+            <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:white; letter-spacing:-0.02em; line-height:1;">Wave</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>18 / 23 &nbsp;·&nbsp; Differentiators</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 19 — 2026 ROADMAP                                        -->
+  <!-- ============================================================ -->
+  <section data-label="19 Roadmap">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 6 — Why now &amp; what's next</div>
+
+      <h2 class="h-title" style="font-size:72px;">
+        We're not done. <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-teal-500);">2026 highlights.</em>
+      </h2>
+
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- Reliability -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:40px 36px; gap:20px;">
+          <div class="row" style="align-items:center; gap:14px;">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M12 2 L4 6 V12 C4 17 7.5 21 12 22 C16.5 21 20 17 20 12 V6 Z" stroke="#42F0CD" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Reliability</div>
+          </div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">Sync architecture migration</div>
+
+          <div class="col" style="gap:16px; margin-top:8px;">
+            <div class="col" style="gap:6px;">
+              <p class="h-body" style="font-size:21px;">Move sync source of truth from a dedicated changeset service into the transaction document itself.</p>
+            </div>
+            <div class="col" style="gap:6px;">
+              <p class="h-small" style="font-size:19px; color:rgba(255,255,255,0.7);">Eliminates race conditions and cross-service drift. Raises the 99.98% endpoint above.</p>
+            </div>
+            <div class="col" style="gap:6px;">
+              <p class="h-small" style="font-size:19px; color:rgba(255,255,255,0.7);">Better item-health prediction — break before the user notices.</p>
+            </div>
+          </div>
+
+          <div style="margin-top:auto; padding-top:18px; border-top:1px solid rgba(255,255,255,0.1); display:flex; align-items:baseline; gap:14px;">
+            <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:white; line-height:1; letter-spacing:-0.02em;">99.98<span style="font-size:30px;">%</span></div>
+            <div class="h-small" style="font-size:16px;">/transactions/sync<br/>success rate, last 30d</div>
+          </div>
+        </div>
+
+        <!-- Intelligence -->
+        <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(66,240,205,0.16), rgba(11,123,188,0.06)); border:1px solid rgba(66,240,205,0.3); border-radius:16px; padding:40px 36px; gap:20px;">
+          <div class="row" style="align-items:center; gap:14px;">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="#42F0CD" stroke-width="1.8"/><circle cx="12" cy="12" r="3" stroke="#42F0CD" stroke-width="1.8"/><path d="M12 4 V8 M12 16 V20 M4 12 H8 M16 12 H20" stroke="#42F0CD" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Intelligence</div>
+          </div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">Foundation model expansion</div>
+
+          <div class="col" style="gap:16px; margin-top:8px;">
+            <div class="col" style="gap:6px;">
+              <p class="h-body" style="font-size:21px;">Continued retraining and new capability layers on the shared representation.</p>
+            </div>
+            <div class="col" style="gap:6px;">
+              <p class="h-small" style="font-size:19px; color:rgba(255,255,255,0.7);">Business categorization GA — 13 SMB-native categories.</p>
+            </div>
+            <div class="col" style="gap:6px;">
+              <p class="h-small" style="font-size:19px; color:rgba(255,255,255,0.7);">Agentic enrichment fix workflows — auto rule generation from customer feedback.</p>
+            </div>
+          </div>
+
+          <div style="margin-top:auto; padding-top:18px; border-top:1px solid rgba(66,240,205,0.18); display:flex; align-items:baseline; gap:14px;">
+            <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:var(--plaid-teal-500); line-height:1; letter-spacing:-0.02em;">+12</div>
+            <div class="h-small" style="font-size:16px;">new subcategories,<br/>more on the way</div>
+          </div>
+        </div>
+
+        <!-- Speed -->
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:40px 36px; gap:20px;">
+          <div class="row" style="align-items:center; gap:14px;">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M13 2 L4 14 H11 L10 22 L20 10 H13 Z" stroke="#42F0CD" stroke-width="1.8" stroke-linejoin="round"/></svg>
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.16em; text-transform:uppercase;">Speed</div>
+          </div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:white; line-height:1.15;">Fresher data at the source</div>
+
+          <div class="col" style="gap:16px; margin-top:8px;">
+            <div class="col" style="gap:6px;">
+              <p class="h-body" style="font-size:21px;">Traffic-optimization ML for major banks — Wells Fargo, Capital One.</p>
+            </div>
+            <div class="col" style="gap:6px;">
+              <p class="h-small" style="font-size:19px; color:rgba(255,255,255,0.7);">ARM + account-based skipping models — smarter extraction timing.</p>
+            </div>
+            <div class="col" style="gap:6px;">
+              <p class="h-small" style="font-size:19px; color:rgba(255,255,255,0.7);">API v2 perf program — reduce latency added on every Plaid call.</p>
+            </div>
+          </div>
+
+          <div style="margin-top:auto; padding-top:18px; border-top:1px solid rgba(255,255,255,0.1); display:flex; align-items:baseline; gap:14px;">
+            <div style="font-family:var(--font-display); font-weight:500; font-size:60px; color:white; line-height:1; letter-spacing:-0.02em;">1–4<span style="font-size:30px;">/d</span></div>
+            <div class="h-small" style="font-size:16px;">syncs per institution,<br/>tuned by ML</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>19 / 23 &nbsp;·&nbsp; Why now &amp; what's next</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 20 — WHY NOW                                             -->
+  <!-- ============================================================ -->
+  <section class="holo" data-label="20 Why now">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="" style="opacity:0.85;" />
+      <div class="eyebrow-tag" style="margin-top:24px; color:var(--plaid-blue-700);">Section 6 — Why now</div>
+
+      <h2 class="h-title" style="color:var(--plaid-ink-900); font-family:var(--font-display); font-weight:500; font-size:120px; letter-spacing:-0.025em; max-width:1500px;">
+        Three forces<br/>
+        are <em style="font-style:italic;">converging.</em>
+      </h2>
+
+      <div class="row" style="gap:32px; flex:1; min-height:0; align-items:stretch;">
+
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.5); border:1px solid rgba(2,37,68,0.08); border-radius:16px; padding:40px 36px; gap:20px; backdrop-filter:blur(8px);">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:96px; color:var(--plaid-blue-600); line-height:0.9; letter-spacing:-0.03em;">01</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:var(--plaid-ink-900); line-height:1.15;">AI agents are operating on financial data.</div>
+          <p class="h-body" style="font-size:22px; color:rgba(2,37,68,0.78);">They need cleaner, denser signals than humans do — and they're already moving money on your platform.</p>
+        </div>
+
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.5); border:1px solid rgba(2,37,68,0.08); border-radius:16px; padding:40px 36px; gap:20px; backdrop-filter:blur(8px);">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:96px; color:var(--plaid-blue-600); line-height:0.9; letter-spacing:-0.03em;">02</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:var(--plaid-ink-900); line-height:1.15;">Consumers expect personalization.</div>
+          <p class="h-body" style="font-size:22px; color:rgba(2,37,68,0.78);">Generic categories no longer cut it. J.D. Power finds personalization is the lever for satisfaction and engagement.</p>
+        </div>
+
+        <div class="col" style="flex:1; background:rgba(255,255,255,0.5); border:1px solid rgba(2,37,68,0.08); border-radius:16px; padding:40px 36px; gap:20px; backdrop-filter:blur(8px);">
+          <div style="font-family:var(--font-display); font-weight:500; font-size:96px; color:var(--plaid-blue-600); line-height:0.9; letter-spacing:-0.03em;">03</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:30px; color:var(--plaid-ink-900); line-height:1.15;">Open finance regulation is solidifying.</div>
+          <p class="h-body" style="font-size:22px; color:rgba(2,37,68,0.78);">Your aggregator choice is now a multi-year commitment — switching has a cost the industry didn't have before.</p>
+        </div>
+      </div>
+
+      <div style="margin-top:auto; padding-top:32px;">
+        <p class="h-sub" style="font-size:36px; color:var(--plaid-ink-900); max-width:1500px; font-family:var(--font-display); font-weight:400; font-style:italic; line-height:1.15; letter-spacing:-0.015em;">
+          "Pick the foundation that's going to keep getting smarter — without a migration."
+        </p>
+      </div>
+
+      <div class="chrome-foot">
+        <span>20 / 23 &nbsp;·&nbsp; Why now</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 21 — KLOVER CUSTOMER STORY                               -->
+  <!-- ============================================================ -->
+  <section class="light" data-label="21 Klover story">
+    <div class="frame" style="padding:80px 100px 80px;">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="" style="opacity:0.85;" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 6 — Proof</div>
+
+      <h2 class="h-title" style="color:var(--plaid-ink-900); font-size:72px; max-width:1500px;">
+        Klover+ <em style="font-family:var(--font-display); font-weight:400; font-style:italic; color:var(--plaid-blue-600);">evolved with the model.</em>
+      </h2>
+      <p class="h-body" style="color:rgba(2,37,68,0.72); font-size:26px; max-width:1500px; margin-top:-24px; margin-bottom:32px;">
+        Chicago-based fintech serving millions of customers underserved by traditional banking. Built their flagship PFM product on Plaid Transactions — and rebuilt it as our intelligence grew.
+      </p>
+
+      <div class="row" style="gap:48px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- LEFT: Story arc + stats -->
+        <div class="col" style="flex:1.35; gap:28px;">
+
+          <!-- Three-stage evolution arc -->
+          <div class="col" style="background:white; border-radius:16px; padding:32px 36px; gap:24px; box-shadow:0 6px 20px rgba(2,37,68,0.06);">
+            <div style="font-family:var(--font-mono); font-size:18px; color:var(--plaid-blue-700); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">The Klover+ arc</div>
+
+            <div class="row" style="gap:18px; align-items:stretch;">
+              <div class="col" style="flex:1; gap:10px; padding:18px 18px; background:#F2F2F2; border-radius:10px;">
+                <div style="font-family:var(--font-display); font-weight:500; font-size:52px; color:var(--plaid-blue-600); line-height:0.95; letter-spacing:-0.025em;">01</div>
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:var(--plaid-ink-900);">Measurement</div>
+                <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.7); line-height:1.45;">Started as a simple tool measuring spend from clean Plaid transaction data.</div>
+              </div>
+              <div style="display:flex; align-items:center; color:var(--plaid-blue-600); font-family:var(--font-mono); font-size:24px;">→</div>
+              <div class="col" style="flex:1; gap:10px; padding:18px 18px; background:#F2F2F2; border-radius:10px;">
+                <div style="font-family:var(--font-display); font-weight:500; font-size:52px; color:var(--plaid-blue-600); line-height:0.95; letter-spacing:-0.025em;">02</div>
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:var(--plaid-ink-900);">Categorization</div>
+                <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.7); line-height:1.45;">As Plaid added merchant names and richer categorization, Klover+ deepened.</div>
+              </div>
+              <div style="display:flex; align-items:center; color:var(--plaid-blue-600); font-family:var(--font-mono); font-size:24px;">→</div>
+              <div class="col" style="flex:1; gap:10px; padding:18px 18px; background:linear-gradient(135deg, #E6E6FF, #D8FEF3); border-radius:10px;">
+                <div style="font-family:var(--font-display); font-weight:500; font-size:52px; color:var(--plaid-blue-600); line-height:0.95; letter-spacing:-0.025em;">03</div>
+                <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:var(--plaid-ink-900);">Anticipation</div>
+                <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.78); line-height:1.45;">Anticipatory tools — what the customer is about to do next.</div>
+              </div>
+            </div>
+
+            <p class="h-small" style="font-size:18px; color:rgba(2,37,68,0.55); padding-top:6px; border-top:1px dashed rgba(2,37,68,0.18);">
+              No re-architecture. The same Transactions integration; the model under it kept getting smarter.
+            </p>
+          </div>
+
+          <!-- Four stat callouts -->
+          <div class="row" style="gap:16px;">
+            <div class="col" style="flex:1; background:white; border-radius:12px; padding:22px 20px; gap:6px; box-shadow:0 4px 14px rgba(2,37,68,0.05);">
+              <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:var(--plaid-ink-900); line-height:1; letter-spacing:-0.02em;">~$1M<span style="font-family:var(--font-sans); font-size:18px; color:rgba(2,37,68,0.55); font-weight:500;">/day</span></div>
+              <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.65); line-height:1.35;">in cash advances on Klover product</div>
+            </div>
+            <div class="col" style="flex:1; background:white; border-radius:12px; padding:22px 20px; gap:6px; box-shadow:0 4px 14px rgba(2,37,68,0.05);">
+              <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:var(--plaid-ink-900); line-height:1; letter-spacing:-0.02em;">80<span style="font-family:var(--font-sans); font-size:32px; font-weight:600;">%+</span></div>
+              <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.65); line-height:1.35;">approval rate on cash advance</div>
+            </div>
+            <div class="col" style="flex:1; background:white; border-radius:12px; padding:22px 20px; gap:6px; box-shadow:0 4px 14px rgba(2,37,68,0.05);">
+              <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:var(--plaid-ink-900); line-height:1; letter-spacing:-0.02em;">~20<span style="font-family:var(--font-sans); font-size:32px; font-weight:600;">%</span></div>
+              <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.65); line-height:1.35;">savings returned to users via Klover+</div>
+            </div>
+            <div class="col" style="flex:1; background:linear-gradient(160deg, rgba(11,123,188,0.10), rgba(66,240,205,0.06)); border:1px solid rgba(11,123,188,0.2); border-radius:12px; padding:22px 20px; gap:6px;">
+              <div style="font-family:var(--font-display); font-weight:500; font-size:48px; color:var(--plaid-blue-700); line-height:1; letter-spacing:-0.02em;">+58<span style="font-family:var(--font-sans); font-size:22px; font-weight:600;">pts</span></div>
+              <div class="h-small" style="font-size:18px; color:rgba(2,37,68,0.7); line-height:1.35;">credit score lift &nbsp;<span style="color:rgba(2,37,68,0.5);">(vs. ~25pt industry avg)</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Pull quote -->
+        <div class="col" style="flex:1; background:var(--plaid-ink-900); color:white; border-radius:16px; padding:40px 40px; gap:20px; position:relative; overflow:hidden;">
+          <div style="position:absolute; right:-60px; bottom:-60px; width:240px; height:240px; background:linear-gradient(135deg, rgba(152,165,255,0.25), rgba(66,240,205,0.18)); border-radius:50%; pointer-events:none;"></div>
+
+          <div style="position:relative; font-family:var(--font-display); font-weight:500; font-size:120px; color:var(--plaid-teal-500); line-height:0.7; letter-spacing:-0.02em; opacity:0.85;">"</div>
+
+          <p style="position:relative; font-family:var(--font-display); font-weight:400; font-style:italic; font-size:27px; color:white; line-height:1.32; letter-spacing:-0.01em;">
+            Klover+ evolved with Plaid's transactions offering. As Plaid began to offer more solutions — like merchant name and categorization — we built anticipatory tools that helped us understand what the customer was going to do next. With the new categorization that's available, we'll be able to <span style="color:var(--plaid-teal-500);">evolve it even further.</span>
+          </p>
+
+          <div style="position:relative; margin-top:auto; padding-top:24px; border-top:1px solid rgba(255,255,255,0.18); display:flex; align-items:center; gap:18px;">
+            <div style="width:52px; height:52px; border-radius:50%; background:linear-gradient(135deg, #E6E6FF, #D8FEF3); display:flex; align-items:center; justify-content:center; color:#022544; font-family:var(--font-sans); font-weight:700; font-size:22px;">DB</div>
+            <div class="col" style="gap:4px;">
+              <div style="font-family:var(--font-sans); font-weight:600; font-size:22px; color:white;">Dominic Bennett</div>
+              <div style="font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.6);">Co-founder &amp; CTO · Klover</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Supporting logo strip -->
+      <div style="margin-top:40px; padding-top:24px; border-top:1px solid rgba(2,37,68,0.14); display:flex; align-items:center; justify-content:space-between; gap:32px;">
+        <div style="font-family:var(--font-mono); font-size:18px; color:rgba(2,37,68,0.6); letter-spacing:0.12em; text-transform:uppercase; font-weight:600;">Also building on Transactions</div>
+        <div class="row" style="gap:48px; align-items:center;">
+          <span style="font-family:var(--font-display); font-weight:500; font-size:34px; color:rgba(2,37,68,0.78); letter-spacing:-0.02em;">Drop</span>
+          <span style="font-family:var(--font-display); font-weight:500; font-size:34px; color:rgba(2,37,68,0.78); letter-spacing:-0.02em;">Brigit</span>
+          <span style="font-family:var(--font-display); font-weight:500; font-size:34px; color:rgba(2,37,68,0.78); letter-spacing:-0.02em;">Vola</span>
+          <span style="font-family:var(--font-display); font-weight:500; font-size:34px; color:rgba(2,37,68,0.78); letter-spacing:-0.02em;">SoFi</span>
+          <span style="font-family:var(--font-display); font-weight:500; font-size:34px; color:rgba(2,37,68,0.78); letter-spacing:-0.02em;">Steady</span>
+        </div>
+      </div>
+
+      <div class="chrome-foot" style="color:rgba(2,37,68,0.5);">
+        <span>21 / 23 &nbsp;·&nbsp; Proof</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 22 — DECISION FRAME                                      -->
+  <!-- ============================================================ -->
+  <section data-label="22 Decision frame">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag" style="margin-top:24px;">Section 7 — Close</div>
+
+      <h2 class="h-title" style="font-size:78px;">
+        What you're <em style="font-family:var(--font-display); font-weight:400; font-style:italic;">really</em> choosing.
+      </h2>
+
+      <!-- Comparison table -->
+      <div style="flex:1; min-height:0; display:flex; flex-direction:column;">
+        <!-- Header -->
+        <div class="row" style="border-bottom:1px solid rgba(255,255,255,0.2); padding-bottom:16px;">
+          <div style="flex:1; padding-right:24px;">
+            <div style="font-family:var(--font-mono); font-size:18px; color:rgba(255,255,255,0.55); letter-spacing:0.14em; text-transform:uppercase;">Building on raw bank data</div>
+          </div>
+          <div style="width:64px;"></div>
+          <div style="flex:1; padding-left:24px;">
+            <div style="font-family:var(--font-mono); font-size:24px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase;">Building on Plaid's foundation</div>
+          </div>
+        </div>
+
+        <!-- Rows -->
+        <div class="col" style="flex:1; justify-content:space-around; padding:8px 0;">
+          <div class="row" style="align-items:center; padding:18px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div style="flex:1; padding-right:24px;"><p class="h-body" style="font-size:26px; color:rgba(255,255,255,0.7);">You build &amp; maintain enrichment.</p></div>
+            <div style="width:64px; text-align:center; color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:22px;">→</div>
+            <div style="flex:1; padding-left:24px;"><p class="h-body" style="font-size:26px; color:white; font-weight:500;">We ship it, you consume it.</p></div>
+          </div>
+
+          <div class="row" style="align-items:center; padding:18px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div style="flex:1; padding-right:24px;"><p class="h-body" style="font-size:26px; color:rgba(255,255,255,0.7);">You wait 12 months for v2 categories.</p></div>
+            <div style="width:64px; text-align:center; color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:22px;">→</div>
+            <div style="flex:1; padding-left:24px;"><p class="h-body" style="font-size:26px; color:white; font-weight:500;">You get v2 today, opt in by flag.</p></div>
+          </div>
+
+          <div class="row" style="align-items:center; padding:18px 0; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div style="flex:1; padding-right:24px;"><p class="h-body" style="font-size:26px; color:rgba(255,255,255,0.7);">Your AI inherits raw ambiguity.</p></div>
+            <div style="width:64px; text-align:center; color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:22px;">→</div>
+            <div style="flex:1; padding-left:24px;"><p class="h-body" style="font-size:26px; color:white; font-weight:500;">Your AI inherits network intelligence.</p></div>
+          </div>
+
+          <div class="row" style="align-items:center; padding:18px 0; background:linear-gradient(90deg, transparent, rgba(66,240,205,0.06), transparent);">
+            <div style="flex:1; padding-right:24px;"><p class="h-body" style="font-size:26px; color:rgba(255,255,255,0.7);">One product, one team's data.</p></div>
+            <div style="width:64px; text-align:center; color:var(--plaid-teal-500); font-family:var(--font-mono); font-size:22px;">→</div>
+            <div style="flex:1; padding-left:24px;"><p class="h-body" style="font-size:30px; color:var(--plaid-teal-500); font-weight:600; line-height:1.2;">One foundation, every Plaid product gets better.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>22 / 23 &nbsp;·&nbsp; Close</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 23 — NEXT STEPS                                          -->
+  <!-- ============================================================ -->
+  <section class="holo" data-label="23 Next steps">
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="" style="opacity:0.85;" />
+      <div class="eyebrow-tag" style="margin-top:24px; color:var(--plaid-blue-700);">Section 7 — Next steps</div>
+
+      <h2 class="h-title" style="color:var(--plaid-ink-900); font-family:var(--font-display); font-weight:500; font-size:140px; letter-spacing:-0.025em; line-height:0.95;">
+        Let's get<br/>
+        <em style="font-style:italic;">specific.</em>
+      </h2>
+
+      <div class="row" style="gap:24px; flex:1; min-height:0; align-items:stretch;">
+
+        <!-- Existing customer -->
+        <div class="col" style="flex:1; background:white; border-radius:16px; padding:36px 32px; gap:18px; box-shadow:0 20px 60px rgba(2,37,68,0.10);">
+          <div style="font-family:var(--font-mono); font-size:15px; color:var(--plaid-blue-700); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">If you're already on Transactions</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:32px; color:var(--plaid-ink-900); line-height:1.15;">Flip on v2.</div>
+          <p class="h-body" style="font-size:20px; color:rgba(2,37,68,0.78);">We'll co-pilot the rollout. A version flag, not a migration.</p>
+
+          <div style="margin-top:auto;">
+            <div class="mono-block" style="font-size:14px; background:#F2F2F2; padding:12px 14px; border-radius:8px; color:#022544;">
+              {<br/>&nbsp;&nbsp;"personal_finance_category_version":<br/>&nbsp;&nbsp;<span style="color:#0B7BBC;">"v2"</span><br/>}
+            </div>
+          </div>
+        </div>
+
+        <!-- Adjacent product -->
+        <div class="col" style="flex:1; background:#022544; color:white; border-radius:16px; padding:36px 32px; gap:18px; box-shadow:0 20px 60px rgba(2,37,68,0.20);">
+          <div style="font-family:var(--font-mono); font-size:15px; color:var(--plaid-teal-500); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">If you're evaluating an adjacent product</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:32px; color:white; line-height:1.15;">30-minute architecture review.</div>
+          <p class="h-body" style="font-size:20px; color:rgba(255,255,255,0.78);">We map Transactions → your downstream use case: PFM, EWA, lending, BFM.</p>
+
+          <div style="margin-top:auto; display:flex; flex-wrap:wrap; gap:8px;">
+            <span style="font-family:var(--font-mono); font-size:13px; padding:6px 12px; background:rgba(66,240,205,0.14); color:var(--plaid-teal-500); border-radius:999px;">PFM</span>
+            <span style="font-family:var(--font-mono); font-size:13px; padding:6px 12px; background:rgba(66,240,205,0.14); color:var(--plaid-teal-500); border-radius:999px;">EWA</span>
+            <span style="font-family:var(--font-mono); font-size:13px; padding:6px 12px; background:rgba(66,240,205,0.14); color:var(--plaid-teal-500); border-radius:999px;">Lending</span>
+            <span style="font-family:var(--font-mono); font-size:13px; padding:6px 12px; background:rgba(66,240,205,0.14); color:var(--plaid-teal-500); border-radius:999px;">BFM</span>
+          </div>
+        </div>
+
+        <!-- New evaluation -->
+        <div class="col" style="flex:1; background:white; border-radius:16px; padding:36px 32px; gap:18px; box-shadow:0 20px 60px rgba(2,37,68,0.10);">
+          <div style="font-family:var(--font-mono); font-size:15px; color:var(--plaid-blue-700); letter-spacing:0.14em; text-transform:uppercase; font-weight:600;">If this is a new evaluation</div>
+          <div style="font-family:var(--font-sans); font-weight:600; font-size:32px; color:var(--plaid-ink-900); line-height:1.15;">Sandbox + 2-week pilot.</div>
+          <p class="h-body" style="font-size:20px; color:rgba(2,37,68,0.78);">On your real institution mix. You see the foundation in your data.</p>
+
+          <div style="margin-top:auto; display:flex; align-items:center; gap:14px; padding-top:16px; border-top:1px solid rgba(2,37,68,0.1);">
+            <div style="width:40px; height:40px; border-radius:8px; background:var(--plaid-blue-600); display:flex; align-items:center; justify-content:center; color:white; font-family:var(--font-sans); font-weight:700;">→</div>
+            <div class="h-small" style="font-size:16px; color:rgba(2,37,68,0.7);">Same-week sandbox access.<br/>Pilot kicks off the week after.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Foot strip -->
+      <div style="margin-top:32px; display:flex; justify-content:space-between; align-items:flex-end; padding-top:24px; border-top:1px solid rgba(2,37,68,0.18);">
+        <div class="col" style="gap:6px;">
+          <div style="font-family:var(--font-mono); font-size:14px; color:rgba(2,37,68,0.55); letter-spacing:0.14em; text-transform:uppercase;">Contact</div>
+          <div style="font-family:var(--font-sans); font-weight:500; font-size:24px; color:var(--plaid-ink-900);">Your Plaid AE / SE pair &nbsp;·&nbsp; <span style="font-family:var(--font-mono);">transactions-feedback@plaid.com</span></div>
+        </div>
+        <div style="font-family:var(--font-mono); font-size:14px; color:rgba(2,37,68,0.55); text-align:right; line-height:1.6;">
+          Walmart &nbsp;·&nbsp; DoorDash × Burger King &nbsp;·&nbsp; Layla<br/>
+          <em>remember the foundation.</em>
+        </div>
+      </div>
+
+      <div class="chrome-foot">
+        <span>23 / 23 &nbsp;·&nbsp; Next steps</span>
+      </div>
+    </div>
+  </section>
+</deck-stage>
+
+</body>
+</html>

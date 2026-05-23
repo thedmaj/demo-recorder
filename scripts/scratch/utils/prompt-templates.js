@@ -407,7 +407,19 @@ function renderBrandBlock(brand) {
   // The build LLM should match these labels and order — paraphrasing
   // results in nav bars that don't look like the real customer's app.
   const navItems = (brand.nav && Array.isArray(brand.nav.items)) ? brand.nav.items : [];
-  if (navItems.length > 0) {
+  const navKind = String((brand.nav && brand.nav._kind) || '').toLowerCase();
+  const marketingNav =
+    navKind === 'marketing' ||
+    (navKind !== 'customer-app' && navKind !== 'app' && navItems.length > 0 &&
+      (() => {
+        try {
+          const BF = require('./brand-fidelity');
+          return BF.looksLikeMarketingNav(navItems);
+        } catch (_) {
+          return false;
+        }
+      })());
+  if (navItems.length > 0 && !marketingNav) {
     const labelList = navItems.map(it => it.label || '').filter(Boolean).join(' | ');
     lines.push('');
     lines.push(`    HOST APP NAV — VERIFIED LABELS (use these exact strings, in this order):`);
@@ -416,6 +428,13 @@ function renderBrandBlock(brand) {
       lines.push(`      _source: ${brand.nav._source}`);
     }
     lines.push(`      RULE: do NOT paraphrase nav labels. "Bill Pay" is not "Pay Bills"; "Accounts" is not "My Accounts".`);
+  } else if (marketingNav) {
+    lines.push('');
+    lines.push(`    HOST APP NAV — CUSTOMER CHECKOUT (marketing-site crawl ignored):`);
+    lines.push(`      Do NOT paste zip.co / marketing mega-menu labels into the host app.`);
+    lines.push(`      Checkout host: Shop | Pay in 4 | Help | Business`);
+    lines.push(`      Underwriting host: Underwriting | Queue | Policies | Help`);
+    lines.push(`      Pick ONE nav set per screen; use short labels (≤20 chars each).`);
   }
 
   // Verified hero copy patterns (from brand-references — auto-crawl rarely
@@ -1445,13 +1464,26 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `- Use the presentation slide template/rules for JSON panel visual styling; do not invent ad-hoc JSON panel styles.\n` +
         `- Slide content must summarize only high-signal attributes (3-6 bullets) that support the story decision; raw payload remains in global panel.\n` +
         `- API request/response shown in panel must match the slide's claim and endpoint context (no mismatched endpoint narrative).\n` +
-        `- **Slide surface:** keep \`.slide-root\` **responsive** per PIPELINE_SLIDE_SHELL_RULES / slide template contract (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n\n`
+        `- **Slide surface:** keep \`.slide-root\` **responsive** per PIPELINE_SLIDE_SHELL_RULES / slide template contract (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n` +
+        `- **Plaid chrome logo (HARD):** On slides, never fabricate the Plaid mark. Use only \`<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png">\` from the bundled logo library, or omit the logo. No inline SVG, icon grids, or "PLAID" text labels.\n\n`
       : '') +
     (!includeFullSlideTemplate
-      ? `SLIDE TRACK (minimal contract for app-phase creativity):\n` +
+      ? `SLIDE TRACK (minimal contract — slide insertion is deferred to post-slides stage):\n` +
         `- Do not spend tokens on full slide-shell polish in this pass.\n` +
         `- Preserve canonical step wrappers and ordering from demo-script.json.\n` +
-        `- For sceneType:"slide" steps, render concise, non-empty placeholders with at least a heading and one value/CTA line.\n` +
+        `- For sceneType:"slide" (or stepKind:"slide") steps, emit ONLY the canonical placeholder shape below.\n` +
+        `  Do NOT emit \`.slide-root\`, \`.frame\`, \`.chrome-logo\`, or any slide visual chrome — those are produced\n` +
+        `  by the post-slides stage, which has full slide template context. A placeholder here is a \\
+contract that the next stage knows how to fill.\n` +
+        `\n` +
+        `  CANONICAL SLIDE PLACEHOLDER (emit verbatim per slide step; substitute {id}, {label}, {T#}):\n` +
+        `    <div data-testid="step-{id}" class="step">\n` +
+        `      <div class="slide-pending-host" data-slide-pending="true" data-slide-template="{T#}">\n` +
+        `        <p style="font-size:24px">Slide placeholder &middot; {label} &middot; awaiting post-slides.</p>\n` +
+        `      </div>\n` +
+        `    </div>\n` +
+        `\n` +
+        `  Template selection: use the step's \`slideTemplate\` field if present (T1-T11); otherwise default to T1.\n` +
         `- Do not create duplicate step IDs/testids; keep all existing interaction selectors stable.\n` +
         `- Keep global API panel wiring valid; no inline raw JSON panels in steps.\n` +
         (deferredSlidesTrack
@@ -1552,6 +1584,14 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     `    - Use renderjson for JSON rendering:\n` +
     `      <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n` +
     `      and style keys/strings/numbers to match Plaid slide theme colors.\n` +
+    `    - **renderjson .disclosure CSS rule (REQUIRED — do NOT customize):**\n` +
+    `      Renderjson generates clickable \`<a class="disclosure">+</a>\` toggles next to every JSON sub-tree.\n` +
+    `      These must remain small inline text characters. DO NOT give .disclosure custom width/height/background-color/border —\n` +
+    `      doing so makes the toggles render as large solid blocks that obscure the JSON\n` +
+    `      (regression seen in 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1).\n` +
+    `      If you must style .disclosure, only set 'color' to a low-contrast text color (e.g. rgba(255,255,255,0.55)) and 'cursor:pointer'.\n` +
+    `      Any rule containing 'width:', 'height:', 'background:', 'background-color:', or 'background-image:'\n` +
+    `      on a .disclosure selector will be flagged by build-qa as a deterministic blocker.\n` +
     `    - It slides in from the right as a glassmorphism overlay with a light-green edge chevron control that flips direction on collapse/expand.\n` +
     `    - CRITICAL: Do NOT create any inline JSON display panels inside step divs.\n` +
     `      No "insight-right", no "auth-json-panel", no "-json-panel" divs of any kind.\n` +
@@ -1660,6 +1700,20 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
       `Profile label: ${productProfile.label}\n\n` +
       `Product-family-specific accuracy rules for this build:\n${formatProductAccuracyRules(productProfile)}`,
   });
+
+  if (productFamily === 'cra_lend_score') {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## CRA LENDSCORE HOST + API PANEL (HARD)\n\n` +
+        `- Hero host step (e.g. lendscore-reveal): white/light ${brand?.name || 'host'} chrome — NOT Plaid deck slides.\n` +
+        `- Show LendScore score (1–99, higher = safer), APPROVE (or review) outcome, **LendScore — beta** badge, 2–3 **reason_codes** chips (PCS-prefixed).\n` +
+        `- \`apiResponse.endpoint\` MUST be \`POST /cra/check_report/lend_score/get\` with \`report.lend_score.score\` + \`reason_codes[]\` in JSON — even when Base Report summary chips appear beside the gauge.\n` +
+        `- Reserve **520px** right margin on the host main column (\`max-width: calc(100% - 520px)\` or \`padding-right: 520px\` on \`.zip-main\` / \`.underwriting-grid\`) so #api-response-panel never covers the decision card or \`data-testid="approve-plan-cta"\`.\n` +
+        `- Zip host footer on at least one screen: verbatim **NMLS ID 1963958** (see inputs/brand-references/zip.md).\n` +
+        `- Host nav: customer checkout/underwriting labels only — **never** paste marketing mega-menu labels from brand-extract crawl.\n`,
+    });
+  }
 
   if (linkTokenCreate && opts.plaidLinkLive && includeLiveLinkInstructionBlock) {
     contentBlocks.push({
@@ -2193,7 +2247,11 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
             `8. Do not add extra iframe/frame containment CSS (display:flex + align-items:center on\n` +
             `   the container forces the widget to the centre with whitespace below). Never use\n` +
             `   overflow:hidden (or overflow-x/y:hidden) on the embed container — it clips the iframe.\n` +
-            `   The container should be a normal block element so the Plaid-rendered iframe fills it naturally.\n`,
+            `   The container should be a normal block element so the Plaid-rendered iframe fills it naturally.\n` +
+            `9. **NO HOST "CONNECTING / WAITING" WRAPPER on the launch step.** Launch step = live embed\n` +
+            `   mount only — no "Connecting your bank…", host spinners, or "Waiting for Plaid Link".\n` +
+            `   onSuccess → first post-Link host step. One data-testid="plaid-embedded-link-container"\n` +
+            `   on the launch step; preload steps use static preview mocks only.\n`,
         });
       }
 
@@ -2687,6 +2745,9 @@ function buildSlideInsertionPrompt({
   slideTemplateCss = '',
   slideTemplateRules = '',
   slideTemplateShellHtml = '',
+  deckDesignSystem = '',
+  deckTemplates = '',
+  deckComposition = '',
   hostHasExistingSlide = false,
   valuePropositionStatements = [],
   narration = '',
@@ -2699,10 +2760,11 @@ function buildSlideInsertionPrompt({
   const endpoint = String(step?.apiResponse?.endpoint || '').trim();
 
   const system =
-    `You are generating ONE Plaid-branded narrative slide as a surgical insertion into an existing demo app's index.html. ` +
-    `Follow the host file's existing slide patterns. Do not regenerate the entire page. ` +
-    `Return a single HTML fragment wrapped in <div data-testid="step-${stepId}" class="step">...</div> whose child is a .slide-root. ` +
-    `Do NOT include <script>, do NOT include inline display styles on the step div, do NOT wrap the output in markdown code fences.`;
+    `You are generating ONE Plaid Deck Design System slide as a surgical insertion into an existing demo app. ` +
+    `Pick exactly ONE template T1–T11 from DECK_TEMPLATES.md and set data-slide-template="T#" on .slide-root. ` +
+    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="T#">...</div></div>. ` +
+    `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), body, .chrome-foot. ` +
+    `Do NOT include <script>, do NOT use display:inline-block inside .slide-root, do NOT add inline display on the step div, do NOT wrap output in markdown fences.`;
 
   const vps = Array.isArray(valuePropositionStatements)
     ? valuePropositionStatements.slice(0, 4)
@@ -2715,38 +2777,67 @@ function buildSlideInsertionPrompt({
     (endpoint ? `API endpoint: ${endpoint}\n` : '') +
     (effectiveNarration ? `Narration: ${effectiveNarration}\n` : '') +
     (stepVisual ? `Expected visual: ${stepVisual}\n` : '') +
-    `\n## OUTPUT CONTRACT\n` +
-    `- Emit ONLY the <div data-testid="step-${stepId}" class="step"> ... </div> fragment.\n` +
-    `- Inside, include exactly ONE <div class="slide-root"> ... </div>.\n` +
-    `- Use existing host classes (slide-header, slide-body, slide-hero, slide-panels, slide-panel, slide-footer).\n` +
-    `- Do NOT add a JSON rail inside the step (the global #api-response-panel handles that).\n` +
-    `- Do NOT include emojis. Outline Heroicons SVG only (copy verbatim) when icons are needed.\n\n`;
+    `\n## OUTPUT CONTRACT (REQUIRED)\n` +
+    `- Emit ONLY <div data-testid="step-${stepId}" class="step"> ... </div>.\n` +
+    `- Exactly ONE child: <div class="slide-root" data-slide-template="T1|T2|...|T11"> with optional background class light|cream|holo on .slide-root.\n` +
+    `- Inner structure: .frame > .chrome-logo + .eyebrow-tag + .h-title + template body + .chrome-foot (T1 title may omit eyebrow/footer per brief).\n` +
+    `- Headline: sentence case, ends with period, exactly one <em> Bowery Street italic accent in .h-title.\n` +
+    `- **Typography ceilings (REQUIRED — do NOT exceed):** use slide.css classes, not oversized inline font-size. ` +
+    `Class .h-title max 72px (T3 statement max 96px; T1 title max 140px). Class .hero-stat-value max 180px (Bowery). ` +
+    `Body .slide-body-text max 30–36px. Eyebrow/chrome-foot 24px. Never put font-size above 180px anywhere in .slide-root.\n` +
+    `- Wrap main body (headline + stats + cards) in <div class="slide-stack"> so .chrome-foot stays at the bottom without overlap.\n` +
+    `- Body text minimum 24px; flex/grid + gap only (no inline-block).\n` +
+    `- One mint moment per slide (--plaid-teal-500 / #42F0CD as primary highlight).\n` +
+    `- **Plaid logo (HARD — build-QA blocker):** NEVER invent a logo (no SVG, no four-dot icon grid, no "PLAID" text, no CSS shapes). ` +
+    `Either use exactly one bundled horizontal wordmark: <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt=""> ` +
+    `(navy), plaid-horizontal-dark.png (light/cream/holo), or plaid-horizontal-holograph.png on holo — OR omit .chrome-logo entirely (T1 may omit).\n` +
+    `- Do NOT add JSON rail inside the step (#api-response-panel is global).\n` +
+    `- Do NOT include emojis.\n\n`;
 
   if (vps.length) {
     userText +=
-      `## APPROVED VALUE PROPOSITIONS (allowed ONLY on slides, not on host app screens)\n` +
+      `## APPROVED VALUE PROPOSITIONS (slides only)\n` +
       vps.map((v) => `- ${v}`).join('\n') + '\n\n';
   }
 
   if (hostHasExistingSlide) {
     userText +=
       `## HOST ALREADY HAS SLIDE MARKUP\n` +
-      `Mirror the existing host slide markup's classes and density. Do NOT restyle or rewrite shared CSS — it is already in the host file.\n\n`;
+      `Mirror existing .slide-root patterns and data-slide-template usage. Do NOT re-emit shared <style> blocks.\n\n`;
   } else {
     if (slideTemplateRules) {
-      userText += `## SLIDE SHELL RULES (authoritative)\n${String(slideTemplateRules).slice(0, 6000)}\n\n`;
+      userText += `## PIPELINE SLIDE RULES\n${String(slideTemplateRules).slice(0, 5000)}\n\n`;
+    }
+    if (deckDesignSystem) {
+      userText += `## DESIGN SYSTEM (tokens + shell)\n${String(deckDesignSystem).slice(0, 8000)}\n\n`;
+    }
+    if (deckTemplates) {
+      // Per-slide insertion = one LLM call per slide. Token budget gets a
+      // single slide, so we can afford the full T1-T11 library here. The
+      // legacy 12,000-char truncation was clipping T9-T11 from the prompt
+      // and contributing to slide quality regressions on later templates.
+      // Future work (post-slides-prompt-refocus follow-up): switch to
+      // per-T# exemplar HTML only, with composition rules separate.
+      userText +=
+        `## TEMPLATE LIBRARY T1–T11 (pick exactly ONE — copy skeleton structure, adapt copy)\n` +
+        `${String(deckTemplates)}\n\n`;
+    }
+    if (deckComposition) {
+      userText += `## COMPOSITION RULES\n${String(deckComposition).slice(0, 6000)}\n\n`;
     }
     if (slideTemplateShellHtml) {
-      userText += `## REFERENCE SHELL (structure only — DO NOT copy verbatim)\n\`\`\`html\n${String(slideTemplateShellHtml).slice(0, 4000)}\n\`\`\`\n\n`;
+      userText += `## REFERENCE SHELL (T3 statement — structure only)\n\`\`\`html\n${String(slideTemplateShellHtml).slice(0, 3500)}\n\`\`\`\n\n`;
     }
     if (slideTemplateCss) {
       userText +=
-        `## SLIDE CSS (available to the host page — do NOT re-emit <style>)\n\`\`\`css\n${String(slideTemplateCss).slice(0, 4000)}\n\`\`\`\n\n`;
+        `## SLIDE CSS (injected in host <head> — do NOT re-emit <style>)\n` +
+        `PPTX export font swap: Manrope / Playfair Display / JetBrains Mono.\n` +
+        `\`\`\`css\n${String(slideTemplateCss).slice(0, 3000)}\n\`\`\`\n\n`;
     }
   }
 
   userText +=
-    `## STEP JSON (for context only — do not include in output)\n` +
+    `## STEP JSON (context only)\n` +
     '```json\n' + toJSON(step) + '\n```\n';
 
   return {

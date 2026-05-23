@@ -1,77 +1,60 @@
 <!doctype html>
 <html lang="en">
 <!--
-  CANONICAL PIPELINE SLIDE SHELL — HTML reference (Plaid-only API storytelling slides)
+  CANONICAL PIPELINE SLIDE SHELL — T3 Statement reference (Plaid Deck Design System)
 
-  Layout / density lineage: production demos including 2026-03-23-layer-v2 (TD final) and
-  subsequent layered Auth / Identity / Signal builds — header logo lockup, multi-panel
-  grids, footer strip, glass side JSON rail.
+  Design source: templates/slide-template/brand-design-briefs/DECK_DESIGN_SYSTEM.md
+  Merge rules: PIPELINE_SLIDE_SHELL_RULES.md
 
-  Usage:
-  - Open locally next to slide.css for visual QA (file:// or static server).
-  - Build agents: merge patterns into scratch-app/index.html per PIPELINE_SLIDE_SHELL_RULES.md
-    + PIPELINE_SLIDE_SHELL_RULES.md (do not paste html/body slide.css rules globally).
-
-  JSON viewer:
-  - renderjson from CDN (required).
-  - Persist ONE control: edge toggle icon with data-testid="api-panel-toggle" (Playwright).
-  - All nodes expanded when JSON is rendered (set_show_to_level 'all').
+  Pipeline contract:
+  - One <div data-testid="step-{id}" class="step"> per slide scene
+  - Child: <div class="slide-root"> with optional .light | .cream | .holo
+  - Inner: .frame + .chrome-logo + .eyebrow-tag + .h-title + body + .chrome-foot
+  - Global #api-response-panel for JSON (not inside .slide-root)
 -->
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pipeline slide shell — reference</title>
+  <title>Pipeline slide shell — T3 Statement reference</title>
   <link rel="stylesheet" href="./slide.css" />
   <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>
-  <!-- Preview-only: real apps use global .step / .step.active from scratch-app contract -->
   <style>
-    .step{display:none;box-sizing:border-box}
-    .step.active{display:flex;position:static;inset:auto;width:100%;min-height:100vh;align-items:center;justify-content:center;padding:24px;background:#0d1117}
+    .step { display: none; box-sizing: border-box; }
+    .step.active {
+      display: flex;
+      position: static;
+      inset: auto;
+      width: 100%;
+      min-height: 100vh;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #022544;
+    }
   </style>
 </head>
 <body style="margin:0">
 
-  <!-- In pipeline apps: one .step per scene; slide-like steps use .slide-root inside. -->
-  <div data-testid="step-slide-example" class="step active">
-    <div class="slide-root">
-      <header class="slide-header">
-        <div class="slide-header-left">
-          <!-- Optional wordmark (local asset in scratch-app); omit if not copied -->
-          <img class="slide-header-logo" src="./plaid-logo-horizontal-white-text-transparent-background.png" alt="Plaid" width="120" height="28" />
-          <div class="slide-header-pill" data-testid="slide-product">PLAID</div>
-          <div class="slide-header-endpoint" data-testid="slide-endpoint">POST /signal/evaluate</div>
+  <div data-testid="step-slide-t3-statement" class="step active">
+    <div class="slide-root" data-slide-template="T3">
+      <div class="frame">
+        <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="Plaid" />
+        <div class="eyebrow-tag" style="margin-top:24px;">Section 1 — Product story</div>
+
+        <h2 class="h-title">
+          Plaid turns linked accounts into
+          <em>actionable intelligence.</em>
+        </h2>
+
+        <p class="slide-body-text">
+          One statement paragraph with breathing room. Sentence case. End with a period.
+          Reserve mint for a single highlight phrase if needed.
+        </p>
+
+        <div class="chrome-foot">
+          <span>03 / 12 &nbsp;·&nbsp; Product story</span>
         </div>
-      </header>
-
-      <main class="slide-body">
-        <section class="slide-hero">
-          <h1 class="slide-title" data-testid="slide-title">Signal evaluated this transfer</h1>
-          <p class="slide-subtitle" data-testid="slide-subtitle">
-            Behind the scenes, Plaid scores ACH return risk and returns a recommendation — open the JSON panel for raw evidence.
-          </p>
-        </section>
-
-        <section class="slide-panels" data-testid="slide-panels">
-          <div class="slide-panel" data-testid="slide-panel-1">
-            <h3 class="slide-panel-title">Outcome</h3>
-            <p class="slide-panel-body">Recommendation aligns with low return risk for this funding path.</p>
-          </div>
-          <div class="slide-panel" data-testid="slide-panel-2">
-            <h3 class="slide-panel-title">What to highlight</h3>
-            <p class="slide-panel-body">Score, tier, and triggered rules that support the narrative (3–6 bullets in real builds).</p>
-          </div>
-        </section>
-
-        <aside class="slide-callout" data-testid="slide-callout">
-          <div class="slide-callout-value">ACCEPT</div>
-          <div class="slide-callout-label">Illustrative reveal — use realistic sandbox values in generated demos.</div>
-        </aside>
-      </main>
-
-      <footer class="slide-footer" data-testid="slide-footer">
-        <img src="./plaid-logo-no-text-white-background.png" alt="" width="20" height="20" style="object-fit:contain;border-radius:4px" />
-        <span class="slide-footer-meta">plaid.com</span>
-      </footer>
+      </div>
     </div>
   </div>
 
@@ -84,28 +67,20 @@
     <button type="button" id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle" aria-label="Expand API JSON panel" aria-expanded="false">
       <span class="api-panel-toggle-icon" aria-hidden="true"></span>
     </button>
-    <header class="side-panel-header">
-      <span>API Response</span>
-    </header>
-    <div class="side-panel-body">
-      <div id="api-response-content"></div>
-    </div>
+    <header class="side-panel-header"><span>API Response</span></header>
+    <div class="side-panel-body"><div id="api-response-content"></div></div>
   </div>
 
   <script>
 (function () {
   'use strict';
-
-  window.__API_PANEL_CONFIG = Object.assign(
-    {
-      collapsedByDefault: true,
-      jsonExpandLevel: 'all',
-      autoResize: true,
-      minWidthPx: 414,
-      maxWidthViewportRatio: 0.6
-    },
-    window.__API_PANEL_CONFIG || {}
-  );
+  window.__API_PANEL_CONFIG = Object.assign({
+    collapsedByDefault: true,
+    jsonExpandLevel: 'all',
+    autoResize: true,
+    minWidthPx: 414,
+    maxWidthViewportRatio: 0.6
+  }, window.__API_PANEL_CONFIG || {});
 
   function configureRenderjson() {
     if (typeof renderjson === 'undefined') return;
@@ -113,7 +88,6 @@
     if (lvl === 'all' || lvl === Infinity) renderjson.set_show_to_level('all');
     else renderjson.set_show_to_level(Number(lvl) || 999);
     renderjson.set_icons('+', '-');
-    if (typeof renderjson.set_sort_objects === 'function') renderjson.set_sort_objects(false);
   }
   configureRenderjson();
 
@@ -122,7 +96,6 @@
     if (!panel) return false;
     return panel.style.display === 'flex' && !panel.classList.contains('api-panel-collapsed');
   }
-
   function syncPanelChrome() {
     var vis = isPanelVisible();
     var leg = document.getElementById('api-panel-toggle');
@@ -132,7 +105,6 @@
     if (vis) leg.classList.add('is-open');
     else leg.classList.remove('is-open');
   }
-
   function showApiPanel() {
     var panel = document.getElementById('api-response-panel');
     if (!panel) return;
@@ -140,7 +112,6 @@
     panel.classList.remove('api-panel-collapsed');
     syncPanelChrome();
   }
-
   function hideApiPanel() {
     var panel = document.getElementById('api-response-panel');
     if (!panel) return;
@@ -148,52 +119,30 @@
     panel.classList.add('api-panel-collapsed');
     syncPanelChrome();
   }
-
-  /** Render payload with every JSON level expanded (renderjson). */
   window.updateApiResponse = function (data) {
     configureRenderjson();
     var panel = document.getElementById('api-response-panel');
     var content = document.getElementById('api-response-content');
     if (!panel || !content) return;
     content.innerHTML = '';
-    if (typeof renderjson !== 'undefined') {
-      content.appendChild(renderjson(data));
-    } else {
+    if (typeof renderjson !== 'undefined') content.appendChild(renderjson(data));
+    else {
       var pre = document.createElement('pre');
-      pre.style.cssText =
-        'color:rgba(255,255,255,.75);font-size:12px;font-family:SF Mono,Fira Code,Consolas,monospace;white-space:pre-wrap;word-break:break-word';
       pre.textContent = JSON.stringify(data, null, 2);
       content.appendChild(pre);
     }
-    if (window.__API_PANEL_CONFIG.collapsedByDefault) {
-      hideApiPanel();
-    } else {
-      showApiPanel();
-    }
+    if (window.__API_PANEL_CONFIG.collapsedByDefault) hideApiPanel();
+    else showApiPanel();
     syncPanelChrome();
   };
-
   window.toggleApiPanel = function () {
     if (isPanelVisible()) hideApiPanel();
     else showApiPanel();
   };
-
   document.getElementById('api-panel-toggle')?.addEventListener('click', function () {
     window.toggleApiPanel();
   });
-
   syncPanelChrome();
-
-  /* ── Standalone file preview only (omit when merging into scratch-app) ── */
-  (function previewExpandedJson() {
-    window.__API_PANEL_CONFIG = Object.assign({}, window.__API_PANEL_CONFIG, { collapsedByDefault: true });
-    window.updateApiResponse({
-      scores: { customer_initiated_return_risk: { score: 8, risk_tier: 'LOW' } },
-      ruleset: { outcome: 'ACCEPT', triggered_rules: [] },
-      nested: { items: [{ id: 'a' }, { id: 'b' }] },
-      request_id: 'pipeline-slide-shell-preview'
-    });
-  })();
 })();
   </script>
 </body>

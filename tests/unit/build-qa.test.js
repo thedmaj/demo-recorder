@@ -12,6 +12,7 @@ const {
   buildPlaidLaunchCtaIconDiagnostics,
   waitForLoadingToClear,
   resolveInitialStepId,
+  scanRenderjsonDisclosureStyling,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/build-qa'));
 
 describe('build-qa helpers', () => {
@@ -147,5 +148,79 @@ describe('build-qa helpers', () => {
     const res = await waitForLoadingToClear(fakePage, { maxWaitMs: 0 });
     assert.equal(res.cleared, true);
     assert.equal(called, false, 'zero maxWaitMs must not invoke page.evaluate');
+  });
+
+  // ── scanRenderjsonDisclosureStyling ──────────────────────────────────────
+  // Deterministic static-CSS check for the LLM bug that gave renderjson's
+  // .disclosure toggles width/background-color, producing huge white blocks
+  // in the JSON panel (regression: 2026-05-21-Uses-Current-For-Daily-CRA-
+  // Auth-Identity-Signal-Protect-v1). The runtime override in post-panels.js
+  // v8 masks the symptom — this check surfaces the source bug.
+
+  test('scanRenderjsonDisclosureStyling: clean HTML produces no diagnostics', () => {
+    const html = `<html><head><style>.disclosure { color: rgba(255,255,255,0.55); cursor: pointer; }</style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 0);
+  });
+
+  test('scanRenderjsonDisclosureStyling: HTML with no .disclosure rule produces no diagnostics', () => {
+    const html = `<html><head><style>body { margin: 0; }</style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 0);
+  });
+
+  test('scanRenderjsonDisclosureStyling: flags .disclosure with width+background as deterministic blocker', () => {
+    // The exact failure pattern from the regression run.
+    const html = `<html><head><style>
+      .disclosure { width: 24px; height: 24px; background-color: white; }
+    </style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 1);
+    assert.equal(d[0].category, 'json-panel-styling');
+    assert.equal(d[0].severity, 'critical');
+    assert.equal(d[0].deterministicBlocker, true);
+    assert.match(d[0].issue, /large solid blocks/);
+  });
+
+  test('scanRenderjsonDisclosureStyling: flags .disclosure with background-image', () => {
+    const html = `<html><head><style>
+      a.disclosure { background-image: url('data:image/svg+xml,...'); }
+    </style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 1);
+    assert.equal(d[0].deterministicBlocker, true);
+  });
+
+  test('scanRenderjsonDisclosureStyling: ignores harmless values (transparent / none / auto / 0)', () => {
+    const html = `<html><head><style>
+      .disclosure { width: auto; height: auto; background: transparent; background-image: none; }
+    </style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 0, 'auto/transparent/none must not trigger the check');
+  });
+
+  test('scanRenderjsonDisclosureStyling: ignores the post-panels override block (already the fix)', () => {
+    // The runtime override in post-panels.js v8 legitimately sets
+    // width:auto, height:auto, background:transparent on
+    // #api-response-panel .disclosure. That is the fix, not the bug.
+    const html = `<html><head><style>
+      #api-response-panel .disclosure, #api-response-panel a.disclosure {
+        width: auto !important; height: auto !important; background: transparent !important;
+      }
+    </style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 0);
+  });
+
+  test('scanRenderjsonDisclosureStyling: still flags problematic rule even when override is also present', () => {
+    // Real-world post-panels-fixed HTML: the LLM bug is still present in the
+    // host CSS, the override is also present. We want the diagnostic to
+    // surface the LLM bug so future builds can be cleaned up.
+    const html = `<html><head><style>
+      .disclosure { width: 24px; background-color: white; }
+      #api-response-panel .disclosure { width: auto !important; background: transparent !important; }
+    </style></head><body></body></html>`;
+    const d = scanRenderjsonDisclosureStyling(html);
+    assert.equal(d.length, 1, 'must surface the LLM-emitted rule even when the override is present');
   });
 });

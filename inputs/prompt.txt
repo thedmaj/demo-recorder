@@ -1,50 +1,58 @@
 ================================================================================
-CarMax Auto Finance — CRA Cash Flow Insights for near-prime underwriting
+Huntington Bank — Instant account verification for external account funding
 ================================================================================
 
-**Host:** **CarMax Auto Finance** — automotive retail / indirect lending
-**Canonical URL:** https://www.carmax.com/
-**Brand URL:** https://www.carmax.com/
+**Host:** **Huntington Bank** — U.S. regional bank (Banking & Wealth, Enterprise)
+**Canonical URL:** https://www.huntington.com/
+**Brand URL** (for `brand-extract`): https://www.huntington.com/
 
-**Opportunity context (Salesforce — open):**
-- Opportunity: `ENT-CarMax- LendScore & CRA` (`006UV00000ahBt7YAF`)
-- Stage: `Evaluation`  •  Close Date: `2026-12-11`
-- Primary products (SFDC): `Cash Flow Insights`, `Base Report (Consumer Report)`, `LendScore`
-- **Hero for this demo:** Cash Flow Insights only (not LendScore reveal)
-- Pain (SFDC): Near-prime/subprime expansion; today bureau-only — need deeper cash-flow signal for ability-to-pay
-- Gong/email: Vehicle-specific hard-pull underwriting; cash-flow underwriting scores from Plaid rails; retro in flight
+**Opportunity context (Salesforce — open, Negotiation; Glean salescloud):**
+- Opportunity: `Huntington Bank - ABI + Yodlee/EWS R&R` (`006UV00000JliQsYAJ`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000JliQsYAJ/view
+- Stage: `Negotiation`  •  Forecast: `Commit` (78%)  •  Close Date: `2026-05-30`
+- Qualified ACV: `$710,000`  •  Technical win: confirmed
+- Quoted risk products (SFDC, full contract): broader account-data bundle — **this demo scopes to Auth + Identity Match + Signal only**
+- Use cases: **Fraud & Risk Prevention**; **Inbound Bank Payments: Account Funding**
+- Pain (verbatim): "Outdated forms of bank acct. verification"
+- Situation: Exploring account verification solutions; currently use **Yodlee** (competing with MX / Finicity)
+- Solution fit (SFDC): Huntington evaluating Plaid for **instant account verification and fraud mitigation** — IAV across customer journeys, **fraud prevention with Signal**, OAuth coverage, and 1033 compliance
+- Recent activity: IDM (Identity Match) testing with Rick Grasseschi's team; L2L contract negotiations pacing for EOM May 2026
+- AE: Ian Barber  •  Manager: Chris Roche  •  Segment: Banking and Wealth
 
 **User journey (one sentence):**
-A CarMax shopper financing a used vehicle links checking via Plaid CRA Link; when the report is ready, underwriting sees Cash Flow Insights attributes and approves a near-prime applicant the bureau alone would have missed.
+A Huntington customer named Jordan Ellis links an external checking account through **embedded Plaid Link** on the Add External Account screen, then Huntington runs **Identity Match**, **Auth**, and **Signal** before releasing a $2,500 ACH funding transfer with instant availability.
 
 **Story arc (short prose):**
-Marcus applies for CarMax financing on a $22K used SUV. The host flow explains cash-flow verification for ability-to-pay. He taps Link Your Bank on the pre-Link screen. Inside Plaid Link he completes CRA consent, OTP, and selects checking. A report-generating beat sets expectations. Cash Flow Insights return: low income volatility, stable inflows, manageable discretionary spend — **APPROVED** with quantified funnel expansion narrative.
+Jordan wants to move $2,500 from an external bank into his Huntington checking account without micro-deposits or manual routing-number entry. On Huntington's Add External Account page, embedded Plaid Link fills the viewport — Jordan searches, selects his institution, and connects in seconds. Huntington exchanges the token, then confirms ownership with **Identity Match** (KYC vs bank-held identity scores), retrieves verified ACH rails with **Auth**, captures the transfer amount in the host app, and evaluates return risk with **Signal** before showing instant funds availability. Plaid-branded insight slides and technical companion slides frame each API milestone. Closing beat: replace Yodlee-era verification delays with link-and-fund in seconds, stronger fraud controls, and ~65% conversion uplift vs micro-deposits.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link (CRA / Check), **Plaid CRA Base Report** (foundation), **CRA Cash Flow Insights** (beta)
+Plaid Link (embedded), **Plaid Auth**, **Plaid Identity Match**, **Plaid Signal**
 
 **Solutions supported:**
-Credit Scoring & Underwriting, Consumer Report Underwriting
+Account Opening, Funding, External Account Verification (EAV)
 
-**Primary product family** (pick one — aligns with pipeline profiles):
-cra_cashflow_insights
+**Primary product family:** `funding`
 
 **Primary messaging file for this demo:**
-`inputs/products/plaid-cra-cashflow-insights.md`
+`inputs/plaid-value-props.md` (Auth + Identity Match + Signal combined story)
 
 **Research depth:** gapfill
+
+**Plaid Link mode:** **embedded** — use `Plaid.createEmbedded`, mount into `data-testid="plaid-embedded-link-container"`. Do NOT add a separate "Connect Bank Account" launch button; activation starts from the embedded container on the link step. Minimum container 350×300px.
+
+**Link token products (research must confirm):** `["auth", "identity", "signal"]` — one Item, standard token exchange.
 
 -------------------------------------------------------------------------------
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Live Plaid Link CRA** — single `plaidPhase: "launch"` step
-  [x] **Sandbox:** `user_credit_profile_good` / `pass_good` per `inputs/plaid-link-sandbox.md` (CRA personas)
-  [x] **Async report-ready** beat before `/cra/check_report/cashflow_insights/get`
+  [x] **Live Plaid Link** — real SDK, single `"plaidPhase": "launch"` step; embedded mode (no modal launch CTA)
+  [ ] Plaid Layer / OAuth — not in scope (standard embedded Link)
+  [x] **Sandbox** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, Remember Me flow)
 
 -------------------------------------------------------------------------------
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
@@ -52,37 +60,80 @@ STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 
 | # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
 |---|------|----------------------|-----------------|--------------|
-| 1 | host | CarMax-style finance application — vehicle + amount | Marcus needs fair near-prime decisioning beyond bureau-only. | Continue |
-| 2 | host | Pre-Link — verify cash flow for ability-to-pay | Ends on **Link Your Bank** (trigger here, not in Link step). | `Link your bank` |
-| 3 | **link** | Real CRA Plaid Link modal (`plaidPhase: "launch"`) | Inside modal: consent, OTP, institution, account. | HANDOFF |
-| 4 | host | Report generating / processing indicator | Async CRA lifecycle. | — |
-| 5 | host | Report ready — proceed to insights | Report available; fetch Cash Flow Insights next. | `View cash flow insights` |
-| 6 | insight | Cash Flow Insights panel — 3–4 attributes + collapsed JSON | Named attributes visible; beta Cash Flow Insights. | **Low volatility — APPROVED** |
-| 7 | host | Underwriting decision — approved near-prime | Decision on screen with attribute callouts. | — |
-| 8 | slide | Plaid-branded — expand funnel beyond bureau | Quantify conversion / near-prime approvals. | CTA |
+| 1 | host | Huntington-branded dashboard / Add External Account entry (white host canvas, Huntington green accent) | Jordan opens Huntington mobile web to fund his checking account from an external bank. | `Add external account` |
+| 2 | host | Add External Account screen with **embedded Plaid Link** container active (institution search visible inside frame) | He chooses Link your bank — Plaid opens embedded right on the page, no redirect. | (embedded Link activates) |
+| 3 | link | Real Plaid Link SDK embedded flow (search → institution → credentials → account select → success) | Inside Link he confirms with a one-time code, selects his checking account, and connects in seconds. | Link success |
+| 4 | host | Huntington "Verifying your account" progress state after Link closes | Huntington receives the connection and begins verification behind the scenes. | — |
+| 5 | insight | Plaid-branded **Identity Match** insight screen + API panel `POST /identity/match` | Identity Match compares Jordan's KYC profile to bank-held identity — handling nicknames and formatting differences. | Match scores visible |
+| 6 | insight | Plaid-branded **Auth** insight screen + API panel `POST /auth/get` | Auth returns verified account and routing numbers straight from the source institution. | ACH rails |
+| 7 | host | Funding amount step — `$2,500.00` entered, Huntington checking ...4821 destination shown | Jordan enters how much to transfer; Huntington will score the specific ACH amount. | `Continue` |
+| 8 | insight | Plaid-branded **Signal** insight screen + API panel `POST /signal/evaluate` | Signal scores ACH return risk for this $2,500 transfer — low score means safe to release funds. | Signal score **12** — ACCEPT |
+| 9 | host | Success — "Funds available now" with `$2,500.00` credited, external institution name from Link metadata | Jordan sees instant availability — no three-day micro-deposit wait. | `Done` |
+| 10 | slide | Value-summary slide (Plaid deck) | Auth gives the rails, Identity Match confirms ownership, Signal assesses return risk — link and fund in seconds. | Closing CTA |
 
-**Compliance / user data:** Permissible purpose `EXTENSION_OF_CREDIT`; `/user/create` before Link; CRA notices on Link step only.
+**Product-specific reminders:**
+- Signal: score **12** on `scores.bank_initiated_return_risk` — low risk, **ACCEPT** (use 5–20 range for happy path; higher = higher return risk)
+- Identity Match BEFORE Auth in narration and step order
+- Pre-Link step narration ends on embedded Link activation; Link step narrates inside the iframe only
+- Use standalone **Plaid Signal** (`POST /signal/evaluate`) for ACH return risk — funding-family demo only
+
+**Compliance / user data:**
+Standard account funding / EAV — no CRA permissible purpose required.
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Marcus Reed, 38, first-time CarMax finance applicant  
-**On screen:** $22,400 vehicle price, report status, attributes (income stability, NSF low, discretionary spend ratio), **APPROVED**
+**Name / role:** Jordan Ellis — Huntington retail checking customer
+**Company / context:** Personal banking; linking external account at a regional credit union for inbound ACH funding
+**KYC on file at Huntington:** `Jordan Ellis`, email `jordan.ellis@example.com`, phone `614-555-0182`, address `41 S High St, Columbus, OH 43215`
+**Name at external bank (intentional variation):** `Jordan A. Ellis` — demonstrates Identity Match fuzzy matching
+**Sample fields on screen:** `$2,500.00` transfer amount, Signal score **12**, ruleset **ACCEPT**, institution + account mask from Link metadata (never hardcode bank names), routing/account numbers on Auth beat
+
+IDENTITY MATCH REFERENCE (use in `/identity/match` response and insight UI):
+- legal_name match score: 0.92
+- address match score: 0.95
+- phone match score: 0.88
+- email match score: 0.00 (mismatch — narrate confidently despite email gap)
+
+SIGNAL REFERENCE (happy path):
+- `scores.bank_initiated_return_risk.score`: **12**
+- `ruleset.result`: **ACCEPT**
+- Include 2–3 `core_attributes` key/value pairs (e.g. stable inflows, account tenure)
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Light neutral host background; CarMax yellow accent on CTAs and nav; auto-finance application layout. 1440×900.
+Huntington digital banking aesthetic: white/light neutral host canvas, Huntington green (`#5BA63C`) accents on primary CTAs, clean sans-serif nav. Entry from checking overview → Add external account. Embedded Plaid Link occupies the main content area on the link step. Post-link screens use standard Huntington host chrome with subtle progress indicators between insight beats.
+
+**Viewport:** 1440×900.
 
 -------------------------------------------------------------------------------
-OPTIONAL: SLIDE SUPPLEMENT
--------------------------------------------------------------------------------
-
 [[SLIDE_OUTPUT_BEGIN]]
-2 slides: (1) Bureau-only blind spot for near-prime auto; (2) Cash Flow Insights unlock safer approvals. No JSON on slides.
+SLIDE OUTPUT — EXEC + TECHNICAL COMPANION SLIDES
+-------------------------------------------------------------------------------
+
+Generate **app+slides** with Plaid deck templates (T1–T11):
+
+1. **Opening slide** — Huntington + Plaid partnership framing: replace Yodlee-era verification with instant IAV + fraud controls (no raw JSON).
+2. **Technical slides** (Plaid-only, navy/cream rhythm) for Identity Match, Auth, and Signal — each with endpoint header, 3–4 value bullets left, JSON preview rail right matching `demo-script.json` apiResponse bodies.
+3. **Closing value-summary slide** — combined Auth + Identity Match + Signal story; cite ~65% conversion uplift vs micro-deposits and 20–30% Identity Match pass-rate lift from value props.
+
+Use sentence-case headlines with one mint moment per slide. Canvas sizing per `pipeline-slide-contract.css`.
+
 [[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Stats sourced from `inputs/plaid-value-props.md` only
+  [x] Products: Auth, Identity Match, Signal — family `funding`
+  [x] Embedded Link mode explicit; no modal launch CTA
+  [x] Storyboard order: Link → Identity Match → Auth → amount → Signal → success
+  [x] Live Link single `plaidPhase: "launch"` step
 
 ================================================================================
 END OF SPECIFICATION
+================================================================================

@@ -76,15 +76,19 @@ const MARKETING_NAV_TERMS = /^(pricing|docs|developers?|customers?|company|blog|
 function looksLikeMarketingNav(items) {
   if (!Array.isArray(items) || items.length === 0) return false;
   let signals = 0;
+  let concatLabels = 0;
   const total = items.length;
   for (const item of items) {
     const label = String((item && item.label) || '').trim();
     if (!label) continue;
     let labelSignals = 0;
     // Concatenated label+description (mega-menu scrape failure).
-    // e.g. "ReceiveGet paid in stablecoins." — lower-then-upper letter
-    // boundary plus terminal punctuation.
-    if (/[a-z][A-Z]/.test(label) && /[.!?]/.test(label)) labelSignals += 2;
+    // e.g. "ReceiveGet paid in stablecoins." or "Store DirectoryFind a Store".
+    if (/[a-z][A-Z]/.test(label)) {
+      labelSignals += 2;
+      concatLabels += 1;
+    }
+    if (/[a-z][A-Z]/.test(label) && /[.!?]/.test(label)) labelSignals += 1;
     // Sentence-length labels (a real customer-app nav item is rarely > 20 chars).
     if (label.length > 24) labelSignals++;
     // Embedded sentence punctuation (CTA / description copy).
@@ -96,6 +100,8 @@ function looksLikeMarketingNav(items) {
     if (MARKETING_NAV_TERMS.test(label)) labelSignals++;
     if (labelSignals > 0) signals++;
   }
+  // Mega-menu scrape artifacts (e.g. Zip "Store DirectoryFind a Store") — never customer-app nav.
+  if (concatLabels >= 2) return true;
   return signals >= Math.ceil(total * 0.6);
 }
 

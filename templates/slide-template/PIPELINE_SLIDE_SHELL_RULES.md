@@ -1,76 +1,79 @@
-# Pipeline slide shell — merge rules (HTML + JSON panel)
+# Pipeline slide shell — Plaid Deck Design System (2026)
 
 ## What this is
 
-`pipeline-slide-shell.html` is the **canonical HTML reference** for Plaid-only **slide** steps (`sceneType: slide`, `.slide-root`) and the **global API JSON rail** (`#api-response-panel`). This document carries **both** prose constraints and **copy-pasteable merge** guidance so builds stay layout-consistent.
+Pipeline-generated **slide** steps (`sceneType: "slide"`, `.slide-root`) follow the **Plaid Deck Design System** in `brand-design-briefs/`. This file is the merge contract for build agents and `post-slides.js`.
 
-**Design lineage:** Layout and density from production **2026-03-23-layer-v2**-family demos (including the “TD final” layered build) and subsequent **Auth / Identity / Signal** slide flows — dense multi-panel grids, optional Plaid wordmark in the header, footer strip (`plaid.com`), glass side JSON. This is **Plaid-only** deck polish; do **not** reuse bank/host branding or colors (see **Agent constraints** below). Mobile shell provenance: `templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`.
+**Historical rules:** `PIPELINE_SLIDE_SHELL_RULES.archive.md` (TD / layered-demo lineage). **Do not** use the old `.slide-header` / `.slide-panels` shell for new runs.
 
-**Hard boundary:** Shell patterns (`.slide-root` regions, slide header/body/footer, slide panels/callouts) belong **only** inside `sceneType: "slide"` steps. Do **not** paste slide shell fragments into host or insight steps, and do **not** paste host app banners/cards/nav into `.slide-root`. Shared global JSON rail only: `#api-response-panel` per the slide + API panel contracts in this file.
+**Frozen runs:** Existing `out/demos/*` runs keep their prior slide HTML. Only **new** pipeline runs adopt this system.
 
-## Files
+## Files (load order)
 
 | File | Role |
 |------|------|
-| `pipeline-slide-shell.html` | Full HTML reference (open beside `slide.css` for local preview). |
-| `slide.css` | Scoped slide + side-panel styles — embed **verbatim** in generated `<style>` (do not leak `html`/`body` slide theme to host steps). |
-| `SLIDE_RULES.archive.md` | Historical prose rules (not loaded by the build; reference only). |
-| `components.html` | Optional fragment snippets (header / hero / panel / callout / footer). |
+| `colors_and_type.css` | Design tokens + `@font-face` (Plaid Sans, Bowery Street) |
+| `slide.css` | Pipeline-scoped shell (`.frame`, chrome, cards, backgrounds) |
+| `pipeline-slide-shell.html` | Canonical **T3 Statement** reference |
+| `brand-design-briefs/DECK_DESIGN_SYSTEM.md` | Foundations (tokens, shell, cards) |
+| `brand-design-briefs/DECK_TEMPLATES.md` | T1–T11 skeletons — pick **exactly one** per slide |
+| `brand-design-briefs/DECK_COMPOSITION.md` | Headlines, pacing, background rhythm |
+| `fonts/*.otf` | Bundled into `scratch-app/fonts/` per build |
+| `assets/logos/*.png` | Bundled into `scratch-app/assets/logos/` |
 
-## Merge into `scratch-app/index.html`
+## DOM contract (required)
 
-1. **Slide surface:** For each slide step, wrap content in `[data-testid="step-{id}"]` + `.slide-root` following the shell’s header / body / footer regions.
-2. **Header:** Prefer the **logo + pill + endpoint** row from the shell (local `./plaid-logo-horizontal-white-text-transparent-background.png` when copied to scratch-app). Omit the `<img>` if the build omits that asset; keep pill + endpoint.
-3. **Footer:** Keep `.slide-footer` with small Plaid mark + `plaid.com` (or equivalent) for deck-style closure on marketing slides.
-4. **Do not** embed raw JSON inside `.slide-root` for endpoint steps — use `#api-response-panel` only.
-5. **Remove** the standalone preview IIFE at the bottom of the shell script when merging (comment begins with `/* ── Standalone file preview only` … `*/`). That block exists so opening `pipeline-slide-shell.html` in a browser demonstrates **fully expanded** JSON with the panel visible. Production demos keep `collapsedByDefault: true` in `window.__API_PANEL_CONFIG` unless the prompt explicitly asks otherwise.
-
-## JSON viewer (required)
-
-- **Library:** `https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js` in `<head>` (CDN exception per DOM contract).
-- **Expansion:** After `configureRenderjson()`, every render must show **all levels expanded**:
-  - `renderjson.set_show_to_level('all')` **or** numeric `999` if `'all'` is unsupported in an older bundle.
-- **Hydration:** Implement `window.updateApiResponse(data)` (or the pipeline’s `_showApiPanelStub` pattern) so it clears `#api-response-content`, appends `renderjson(data)`, and respects `__API_PANEL_CONFIG.collapsedByDefault` for panel visibility.
-
-## API panel chrome — single edge toggle (required)
-
-Persist **one** control on `#api-response-panel`:
-
-| Control | `data-testid` | Behavior |
-|---------|---------------|----------|
-| Edge toggle | `api-panel-toggle` | Calls `toggleApiPanel`; chevron direction flips with collapse/expand state |
-
-- Implement `window.toggleApiPanel()` for Playwright / dashboard parity.
-- Do **not** include `api-json-panel-show` / `api-json-panel-hide` buttons.
-- Keep edge toggle ARIA state in sync (`aria-expanded` + directional chevron class).
-- `#link-events-panel` remains `display:none` for all demo-facing steps.
-
-## `window.__API_PANEL_CONFIG`
-
-Centralize behavior:
-
-```javascript
-window.__API_PANEL_CONFIG = Object.assign({
-  collapsedByDefault: true,
-  jsonExpandLevel: 'all',
-  autoResize: true,
-  minWidthPx: 360,
-  maxWidthViewportRatio: 0.52
-}, window.__API_PANEL_CONFIG || {});
+```html
+<div data-testid="step-{id}" class="step">
+  <div class="slide-root" data-slide-template="T3">
+    <!-- optional background class on .slide-root: light | cream | holo -->
+    <div class="frame">
+      <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
+      <div class="eyebrow-tag">Section X — Name</div>
+      <h2 class="h-title">Headline with <em>italic accent.</em></h2>
+      <!-- template body (T1–T11) -->
+      <div class="chrome-foot"><span>NN / TOTAL · Section</span></div>
+    </div>
+  </div>
+</div>
 ```
 
-- **`jsonExpandLevel`:** `'all'` preferred for fully expanded trees when the panel is opened.
-- **`collapsedByDefault`:** `true` for recordings so the rail opens only when the story needs it.
+- Set `data-slide-template="T1"` … `T11` on `.slide-root` for audit (`post-slides-report.json` → `templatesUsed`).
+- Logo variant: `plaid-horizontal-white.png` on navy default; `plaid-horizontal-dark.png` on `.light` / `.cream` / `.holo`; `plaid-horizontal-holograph.png` optional on holo.
+- **Plaid logo — hard contract (build-QA blocker):** Never invent a logo. Do **not** draw SVG marks, four-dot icon grids, rounded-square icons, or render the word "PLAID" as HTML/CSS text. Use **only** the bundled horizontal wordmarks under `assets/logos/` via `<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png" alt="">`, **or omit** `.chrome-logo` entirely (T1 title slides may omit chrome). Do **not** use `plaid-icon-white.png` or legacy `plaid-logo-*` paths in slide chrome.
+- **Never** use `display: inline-block` inside `.slide-root` — flex/grid + `gap` only.
+- Body text **≥ 24px** (mockup chrome excepted — see build-QA allowlist).
+- **Typography ceilings:** `.h-title` max **72px** (T3 **96px**, T1 **140px**); `.hero-stat-value` max **180px**; body max **36px**. Prefer `slide.css` classes — post-slides runs `normalize-slide-typography.js` to cap LLM oversizing.
+- Wrap slide body in `.slide-stack` so `.chrome-foot` (flex `margin-top: auto`) does not overlap content.
 
-## renderjson theming
+## Composition (required)
 
-Apply Plaid-aligned colors via CSS on `#api-response-content .renderjson …` in the same `<style>` block as `slide.css` (canonical rules live in `slide.css` in this folder).
+From `DECK_COMPOSITION.md`:
 
-## QA checklist
+- Headlines: **sentence case**, end with a **period**, one **`<em>` Bowery Street italic** accent per `.h-title`.
+- **One mint moment** per slide (`--plaid-teal-500` / `#42F0CD` as the primary eye-draw).
+- Background rhythm: no more than **4 consecutive navy** slides without `.light` / `.cream` / `.holo`.
+- Approved palette only; soft tints via `rgba()` on brand tokens.
 
-- [ ] Slide steps include responsive `.slide-root` (no fixed 1440×900 on root).
-- [ ] `value-summary-slide` has **no** `apiResponse` and **no** JSON panel content.
-- [ ] Endpoint slides: body summarizes 3–6 fields; raw JSON only in `#api-response-content`.
-- [ ] Single edge toggle control present and wired; `toggleApiPanel` works.
-- [ ] renderjson tree is **fully expanded** when the user opens the panel.
-- [ ] On widescreen, slide content remains centered in a bordered frame; table scenes do not spread columns edge-to-edge.
+## PPTX export font swap (documented, not automated)
+
+When exporting to PowerPoint: **Manrope** (sans), **Playfair Display** (display), **JetBrains Mono** (mono).
+
+## JSON panel (unchanged)
+
+- `renderjson` CDN in `<head>`; `window.updateApiResponse`; single edge toggle `data-testid="api-panel-toggle"`.
+- Raw JSON **only** in `#api-response-panel`, not inside `.slide-root`.
+- `value-summary-slide`: no `apiResponse`, no JSON panel content.
+
+## Build-QA
+
+Nine slide-design scanners in `build-qa.js` (`scanSlideDesignSystem`):
+
+- **`scanSlidePlaidLogoAuthenticity`** — **critical / deterministic blocker**. Flags invented logos and non-library `chrome-logo` src paths. Omitting `.chrome-logo` is allowed.
+- **Eight warning scanners** — tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors (`severity: 'warning'`, not blockers).
+
+See `CLAUDE.md` § Plaid Slide Design System.
+
+## Opt-in patches
+
+`qa-patch-library.js`: `slide-design-tokens-inject`, `slide-shell-chrome-inject`, `slide-chrome-logo-canonical`, `slide-typography-floor` — manual invoke only.

@@ -36,8 +36,9 @@ const { startServer } = require('../utils/app-server');
 const { gleanChat } = require('../utils/mcp-clients');
 const { loadTimingContract } = require('../../timing-contract');
 const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../../validate-narration-sync');
-const { requireRunDir, getRunLayout } = require('../utils/run-io');
+const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { isSlideStep: isSlideStepShared } = require('../utils/step-kind');
+const { getSlideTypographyCeilings } = require('../utils/normalize-slide-typography');
 const {
   appendPipelineLogSection,
   appendPipelineLogJson,
@@ -102,6 +103,7 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'panel-visibility',
   'api-story-alignment',
   'slide-template-misuse',
+  'slide-canvas-size',
   'mobile-slide-mode-contract',
   'qa-target-mismatch',
   'runtime-js-error',
@@ -121,6 +123,9 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'brand-disclosure-missing',
   'brand-nav-label-missing',
   'brand-fidelity-vision', // reserved for future LLM-graded sub-check
+  'slide-plaid-logo-invented',
+  'slide-plaid-logo-noncanonical',
+  'cra-lendscore-host-layout',
 ]);
 
 const PLAID_BTN_RE = /link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_](?:\w+[-_])?bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i;
@@ -277,6 +282,978 @@ function scanMissingBrandLogo(html, demoScript) {
     issue: 'No host bank logo/image element found in built HTML.',
     suggestion: 'Render exactly one host brand <img> in nav (data-testid host-bank-logo-img or host-bank-icon-img).',
   }];
+}
+
+// ─── Plaid Slide Design System scanners (warning-only) ─────────────────────
+
+const SLIDE_DESIGN_APPROVED_HEX = new Set([
+  '#111112', '#ffffff', '#f9f9f9', '#f2f2f2', '#f4f0e6',
+  '#022544', '#043c65', '#07578d', '#0b7bbc', '#3a80e2', '#5fa8e2',
+  '#05565c', '#42f0cd', '#71fbe3',
+  '#e6e6ff', '#d8fef3', '#fff6d8', '#ffc0ff', '#98a5ff',
+  '#1d1d1b', '#2a2a28', '#474747', '#747677', '#a8aaab', '#d4d4d4', '#e6e6e6',
+  '#d83232', '#8b1f1f', '#ffe5e5', '#8f6a00',
+]);
+
+const SLIDE_TYPOGRAPHY_ALLOWLIST = /\.(?:mockup-chrome|phone-mockup|avatar|confidence-pill)\b/i;
+
+function escapeRegexId(id) {
+  return String(id).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+}
+
+function extractStepHtmlBlocks(html, stepIds, { requireSlideRoot = false } = {}) {
+  const blocks = new Map();
+  if (!html || !Array.isArray(stepIds)) return blocks;
+  for (const id of stepIds) {
+    const safe = escapeRegexId(id);
+    const openRe = new RegExp(`<div[^>]*\\bdata-testid=["']step-${safe}["'][^>]*>`, 'i');
+    const open = openRe.exec(html);
+    if (!open) continue;
+    const start = open.index;
+    const tail = html.slice(start + open[0].length);
+    const nextRe = /<div[^>]*\bdata-testid=["']step-[^"']+["'][^>]*>/gi;
+    const next = nextRe.exec(tail);
+    const end = start + open[0].length + (next ? next.index : tail.length);
+    const block = html.slice(start, end);
+    if (requireSlideRoot && !/\bslide-root\b/.test(block)) continue;
+    blocks.set(id, block);
+  }
+  return blocks;
+}
+
+function extractSlideStepHtmlBlocks(html, slideStepIds) {
+  return extractStepHtmlBlocks(html, slideStepIds, { requireSlideRoot: true });
+}
+
+/**
+ * CRA LendScore / Network Insights host steps: NMLS footer, API rail clearance, CTA visibility.
+ */
+function scanCraHostUnderwritingContracts(html, demoScript) {
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  const lendSteps = steps.filter((s) => /lend[_\s-]?score/i.test(String(s?.apiResponse?.endpoint || '')));
+  const networkSteps = steps.filter((s) => /network[_\s-]?insights/i.test(String(s?.apiResponse?.endpoint || '')));
+  if (!lendSteps.length && !networkSteps.length) return [];
+
+  const out = [];
+  const hostSteps = steps.filter((s) => {
+    const kind = String(s?.stepKind || s?.sceneType || '').toLowerCase();
+    return kind !== 'slide' && !/slide-root/i.test(String(s?.visualState || ''));
+  });
+  if (hostSteps.length && !/nmls\s*id\s*1963958/i.test(html || '')) {
+    out.push({
+      stepId: 'host-app',
+      category: 'brand-disclosure-missing',
+      severity: 'critical',
+      deterministicBlocker: true,
+      issue: 'Zip CRA host app is missing verbatim footer disclosure: "NMLS ID 1963958".',
+      suggestion:
+        'Add a host footer on checkout/underwriting screens with exactly: NMLS ID 1963958 (see inputs/brand-references/zip.md).',
+    });
+  }
+
+  const reserveRe =
+    /(?:padding-right|margin-right)\s*:\s*(?:5[2-9]\d|[6-9]\d{2}|\d{4})|max-width\s*:\s*calc\s*\(\s*100%\s*-\s*5\d{2}|\.host-api-panel-reserve|underwriting-grid[\s\S]{0,800}520px/i;
+
+  for (const step of lendSteps) {
+    const block = extractStepHtmlBlocks(html, [step.id]).get(step.id) || '';
+    if (!block) {
+      out.push({
+        stepId: step.id,
+        category: 'cra-lendscore-host-layout',
+        severity: 'critical',
+        deterministicBlocker: true,
+        issue: `Missing host step container for LendScore reveal (${step.id}).`,
+        suggestion: 'Render data-testid="step-lendscore-reveal" with underwriting UI and API panel wiring.',
+      });
+      continue;
+    }
+    if (!/approve-plan-cta|data-testid=['"]approve-plan-cta['"]/i.test(block)) {
+      out.push({
+        stepId: step.id,
+        category: 'cra-lendscore-host-layout',
+        severity: 'critical',
+        deterministicBlocker: true,
+        issue: 'LendScore host step is missing primary CTA data-testid="approve-plan-cta".',
+        suggestion: 'Add visible pink Approve plan button per demo-script interaction target.',
+      });
+    }
+    if (!/\blendscore\b|lend[\s_-]?score/i.test(block) || !/\b78\b|\bscore\b/i.test(block)) {
+      out.push({
+        stepId: step.id,
+        category: 'cra-lendscore-host-layout',
+        severity: 'warning',
+        deterministicBlocker: false,
+        issue: 'LendScore score/decision not clearly visible on the host step.',
+        suggestion: 'Show LendScore 78 (or script value), APPROVE badge, and LendScore — beta microcopy.',
+      });
+    }
+    if (!reserveRe.test(block) && !reserveRe.test(html)) {
+      out.push({
+        stepId: step.id,
+        category: 'cra-lendscore-host-layout',
+        severity: 'critical',
+        deterministicBlocker: true,
+        issue: 'Host main column does not reserve ~520px for #api-response-panel (content will sit under JSON rail).',
+        suggestion:
+          'On LendScore host steps set .zip-main or .underwriting-grid { max-width: calc(100% - 520px); padding-right: 24px; } or class host-api-panel-reserve.',
+      });
+    }
+    if (/base[_\s-]?report\/get/i.test(block) && !/lend[_\s-]?score\/get/i.test(block)) {
+      out.push({
+        stepId: step.id,
+        category: 'api-story-alignment',
+        severity: 'critical',
+        deterministicBlocker: true,
+        issue: 'On-screen API label references base_report/get but demo-script declares lend_score/get.',
+        suggestion: 'Panel endpoint label and _stepApiResponses key must be POST /cra/check_report/lend_score/get.',
+      });
+    }
+  }
+
+  for (const step of networkSteps) {
+    const block = extractStepHtmlBlocks(html, [step.id]).get(step.id) || '';
+    if (block && /\bslide-root\b/.test(block) && !reserveRe.test(block)) {
+      out.push({
+        stepId: step.id,
+        category: 'cra-lendscore-host-layout',
+        severity: 'warning',
+        deterministicBlocker: false,
+        issue: 'Network Insights slide body may collide with the global API JSON rail.',
+        suggestion: 'Reserve right padding on .slide-body (~520px) or keep JSON only in #api-response-panel.',
+      });
+    }
+  }
+
+  return out;
+}
+
+function slideDesignWarning(stepId, category, issue, suggestion) {
+  return {
+    stepId,
+    category,
+    severity: 'warning',
+    deterministicBlocker: false,
+    issue,
+    suggestion,
+  };
+}
+
+function slideDesignCritical(stepId, category, issue, suggestion) {
+  return {
+    stepId,
+    category,
+    severity: 'critical',
+    deterministicBlocker: true,
+    issue,
+    suggestion,
+  };
+}
+
+/** Canonical Plaid deck chrome logos — templates/slide-template/assets/logos/ */
+const CANONICAL_SLIDE_PLAID_LOGO_SRC = new Set([
+  'assets/logos/plaid-horizontal-white.png',
+  'assets/logos/plaid-horizontal-dark.png',
+  'assets/logos/plaid-horizontal-holograph.png',
+]);
+
+const LEGACY_NONCANONICAL_LOGO_SRC = /(?:plaid-logo-|\.\/plaid-logo|scratch-app\/plaid-logo)/i;
+
+function normalizeSlideLogoSrc(src) {
+  return String(src || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .toLowerCase();
+}
+
+function isCanonicalSlidePlaidLogoSrc(src) {
+  return CANONICAL_SLIDE_PLAID_LOGO_SRC.has(normalizeSlideLogoSrc(src));
+}
+
+function pickCanonicalLogoForSlideBlock(block) {
+  const isLight =
+    /\bslide-root[^>]*\b(?:light|cream|holo)\b/i.test(block) ||
+    /\bclass="[^"]*\bslide-root\s+(?:light|cream|holo)\b/i.test(block);
+  return isLight
+    ? 'assets/logos/plaid-horizontal-dark.png'
+    : 'assets/logos/plaid-horizontal-white.png';
+}
+
+/**
+ * Hard contract: never invent a Plaid logo on slides. Use bundled horizontal
+ * wordmarks from assets/logos/ via <img class="chrome-logo">, or omit logo entirely.
+ *
+ * @param {string} html
+ * @param {string[]} slideStepIds
+ */
+function scanSlidePlaidLogoAuthenticity(html, slideStepIds) {
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const iterable = blocks.size
+    ? [...blocks.entries()]
+    : /\bslide-root\b/.test(html || '')
+      ? [['slide-design', html]]
+      : [];
+  const out = [];
+
+  for (const [stepId, block] of iterable) {
+    const frameHead = (block.match(/<div[^>]*\bclass="[^"]*\bframe\b[^"]*"[^>]*>[\s\S]{0,2500}/i) || [])[0] || block.slice(0, 2500);
+
+    // Non-<img> chrome-logo (div/span with text, icon grid, etc.) — the common LLM failure mode.
+    const nonImgChrome = block.match(/<(?!(?:img|img\/))[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>[\s\S]*?<\/[^>]+>/gi) || [];
+    for (const tag of nonImgChrome) {
+      if (/>?\s*PLAID\s*</i.test(tag) || /<svg\b/i.test(tag)) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-plaid-logo-invented',
+          'Invented Plaid logo on slide (text/SVG chrome-logo). Do not draw icons or set "PLAID" in a div/span.',
+          'Use <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png"> (or -dark/-holograph on light slides), or remove .chrome-logo entirely.'
+        ));
+        break;
+      }
+    }
+
+    // SVG or icon-grid posing as logo inside .frame header region.
+    if (/<div[^>]*\bclass="[^"]*\bframe\b[^"]*"[^>]*>[\s\S]{0,1200}?<svg\b/i.test(block)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-plaid-logo-invented',
+        'Inline SVG used as Plaid logo inside .slide-root .frame (forbidden).',
+        'Replace with canonical <img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png"> from templates/slide-template/assets/logos/, or omit the logo.'
+      ));
+    }
+    if (/\b(?:plaid-icon|logo-icon|brand-icon|die-icon|four-dot)\b/i.test(frameHead) && /<svg\b/i.test(frameHead)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-plaid-logo-invented',
+        'Custom icon-grid / faux Plaid mark detected in slide header (not from logo library).',
+        'Use bundled horizontal wordmark PNG only — never recreate the four-dot icon or "PLAID" logotype in HTML/CSS.'
+      ));
+    }
+
+    // Standalone PLAID wordmark text in frame without canonical img (e.g. rounded icon + PLAID label).
+    if (
+      />?\s*PLAID\s*</i.test(frameHead) &&
+      !/<img[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>/i.test(frameHead)
+    ) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-plaid-logo-invented',
+        'Rendered "PLAID" as text/CSS instead of the canonical horizontal wordmark image.',
+        'Delete faux logo markup. Use <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt=""> or omit chrome-logo.'
+      ));
+    }
+
+    const imgTags = block.match(/<img[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>/gi) || [];
+    for (const imgTag of imgTags) {
+      const srcMatch = imgTag.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+      const src = srcMatch ? srcMatch[1] : '';
+      if (!src || /^data:/i.test(src)) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-plaid-logo-noncanonical',
+          'chrome-logo <img> is missing src or uses a data URI — not the bundled logo library.',
+          `Set src="${pickCanonicalLogoForSlideBlock(block)}" (canonical assets/logos/ path).`
+        ));
+        continue;
+      }
+      if (LEGACY_NONCANONICAL_LOGO_SRC.test(src) || /plaid-icon-white/i.test(src)) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-plaid-logo-noncanonical',
+          `Slide chrome-logo uses non-library path "${src}" (legacy or icon asset).`,
+          `Use assets/logos/plaid-horizontal-white.png, plaid-horizontal-dark.png, or plaid-horizontal-holograph.png only.`
+        ));
+        continue;
+      }
+      if (!isCanonicalSlidePlaidLogoSrc(src)) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-plaid-logo-noncanonical',
+          `Slide chrome-logo src "${src}" is not an approved bundled wordmark.`,
+          'Copy from templates/slide-template/assets/logos/ — horizontal wordmarks only — or remove .chrome-logo.'
+        ));
+      }
+    }
+
+    // img with alt=Plaid in slide frame but not chrome-logo — often a homemade mark.
+    const roguePlaidImg = block.match(/<img(?![^>]*chrome-logo)[^>]*\balt\s*=\s*["']Plaid["'][^>]*>/gi) || [];
+    for (const tag of roguePlaidImg) {
+      if (!isCanonicalSlidePlaidLogoSrc((tag.match(/\bsrc\s*=\s*["']([^"']+)["']/i) || [])[1])) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-plaid-logo-invented',
+          'Non-canonical <img alt="Plaid"> in slide frame (invented logo asset).',
+          'Remove and use <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png"> or omit logo entirely.'
+        ));
+        break;
+      }
+    }
+  }
+
+  return out;
+}
+
+/** @param {string} html */
+function scanSlideDesignTokens(html) {
+  if (!html || !/\bslide-root\b/.test(html)) return [];
+  const hasInk = /--plaid-ink-900|#022544/i.test(html);
+  const hasMint = /--plaid-teal-500|#42F0CD/i.test(html);
+  const hasTokenSheet = /colors_and_type\.css|POST-SLIDES DESIGN SYSTEM CSS/i.test(html);
+  if (hasInk && hasMint && (hasTokenSheet || /--plaid-ink-900/.test(html))) return [];
+  const firstId = 'slide-design';
+  return [slideDesignWarning(
+    firstId,
+    'slide-design-tokens',
+    'Slide markup is missing Plaid Deck Design System tokens (--plaid-ink-900 / --plaid-teal-500 or colors_and_type.css).',
+    'Ensure post-slides injects design-system CSS or reference token variables in slide styles.'
+  )];
+}
+
+/** @param {string} html @param {string[]} slideStepIds */
+function scanSlideShellChrome(html, slideStepIds) {
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const out = [];
+  for (const [stepId, block] of blocks) {
+    if (/data-slide-template\s*=\s*["']T1["']/i.test(block)) continue;
+    const missing = [];
+    if (!/\bchrome-logo\b/.test(block)) missing.push('.chrome-logo');
+    if (!/\beyebrow-tag\b/.test(block)) missing.push('.eyebrow-tag');
+    if (!/\bchrome-foot\b/.test(block)) missing.push('.chrome-foot');
+    if (missing.length) {
+      out.push(slideDesignWarning(
+        stepId,
+        'slide-shell-chrome',
+        `Slide missing canonical shell chrome: ${missing.join(', ')}.`,
+        'Use .frame + .chrome-logo + .eyebrow-tag + .chrome-foot per DECK_DESIGN_SYSTEM.md (T1 may omit eyebrow/footer).'
+      ));
+    }
+  }
+  return out;
+}
+
+/** @param {string} html */
+function scanSlideTypographyFloor(html) {
+  const out = [];
+  if (!html || !/\bslide-root\b/.test(html)) return out;
+  const blocks = extractSlideStepHtmlBlocks(
+    html,
+    [...html.matchAll(/data-testid="step-([^"]+)"/gi)].map((m) => m[1]).filter((id) => {
+      const safe = escapeRegexId(id);
+      const re = new RegExp(`data-testid="step-${safe}"[\\s\\S]*?\\bslide-root\\b`, 'i');
+      return re.test(html);
+    })
+  );
+  const iterable = blocks.size ? [...blocks.entries()] : [['slide-root', html]];
+  let idx = 0;
+  const re = /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
+  for (const [stepId, block] of iterable) {
+    if (SLIDE_TYPOGRAPHY_ALLOWLIST.test(block)) continue;
+    let m;
+    while ((m = re.exec(block)) !== null) {
+      const px = parseFloat(m[1]);
+      if (px > 0 && px < 24) {
+        out.push(slideDesignWarning(
+          stepId,
+          'slide-typography-floor',
+          `Inline font-size ${px}px is below the 24px floor inside .slide-root.`,
+          'Raise body copy to ≥24px or use design-system type tokens (--type-small / --type-body).'
+        ));
+        break;
+      }
+    }
+    idx += 1;
+  }
+  return out;
+}
+
+/**
+ * Slide canvas hard contract (May 2026 — see CLAUDE.md "Plaid Slide Design
+ * System"). Evaluates a per-step `state` produced by `evaluateStepState`
+ * (live Playwright snapshot of `.slide-root.getBoundingClientRect()`) and
+ * returns deterministic diagnostics when the slide does not meet the
+ * Google-Slides-class size + 16:10 aspect contract.
+ *
+ * Contract:
+ *   width  ≥ viewportWidth  * widthFraction  (default 0.75 → 1080px on 1440)
+ *   height ≥ viewportHeight * heightFraction (default 0.67 → 600px on 900)
+ *   aspect ratio in [minAspect, maxAspect] (default [1.40, 1.85] — covers 16:9 and 16:10)
+ *
+ * Returns `[]` (no diagnostics) for non-slide steps or when the slide has
+ * not been measured yet (state.slideRootRenderedWidth === 0). All emitted
+ * diagnostics use `category: 'slide-canvas-size'` and `severity: 'critical'`
+ * — auto-blocked by the deterministic blocker gate.
+ *
+ * Pure function. Exported for unit testing.
+ *
+ * @param {object} state  Output of evaluateStepState (or equivalent shape)
+ * @param {object} step   demo-script step object (used to check isSlideLikeStep)
+ * @param {object} [opts]
+ * @param {number} [opts.widthFraction=0.75]
+ * @param {number} [opts.heightFraction=0.67]
+ * @param {number} [opts.minAspect=1.40]
+ * @param {number} [opts.maxAspect=1.85]
+ * @returns {Array<object>} Array of diagnostic objects { stepId, category, severity, issue, suggestion }
+ */
+function scanSlideCanvasSize(state, step, opts = {}) {
+  const out = [];
+  if (!state || !step) return out;
+  if (!isSlideLikeStep(step)) return out;
+  const renderedWidth = Number(state.slideRootRenderedWidth) || 0;
+  if (renderedWidth <= 0) return out;
+  const renderedHeight = Number(state.slideRootRenderedHeight) || 0;
+  const viewportWidth = Number(state.viewportWidth) || 1440;
+  const viewportHeight = Number(state.viewportHeight) || 900;
+  const widthFraction = Number.isFinite(opts.widthFraction) ? opts.widthFraction : 0.75;
+  const heightFraction = Number.isFinite(opts.heightFraction) ? opts.heightFraction : 0.67;
+  const minAspect = Number.isFinite(opts.minAspect) ? opts.minAspect : 1.40;
+  const maxAspect = Number.isFinite(opts.maxAspect) ? opts.maxAspect : 1.85;
+  const minWidth = Math.round(viewportWidth * widthFraction);
+  const minHeight = Math.round(viewportHeight * heightFraction);
+  const aspectRatio = renderedHeight > 0 ? renderedWidth / renderedHeight : 0;
+  if (renderedWidth < minWidth) {
+    out.push({
+      stepId: step.id,
+      category: 'slide-canvas-size',
+      severity: 'critical',
+      issue:
+        `Slide canvas width ${Math.round(renderedWidth)}px is below the ${minWidth}px contract ` +
+        `(viewport ${viewportWidth}×${viewportHeight}). Slides must occupy at least ${Math.round(widthFraction * 100)}% of viewport width.`,
+      suggestion:
+        'Apply the `slide-canvas-fullbleed` patch (or update slide.css) so `.step.active .slide-root` ' +
+        'uses `max-width: min(1280px, calc(100vw - 80px))` and only reserves panel space when ' +
+        '`body.api-panel-open` is set.',
+    });
+  }
+  if (renderedHeight > 0 && renderedHeight < minHeight) {
+    out.push({
+      stepId: step.id,
+      category: 'slide-canvas-size',
+      severity: 'critical',
+      issue:
+        `Slide canvas height ${Math.round(renderedHeight)}px is below the ${minHeight}px contract ` +
+        `(viewport ${viewportWidth}×${viewportHeight}).`,
+      suggestion:
+        'Verify the slide CSS keeps `aspect-ratio: 16/10` (or 16/9) so the slide auto-sizes vertically ' +
+        'when the width contract is met. Avoid inline `min-height` / `height` on `.slide-root` — use the CSS contract.',
+    });
+  }
+  if (aspectRatio > 0 && (aspectRatio < minAspect || aspectRatio > maxAspect)) {
+    out.push({
+      stepId: step.id,
+      category: 'slide-canvas-size',
+      severity: 'critical',
+      issue:
+        `Slide aspect ratio ${aspectRatio.toFixed(2)} is outside the [${minAspect}–${maxAspect}] contract ` +
+        `(canonical 16:10 = 1.60, 16:9 = 1.78).`,
+      suggestion:
+        'Restore `aspect-ratio: 16/10` on `.slide-root` and remove any inline `aspect-ratio` / `min-height` ' +
+        'overrides that change the slide shape.',
+    });
+  }
+  return out;
+}
+
+/**
+ * Warn when inline font-size exceeds DECK_DESIGN_SYSTEM ceilings for the slide template.
+ * @param {string} html
+ */
+function scanSlideTypographyCeiling(html) {
+  const out = [];
+  if (!html || !/\bslide-root\b/.test(html)) return out;
+  const blocks = extractSlideStepHtmlBlocks(
+    html,
+    [...html.matchAll(/data-testid="step-([^"]+)"/gi)].map((m) => m[1]).filter((id) => {
+      const safe = escapeRegexId(id);
+      const re = new RegExp(`data-testid="step-${safe}"[\\s\\S]*?\\bslide-root\\b`, 'i');
+      return re.test(html);
+    })
+  );
+  const iterable = blocks.size ? [...blocks.entries()] : [['slide-root', html]];
+  const re = /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
+  for (const [stepId, block] of iterable) {
+    if (SLIDE_TYPOGRAPHY_ALLOWLIST.test(block)) continue;
+    const templateMatch = block.match(/\bdata-slide-template\s*=\s*["'](T(?:1[01]|[1-9]))["']/i);
+    const templateId = templateMatch ? templateMatch[1].toUpperCase() : null;
+    const ceilings = getSlideTypographyCeilings(templateId);
+    const absoluteMax = Math.max(ceilings.hTitle, ceilings.hero, ceilings.display, 180);
+    let m;
+    while ((m = re.exec(block)) !== null) {
+      const px = parseFloat(m[1]);
+      if (!Number.isFinite(px) || px <= absoluteMax) continue;
+      const ctxStart = Math.max(0, m.index - 180);
+      const ctx = block.slice(ctxStart, m.index + 40);
+      let maxPx = ceilings.body;
+      if (/\bhero-stat-value\b/i.test(ctx)) maxPx = ceilings.hero;
+      else if (/\bh-title\b/i.test(ctx)) maxPx = ceilings.hTitle;
+      else if (/<h1\b/i.test(ctx)) maxPx = ceilings.display;
+      else if (/<h2\b/i.test(ctx)) maxPx = ceilings.hTitle;
+      if (px > maxPx) {
+        out.push(slideDesignWarning(
+          stepId,
+          'slide-typography-ceiling',
+          `Inline font-size ${px}px exceeds the ${maxPx}px ceiling for this slide element (template ${templateId || 'default'}).`,
+          'Use slide.css classes (.h-title, .hero-stat-value, .slide-body-text) without oversized inline font-size.'
+        ));
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** @param {string} html @param {string[]} slideStepIds */
+function scanSlideHeadlineItalicAccent(html, slideStepIds) {
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const out = [];
+  for (const [stepId, block] of blocks) {
+    if (/data-slide-template\s*=\s*["']T1["']/i.test(block)) continue;
+    const titleMatch = block.match(/<h[12][^>]*\bh-title\b[^>]*>[\s\S]*?<\/h[12]>/i);
+    if (!titleMatch) {
+      out.push(slideDesignWarning(stepId, 'slide-headline-accent', 'Slide has no .h-title headline.', 'Add .h-title with one <em> Bowery Street italic accent.'));
+      continue;
+    }
+    if (!/<em\b/i.test(titleMatch[0])) {
+      out.push(slideDesignWarning(
+        stepId,
+        'slide-headline-accent',
+        '.h-title is missing the required Bowery Street <em> italic accent.',
+        'Italicize the operative noun phrase once per headline (DECK_COMPOSITION.md).'
+      ));
+    }
+  }
+  return out;
+}
+
+/** @param {string} html @param {string[]} slideStepIds */
+function scanSlideMintOveruse(html, slideStepIds) {
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const out = [];
+  const mintRe = /(--plaid-teal-500|#42F0CD)/gi;
+  for (const [stepId, block] of blocks) {
+    const hits = block.match(mintRe) || [];
+    if (hits.length > 3) {
+      out.push(slideDesignWarning(
+        stepId,
+        'slide-mint-overuse',
+        `Slide uses mint (${hits.length} references); limit to one primary mint moment.`,
+        'Reserve --plaid-teal-500 / #42F0CD for a single eye-draw per slide.'
+      ));
+    }
+  }
+  return out;
+}
+
+/** @param {string} html */
+function scanSlideInlineBlockLayout(html) {
+  if (!html || !/\bslide-root\b/.test(html)) return [];
+  const styleBlocks = [];
+  const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let m;
+  while ((m = styleRe.exec(html)) !== null) styleBlocks.push(m[1]);
+  const offenders = [];
+  for (const css of styleBlocks) {
+    const ruleRe = /([^{}]*\.slide-root[^{}]*)\{([^{}]*)\}/gi;
+    let rule;
+    while ((rule = ruleRe.exec(css)) !== null) {
+      if (/display\s*:\s*inline-block/i.test(rule[2])) offenders.push(rule[1].trim());
+    }
+    if (/\.slide-root[\s\S]*?display\s*:\s*inline-block/i.test(css)) offenders.push('.slide-root');
+  }
+  if (/\bslide-root\b[^>]*style="[^"]*display\s*:\s*inline-block/i.test(html)) offenders.push('inline style');
+  if (!offenders.length) return [];
+  return [slideDesignWarning(
+    'slide-design',
+    'slide-inline-block',
+    'display:inline-block detected in slide-scoped CSS (forbidden — use flex/grid + gap).',
+    'Remove inline-block rules under .slide-root per DECK_DESIGN_SYSTEM.md.'
+  )];
+}
+
+/** @param {object} demoScript @param {string} html */
+function scanSlideBackgroundRhythm(demoScript, html) {
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  const slideSteps = steps.filter((s) => isSlideLikeStep(s));
+  if (slideSteps.length < 5) return [];
+  let consecutiveNavy = 0;
+  let maxRun = 0;
+  let runStartId = null;
+  let worstStart = null;
+  for (const step of slideSteps) {
+    const safe = escapeRegexId(step.id);
+    const re = new RegExp(
+      `<div[^>]*\\bdata-testid="step-${safe}"[^>]*>[\\s\\S]*?\\bslide-root\\b[^>]*`,
+      'i'
+    );
+    const m = html.match(re);
+    const variant = m && m[0] || '';
+    const isInterlude = /\bslide-root[^>]*\b(?:light|cream|holo)\b/i.test(variant) ||
+      /\bclass="[^"]*\bslide-root\s+(?:light|cream|holo)\b/i.test(variant);
+    if (isInterlude) {
+      consecutiveNavy = 0;
+      runStartId = null;
+      continue;
+    }
+    if (consecutiveNavy === 0) runStartId = step.id;
+    consecutiveNavy += 1;
+    if (consecutiveNavy > maxRun) {
+      maxRun = consecutiveNavy;
+      worstStart = runStartId;
+    }
+  }
+  if (maxRun <= 4) return [];
+  return [slideDesignWarning(
+    worstStart || slideSteps[0].id,
+    'slide-background-rhythm',
+    `${maxRun} consecutive navy slides without a .light / .cream / .holo interlude.`,
+    'Alternate background variants — no more than 4 navy slides in a row (DECK_COMPOSITION.md).'
+  )];
+}
+
+/** @param {string} html */
+function scanSlideInventedColors(html) {
+  if (!html || !/\bslide-root\b/.test(html)) return [];
+  const out = [];
+  const hexRe = /#([0-9a-fA-F]{3,8})\b/g;
+  const slideSection = html.split(/\bslide-root\b/).slice(1).join('slide-root') || html;
+  const seen = new Set();
+  let m;
+  while ((m = hexRe.exec(slideSection)) !== null) {
+    const raw = m[0].toLowerCase();
+    const norm = raw.length === 4
+      ? `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`
+      : raw.slice(0, 7);
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    if (!SLIDE_DESIGN_APPROVED_HEX.has(norm)) {
+      out.push(slideDesignWarning(
+        'slide-design',
+        'slide-invented-color',
+        `Non-palette hex color ${raw} in slide CSS/HTML.`,
+        'Use documented Plaid tokens or rgba() on brand colors only.'
+      ));
+      if (out.length >= 5) break;
+    }
+  }
+  return out;
+}
+
+/** Run all slide-design scanners when the build includes slides. */
+function scanSlideDesignSystem(html, demoScript) {
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  const slideStepIds = steps.filter((s) => isSlideLikeStep(s)).map((s) => s.id);
+  if (!slideStepIds.length || !/\bslide-root\b/.test(html || '')) return [];
+  return [
+    ...scanSlidePlaidLogoAuthenticity(html, slideStepIds),
+    ...scanSlideDesignTokens(html),
+    ...scanSlideShellChrome(html, slideStepIds),
+    ...scanSlideTypographyFloor(html),
+    ...scanSlideTypographyCeiling(html),
+    ...scanSlideHeadlineItalicAccent(html, slideStepIds),
+    ...scanSlideMintOveruse(html, slideStepIds),
+    ...scanSlideInlineBlockLayout(html),
+    ...scanSlideBackgroundRhythm(demoScript, html),
+    ...scanSlideInventedColors(html),
+  ];
+}
+
+/**
+ * Slide narration drift scanner — fires ONLY when buildMode === 'app+slides'.
+ *
+ * For every slide-kind step, extracts concrete numeric tokens + named
+ * decisions + product names from `step.narration` and asserts each appears
+ * in the rendered slide block's text content. If the LLM inserted a slide
+ * whose visible text doesn't match the narration's concrete claims, we'd
+ * ship voiceover that says "Trust Index 87 — ACCEPT" while the screen shows
+ * "Score 92 — REVIEW". This scanner catches that BEFORE recording.
+ *
+ * Returns an array of diagnostics (empty when clean).
+ *
+ * @param {string} html
+ * @param {object} demoScript
+ * @param {string} buildMode
+ * @returns {Array<object>}
+ */
+function scanSlideNarrationConcreteValues(html, demoScript, buildMode) {
+  const mode = String(buildMode || '').toLowerCase().trim();
+  if (mode !== 'app+slides') return [];
+  if (!html || !demoScript || !Array.isArray(demoScript.steps)) return [];
+
+  // Re-use extractStepBlocks from the hash utility to get per-step HTML;
+  // import lazily so we don't introduce a load-order cycle.
+  let extract;
+  try {
+    delete require.cache[require.resolve('../utils/slide-content-hash')];
+    extract = require('../utils/slide-content-hash').extractStepBlocks;
+  } catch (_) {
+    return [];
+  }
+  const blocks = new Map(extract(html).map((b) => [b.stepId, b.html]));
+
+  const slideSteps = demoScript.steps.filter((s) => s && (isSlideLikeStep ? isSlideLikeStep(s) : (s.stepKind === 'slide' || s.sceneType === 'slide')));
+  if (slideSteps.length === 0) return [];
+
+  const out = [];
+  for (const step of slideSteps) {
+    const blockHtml = blocks.get(step.id);
+    if (!blockHtml) continue; // missing slide block is handled by other scanners
+    const narration = String(step.narration || '').trim();
+    if (!narration) continue;
+    // Strip HTML tags for content-only comparison.
+    const slideText = String(blockHtml)
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const slideTextLower = slideText.toLowerCase();
+
+    const missingTokens = [];
+
+    // 1. Numeric tokens — `\b\d+(\.\d+)?\s*(%|seconds|s|ms)?\b`. We extract
+    //    numbers that look like meaningful claims (scores, percentages,
+    //    durations, dollar amounts). Filter out tiny 1-2 digit numbers
+    //    that might just be IDs or step counts.
+    const numericRe = /(\$?\d{1,3}(?:,\d{3})+|\$?\d+(?:\.\d+)?\s*(?:%|seconds?|s|ms|days?)?)/gi;
+    const seenNums = new Set();
+    let m;
+    while ((m = numericRe.exec(narration)) !== null) {
+      const raw = m[1].trim();
+      // Skip standalone single-digit / two-digit numbers without unit (likely word counts).
+      if (/^\d{1,2}$/.test(raw)) continue;
+      const normalized = raw.replace(/\s+/g, '').toLowerCase();
+      if (seenNums.has(normalized)) continue;
+      seenNums.add(normalized);
+      const variants = [normalized, raw.toLowerCase()];
+      const found = variants.some((v) => slideTextLower.includes(v));
+      if (!found) missingTokens.push(`numeric: "${raw}"`);
+    }
+
+    // 2. Named decisions — ACCEPT / REVIEW / REROUTE / DECLINE / APPROVED / etc.
+    const decisionWords = [
+      'ACCEPT', 'ACCEPTED', 'REVIEW', 'REROUTE', 'REROUTED', 'DECLINE', 'DECLINED',
+      'APPROVE', 'APPROVED', 'REJECT', 'REJECTED', 'PENDING', 'PASS', 'FAIL',
+    ];
+    for (const w of decisionWords) {
+      // Word-boundary match in narration (case-insensitive for the source,
+      // but only flag when present as a capitalized decision token in
+      // narration — those are the ones authors put in to make claims).
+      const re = new RegExp(`\\b${w}\\b`, 'g');
+      if (re.test(narration) && !new RegExp(`\\b${w}\\b`, 'i').test(slideText)) {
+        missingTokens.push(`decision: "${w}"`);
+      }
+    }
+
+    // 3. Named Plaid products mentioned in narration but not on screen.
+    //    These are the product names the demo cares about — Plaid Layer,
+    //    Plaid Signal, Trust Index, Ti2, etc.
+    const productPhrases = [
+      'Trust Index', 'Ti2',
+      'Plaid Layer', 'Plaid Signal', 'Plaid Identity Verification', 'Plaid IDV',
+      'Plaid Monitor', 'Plaid Assets', 'Plaid Protect', 'Plaid Instant Auth',
+      'Plaid Liabilities', 'Plaid Investments', 'Plaid Investments Move',
+      'Bank Income', 'Cash Advance Score', 'Earned Wage Access',
+    ];
+    for (const phrase of productPhrases) {
+      if (new RegExp(`\\b${phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(narration)
+          && !new RegExp(`\\b${phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i').test(slideText)) {
+        missingTokens.push(`product: "${phrase}"`);
+      }
+    }
+
+    if (missingTokens.length > 0) {
+      out.push({
+        stepId: step.id,
+        category: 'slide-narration-drift',
+        severity: 'critical',
+        issue:
+          `Slide HTML for "${step.id}" is missing concrete claims from its narration: ` +
+          `${missingTokens.slice(0, 6).join(', ')}` +
+          (missingTokens.length > 6 ? ` (+ ${missingTokens.length - 6} more)` : ''),
+        suggestion:
+          'Either (a) update the slide HTML so the rendered content visibly evidences these claims ' +
+          '(numbers, decisions, product names appear on screen), or (b) edit step.narration to remove ' +
+          'claims the slide does not actually show. Recording + voiceover sync depend on the rendered ' +
+          'content matching what the narrator says.',
+        deterministicBlocker: true,
+        missingTokens,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * App-only invariant scanner — fires ONLY when run-manifest.buildMode is
+ * 'app-only'. Asserts the generated HTML contains zero slide artifacts.
+ * Any leak is a critical deterministic blocker because it points at a
+ * regression in build-app or the script stage (NOT something slide-fix
+ * should "fix" — slide-fix doesn't run on app-only). The recovery hint
+ * tells the operator that fact explicitly so they don't reach for the
+ * wrong patch.
+ *
+ * Returns an array of diagnostics (empty when clean).
+ */
+function scanAppOnlyNoSlides(html, demoScript, buildMode) {
+  const mode = String(buildMode || '').toLowerCase().trim();
+  if (mode !== 'app-only') return [];
+  const src = String(html || '');
+  if (!src) return [];
+
+  const checks = [
+    {
+      pattern: /<div[^>]*\bclass="[^"]*\bslide-root\b/i,
+      label: '`.slide-root` div',
+      hint: 'Build-app should emit zero `.slide-root` markup on app-only runs.',
+    },
+    {
+      pattern: /\bdata-slide-pending\s*=\s*"true"/i,
+      label: '`data-slide-pending="true"` placeholder',
+      hint: 'Canonical slide placeholders are gated on buildMode==="app+slides" only.',
+    },
+    {
+      pattern: /<style[^>]*\bdata-pipeline-slide-contract\b/i,
+      label: '`<style data-pipeline-slide-contract>` CSS block',
+      hint: 'The pipeline-slide-contract CSS is injected by post-slides; post-slides must not run on app-only.',
+    },
+    {
+      pattern: /\bdata-slide-template\s*=\s*"T\d+/i,
+      label: '`data-slide-template="T#"` marker',
+      hint: 'Slide template markers belong on app+slides runs only.',
+    },
+  ];
+
+  const out = [];
+  for (const check of checks) {
+    if (check.pattern.test(src)) {
+      out.push({
+        stepId: 'build',
+        category: 'app-only-slide-leak',
+        severity: 'critical',
+        issue: `App-only run contains ${check.label} — slide artifact leaked into an app-only build.`,
+        suggestion:
+          `${check.hint} This is a build-app or script-stage regression, NOT something slide-fix should patch ` +
+          '(slide-fix does not run on app-only). Inspect generate-script.js (slide step leak), build-app.js ' +
+          '(slide-root post-processing), or the LLM build prompt for the failing run.',
+        deterministicBlocker: true,
+      });
+    }
+  }
+
+  // Also flag demo-script step leak: if any step has stepKind==='slide' or
+  // sceneType==='slide' on app-only, log it (even if HTML happens to be clean
+  // this run — the next stage that consumes the script will misbehave).
+  const slideStepsInScript = Array.isArray(demoScript?.steps)
+    ? demoScript.steps.filter((s) => s && (s.stepKind === 'slide' || s.sceneType === 'slide'))
+    : [];
+  if (slideStepsInScript.length > 0) {
+    out.push({
+      stepId: slideStepsInScript[0].id || 'build',
+      category: 'app-only-slide-leak',
+      severity: 'critical',
+      issue:
+        `App-only demo-script.json contains ${slideStepsInScript.length} slide step(s): ` +
+        `${slideStepsInScript.map((s) => s.id || '<no-id>').join(', ')}`,
+      suggestion:
+        'Check generate-script.js app-only safety net (it should strip insight/slide steps when ' +
+        'SCRIPT_ZERO_SLIDE=true). If the operator wants slides, the storyboard editor flips ' +
+        'buildMode -> "app+slides" via stampInsertedStepKindAndMaybeUpgradeBuildMode.',
+      deterministicBlocker: true,
+    });
+  }
+
+  return out;
+}
+
+// Properties that, when applied to renderjson's `.disclosure` toggle class,
+// turn the small inline-character toggles into large solid blocks. Verified
+// regression: 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1
+// where LLM-generated CSS gave .disclosure width + background → huge white
+// squares obscuring every JSON sub-tree marker.
+const DISCLOSURE_PROBLEM_PROPS = /\b(width|height|min-width|min-height|background|background-color|background-image)\s*:/i;
+const DISCLOSURE_PROP_HARMLESS_VALUES = /:\s*(0(\.0+)?(px|em|rem)?|auto|none|transparent|inherit|initial|unset)\s*(!important)?\s*;/i;
+
+/**
+ * Deterministic static-CSS scan: flag rules that style renderjson's
+ * `.disclosure` class with width, height, or background — those produce the
+ * "huge white block" failure mode observed in build
+ * 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1.
+ *
+ * post-panels.js v8 injects canonical override CSS at request time, so the
+ * panel ultimately renders correctly. This check still surfaces the LLM's
+ * bad output so future builds can be fixed at the source.
+ *
+ * @param {string} html
+ * @returns {Array<object>}
+ */
+function scanRenderjsonDisclosureStyling(html) {
+  const out = [];
+  if (typeof html !== 'string' || html.length === 0) return out;
+  // Extract every <style>...</style> block, including ones with attributes.
+  const styleBlocks = [];
+  const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+  let m;
+  while ((m = styleRe.exec(html)) !== null) {
+    styleBlocks.push(m[1]);
+  }
+  if (styleBlocks.length === 0) return out;
+  // Skip rules that look like the post-panels v8 canonical override block —
+  // those legitimately set width:auto, height:auto, background:transparent,
+  // and those are the FIX not the bug.
+  const POST_PANELS_OVERRIDE = /#api-response-panel\s+(a\.)?disclosure|#api-response-panel\s+button\.disclosure/i;
+  const offenders = [];
+  for (const css of styleBlocks) {
+    // Find all rules where the selector list contains a token matching
+    // .disclosure (with optional ancestor selector). We capture each rule
+    // body separately so we can inspect its declarations.
+    const ruleRe = /([^{}]*\.disclosure[^{}]*)\{([^{}]*)\}/gi;
+    let rule;
+    while ((rule = ruleRe.exec(css)) !== null) {
+      const selector = (rule[1] || '').trim();
+      const body     = rule[2] || '';
+      // Skip the post-panels override block — that is our fix, not the bug.
+      if (POST_PANELS_OVERRIDE.test(selector)) continue;
+      // Look for problematic property declarations. Each declaration is
+      // `prop: value;`. We split on `;` and check each one against the
+      // problem-prop regex while excluding harmless values like `0`,
+      // `auto`, `none`, `transparent`.
+      const decls = body
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const badDecls = [];
+      for (const decl of decls) {
+        const declWithSemi = decl + ';';
+        if (!DISCLOSURE_PROBLEM_PROPS.test(declWithSemi)) continue;
+        if (DISCLOSURE_PROP_HARMLESS_VALUES.test(declWithSemi)) continue;
+        badDecls.push(decl);
+      }
+      if (badDecls.length) {
+        offenders.push({ selector, badDecls });
+      }
+    }
+  }
+  if (offenders.length === 0) return out;
+  const summarized = offenders
+    .slice(0, 3)
+    .map((o) => `\`${o.selector} { ${o.badDecls.join('; ')}; }\``)
+    .join(' • ');
+  out.push({
+    stepId: 'build',
+    category: 'json-panel-styling',
+    severity: 'critical',
+    issue:
+      `renderjson \`.disclosure\` toggles have host-CSS rule(s) that set width/height/background — these render as ` +
+      `large solid blocks in the API panel (regression: ` +
+      `2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1). Offending rule(s): ${summarized}.`,
+    suggestion:
+      'Remove the width/height/background declarations from any .disclosure CSS rule. ' +
+      'Renderjson disclosure toggles must remain inline text (only `color` and `cursor: pointer` are safe to set). ' +
+      'post-panels.js v8 injects an override that masks the symptom at request time, but the LLM-generated rule ' +
+      'should be cleaned up for future builds.',
+    deterministicBlocker: true,
+  });
+  return out;
 }
 
 async function locateVisible(page, selector) {
@@ -491,8 +1468,12 @@ async function evaluateStepState(page, stepId) {
       activeStepJsonHintNodeCount: active ? active.querySelectorAll('[class*="json"], [id*="json"], [data-testid*="json"]').length : 0,
       slideRootInlineStyleHasFixedSize: /\b(?:width|height|min-width|min-height|max-width|max-height)\s*:\s*\d+px\b/i.test(slideInlineStyle),
       slideRootComputedWidth: slideRootStyle ? parseFloat(slideRootStyle.width || '0') : 0,
+      slideRootComputedHeight: slideRootStyle ? parseFloat(slideRootStyle.height || '0') : 0,
+      slideRootRenderedWidth: slideRootRect ? slideRootRect.width : 0,
+      slideRootRenderedHeight: slideRootRect ? slideRootRect.height : 0,
       slideRootOffsetLeft: slideRootRect ? slideRootRect.left : 0,
       viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
+      viewportHeight: window.innerHeight || document.documentElement.clientHeight || 0,
       activeSlideHasTable: Boolean(slideTable),
       slideTableWidth: slideTableRect ? slideTableRect.width : 0,
       slideBodyBorderWidth: slideBodyStyle ? parseFloat(slideBodyStyle.borderTopWidth || '0') : 0,
@@ -635,11 +1616,26 @@ function evaluateApiStoryAlignment(step) {
       label: 'income-insights context',
     },
     {
+      key: 'lendScore',
+      storyPattern: /\blendscore|lend[\s_-]?score|scores\.lend_score|12-month default|reason_codes|pcs\d{4}\b/i,
+      endpointPattern: /lend[_\s-]?score/,
+      responseHints: ['lend_score', 'reason_codes', 'score_range', 'model_status', 'decision_hint'],
+      label: 'lend-score context',
+    },
+    {
+      key: 'networkInsights',
+      storyPattern: /\bnetwork insights|network_insights|network_attributes|plaid_conn_user_/i,
+      endpointPattern: /network[_\s-]?insights/,
+      responseHints: ['network_attributes', 'network_insight', 'items', 'report_id'],
+      label: 'network-insights context',
+    },
+    {
       key: 'baseReport',
       // Removed "ownership" — it is also a core Identity Match term and was
       // producing false positives on non-CRA demos (see audit 2026-04-18).
       // Require an explicit CRA/base-report phrase for the story match.
-      storyPattern: /\bbase report|cra base report|consumer report|inflows|outflows|days available|net income\b/i,
+      // Exclude LendScore-only beats: "days available" beside lend_score/get is common.
+      storyPattern: /\bbase report|cra base report|consumer report|inflows|outflows|net income\b/i,
       endpointPattern: /base[_\s-]?report/,
       responseHints: ['accounts', 'balances', 'ownership', 'inflows', 'outflows', 'days_available'],
       label: 'base-report context',
@@ -1186,6 +2182,7 @@ function inferQaPhase(diag) {
 
 function isDeterministicBlocker(diag) {
   if (!diag || typeof diag !== 'object') return false;
+  if (diag.deterministicBlocker === true) return true;
   if (diag.severity !== 'critical') return false;
   const category = String(diag.category || '').trim();
   if (!category) return false;
@@ -1527,7 +2524,8 @@ async function prepareGlobalJsonRailForBuildQa(page, stepId) {
   }, stepId);
 }
 
-function buildStepAssertions(step, state, demoScript) {
+function buildStepAssertions(step, state, demoScript, opts = {}) {
+  const isAppOnlyRun = !!opts.isAppOnlyRun;
   const diagnostics = [];
   const expectedStepTestid = `step-${step.id}`;
   const isValueSummarySlide = String(step?.id || '').toLowerCase() === 'value-summary-slide';
@@ -1663,6 +2661,16 @@ function buildStepAssertions(step, state, demoScript) {
       issue: 'Slide root uses fixed pixel sizing (inline width/height).',
       suggestion: 'Use responsive .slide-root sizing per PIPELINE_SLIDE_SHELL_RULES.md; avoid fixed px width/height.',
     });
+  }
+
+  // Canonical slide canvas contract — see `scanSlideCanvasSize()` definition
+  // above for the rule details. Emits up to 3 deterministic-blocker diagnostics
+  // (`slide-canvas-size` category) when a slide doesn't meet the
+  // Google-Slides-class width/height/aspect-ratio contract.
+  // Gated on !isAppOnlyRun — app-only runs use scanAppOnlyNoSlides instead
+  // (which flags any slide DOM as a critical leak).
+  if (!isAppOnlyRun) {
+    for (const d of scanSlideCanvasSize(state, step)) diagnostics.push(d);
   }
   if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {
     diagnostics.push({
@@ -2108,6 +3116,20 @@ async function main(opts = {}) {
     ? !!opts.mobileVisualEnabled
     : MOBILE_VISUAL_ENABLED;
 
+  // Resolve buildMode from run-manifest (authoritative). Used to gate slide-tier
+  // scanners + activate the app-only invariant scanner. Falls back to demo-script
+  // step inspection if manifest is missing (legacy runs).
+  const runManifestForMode = readRunManifest(OUT_DIR);
+  let resolvedBuildMode = runManifestForMode && typeof runManifestForMode.buildMode === 'string'
+    ? String(runManifestForMode.buildMode).toLowerCase().trim()
+    : '';
+  if (resolvedBuildMode !== 'app-only' && resolvedBuildMode !== 'app+slides') {
+    const hasSlideSteps = Array.isArray(demoScript.steps)
+      && demoScript.steps.some((s) => s && (s.stepKind === 'slide' || s.sceneType === 'slide'));
+    resolvedBuildMode = hasSlideSteps ? 'app+slides' : 'app-only';
+  }
+  const isAppOnlyRun = resolvedBuildMode === 'app-only';
+
   const server = await startServer(3739, SCRATCH_DIR);
   const url    = server.url;
   console.log(`[build-qa] Serving app at ${url}`);
@@ -2163,6 +3185,19 @@ async function main(opts = {}) {
     }
     diagnostics.push(...scanDuplicateBankMarks(html, demoScript));
     diagnostics.push(...scanMissingBrandLogo(html, demoScript));
+    diagnostics.push(...scanRenderjsonDisclosureStyling(html));
+    // Slide-design scanners are gated on buildMode === 'app+slides'.
+    // On app-only runs we instead run scanAppOnlyNoSlides, which asserts
+    // zero slide artifacts (any leak is a critical blocker).
+    if (!isAppOnlyRun) {
+      diagnostics.push(...scanSlideDesignSystem(html, demoScript));
+      // Narration-vs-rendered concrete-values drift scanner. Fires only on
+      // app+slides; catches LLM hallucinated claims before recording.
+      diagnostics.push(...scanSlideNarrationConcreteValues(html, demoScript, resolvedBuildMode));
+    } else {
+      diagnostics.push(...scanAppOnlyNoSlides(html, demoScript, resolvedBuildMode));
+    }
+    diagnostics.push(...scanCraHostUnderwritingContracts(html, demoScript));
   } catch (_) {}
 
   // Sanity guard: ensure the loaded page actually contains the expected step containers.
@@ -2213,9 +3248,9 @@ async function main(opts = {}) {
 
   const rowsAll = playwrightScript.steps || [];
   const stepScopeRaw = String(opts.stepScope || process.env.BUILD_QA_STEP_SCOPE || 'all').trim().toLowerCase();
-  const stepScope = stepScopeRaw === 'slides' ? 'slides' : 'all';
+  const stepScope = (stepScopeRaw === 'slides' || stepScopeRaw === 'app') ? stepScopeRaw : 'all';
   CURRENT_BUILD_QA_STEP_SCOPE = stepScope;
-  if (stepScopeRaw !== 'all' && stepScopeRaw !== 'slides') {
+  if (stepScopeRaw !== 'all' && stepScopeRaw !== 'slides' && stepScopeRaw !== 'app') {
     console.warn(`[build-qa] Unknown BUILD_QA_STEP_SCOPE="${stepScopeRaw}" — defaulting to "all"`);
   }
   const slideStepIds = new Set(
@@ -2224,21 +3259,31 @@ async function main(opts = {}) {
       .map((step) => step.id)
       .filter(Boolean)
   );
-  let rows = stepScope === 'slides'
-    ? rowsAll.filter((row) => slideStepIds.has(row.stepId || row.id))
-    : rowsAll;
-  if (stepScope === 'slides' && rows.length === 0) {
-    console.warn('[build-qa] BUILD_QA_STEP_SCOPE=slides yielded zero rows — falling back to full walkthrough');
+  // Tier-scoped row filter — 'slides' keeps slide steps only, 'app' keeps
+  // non-slide steps only, 'all' keeps everything. Slide-scoped QA is used by
+  // the slide-fix lane; app-scoped QA is used by the app-touchup lane.
+  let rows;
+  if (stepScope === 'slides') {
+    rows = rowsAll.filter((row) => slideStepIds.has(row.stepId || row.id));
+  } else if (stepScope === 'app') {
+    rows = rowsAll.filter((row) => !slideStepIds.has(row.stepId || row.id));
+  } else {
+    rows = rowsAll;
+  }
+  if ((stepScope === 'slides' || stepScope === 'app') && rows.length === 0) {
+    console.warn(`[build-qa] BUILD_QA_STEP_SCOPE=${stepScope} yielded zero rows — falling back to full walkthrough`);
     rows = rowsAll;
   }
   const qaTargetStepIds =
     stepScope === 'slides'
       ? demoStepIds.filter((id) => slideStepIds.has(id))
-      : demoStepIds.slice();
+      : stepScope === 'app'
+        ? demoStepIds.filter((id) => !slideStepIds.has(id))
+        : demoStepIds.slice();
   const effectiveQaTargetStepIds = qaTargetStepIds.length > 0 ? qaTargetStepIds : demoStepIds;
   console.log(
     `[build-qa] Walking ${rows.length} playwright row(s)...` +
-    (stepScope === 'slides' ? ` (scope=slides, totalRows=${rowsAll.length})` : '') +
+    (stepScope !== 'all' ? ` (scope=${stepScope}, totalRows=${rowsAll.length})` : '') +
     ` [plaidMode=${plaidQaMode}]`
   );
   const launchStepId = getPlaidLaunchStepId(demoScript);
@@ -2454,7 +3499,7 @@ async function main(opts = {}) {
         if (htmlPanelTogglePresent && !state.apiPanelChromeTriplet) {
           state.apiPanelChromeTriplet = true;
         }
-        diagnostics.push(...buildStepAssertions(step, state, demoScript));
+        diagnostics.push(...buildStepAssertions(step, state, demoScript, { isAppOnlyRun }));
         if (step.apiResponse?.response && state.apiPanelExists) {
           // JSON should be visible whenever panel is visible; no toggle-behavior checks.
         }
@@ -2990,6 +4035,60 @@ async function main(opts = {}) {
     console.warn(`[build-qa] Could not write sync-health-report: ${err.message}`);
   }
 
+  // ── Tier-aware summary ────────────────────────────────────────────────────
+  // After all guardrails have settled report.passed / overrideReason / scores,
+  // stamp an `app` vs `slide` tier breakdown + a `recommendedRecovery` hint on
+  // the report. This is the single signal the orchestrator + stage-state read
+  // to decide whether to route to `slide-fix`, `app-touchup`, or `fullbuild`
+  // instead of full `build-app` regeneration.
+  try {
+    if (report) {
+      delete require.cache[require.resolve('../utils/qa-tier-summary')];
+      const { computeTierSummary } = require('../utils/qa-tier-summary');
+      const tier = computeTierSummary(report, demoScript, { runDir: OUT_DIR });
+      report.buildMode = tier.buildMode;
+      report.tierSummary = tier.tierSummary;
+      report.recommendedRecovery = tier.recommendedRecovery;
+      report.systemicReasons = tier.systemicReasons;
+      const outPath = path.join(OUT_DIR, 'qa-report-build.json');
+      fs.writeFileSync(outPath, JSON.stringify(report, null, 2));
+
+      // Drift checkpoint: after a passing QA, hash each step block in the
+      // scratch-app HTML so downstream stages (record, voiceover, sync) can
+      // detect any drift since QA blessed the HTML. On app-only runs the
+      // slide-tier entries are omitted entirely by the hash utility.
+      if (report.passed === true) {
+        try {
+          delete require.cache[require.resolve('../utils/slide-content-hash')];
+          const { computeHashesForRun } = require('../utils/slide-content-hash');
+          const summary = computeHashesForRun(OUT_DIR, { source: 'build-qa', userModifiedSinceQa: false });
+          appendPipelineLogJson('[BUILD-QA] slide-content-hash baseline', summary, { runDir: OUT_DIR });
+        } catch (hashErr) {
+          console.warn(`[build-qa] slide-content-hash baseline skipped: ${hashErr.message}`);
+        }
+      }
+
+      appendPipelineLogJson('[BUILD-QA] Tier summary', {
+        buildMode: tier.buildMode,
+        app: {
+          passed: tier.tierSummary.app.passed,
+          minScore: tier.tierSummary.app.minScore,
+          failingStepIds: tier.tierSummary.app.failingStepIds,
+        },
+        slide: {
+          passed: tier.tierSummary.slide.passed,
+          skipped: tier.tierSummary.slide.skipped,
+          minScore: tier.tierSummary.slide.minScore,
+          failingStepIds: tier.tierSummary.slide.failingStepIds,
+        },
+        recommendedRecovery: tier.recommendedRecovery,
+        systemicReasons: tier.systemicReasons,
+      }, { runDir: OUT_DIR });
+    }
+  } catch (err) {
+    console.warn(`[build-qa] Could not write tier summary: ${err.message}`);
+  }
+
   const strict = process.env.BUILD_QA_STRICT === 'true' || process.env.BUILD_QA_STRICT === '1';
   if (strict && report && !report.passed) {
     console.error('[build-qa] BUILD_QA_STRICT: QA did not pass threshold');
@@ -3039,6 +4138,26 @@ module.exports = {
   resolveInitialStepId,
   ensureInitialStepVisible,
   hasVisibleActiveStep,
+  scanRenderjsonDisclosureStyling,
+  scanSlideDesignTokens,
+  scanSlideShellChrome,
+  scanSlideTypographyFloor,
+  scanSlideTypographyCeiling,
+  scanSlideCanvasSize,
+  scanSlideHeadlineItalicAccent,
+  scanSlideMintOveruse,
+  scanSlideInlineBlockLayout,
+  scanSlideBackgroundRhythm,
+  scanSlideInventedColors,
+  scanSlideDesignSystem,
+  scanAppOnlyNoSlides,
+  scanSlideNarrationConcreteValues,
+  scanCraHostUnderwritingContracts,
+  scanSlidePlaidLogoAuthenticity,
+  extractStepHtmlBlocks,
+  extractSlideStepHtmlBlocks,
+  isCanonicalSlidePlaidLogoSrc,
+  CANONICAL_SLIDE_PLAID_LOGO_SRC,
 };
 
 if (require.main === module) {

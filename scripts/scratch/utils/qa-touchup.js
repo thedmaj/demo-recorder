@@ -23,6 +23,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const { isSlideStep } = require('./step-kind');
+
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 
 // Categories that the orchestrator treats as "shared chrome" — i.e. issues
@@ -118,7 +120,7 @@ function extractFailingSteps(qaReport, opts = {}) {
     raw = [];
   }
 
-  return raw
+  let out = raw
     .filter((s) => s && s.stepId)
     .map((s) => ({
       stepId: String(s.stepId),
@@ -128,6 +130,20 @@ function extractFailingSteps(qaReport, opts = {}) {
       categories: Array.isArray(s.categories) ? s.categories.map(String) : [],
       critical: !!s.critical,
     }));
+
+  // Optional tier filter — when callers (app-touchup, slide-fix) want only
+  // `stepKind === 'app'` or `stepKind === 'slide'` failures, classify each
+  // failing step against the provided demo-script and drop the rest.
+  const tier = String(opts.tierFilter || '').toLowerCase().trim();
+  if ((tier === 'app' || tier === 'slide') && opts.demoScript) {
+    const stepKindById = new Map();
+    for (const s of (opts.demoScript.steps || [])) {
+      if (s && s.id) stepKindById.set(String(s.id), isSlideStep(s) ? 'slide' : 'app');
+    }
+    out = out.filter((row) => (stepKindById.get(row.stepId) || 'app') === tier);
+  }
+
+  return out;
 }
 
 // ─── 3) Frame-path resolver (handles BOTH naming conventions) ───────────────
@@ -311,14 +327,25 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
   const qa = readQaReportForRun(runDir);
   if (!qa) throw new Error('qa-touchup: no QA report found (qa-report-build.json or qa-report-N.json)');
 
-  const failing = extractFailingSteps(qa.report);
-  const systemic = analyzeSystemicSignals(qa.report);
-
   const artifacts = resolveBuildArtifacts(runDir);
   if (!artifacts) throw new Error('qa-touchup: no scratch-app build found — build the demo before running touchup');
   const html = safeRead(artifacts.htmlPath);
   const playwright = safeReadJson(artifacts.playwrightPath) || {};
   const demoScript = safeReadJson(path.join(runDir, 'demo-script.json')) || {};
+
+  // Tier-aware failing-step extraction. When the caller (app-touchup /
+  // slide-fix lane) restricts to a single tier we hand demoScript through so
+  // `extractFailingSteps` can use stepKind for classification.
+  const tierFilter = String(opts.tierFilter || '').toLowerCase().trim();
+  const failing = extractFailingSteps(qa.report, {
+    passThreshold: opts.passThreshold,
+    tierFilter,
+    demoScript,
+  });
+  // Systemic signals are computed across the full report regardless of tier
+  // filter — they are the orchestrator's "should we escalate to fullbuild?"
+  // signals, not "should we edit this step?".
+  const systemic = analyzeSystemicSignals(qa.report);
 
   // Per-step blocks: html chunk + playwright row + frame paths.
   const stepBlocks = failing.map((s) => {
@@ -335,8 +362,16 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
   // ── Markdown assembly ────────────────────────────────────────────────────
   const passThreshold = Number(qa.report.passThreshold) || 80;
   const overallScore = Number(qa.report.overallScore);
-  const buildMode = demoScript.buildMode || 'app-only';
+  const buildMode = qa.report.buildMode || demoScript.buildMode || 'app-only';
   const plaidLinkMode = demoScript.plaidLinkMode || 'modal';
+  const tierLabel =
+    tierFilter === 'slide' ? 'slide-fix (slides tier only)' :
+    tierFilter === 'app'   ? 'app-touchup (app tier only)'   :
+    'general qa-touchup (all tiers)';
+  const taskTitle =
+    tierFilter === 'slide' ? 'Slide-fix task' :
+    tierFilter === 'app'   ? 'App-touchup task' :
+    'QA touchup task';
 
   const introHowToUse = opts.orchestratorDriven
     ? `> **How to use:** the orchestrator is paused on a continue-gate waiting for you. Stay in Agent ` +
@@ -347,23 +382,42 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
       `they re-verify with \`npm run pipe -- stage build-qa ${runId}\`.\n\n`;
 
   let promptMarkdown =
-    `# QA touchup task — ${runId}\n\n` +
+    `# ${taskTitle} — ${runId}\n\n` +
     `> **What this is:** an agent-ready prompt ${opts.orchestratorDriven ? 'emitted by the orchestrator\'s build-qa refinement loop' : 'produced by `npm run pipe -- qa-touchup ' + runId + '`'}. ` +
     `It lets you (the AI agent in Cursor or Claude Code, Agent mode) make surgical, single-step edits to ` +
     `\`scratch-app/index.html\` and \`scratch-app/playwright-script.json\` based on the most recent QA ` +
     `findings — without regenerating the whole app like the LLM-driven ` +
     `\`--build-fix-mode=touchup\` path does.\n\n` +
+    `> **Tier scope:** ${tierLabel}. Edits MUST stay within this tier ` +
+    `(${tierFilter === 'slide' ? '`.slide-root` blocks' : tierFilter === 'app' ? 'non-slide step blocks' : 'either tier'}) — ` +
+    `the passing tier is **frozen**.\n\n` +
     introHowToUse +
     `---\n\n` +
     `## QA SUMMARY\n\n` +
     `- **Run id:** \`${runId}\`\n` +
-    `- **Build mode:** \`${buildMode}\`  ·  **Plaid Link mode:** \`${plaidLinkMode}\`\n` +
+    `- **Build mode:** \`${buildMode}\`  ·  **Plaid Link mode:** \`${plaidLinkMode}\`  ·  **Tier filter:** \`${tierFilter || 'all'}\`\n` +
     `- **QA report:** \`${path.relative(runDir, qa.path)}\`  (source: \`${qa.report.qaSource || 'unknown'}\`, iteration: \`${qa.report.iteration ?? 'n/a'}\`)\n` +
     `- **Overall score / threshold:** ${Number.isFinite(overallScore) ? overallScore : '?'} / ${passThreshold}\n` +
     `- **Vision passed:** ${qa.report.visionThresholdPassed ? 'yes' : 'no'}  ·  ` +
     `**Deterministic passed:** ${qa.report.deterministicPassed === false ? 'no' : 'yes'}\n` +
-    `- **Failing steps:** ${failing.length} (${systemic.distinctFailingSteps} distinct)\n` +
+    `- **Failing steps (this tier):** ${failing.length}` +
+    (tierFilter ? `  ·  **Total distinct failing across report:** ${systemic.distinctFailingSteps}\n` : ` (${systemic.distinctFailingSteps} distinct)\n`) +
     `- **Build artifacts:** \`${path.relative(runDir, artifacts.htmlPath)}\` + \`${path.relative(runDir, artifacts.playwrightPath)}\`\n\n`;
+
+  // Tier-aware recovery hint — when the QA report carries a tierSummary,
+  // surface it so the agent knows which tier passed and is frozen.
+  if (qa.report.tierSummary) {
+    const ts = qa.report.tierSummary;
+    promptMarkdown +=
+      `**Tier summary from QA report:**\n\n` +
+      `- app:   passed=${!!ts.app.passed} · failingStepIds=[${(ts.app.failingStepIds || []).join(', ')}] · minScore=${ts.app.minScore ?? '?'}\n` +
+      `- slide: passed=${!!ts.slide.passed}` +
+      (ts.slide.skipped ? ' (skipped — app-only run)' : '') +
+      ` · failingStepIds=[${(ts.slide.failingStepIds || []).join(', ')}] · minScore=${ts.slide.minScore ?? '?'}\n` +
+      (qa.report.recommendedRecovery
+        ? `- recommendedRecovery: \`${qa.report.recommendedRecovery}\`\n\n`
+        : `\n`);
+  }
 
   // ── Systemic escalation gate ────────────────────────────────────────────
   // The standalone `pipe qa-touchup` command keeps this gate so manual users
@@ -410,6 +464,20 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
   }
 
   // ── Required reading + contracts ────────────────────────────────────────
+  const tierContract =
+    tierFilter === 'slide'
+      ? `- **Tier scope = slide.** Only edit \`<div data-testid="step-<id>">\` blocks that contain ` +
+        `\`<div class="slide-root">\` (and shared slide CSS in \`<head>\`). **Do NOT edit any non-slide step block** ` +
+        `— the app tier passed build-qa and is frozen.\n` +
+        `- **Prefer the slide-fix lane** (\`pipe slide-fix <RUN_ID>\` runs strip + \`post-slides --steps=…\` + ` +
+        `\`post-panels\`) over hand-editing template structure. Use \`StrReplace\` only for copy / spacing / ` +
+        `clipping issues that survived the deterministic pass.\n`
+      : tierFilter === 'app'
+        ? `- **Tier scope = app.** Only edit \`<div data-testid="step-<id>">\` blocks that are NOT slides ` +
+          `(no \`.slide-root\` inside) and shared host CSS / JS in \`<head>\`. **Do NOT edit any ` +
+          `\`.slide-root\` block** — the slide tier passed (or was skipped on app-only) and is frozen.\n`
+        : '';
+
   promptMarkdown +=
     `---\n\n` +
     `## REQUIRED READING (do this before any edits)\n\n` +
@@ -420,6 +488,7 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
     `4. The per-step screenshots listed below — use the \`Read\` tool against the file path; the agent client renders them as images.\n\n` +
     `---\n\n` +
     `## EDITING CONTRACT (read carefully — these are guard-rails)\n\n` +
+    tierContract +
     `- **One step at a time.** For each failing step in the next section, edit ONLY the \`<div data-testid="step-<id>">…</div>\` block ` +
     `for that step. Use \`StrReplace\` with enough surrounding context to be uniquely match within the file.\n` +
     `- **Do NOT touch \`demo-script.json\`** — it's the source of truth and is consumed by other stages. ` +
@@ -430,7 +499,9 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
     `- **Honor APP-ONLY HOST POLICY when buildMode is \`app-only\`:** no Plaid product names / score grids / ` +
     `"Powered by Plaid" attribution / raw API field values on host frames. Slide-kind frames are unaffected.\n` +
     `- **Frame budget:** if a step's HTML chunk shows \`<!-- truncated for prompt budget -->\`, open the file ` +
-    `with \`Read\` to see the rest before editing.\n\n` +
+    `with \`Read\` to see the rest before editing.\n` +
+    `- **No \`build-app\` calls.** Never recommend \`npm run pipe -- resume --from=build\` or ` +
+    `\`--build-fix-mode=touchup\` from inside this task — those regenerate the entire \`index.html\`.\n\n` +
     `---\n\n` +
     `## FAILING STEPS (in QA-report order — fix each before moving on)\n\n`;
 
@@ -451,18 +522,30 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
   // build-qa explicitly.
   const finalCommand = opts.orchestratorDriven
     ? `npm run pipe -- continue ${runId}`
-    : `npm run pipe -- stage build-qa ${runId}`;
+    : tierFilter === 'slide'
+      ? `BUILD_QA_STEP_SCOPE=slides npm run pipe -- stage build-qa ${runId}`
+      : tierFilter === 'app'
+        ? `BUILD_QA_STEP_SCOPE=app npm run pipe -- stage build-qa ${runId}`
+        : `npm run pipe -- stage build-qa ${runId}`;
   const finalContextLine = opts.orchestratorDriven
     ? `The orchestrator is **paused on a continue-gate** waiting for you. Run the command below to ` +
       `release it; the orchestrator will then re-run build-qa automatically and either pass the run or ` +
       `loop back here for another iteration (max 3 by default).`
     : `Run a re-QA so the score gets recomputed:`;
 
+  const tierVerifyLine =
+    tierFilter === 'slide'
+      ? `- [ ] **No non-slide step block was modified.** \`.slide-root\` blocks only.\n`
+      : tierFilter === 'app'
+        ? `- [ ] **No \`.slide-root\` block was modified.** App tier only.\n`
+        : '';
+
   promptMarkdown +=
     `---\n\n` +
     `## VERIFICATION CHECKLIST (run before reporting completion)\n\n` +
     `- [ ] Every failing step listed above has been edited (or explicitly skipped with a reason).\n` +
     `- [ ] No \`<div data-testid="step-...">\` block was modified other than the failing ones.\n` +
+    tierVerifyLine +
     `- [ ] \`playwright-script.json\` rows still cover every step in \`demo-script.json\` (count match).\n` +
     `- [ ] On \`buildMode=app-only\` runs: no Plaid product names / score grids / "Powered by Plaid" added or kept.\n` +
     `- [ ] If you also edited the legacy mirror (\`<run>/scratch-app/index.html\`), keep it in sync with \`artifacts/build/scratch-app/index.html\`.\n\n` +
@@ -477,6 +560,8 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
 
   const summary = {
     runId,
+    buildMode,
+    tierFilter: tierFilter || null,
     qaReportPath: qa.path,
     overallScore: Number.isFinite(overallScore) ? overallScore : null,
     passThreshold,

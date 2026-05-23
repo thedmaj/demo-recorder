@@ -142,6 +142,7 @@ const PIPELINE_STAGES = [
   'embed-script-validate',
   /* 'plaid-link-capture', */ 'build', 'plaid-link-qa', 'build-qa',
   'post-slides', 'post-panels',
+  'app-touchup', 'slide-fix',
   'record', 'qa', 'figma-review', 'post-process',
   'voiceover', 'coverage-check', 'auto-gap', 'resync-audio', 'embed-sync', 'audio-qa',
   'ai-suggest-overlays', 'render', 'ppt', 'touchup',
@@ -2216,6 +2217,117 @@ app.post('/api/config/prompt', (req, res) => {
   }
 });
 
+// ── Storyboard editor mutation tracking (drift checkpoint integration) ───────
+//
+// Every storyboard mutation that touches `scratch-app/index.html` or any
+// step that affects the recorded baseline must:
+//   1. Recompute `slide-content-hash.json` with `source: 'storyboard-edit'`
+//      and `userModifiedSinceQa: true` for the affected step ids
+//   2. Append a row to `editor-mutation-log.json` so:
+//        - The dashboard can show staleness banners
+//        - `stage-state.nextRecoveryCommand` can advise re-running QA / record
+//
+// The freeze sentinel (`post-record-freeze.sentinel`) only BLOCKS automated
+// re-runs. Editor mutations are always allowed; they just leave a trail of
+// staleness flags that downstream stages observe.
+
+const EDITOR_MUTATION_LOG_FILE = 'editor-mutation-log.json';
+
+function appendEditorMutationEntry(runDir, entry) {
+  if (!runDir || !entry || typeof entry !== 'object') return null;
+  const logPath = path.join(runDir, EDITOR_MUTATION_LOG_FILE);
+  let log = { schemaVersion: 1, entries: [] };
+  try {
+    if (fs.existsSync(logPath)) {
+      const raw = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+      if (raw && typeof raw === 'object') {
+        log = {
+          schemaVersion: 1,
+          entries: Array.isArray(raw.entries) ? raw.entries : [],
+        };
+      }
+    }
+  } catch (_) { /* fall through with empty log */ }
+  log.entries.push({
+    at: new Date().toISOString(),
+    ...entry,
+  });
+  try {
+    const tmp = logPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(log, null, 2), 'utf8');
+    fs.renameSync(tmp, logPath);
+  } catch (err) {
+    console.warn(`[editor-mutation-log] Could not write ${logPath}: ${err.message}`);
+  }
+  return log;
+}
+
+/**
+ * Record a storyboard editor mutation:
+ *   - recompute slide-content-hash with source='storyboard-edit'
+ *   - append to editor-mutation-log.json with staleness flags
+ *
+ * The flags surface in the dashboard staleness banners:
+ *   - `voiceoverStale: true`  → narration changed → voiceover needs re-running
+ *   - `recordingStale: true`  → structural change after record → recording needs redoing
+ *
+ * @param {string} runDir
+ * @param {object} opts
+ * @param {string} opts.endpoint        e.g. '/script', '/insert-library-slide'
+ * @param {string[]} opts.affectedStepIds
+ * @param {boolean} [opts.voiceoverStale=false]  narration changed?
+ * @param {boolean} [opts.recordingStale=false]  structural mutation post-record?
+ * @param {object} [opts.details]       per-endpoint context (for debugging)
+ */
+function recordEditorMutation(runDir, opts) {
+  if (!runDir) return null;
+  const endpoint = opts && opts.endpoint ? String(opts.endpoint) : 'unknown';
+  const affectedStepIds = Array.isArray(opts && opts.affectedStepIds)
+    ? opts.affectedStepIds.filter(Boolean)
+    : [];
+  const voiceoverStale = !!(opts && opts.voiceoverStale);
+  const recordingStale = !!(opts && opts.recordingStale);
+
+  // Recompute hashes if scratch-app/index.html exists. Best-effort — never
+  // fail the editor endpoint if hashing has a problem.
+  let hashResult = null;
+  try {
+    const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+    if (fs.existsSync(htmlPath)) {
+      delete require.cache[require.resolve('../scratch/utils/slide-content-hash')];
+      const { computeHashesForRun } = require('../scratch/utils/slide-content-hash');
+      hashResult = computeHashesForRun(runDir, {
+        source: 'storyboard-edit',
+        userModifiedSinceQa: true,
+        affectedStepIds,
+      });
+    }
+  } catch (err) {
+    console.warn(`[editor-mutation] slide-content-hash recompute skipped: ${err.message}`);
+  }
+
+  // Detect post-record state. If recording.webm exists, structural edits
+  // imply the recording is stale. The endpoint caller may override this if
+  // they have endpoint-specific knowledge (e.g. narration edit always sets
+  // voiceoverStale, structural edits always set recordingStale).
+  const recordingPath = path.join(runDir, 'recording.webm');
+  const hasRecording = fs.existsSync(recordingPath);
+
+  return appendEditorMutationEntry(runDir, {
+    endpoint,
+    affectedStepIds,
+    voiceoverStale,
+    recordingStale: recordingStale && hasRecording,
+    postRecord: hasRecording,
+    details: (opts && opts.details) || null,
+    hashSummary: hashResult ? {
+      stepCount: hashResult.stepCount,
+      slideCount: hashResult.slideCount,
+      appCount: hashResult.appCount,
+    } : null,
+  });
+}
+
 // ── Storyboard narration editing ──────────────────────────────────────────────
 
 function injectNarrationStoreIntoHtml(html, steps) {
@@ -2423,7 +2535,82 @@ app.post('/api/runs/:runId/script', (req, res) => {
       syncAdjust = { updated: false, reason: 'sync-adjust-failed' };
     }
 
+    // Narration edit: voiceover is now stale for this step. Recording is NOT
+    // stale (the visuals haven't changed) — only the audio track needs to
+    // be regenerated.
+    recordEditorMutation(dir, {
+      endpoint: '/script',
+      affectedStepIds: [stepId],
+      voiceoverStale: true,
+      recordingStale: false,
+      details: { wordCount, syncAdjust },
+    });
+
     res.json({ ok: true, wordCount, syncAdjust });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/runs/:runId/staleness
+ *
+ * Returns the dashboard-banner-ready summary of how the editor has mutated
+ * this run since the last QA and recording baselines:
+ *
+ *   {
+ *     ok: true,
+ *     hasEditorMutations: true | false,
+ *     qaStale: boolean,          // slide-content-hash flagged userModifiedSinceQa anywhere
+ *     voiceoverStale: boolean,   // any mutation flagged voiceoverStale
+ *     recordingStale: boolean,   // any mutation flagged recordingStale (post-record)
+ *     userModifiedStepIds: string[],
+ *     mostRecentMutation: { at, endpoint, affectedStepIds } | null,
+ *     postRecordSentinelExists: boolean,
+ *     recommendedRecovery: 'pipe stage build-qa' | 'pipe stage record' | 'pipe stage voiceover' | null,
+ *   }
+ */
+app.get('/api/runs/:runId/staleness', (req, res) => {
+  try {
+    const dir = getRunDir(req.params.runId);
+    const hashFile = path.join(dir, 'slide-content-hash.json');
+    const logFile = path.join(dir, EDITOR_MUTATION_LOG_FILE);
+    const freezeSentinel = path.join(dir, 'post-record-freeze.sentinel');
+
+    const hash = fs.existsSync(hashFile) ? safeReadJson(hashFile) : null;
+    const log = fs.existsSync(logFile) ? safeReadJson(logFile) : null;
+    const entries = (log && Array.isArray(log.entries)) ? log.entries : [];
+
+    const userModifiedStepIds = hash && hash.steps
+      ? Object.entries(hash.steps).filter(([, v]) => v && v.userModifiedSinceQa).map(([id]) => id)
+      : [];
+    const qaStale = userModifiedStepIds.length > 0;
+    const voiceoverStale = entries.some((e) => e && e.voiceoverStale === true);
+    const recordingStale = entries.some((e) => e && e.recordingStale === true);
+    const mostRecent = entries.length > 0 ? entries[entries.length - 1] : null;
+
+    // Recovery hint priority: record-stale wins (must re-record before any
+    // sync/audio work makes sense). Then voiceover. Then QA.
+    let recommendedRecovery = null;
+    if (recordingStale) recommendedRecovery = 'pipe stage record';
+    else if (voiceoverStale) recommendedRecovery = 'pipe stage voiceover';
+    else if (qaStale) recommendedRecovery = 'pipe stage build-qa';
+
+    res.json({
+      ok: true,
+      hasEditorMutations: entries.length > 0,
+      qaStale,
+      voiceoverStale,
+      recordingStale,
+      userModifiedStepIds,
+      mostRecentMutation: mostRecent ? {
+        at: mostRecent.at,
+        endpoint: mostRecent.endpoint,
+        affectedStepIds: mostRecent.affectedStepIds || [],
+      } : null,
+      postRecordSentinelExists: fs.existsSync(freezeSentinel),
+      recommendedRecovery,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2514,11 +2701,30 @@ app.post('/api/runs/:runId/reorder-steps', (req, res) => {
     const missing = stepIds.filter(id => !byId[id]);
     if (missing.length > 0) return res.status(400).json({ error: `Unknown step IDs: ${missing.join(', ')}` });
 
+    // Identify reordered steps (those whose position changed) so we flag
+    // only them as user-modified. Unchanged neighbors keep their prior
+    // hash baseline.
+    const priorIds = (script.steps || []).map((s) => s && s.id).filter(Boolean);
+    const reorderedIds = stepIds.filter((id, idx) => priorIds[idx] !== id);
+
     script.steps = stepIds.map(id => byId[id]);
 
     const tmpPath = scriptPath + '.tmp';
     fs.writeFileSync(tmpPath, JSON.stringify(script, null, 2), 'utf8');
     fs.renameSync(tmpPath, scriptPath);
+
+    // Reorder mutates step order in demo-script.json AND can shift step
+    // boundaries in scratch-app/index.html (the regex-based extractor sees
+    // adjacent steps' content as part of the boundary). Recording is stale
+    // if anything moved; voiceover is unaffected (narration is per-step,
+    // not positional).
+    recordEditorMutation(dir, {
+      endpoint: '/reorder-steps',
+      affectedStepIds: reorderedIds,
+      voiceoverStale: false,
+      recordingStale: reorderedIds.length > 0,
+      details: { reorderedCount: reorderedIds.length, totalSteps: script.steps.length },
+    });
 
     res.json({ ok: true, stepCount: script.steps.length });
   } catch (err) {
@@ -2896,6 +3102,10 @@ app.get('/api/pipeline/status', (req, res) => {
     runId: running ? activePipelineRunId : (cliActive ? cliActive.runId : null),
     runningStage: cliActive ? cliActive.runningStage : null,
     awaitingContinue: cliActive ? cliActive.awaitingContinue : false,
+    lastHeartbeatAt: cliActive ? cliActive.lastHeartbeatAt : null,
+    lastHeartbeatAgeSec: cliActive ? cliActive.lastHeartbeatAgeSec : null,
+    heartbeatStale: cliActive ? cliActive.heartbeatStale : false,
+    heartbeatIntervalMs: cliActive ? cliActive.heartbeatIntervalMs : null,
     writesEnabled: DASHBOARD_WRITE_ENABLED,
   });
 });
@@ -3468,6 +3678,23 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
       console.log(`[SlideLibrary] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
     }
 
+    // Insert is a structural mutation: it changes both demo-script.json AND
+    // (when spliced) the scratch-app HTML. Recording is stale if recording
+    // exists. Voiceover is stale for the new step (its narration didn't
+    // exist before).
+    recordEditorMutation(dir, {
+      endpoint: '/insert-library-slide',
+      affectedStepIds: [nextStepId, insertAfterId].filter(Boolean),
+      voiceoverStale: true,
+      recordingStale: true,
+      details: {
+        slideId: slide.id,
+        sceneType,
+        spliced: !!spliceResult.applied,
+        spliceReason: spliceResult.applied ? spliceResult.reason : (spliceResult.skippedReason || spliceResult.reason || null),
+      },
+    });
+
     res.json({
       ok: true,
       step: nextStep,
@@ -3589,6 +3816,23 @@ app.post('/api/runs/:runId/remove-step', (req, res) => {
     // Invalidate the AI-edit cache so subsequent /ai-edit calls re-parse
     // the new HTML (and don't operate on stale step blobs).
     try { _appCache.delete(runId); } catch (_) {}
+
+    // Removal mutates both demo-script.json and scratch-app HTML. The
+    // removed step is gone, so we mark adjacent steps as user-modified
+    // (their step-block boundaries shifted). Recording is stale if recording
+    // exists. Voiceover for the removed step is no longer needed; the
+    // re-runs handle that.
+    recordEditorMutation(dir, {
+      endpoint: '/remove-step',
+      affectedStepIds: [stepId],
+      voiceoverStale: false,
+      recordingStale: true,
+      details: {
+        removedStepKind: kind,
+        playwrightRowsRemoved,
+        htmlFiles: htmlResult.removedFrom.map((p) => path.relative(PROJECT_ROOT, p)),
+      },
+    });
 
     res.json({
       ok: true,

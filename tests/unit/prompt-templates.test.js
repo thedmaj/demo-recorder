@@ -484,7 +484,7 @@ describe('prompt-templates', () => {
     assert.ok(!full.includes('SENTINEL_RULES_MARKER_Abc123'), 'Full slide rules must not leak when host already has slides');
     assert.ok(!full.includes('SENTINEL_SHELL_MARKER_Abc123'), 'Full slide shell must not leak when host already has slides');
     assert.ok(
-      /do\s*not[\s\S]*markdown code fences/i.test(full),
+      /do\s*not[\s\S]*markdown(?: code)? fences/i.test(full),
       'Prompt should forbid fenced output'
     );
   });

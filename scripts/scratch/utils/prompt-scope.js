@@ -424,7 +424,7 @@ function detectProductSlugFromPrompt(promptContent) {
   if (explicit === 'investments') return 'investments';
   if (explicit === 'liabilities') return 'liabilities';
   if (explicit === 'cra_cashflow_insights') return 'cra-cashflow-insights';
-  if (explicit === 'cra_lend_score') return 'cra-base-report';
+  if (explicit === 'cra_lend_score') return 'cra-lend-score';
   if (explicit === 'cra_network_insights') return 'cra-base-report';
   if (explicit === 'cra_partner_insights') return 'cra-base-report';
 

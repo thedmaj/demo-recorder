@@ -46,6 +46,10 @@ const { resolveMode, getLinkModeAdapter } = require('../utils/link-mode');
 const { askPlaidDocs } = require('../utils/mcp-clients');
 const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { isSlideStep: isSlideStepShared, annotateScriptWithStepKinds } = require('../utils/step-kind');
+const {
+  normalizeSlideTypography,
+  injectSlideTypographyOverrides,
+} = require('../utils/normalize-slide-typography');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -2281,72 +2285,21 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
  * Endpoint text is inferred from existing `POST /…` labels already present in the HTML
  * (same strings the insight steps use), so marketing copy on the slide is unchanged.
  */
+/*
+ * RETIRED 2026-05-22 — pre-T1–T11 legacy slide chrome conformance.
+ *
+ * This function used to patch `.slide-header-endpoint`, `.slide-callout`,
+ * `.slide-panel`, etc. — classes from the pre-T1–T11 shell that no current
+ * run uses. Slide layout is now owned by:
+ *   - templates/slide-template/pipeline-slide-contract.css (canvas + cascade)
+ *   - templates/slide-template/slide.css (base design tokens + chrome)
+ *   - The T1–T11 templates LLM-inserted by post-slides
+ *
+ * Kept as a no-op stub so the call site on the slide-root post-processing
+ * path doesn't crash on legacy resumes. Logs a deprecation note in dev.
+ */
 function ensurePipelineSlideShellConformance(html) {
-  if (!html.includes('slide-root')) return html;
-  let out = html;
-
-  if (!out.includes('.slide-header-endpoint{')) {
-    const pillRuleRe = /(\.slide-header-pill\{[^}]+\})/;
-    if (pillRuleRe.test(out)) {
-      out = out.replace(
-        pillRuleRe,
-        '$1.slide-header-endpoint{font-size:13px;font-family:"SF Mono","Fira Code",Consolas,monospace;color:var(--slide-text-tertiary)}'
-      );
-      console.log('[Build] Slide shell: added .slide-header-endpoint to scoped slide CSS');
-    }
-  }
-
-  const calloutShortRe =
-    /\.slide-callout\{background:rgba\(255,255,255,0\.05\);border:1px solid rgba\(0,166,126,0\.28\);border-radius:14px;padding:18px 20px\}/;
-  if (calloutShortRe.test(out) && !/\.slide-callout\{[^}]*align-self/.test(out)) {
-    out = out.replace(
-      calloutShortRe,
-      '.slide-callout{align-self:flex-end;background:rgba(255,255,255,0.05);border:1px solid rgba(0,166,126,0.28);border-radius:14px;padding:18px 20px;min-width:360px}'
-    );
-    console.log('[Build] Slide shell: normalized .slide-callout rule to template');
-  }
-
-  out = out.replace(/\.slide-panel\{([^}]*min-width:)240px([^}]*)\}/, (_, a, b) => `${a}360px${b}`);
-
-  const escapeHtmlText = (s) =>
-    String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-  function inferPostEndpointLineFromHtml(src) {
-    const re = /POST\s\/[a-z0-9_/]+/gi;
-    const seen = new Set();
-    const ordered = [];
-    let m;
-    while ((m = re.exec(src)) !== null) {
-      const norm = m[0].replace(/\s+/g, ' ');
-      const key = norm.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      ordered.push(norm);
-    }
-    return ordered.join('  ·  ').slice(0, 240);
-  }
-
-  out = out.replace(
-    /(<div class="slide-header-pill"[^>]*>[\s\S]*?<\/div>)(\s*)(<\/div>\s*<\/header>)/g,
-    (full, pillClose, gap, headerTail) => {
-      if (full.includes('slide-header-endpoint')) return full;
-      const line = inferPostEndpointLineFromHtml(out);
-      const inner = line
-        ? `<div class="slide-header-endpoint" data-testid="slide-endpoint">${escapeHtmlText(line)}</div>`
-        : '<div class="slide-header-endpoint" data-testid="slide-endpoint"></div>';
-      return `${pillClose}${gap}${inner}${gap}${headerTail}`;
-    }
-  );
-
-  out = out.replace(
-    /(<aside class="slide-callout"[^>]*?)\s+style="[^"]*\balign-self\s*:\s*[^;"]+[^"]*"/gi,
-    '$1'
-  );
-
-  return out;
+  return html;
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -2984,6 +2937,33 @@ async function main(opts = {}) {
     html = html.replace('</body>', `${navPatch}\n</body>`);
     console.log('[Build] Injected fallback goToStep/getCurrentStep contract');
   }
+
+  // 2b. First-step bootstrap (always idempotent). Ensures the first .step is
+  // .active on DOMContentLoaded if no step has been activated yet. This fixes
+  // the "blank first slide" regression where the LLM emits `class="step"`
+  // (without `active`) on the first step. Idempotent with the storyboard
+  // editor's STORYBOARD_SET_STEP postMessage bridge: if the editor has already
+  // called window.goToStep(sid), the .active flag is set and this bootstrap
+  // becomes a no-op. Marker tag prevents duplicate injection on rebuild.
+  const FIRST_STEP_BOOTSTRAP_MARKER = 'pipeline-first-step-bootstrap-v1';
+  if (!html.includes(FIRST_STEP_BOOTSTRAP_MARKER) && html.includes('</body>')) {
+    const bootstrapPatch = `<script id="${FIRST_STEP_BOOTSTRAP_MARKER}" data-pipeline-injection="first-step-bootstrap-v1">
+(function() {
+  function activateFirstStepIfNoneActive() {
+    if (document.querySelector('.step.active')) return;
+    var first = document.querySelector('.step[data-testid]');
+    if (first) first.classList.add('active');
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', activateFirstStepIfNoneActive);
+  } else {
+    activateFirstStepIfNoneActive();
+  }
+})();
+</script>`;
+    html = html.replace('</body>', `${bootstrapPatch}\n</body>`);
+    console.log('[Build] Injected first-step bootstrap (pipeline-first-step-bootstrap-v1)');
+  }
   if (!html.includes('window.goToStep')) {
     domErrors.push('window.goToStep not found in generated HTML');
   }
@@ -3171,20 +3151,13 @@ async function main(opts = {}) {
   if (slideRootInlineFixes > 0) {
     console.log(`[Build] Removed fixed pixel sizing from ${slideRootInlineFixes} .slide-root inline style block(s)`);
   }
-  if (html.includes('</head>') && !html.includes('id="slide-root-responsive-override"')) {
-    const responsiveOverride = `<style id="slide-root-responsive-override">
-.slide-root{
-  width:100% !important;
-  max-width:min(1440px, 100vw) !important;
-  height:auto !important;
-  max-height:min(900px, 100vh, 100dvh) !important;
-  aspect-ratio:16 / 10 !important;
-  margin-inline:auto;
-  box-sizing:border-box;
-}
-</style>`;
-    html = html.replace('</head>', `${responsiveOverride}\n</head>`);
-  }
+  // The `slide-root-responsive-override` inline style block used to be
+  // injected here as a 1440px-cap escape hatch. It has been REMOVED — the
+  // canonical pipeline-slide-contract.css (injected by post-slides) now
+  // owns canvas sizing with a 1280px cap and no `!important` arms race.
+  // For an app-only run, no slide-root markup should exist anyway
+  // (scanAppOnlyNoSlides will flag any leak). For app+slides runs, the
+  // contract CSS handles sizing.
   html = ensurePipelineSlideShellConformance(html);
   const valueSummaryBlock = html.match(
     /<div[^>]*data-testid=["']step-value-summary-slide["'][^>]*>[\s\S]*?(?=<!--[\s\S]*SIDE PANELS[\s\S]*-->|<div[^>]*id=["']link-events-panel["'][^>]*>|<div[^>]*data-testid=["']step-[^"']+["'][^>]*>|<\/body>)/i
@@ -3995,6 +3968,17 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     const strict = process.env.BUILD_CONSISTENCY_LINT_STRICT === '1' || process.env.BUILD_CONSISTENCY_LINT_STRICT === 'true';
     if (strict) {
       process.exit(1);
+    }
+  }
+
+  if (html.includes('slide-root')) {
+    const slideNorm = normalizeSlideTypography(html);
+    html = slideNorm.html;
+    html = injectSlideTypographyOverrides(html);
+    if (slideNorm.capped || slideNorm.stripped) {
+      console.log(
+        `[Build] Slide typography normalize: capped=${slideNorm.capped}, stripped=${slideNorm.stripped}`
+      );
     }
   }
 

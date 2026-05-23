@@ -2301,6 +2301,25 @@ async function main(opts = {}) {
     process.exit(1);
   }
 
+  // Record-stale guards. The recording captures the host app's rendered
+  // HTML at this moment in time, so if the HTML carries unresolved
+  // placeholders (post-slides hasn't filled them yet), the recording will
+  // ship a broken slide. Refuse to start with a clear recovery hint.
+  const SCRATCH_HTML = path.join(OUT_DIR, 'scratch-app', 'index.html');
+  if (fs.existsSync(SCRATCH_HTML)) {
+    try {
+      const html = fs.readFileSync(SCRATCH_HTML, 'utf8');
+      if (/\bdata-slide-pending\s*=\s*"true"/i.test(html)) {
+        console.error(
+          '[Record] Refusing to start — scratch-app/index.html contains data-slide-pending="true" ' +
+          'placeholders that post-slides has not filled. Run "pipe stage post-slides" or "pipe slide-fix" ' +
+          'to insert the missing slides before recording.'
+        );
+        process.exit(1);
+      }
+    } catch (_) { /* fall through and let normal flow surface the error */ }
+  }
+
   const playwrightScript = JSON.parse(fs.readFileSync(PLAYWRIGHT_SCRIPT, 'utf8'));
   const demoScript       = JSON.parse(fs.readFileSync(DEMO_SCRIPT_FILE, 'utf8'));
   _plaidLinkMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ? 'embedded' : 'modal';
@@ -2792,6 +2811,28 @@ async function main(opts = {}) {
   // Write step-timing.json
   writeStepTiming(totalMs);
   console.log(`[Record] Timing: ${path.relative(PROJECT_ROOT, TIMING_FILE)}`);
+
+  // Write post-record-freeze sentinel. Automated post-slides and slide-fix
+  // runs refuse to mutate slide HTML while this sentinel exists — once the
+  // recording captures the host app, automated re-rolls would invalidate the
+  // recorded video. Editor mutations are still allowed (with a stale flag
+  // surfaced via the dashboard). To re-record, the operator runs the record
+  // stage again, which overwrites the sentinel with a fresh timestamp.
+  try {
+    const sentinelPath = path.join(OUT_DIR, 'post-record-freeze.sentinel');
+    fs.writeFileSync(sentinelPath, JSON.stringify({
+      schemaVersion: 1,
+      frozenAt: new Date().toISOString(),
+      recordingPath: path.relative(OUT_DIR, finalVideoPath),
+      recordingExists: fs.existsSync(finalVideoPath),
+      totalDurationMs: totalMs,
+      note: 'Automated slide-fix / post-slides re-runs refuse while this sentinel exists. Storyboard editor mutations are allowed but will flag voiceover-stale or recording-stale. Re-run "pipe stage record" to overwrite.',
+    }, null, 2), 'utf8');
+    console.log(`[Record] Freeze sentinel: ${path.relative(PROJECT_ROOT, sentinelPath)}`);
+  } catch (sentinelErr) {
+    console.warn(`[Record] Could not write post-record-freeze.sentinel: ${sentinelErr.message}`);
+  }
+
   console.log(`[Record] Total: ${(totalMs / 1000).toFixed(1)}s — Next: qa-review.js`);
 }
 

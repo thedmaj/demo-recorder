@@ -376,8 +376,17 @@ async function crawlAdditionalBrandPages(homeUrl, opts = {}) {
  */
 function loadBrandReferenceFile(slug) {
   if (!slug) return null;
-  const refPath = path.resolve(PROJECT_ROOT, 'inputs', 'brand-references', `${slug}.md`);
-  if (!fs.existsSync(refPath)) return null;
+  const candidates = [slug];
+  if (/^zip/i.test(slug)) candidates.push('zip');
+  let refPath = null;
+  for (const s of candidates) {
+    const p = path.resolve(PROJECT_ROOT, 'inputs', 'brand-references', `${s}.md`);
+    if (fs.existsSync(p)) {
+      refPath = p;
+      break;
+    }
+  }
+  if (!refPath) return null;
   let md;
   try { md = fs.readFileSync(refPath, 'utf8'); }
   catch (_) { return null; }
@@ -415,9 +424,14 @@ function loadBrandReferenceFile(slug) {
   };
 
   // Nav items: the file convention is a single bullet line `Item 1 | Item 2 | ...`.
-  const navLines = bulletsOf('nav (online banking, post-login)');
+  const navLines =
+    bulletsOf('nav (online banking, post-login)') ||
+    bulletsOf('nav (checkout + underwriting host app)') ||
+    bulletsOf('nav (underwriting console — alternate host chrome)');
   if (navLines.length > 0) {
-    out.nav.items = navLines[0].split('|').map(s => s.trim()).filter(Boolean).map(label => ({ label, href: null }));
+    const labels = navLines
+      .flatMap((line) => line.split('|').map((s) => s.trim()).filter(Boolean));
+    out.nav.items = labels.map((label) => ({ label, href: null }));
   }
 
   out.hero.patterns = bulletsOf('hero / hero-area copy patterns');
@@ -922,6 +936,7 @@ async function main() {
     if (refFile.nav && refFile.nav.items && refFile.nav.items.length > 0) {
       profile.nav = profile.nav || {};
       profile.nav.items = refFile.nav.items;
+      profile.nav._kind = 'customer-app';
       profile.nav._source = 'brand-references';
     }
     if (refFile.hero && refFile.hero.patterns && refFile.hero.patterns.length > 0) {
