@@ -1,36 +1,30 @@
 /*
- * Plaid Slide Template CSS (Plaid-only)
- * Designed for presentation readability on both projector and remote calls.
+ * Plaid Slide Design System — pipeline-scoped CSS
+ * Source: brand-design-briefs/DECK_DESIGN_SYSTEM.md (sec 1.6–1.8)
  *
- * SCOPING: All rules apply ONLY under `.slide-root`. Do not paste `html`/`body`
- * rules into the host demo app — that would override bank-branded chrome.
- * Color + typography tokens match the Plaid design system in `CLAUDE.md`.
+ * SCOPING: All rules apply ONLY under `.slide-root`. Do not paste global
+ * html/body rules from colors_and_type.css into the host demo app.
+ * Import tokens via colors_and_type.css (fonts copied to scratch-app/fonts/).
  */
 
-.slide-root{
-  /* Layout + surface */
-  --slide-safe-pad: 64px;
-  --slide-bg: linear-gradient(135deg, #0d1117, #0a2540);
-  --slide-surface: rgba(255,255,255,0.04);
-  --slide-border: rgba(255,255,255,0.10);
+@import url("./colors_and_type.css");
 
-  /* Text */
-  --slide-text-primary: #ffffff;
-  --slide-text-secondary: rgba(255,255,255,0.65);
-  --slide-text-tertiary: rgba(255,255,255,0.35);
+/* Pipeline slide canvas — 1920×1080 design, responsive cap for recording */
+.slide-root {
+  --type-mega: 180px;
+  --type-display: 110px;
+  --type-title: 72px;
+  --type-subtitle: 48px;
+  --type-body: 30px;
+  --type-small: 24px;
+  --type-meta: 24px;
+  --type-mono: 26px;
+  --type-mono-sm: 22px;
 
-  /* Accent */
-  --slide-accent: #00A67E;
-  --slide-accent-border: rgba(0,166,126,0.45);
-  --slide-accent-tint: rgba(0,166,126,0.12);
+  --pad-top: 100px;
+  --pad-bottom: 88px;
+  --pad-x: 120px;
 
-  /* Risk */
-  --slide-risk: #f87171;
-
-  /* Typography */
-  --slide-font: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-
-  /* Responsive: fill the active step / viewport; cap at recording frame 1440×900 */
   box-sizing: border-box;
   width: 100%;
   max-width: min(1440px, 100vw);
@@ -41,10 +35,11 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  font-family: var(--slide-font);
-  background: var(--slide-bg);
-  color: var(--slide-text-primary);
+  font-family: var(--font-sans);
+  background: var(--plaid-ink-900);
+  color: var(--plaid-white);
   overflow: hidden;
+  position: relative;
 }
 
 .slide-root *,
@@ -53,150 +48,299 @@
   box-sizing: border-box;
 }
 
-.slide-header{
-  height:72px;
-  padding: 0 var(--slide-safe-pad);
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  border-bottom: 2px solid var(--slide-accent-border);
+/* Background variants (apply on .slide-root, not bare section) */
+.slide-root.light {
+  background: var(--plaid-white);
+  color: var(--plaid-ink-900);
+}
+.slide-root.cream {
+  background: #f4f0e6;
+  color: var(--plaid-ink-900);
+}
+.slide-root.holo {
+  color: var(--plaid-ink-900);
+  background:
+    radial-gradient(1200px 700px at 12% 18%, rgba(152, 165, 255, 0.55), transparent 60%),
+    radial-gradient(1100px 800px at 88% 82%, rgba(255, 192, 255, 0.45), transparent 55%),
+    radial-gradient(900px 600px at 78% 14%, rgba(255, 246, 216, 0.55), transparent 60%),
+    radial-gradient(900px 700px at 18% 82%, rgba(216, 254, 243, 0.55), transparent 55%),
+    linear-gradient(135deg, #e6e6ff 0%, #d8fef3 50%, #fff6d8 100%);
 }
 
-.slide-header-left{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; min-width:0; }
-.slide-header-logo{
-  height:28px;
-  width:auto;
-  max-width:min(200px, 40vw);
-  object-fit:contain;
-  display:block;
-}
-.slide-header-pill{
-  background: var(--slide-accent-tint);
-  border: 1px solid var(--slide-accent-border);
-  padding: 8px 14px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing:0.10em;
-  text-transform:uppercase;
-}
-.slide-header-endpoint{
-  font-size: 13px;
-  font-family: "SF Mono","Fira Code",Consolas,monospace;
-  color: var(--slide-text-tertiary);
-}
-
-.slide-body{
-  flex:1;
-  padding: 48px var(--slide-safe-pad) 56px;
-  display:flex;
-  flex-direction:column;
-  gap: 28px;
-  min-width:0;
-  width: min(1220px, calc(100% - 64px));
-  margin: 22px auto;
-  border: 1px solid var(--slide-border);
-  border-radius: 18px;
-  background: rgba(255,255,255,0.03);
-}
-
-.slide-hero{ max-width: 920px; }
-.slide-title{
-  margin:0;
-  font-size: 44px;
-  line-height:1.1;
-  letter-spacing:-0.02em;
-}
-.slide-subtitle{
-  margin-top: 14px;
-  font-size: 16px;
-  color: var(--slide-text-secondary);
-  line-height:1.6;
-  max-width: 70ch;
-}
-
-.slide-panels{
-  display:flex;
-  gap: 18px;
-  flex-wrap:wrap;
-}
-
-.slide-panel{
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 14px;
-  padding: 20px 22px;
-  min-width: 360px;
+/* Shell */
+.slide-root .frame {
+  width: 100%;
+  height: 100%;
   flex: 1;
-}
-.slide-panel-title{
-  margin:0 0 10px 0;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing:0.05em;
-  text-transform:uppercase;
-  color: rgba(255,255,255,0.75);
-}
-.slide-panel-body{
-  margin:0;
-  font-size: 16px;
-  color: var(--slide-text-secondary);
-  line-height:1.7;
-  max-width: 72ch;
-}
-
-.slide-root table{
-  width: min(100%, 1040px);
-  margin-inline: auto;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-.slide-root th,
-.slide-root td{
-  padding: 10px 12px;
-  vertical-align: top;
-  word-break: break-word;
-}
-
-.slide-callout{
-  align-self:flex-end;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(0,166,126,0.28);
-  border-radius: 14px;
-  padding: 18px 20px;
-  min-width: 360px;
-}
-.slide-callout-value{
-  font-size: 40px;
-  font-weight: 800;
-  color: var(--slide-accent);
-  line-height:1;
-}
-.slide-callout-label{
-  margin-top: 10px;
-  font-size: 14px;
-  color: var(--slide-text-secondary);
-  line-height:1.5;
-}
-
-/* Footer strip (TD / layered-demo lineage) */
-.slide-footer{
-  margin-top: auto;
-  padding: 18px var(--slide-safe-pad) 22px;
-  border-top: 1px solid var(--slide-accent-border);
+  min-height: 0;
+  padding: var(--pad-top) var(--pad-x) var(--pad-bottom);
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Canonical slide canvas (HARD CONTRACT, May 2026) ─────────────────────
+ *
+ * Every active slide MUST render at a Google-Slides-class size:
+ *   width  ≥ 1080px (≥ 75% of a 1440 viewport)
+ *   height ≥ 600px  (≥ 67% of a 900 viewport)
+ *   aspect ratio = 16/10 (with 16/9 = 1.78 tolerated, see scanner)
+ *
+ * Defaults (slide-only steps — no API panel visible):
+ *   max-width: min(1280px, calc(100vw - 80px))   → 1280 × 800 on 1440×900
+ *
+ * Insight / host steps with an API panel OPEN (`body.api-panel-open`)
+ * reserve room on the right edge so the slide doesn't sit under the
+ * expanded JSON rail. The collapsed-panel (48px edge toggle) does NOT
+ * shrink the slide.
+ *
+ * This contract is enforced by:
+ *   - The `scanSlideCanvasSize` deterministic blocker in build-qa.js
+ *   - The `slide-canvas-fullbleed` patch in qa-patch-library.js (auto-fires)
+ *   - Documentation: CLAUDE.md "Plaid Slide Design System" + this file
+ */
+.step.active .slide-root {
+  width: 100%;
+  max-width: min(1280px, calc(100vw - 80px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+body.api-panel-open .step.active .slide-root {
+  max-width: min(820px, calc(100vw - 560px));
+}
+
+.slide-root .chrome-logo {
+  position: absolute;
+  top: 60px;
+  left: 120px;
+  height: 28px;
+  width: auto;
+  opacity: 0.85;
+  z-index: 2;
+}
+
+.slide-root .chrome-foot {
+  position: relative;
+  margin-top: auto;
+  flex-shrink: 0;
+  padding-top: 32px;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font-sans);
+  font-size: var(--type-meta);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 0.04em;
+  z-index: 2;
+}
+
+.slide-root.light .chrome-foot,
+.slide-root.cream .chrome-foot,
+.slide-root.holo .chrome-foot {
+  color: rgba(2, 37, 68, 0.55);
+}
+
+.slide-root .eyebrow-tag {
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--plaid-teal-500);
+  margin-bottom: 32px;
+}
+
+.slide-root.light .eyebrow-tag,
+.slide-root.cream .eyebrow-tag,
+.slide-root.holo .eyebrow-tag {
+  color: var(--plaid-blue-600);
+}
+
+.slide-root .h-title {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: var(--type-title);
+  line-height: 1.08;
+  letter-spacing: -0.018em;
+  margin: 0 0 40px 0;
+  max-width: 1500px;
   flex-shrink: 0;
 }
-.slide-footer-meta{
-  font-size: 12px;
-  color: var(--slide-text-tertiary);
-  letter-spacing: 0.02em;
+
+/* Typography ceilings — DECK_DESIGN_SYSTEM.md §1.4 (override LLM inline font-size) */
+.slide-root .h-title {
+  font-size: min(var(--type-title), 84px) !important;
+}
+.slide-root[data-slide-template="T1"] .h-title {
+  font-size: min(var(--type-display), 140px) !important;
+}
+.slide-root[data-slide-template="T2"] .h-title,
+.slide-root[data-slide-template="T3"] .h-title {
+  font-size: min(96px, var(--type-title)) !important;
+}
+.slide-root .slide-body-text {
+  font-size: min(var(--type-body), 36px) !important;
 }
 
-/* Global API side panel (collapsed by default, expanded JSON) */
-.side-panel{
+.slide-root .h-title em,
+.slide-root .h-title .bowery-accent {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* Bowery accent utility */
+.slide-root .bowery-accent {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-style: italic;
+}
+
+/* Body copy */
+.slide-root .slide-body-text {
+  font-family: var(--font-sans);
+  font-size: var(--type-body);
+  line-height: 1.45;
+  max-width: 1200px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.slide-root.light .slide-body-text,
+.slide-root.cream .slide-body-text,
+.slide-root.holo .slide-body-text {
+  color: rgba(2, 37, 68, 0.78);
+}
+
+.slide-root .mono-block {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono);
+  line-height: 1.5;
+}
+
+/* Flex/grid layouts — no inline-block */
+.slide-root .slide-row {
+  display: flex;
+  gap: 32px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.slide-root .slide-col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  min-width: 280px;
+}
+
+/* Card patterns */
+.slide-root .card-default {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 30px 32px;
+}
+
+.slide-root .card-accent {
+  background: linear-gradient(160deg, rgba(66, 240, 205, 0.14), rgba(11, 123, 188, 0.06));
+  border: 1px solid rgba(66, 240, 205, 0.3);
+  border-radius: 14px;
+  padding: 30px 32px;
+}
+
+.slide-root.light .card-default,
+.slide-root.cream .card-default,
+.slide-root.holo .card-default {
+  background: rgba(2, 37, 68, 0.04);
+  border-color: rgba(2, 37, 68, 0.1);
+}
+
+.slide-root .card-light {
+  background: white;
+  border-radius: 16px;
+  padding: 36px;
+  box-shadow: 0 6px 20px rgba(2, 37, 68, 0.06);
+}
+
+.slide-root .card-frosted {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(2, 37, 68, 0.08);
+  backdrop-filter: blur(8px);
+  border-radius: 16px;
+  padding: 40px 36px;
+}
+
+/* Mint moment — single highlight per slide */
+.slide-root .mint-moment {
+  color: var(--plaid-teal-500);
+}
+
+/* Hero numbers (T4+) — max 180px per DECK_DESIGN_SYSTEM §1.4 */
+.slide-root .hero-stat-value {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: min(var(--type-mega), 180px) !important;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+.slide-root .hero-stat-value .hero-stat-suffix,
+.slide-root .hero-stat-value span[style*="font-size"] {
+  font-size: min(90px, 0.5em) !important;
+}
+
+/* Stackable main column — keeps footer from overlapping body */
+.slide-root .slide-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.slide-root .slide-code-block,
+.slide-root .card-default,
+.slide-root .card-accent {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.slide-root .hero-stat-label {
+  font-family: var(--font-sans);
+  font-size: var(--type-small);
+  line-height: 1.4;
+  margin-top: 16px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.slide-root.light .hero-stat-label,
+.slide-root.cream .hero-stat-label,
+.slide-root.holo .hero-stat-label {
+  color: rgba(2, 37, 68, 0.65);
+}
+
+/* Global API side panel (unchanged contract — hidden by default) */
+#api-response-panel .renderjson a {
+  color: rgba(255, 255, 255, 0.45);
+  text-decoration: none;
+}
+#api-response-content .renderjson .string { color: #5eead4; }
+#api-response-content .renderjson .number { color: #38bdf8; }
+#api-response-content .renderjson .boolean { color: #f472b6; }
+#api-response-content .renderjson .key { color: #fca5a5; }
+#api-response-content .renderjson .null,
+#api-response-content .renderjson .undefined { color: rgba(255, 255, 255, 0.35); }
+
+.side-panel {
   position: fixed;
   top: 0;
   right: 0;
@@ -204,16 +348,16 @@
   min-width: 414px;
   max-width: calc(100vw - 32px);
   height: 100vh;
-  background: rgba(13,17,23,0.95);
+  background: rgba(13, 17, 23, 0.95);
   backdrop-filter: blur(8px);
-  border-left: 1px solid rgba(255,255,255,0.12);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
   display: flex;
   flex-direction: column;
   z-index: 2000;
 }
-.side-panel-header{
+.side-panel-header {
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -221,7 +365,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.api-panel-edge-toggle{
+.api-panel-edge-toggle {
   position: absolute;
   left: -20px;
   top: 50%;
@@ -229,21 +373,20 @@
   width: 20px;
   height: 64px;
   border-radius: 10px 0 0 10px;
-  border: 1px solid rgba(0,166,126,0.55);
+  border: 1px solid rgba(66, 240, 205, 0.55);
   border-right: none;
-  background: rgba(0,166,126,0.22);
+  background: rgba(66, 240, 205, 0.22);
   color: #9cf8df;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.28);
 }
-.api-panel-edge-toggle:hover{
-  background: rgba(0,166,126,0.30);
+.api-panel-edge-toggle:hover {
+  background: rgba(66, 240, 205, 0.3);
   color: #c6ffef;
 }
-.api-panel-toggle-icon{
+.api-panel-toggle-icon {
   width: 8px;
   height: 8px;
   border-top: 2px solid currentColor;
@@ -251,42 +394,20 @@
   transform: rotate(-135deg);
   display: block;
 }
-.api-panel-edge-toggle.is-open .api-panel-toggle-icon{
+.api-panel-edge-toggle.is-open .api-panel-toggle-icon {
   transform: rotate(45deg);
 }
-.side-panel{
-  overflow: visible;
-}
-.side-panel.api-panel-collapsed{
+.side-panel.api-panel-collapsed {
   width: 22px !important;
   min-width: 22px !important;
   max-width: 22px !important;
 }
 .side-panel.api-panel-collapsed .side-panel-header,
-.side-panel.api-panel-collapsed .side-panel-body{
+.side-panel.api-panel-collapsed .side-panel-body {
   display: none !important;
 }
-.side-panel-body{
+.side-panel-body {
   padding: 14px 16px;
   flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
+  overflow: auto;
 }
-#api-response-content{
-  min-width: 0;
-}
-#api-response-content *{
-  max-width: 100%;
-}
-
-/* renderjson — Plaid dark panel contrast (align with pipeline scratch-app) */
-#api-response-content .renderjson a{
-  color: rgba(255,255,255,0.45);
-  text-decoration: none;
-}
-#api-response-content .renderjson .string{ color: #5eead4; }
-#api-response-content .renderjson .number{ color: #38bdf8; }
-#api-response-content .renderjson .boolean{ color: #f472b6; }
-#api-response-content .renderjson .key{ color: #fca5a5; }
-#api-response-content .renderjson .null,
-#api-response-content .renderjson .undefined{ color: rgba(255,255,255,0.35); }

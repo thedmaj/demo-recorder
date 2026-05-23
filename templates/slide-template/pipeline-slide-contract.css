@@ -1,0 +1,93 @@
+/*
+ * Pipeline slide contract (v1) — SINGLE SOURCE OF TRUTH
+ * ----------------------------------------------------------------------------
+ * Injected ONCE per scratch-app/index.html by post-slides.ensureSlideDesignStylesInHead()
+ * inside the `<!-- POST-SLIDES DESIGN SYSTEM CSS -->` block, after slide.css.
+ *
+ * Marker: <style data-pipeline-slide-contract="v1">
+ *
+ * This file consolidates the rules that USED TO be split across four
+ * competing layers (all of which used `!important` to win the cascade and
+ * collectively produced the "fonts too big, content bleeds" regression):
+ *
+ *   1. build-app.js slide-root-responsive-override         [DELETED]
+ *   2. normalize-slide-typography.js slide-typography-ceilings-v1
+ *      (max-width clause)                                  [DELETED — typography ceilings kept]
+ *   3. qa-patch-library.js slide-canvas-fullbleed-v1       [DELETED]
+ *   4. Per-step inline-style escapes added during surgical [DELETED]
+ *      slide-fix iterations
+ *
+ * NO !important declarations here. The cascade depends on:
+ *   - This block being injected AFTER slide.css in <head>
+ *   - Selector specificity (`.step.active .slide-root` beats `.slide-root`)
+ *   - No other inline styles overriding `.slide-root` sizing
+ *
+ * If a future patch needs to override this contract, it MUST replace this
+ * file's rules — NOT shadow them with a higher-priority `!important` block.
+ * That cascade arms race is what created the original bug.
+ *
+ * Consumers:
+ *   - post-slides.ensureSlideDesignStylesInHead (injects)
+ *   - build-qa.scanSlideCanvasSize (validates the rendered width matches)
+ *   - storyboard editor `/insert-library-slide` (re-injects per-slide style
+ *     blocks that respect this contract for canvas size)
+ * ----------------------------------------------------------------------------
+ */
+
+/* Slide canvas sizing — 1280×800-class default, narrows only when the JSON
+ * rail is expanded (body.api-panel-open). No !important; cascade order wins. */
+.step.active .slide-root {
+  width: 100%;
+  max-width: min(1280px, calc(100vw - 80px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+body.api-panel-open .step.active .slide-root {
+  max-width: min(820px, calc(100vw - 560px));
+}
+
+/* Canvas clip: outer .slide-root frame handles overflow; inner .slide-stack
+ * stays visible so tall stacks of bullets aren't truncated by their parent.
+ * (This was the second source of the regression: an inner overflow:hidden
+ * was clipping content the canvas should have shown.) */
+.slide-root .frame {
+  overflow: hidden;
+}
+
+.slide-root .slide-stack {
+  overflow: visible;
+}
+
+/* Typography ceilings — single-source font sizing for slide headlines + body.
+ * These ceilings prevent the LLM from emitting absurdly large hero numbers
+ * that overflow the canvas at narrow widths. */
+.slide-root .h-title {
+  font-size: clamp(40px, 5.4vw, 96px);
+  line-height: 1.05;
+}
+
+.slide-root .h-section,
+.slide-root .h-subtitle {
+  font-size: clamp(28px, 3.2vw, 48px);
+  line-height: 1.15;
+}
+
+.slide-root .hero-stat-value,
+.slide-root .stat-value {
+  font-size: clamp(56px, 7.2vw, 128px);
+  line-height: 1.0;
+}
+
+.slide-root .slide-body-text,
+.slide-root .body-text,
+.slide-root .body-large {
+  font-size: clamp(24px, 1.8vw, 32px);
+  line-height: 1.4;
+}
+
+/* Per-slide visual chrome is allowed via per-slide <style> blocks emitted by
+ * the LLM (T1-T11). Those blocks govern colors, accents, and per-template
+ * layout — they MUST NOT redefine `.slide-root` max-width or the inner
+ * overflow rules above. build-qa.scanSlideCanvasSize will flag canvas
+ * violations as `slide-canvas-size` critical blockers. */

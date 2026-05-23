@@ -6,11 +6,20 @@ This repository expects **automated assistants** to follow [`CLAUDE.md`](CLAUDE.
 
 If you **start or supervise** a long-running pipeline (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, or watching logs while a run is active):
 
-1. Post a **short status update in chat at least every 5 minutes** until the run finishes or fails. Use `npm run pipe -- status` or `npm run pipe -- status --json`.
-2. **Do not** only report progress when the user asks. Proactive updates are required.
-3. If logs go quiet for **~5 minutes** while status still shows an in-flight stage, investigate (`activePid`, `artifacts/logs/pipeline-build.log.md`) and tell the user.
-4. Prefer **`--non-interactive`** on `pipe` commands when possible.
+1. **Observe orchestrator heartbeats** — the orchestrator emits `::PIPE:: event=heartbeat` every 5 minutes mid-stage. Configure your Shell call with:
+   ```
+   notify_on_output: {
+     pattern: "::PIPE:: event=heartbeat",
+     reason: "5min pipeline heartbeat",
+     debounce_ms: 280000
+   }
+   ```
+   Post a one-line chat summary on each tick: `stage=<name>, elapsed=<s>s, lastLogActivity=<s>s ago, awaiting=<bool>`.
+2. **Background orchestrator:** run `npm run pipe -- monitor [RUN_ID]` in parallel with the same `notify_on_output` pattern.
+3. **Do not** only report progress when the user asks. Heartbeat-driven updates are required.
+4. If `heartbeatStale: true` in `npm run pipe -- status --json`, investigate (`activePid`, tail `artifacts/logs/pipeline-build.log.md`).
+5. Prefer **`--non-interactive`** on `pipe` commands when possible.
 
-Optional: run `npm run pipe:status-loop` in another terminal — it **does not replace** chat updates.
+Optional for humans only: `npm run pipe:status-loop` — redundant for agents once orchestrator heartbeats are active.
 
-**Full policy:** [`CLAUDE.md`](CLAUDE.md) — sections **REQUIRED — Pipeline heartbeat** and **Claude Code / Cursor agents — long-running builds (heartbeat policy)**. Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
+**Full policy:** [`CLAUDE.md`](CLAUDE.md) — **REQUIRED — Pipeline heartbeat**. Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc). CLI skill: [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md).

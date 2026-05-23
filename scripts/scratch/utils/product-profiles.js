@@ -25,6 +25,7 @@ const PRODUCT_FAMILIES = {
     label: 'Funding / Auth / Identity Match / Signal',
     kbSlugs: ['auth', 'signal'],
     accuracyRules: [
+      'When the demo includes POST /signal/evaluate, Link token products MUST include "signal" alongside auth/identity (e.g. ["auth", "identity", "signal"]). "signal" is a valid /link/token/create product string since Oct 2024 — not a post-Link-only flag.',
       'Signal scores 0–99: higher score = higher ACH return risk.',
       'ACCEPT scenarios should use low Signal scores (5–20), not 82–97.',
       'Auth coverage phrasing: "over 98% of U.S. depository accounts".',
@@ -126,13 +127,15 @@ const PRODUCT_FAMILIES = {
   cra_lend_score: {
     key: 'cra_lend_score',
     label: 'Plaid Check CRA LendScore (beta)',
-    kbSlugs: ['cra-base-report'],
+    kbSlugs: ['cra-lend-score', 'cra-base-report'],
     accuracyRules: [
       'LendScore is in closed beta (as of 2026). Demos must explicitly call out beta status when surfacing eligibility messaging.',
-      'Retrieve via /cra/check_report/lend_score/get after the standard CRA Check report-ready flow (USER_CHECK_REPORT_READY webhook).',
-      'Score range: 1–99, higher = lower default risk. Response includes up to 5 reason_codes (e.g., "PCS0221") for adverse-action transparency.',
+      'Retrieve via POST /cra/check_report/lend_score/get after the standard CRA Check report-ready flow (USER_CHECK_REPORT_READY webhook).',
+      'Score range: 1–99, higher = lower default risk. Response field: report.lend_score.score with report.lend_score.reason_codes[] (up to 5 PCS-prefixed codes) — not Signal reason_codes shape.',
+      'apiResponse.endpoint on the LendScore reveal host step MUST be POST /cra/check_report/lend_score/get (not /base_report/get) even when Base Report summary chips appear on screen.',
+      'Host LendScore step layout: reserve ~520px right margin for #api-response-panel; data-testid="approve-plan-cta" fully visible; show LendScore — beta badge.',
       'LendScore predicts 12-month default risk for non-mortgage lending; do not present as a generic credit score replacement.',
-      'Pair with Base Report data on the same report to anchor the narrative.',
+      'Pair with Base Report summary on the same screen when narrated; optional Network Insights on a following slide.',
       'Use real Plaid Link CRA experience (single plaidPhase "launch"); do not simulate host-only Link.',
     ],
     critiqueRules: [

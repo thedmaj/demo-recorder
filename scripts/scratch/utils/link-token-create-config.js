@@ -9,17 +9,31 @@
 
 const { askPlaidDocs, tryExtractJsonBlock } = require('./mcp-clients');
 
-/** Valid Plaid Link token product strings (lowercase) we allow onto the wire. */
+/** Valid Plaid Link token product strings (lowercase) we allow onto the wire.
+ *
+ * Verified 2026-05-22 via AskBill (Plaid docs MCP) + Glean GTM Playbook 2026:
+ *   - `protect_linked_bank` and `protect_transactions` ARE public Link product
+ *     strings (US-only for protect_linked_bank). Previous KB note treating
+ *     them as NDA was stale.
+ *   - `identity_verification` is the standalone IDV product string (separate
+ *     token flow but also valid as a Link products[] entry when bundled
+ *     with Protect for the Trust Index Ti2 surface).
+ *   - `monitor` is the Plaid Monitor (sanctions / watchlist / PEP) string.
+ */
 const ALLOWED_LINK_PRODUCTS = new Set([
   'assets',
   'auth',
   'employment',
   'identity',
+  'identity_verification',
   'income_verification',
   'investments',
   'investments_auth',
   'liabilities',
+  'monitor',
   'payment_initiation',
+  'protect_linked_bank',
+  'protect_transactions',
   'signal',
   'standing_orders',
   'transactions',
@@ -233,6 +247,16 @@ function inferPlaidLinkProductsFromPrompt(promptText = '') {
   }
   if (/\bidentity\b/.test(text) && (/\bmatch\b/.test(text) || /\/identity\//.test(text))) add('identity');
   if (/\bauth\b/.test(text) && (/\bget\b/.test(text) || /\/auth\//.test(text) || /\brouting\b/.test(text))) add('auth');
+  // Standalone Plaid Signal (funding / ACH return risk) — not only Plaid Protect umbrella.
+  // Huntington-style Auth + Identity Match + Signal demos mention "Plaid Signal" and
+  // /signal/evaluate but are NOT Protect demos; signal must still land in products[].
+  if (
+    /\bplaid\s+signal\b/.test(text) ||
+    /\/signal\/evaluate\b/.test(text) ||
+    (/\bsignal\b/.test(text) && (/\bach\b/.test(text) || /\breturn risk\b/.test(text) || /\bfunding\b/.test(text) || /\binstant availability\b/.test(text)))
+  ) {
+    add('signal');
+  }
   if (/\btransactions\b/.test(text) || /\/transactions\//.test(text)) add('transactions');
   if (/\bliabilit/.test(text) || /\/liabilities\//.test(text)) add('liabilities');
   if (/\basset report\b/.test(text) || /\bassets\b.*\bplaid\b/.test(text)) add('assets');
@@ -257,6 +281,50 @@ function inferPlaidLinkProductsFromPrompt(promptText = '') {
     add('signal');
   }
 
+  // Plaid Protect (umbrella) — Trust Index Ti2 surface.
+  // Verified 2026-05-22 via AskBill + Glean Protect Megadoc:
+  //   - Canonical Protect demo path uses `protect_linked_bank` (US-only).
+  //   - `/protect/event/send` returns the trust_index block.
+  //   - Bundle with `identity_verification` ONLY when the prompt explicitly
+  //     names IDV / identity verification as a featured product. Otherwise
+  //     `protect_linked_bank` is sufficient and is the default.
+  //   - Add `'signal'` whenever transaction-time scoring is implied.
+  //   - Add `'monitor'` whenever sanctions / watchlist / PEP is mentioned.
+  // EWA / Cash Advance Score is handled above and is a separate family
+  // (it routes to `['auth', 'signal']` because Plaid Protect Cash Advance
+  // doesn't use `protect_linked_bank` — verified via prompt-scope.js).
+  const isPlaidProtectIntent =
+    /\bplaid\s+protect\b/.test(text) ||
+    /\btrust\s+index\b/.test(text) ||
+    /\bti2\b/.test(text) ||
+    /\bti\s*score\b/.test(text) ||
+    /\bprotect\s+(retro|trust|score|umbrella|sdk)\b/.test(text) ||
+    /\bprotect_linked_bank\b/.test(text) ||
+    /\/protect\/event\/send\b/.test(text);
+  const isEwaScopeOnly =
+    /\bewa\b/.test(text) ||
+    /\bearned[\s_-]?wage[\s_-]?access\b/.test(text) ||
+    /\bcash[\s_-]?advance\s+score\b/.test(text);
+  if (isPlaidProtectIntent && !isEwaScopeOnly) {
+    add('protect_linked_bank');
+    // Add IDV ONLY when prompt explicitly names identity verification as a featured product.
+    if (/\bidentity\s+verification\b/.test(text) || /\bplaid\s+idv\b/.test(text) || /\/identity_verification\//.test(text)) {
+      add('identity_verification');
+    }
+    // Add Signal when the prompt mentions transaction-time scoring / Signal / decisions.
+    if (/\bsignal\b/.test(text) || /\/signal\/evaluate\b/.test(text) || /\bunderwriting\b/.test(text) || /\bdecisioning\b/.test(text)) {
+      add('signal');
+    }
+    // Add Monitor when the prompt mentions sanctions / PEP / watchlist.
+    if (/\bmonitor\b/.test(text) || /\bsanctions?\b/.test(text) || /\bpep\b/.test(text) || /\bwatchlist\b/.test(text)) {
+      add('monitor');
+    }
+    // Add `protect_transactions` only when explicitly mentioned.
+    if (/\bprotect_transactions\b/.test(text) || /\bprotect\s+transaction\s+monitor/.test(text)) {
+      add('protect_transactions');
+    }
+  }
+
   return [...found];
 }
 
@@ -277,11 +345,27 @@ function inferProductsFromApiSignals(signals = []) {
       // Move flows should be explicit (investments/auth in the signal).
       out.push('investments');
     }
-    if (c.includes('identity')) out.push('identity');
+    // Identity vs Identity Verification: `/identity/get` → 'identity', but
+    // `/identity_verification/get` → 'identity_verification' (separate IDV
+    // product). Order matters because 'identity_verification' contains
+    // 'identity' as a substring.
+    if (c.includes('identity_verification') || c.includes('identity-verification')) out.push('identity_verification');
+    else if (c.includes('identity')) out.push('identity');
+    // Plaid Protect SDK endpoints
+    if (c.includes('protect/event/send') || c.includes('protect/user/insights') || c.includes('protect_linked_bank')) {
+      out.push('protect_linked_bank');
+    }
+    if (c.includes('protect_transactions') || c.includes('protect/transactions')) {
+      out.push('protect_transactions');
+    }
+    if (c.includes('/monitor/') || /\bsanctions\b/.test(c) || /\bwatchlist\b/.test(c)) {
+      out.push('monitor');
+    }
     // Plain 'auth' here means /auth/get (the Plaid Auth product for ACH
     // routing/account numbers), NOT the Investments Move /investments/auth/get
     // path which is handled above and routes to 'investments_auth'.
     if (/(^|\W)auth($|\W)/.test(c) && !c.includes('investments/auth')) out.push('auth');
+    if (c.includes('signal/evaluate') || c.includes('/signal/')) out.push('signal');
     if (c.includes('transactions') && !c.includes('investments/transactions')) out.push('transactions');
     if (c.includes('liabilities')) out.push('liabilities');
     if (c.includes('cra/check_report/base')) out.push('cra_base_report');

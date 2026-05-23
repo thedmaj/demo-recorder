@@ -15,6 +15,7 @@
  *   pipe resume     [RUN_ID] [--from=STAGE] [--to=STAGE] [--override-with-slides]
  *   pipe stage      STAGE [RUN_ID]
  *   pipe status     [RUN_ID] [--json]
+ *   pipe monitor    [RUN_ID] [--poll-ms=N]
  *   pipe logs       [RUN_ID] [--follow] [--since=STAGE]
  *   pipe stop       [RUN_ID] [--force]
  *   pipe list       [--limit=N] [--json]
@@ -309,6 +310,15 @@ function cmdStatus({ positional, flags }) {
       console.log(c.dim(`  reason: ${status.continueContext.message}`));
     }
   }
+  if (status.running && status.lastHeartbeatAgeSec != null) {
+    const intervalLbl = status.heartbeatIntervalMs
+      ? `${Math.round(status.heartbeatIntervalMs / 1000)}s`
+      : '300s';
+    const hbLine = `Heartbeat: ${status.lastHeartbeatAgeSec}s ago (interval ${intervalLbl})`;
+    console.log(status.heartbeatStale ? c.yellow(`${hbLine} — stale`) : hbLine);
+  } else if (status.lastHeartbeatAt) {
+    console.log(c.dim(`Last heartbeat: ${status.lastHeartbeatAt}`));
+  }
   console.log(bar);
   const width = Math.max(...STAGES.map(s => s.length));
   for (const s of status.stages) {
@@ -335,6 +345,90 @@ function cmdStatus({ positional, flags }) {
     console.log(c.dim('Next:'), status.nextRecoveryCommand);
   }
   return 0;
+}
+
+// ── Command: monitor ─────────────────────────────────────────────────────────
+function cmdMonitor({ positional, flags }) {
+  const runDir = resolveRunDir(positional[0] || null);
+  const runId = path.basename(runDir);
+  const pollMs = Number(flags['poll-ms'] || flags.pollMs || 30000);
+  const pollInterval = Number.isFinite(pollMs) && pollMs > 0 ? pollMs : 30000;
+  const {
+    readHeartbeatSentinel,
+    formatHeartbeatStdoutLine,
+  } = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'pipeline-heartbeat.js'));
+
+  let lastTick = null;
+  let lastAt = null;
+
+  function emitFromSentinel(sentinel) {
+    if (!sentinel || sentinel.tick == null) return;
+    const tickKey = `${sentinel.tick}:${sentinel.lastHeartbeatAt || ''}`;
+    if (tickKey === lastTick) return;
+    lastTick = tickKey;
+    const line = formatHeartbeatStdoutLine({
+      tick: sentinel.tick,
+      runId,
+      stage: sentinel.runningStage || 'none',
+      stageElapsedSec: sentinel.stageElapsedSec != null ? sentinel.stageElapsedSec : 0,
+      pipelineElapsedSec: sentinel.pipelineElapsedSec != null ? sentinel.pipelineElapsedSec : 0,
+      awaitingContinue: sentinel.awaitingContinue,
+      lastLogActivitySec: sentinel.lastLogActivitySec != null ? sentinel.lastLogActivitySec : '',
+      at: sentinel.lastHeartbeatAt || new Date().toISOString(),
+    });
+    console.log(line);
+  }
+
+  function pollOnce() {
+    const status = computeStatus(runDir);
+    const sentinel = readHeartbeatSentinel(runDir);
+    if (sentinel && sentinel.lastHeartbeatAt !== lastAt) {
+      lastAt = sentinel.lastHeartbeatAt;
+      emitFromSentinel(sentinel);
+    }
+    if (!status.running) {
+      console.log(`::PIPE:: event=monitor_end  runId=${runId}  reason=orchestrator_not_running`);
+      return false;
+    }
+    return true;
+  }
+
+  if (flags.json) {
+    const status = computeStatus(runDir);
+    process.stdout.write(JSON.stringify({
+      runId,
+      runDir,
+      pollIntervalMs: pollInterval,
+      running: status.running,
+      lastHeartbeatAt: status.lastHeartbeatAt,
+      lastHeartbeatAgeSec: status.lastHeartbeatAgeSec,
+      heartbeatStale: status.heartbeatStale,
+    }, null, 2) + '\n');
+    return 0;
+  }
+
+  console.log(`[pipe monitor] run=${runId} poll=${pollInterval}ms (Ctrl+C to stop)`);
+  pollOnce();
+  if (!computeStatus(runDir).running) return 0;
+
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (!pollOnce()) {
+        clearInterval(timer);
+        resolve(0);
+      }
+    }, pollInterval);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    process.on('SIGINT', () => {
+      clearInterval(timer);
+      resolve(130);
+    });
+    process.on('SIGTERM', () => {
+      clearInterval(timer);
+      resolve(143);
+    });
+  });
 }
 
 // ── Command: list ────────────────────────────────────────────────────────────
@@ -537,6 +631,59 @@ async function cmdStage({ positional, flags }) {
   return code === 0 ? 0 : 2;
 }
 
+// ── Command: slide-fix (tier-scoped slide recovery lane) ────────────────────
+//
+// Runs the deterministic slide-fix loop documented at top of
+// scripts/scratch/scratch/slide-fix.js. Refuses to run on app-only builds
+// (slide tier is skipped); refuses to run when the app tier hasn't passed
+// (run `pipe app-touchup` first). On residual failures under an AI agent,
+// writes qa-slide-fix-task.md and returns 0 — the user opens the task in
+// Agent mode for surgical edits.
+async function cmdSlideFix({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to target — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const script = path.join(PROJECT_ROOT, 'scripts', 'scratch', 'scratch', 'slide-fix.js');
+  const args = [script];
+  if (flags['max-iters']) args.push(`--max-iters=${flags['max-iters']}`);
+  if (flags['skip-agent-task']) args.push('--skip-agent-task');
+  console.log(c.bold(`[pipe] slide-fix on ${runId}`));
+  const child = spawn('node', args, {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, PIPELINE_RUN_DIR: runDir },
+    stdio: 'inherit',
+  });
+  return new Promise((resolve) => {
+    child.on('exit', (code) => resolve(code === 0 ? 0 : 2));
+  });
+}
+
+// ── Command: app-touchup (tier-scoped app recovery lane) ────────────────────
+//
+// Runs the deterministic app-touchup loop documented at top of
+// scripts/scratch/scratch/app-touchup.js. Primary recovery path for
+// app-only runs that fail build-qa. On residual failures under an AI
+// agent, writes qa-touchup-task.md (app-only) or qa-app-touchup-task.md
+// (app+slides) and returns 0.
+async function cmdAppTouchup({ positional, flags }) {
+  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  if (!runId) throw new Error('No run to target — pass RUN_ID.');
+  const runDir = runDirFromId(runId);
+  const script = path.join(PROJECT_ROOT, 'scripts', 'scratch', 'scratch', 'app-touchup.js');
+  const args = [script];
+  if (flags['max-iters']) args.push(`--max-iters=${flags['max-iters']}`);
+  if (flags['skip-agent-task']) args.push('--skip-agent-task');
+  console.log(c.bold(`[pipe] app-touchup on ${runId}`));
+  const child = spawn('node', args, {
+    cwd: PROJECT_ROOT,
+    env: { ...process.env, PIPELINE_RUN_DIR: runDir },
+    stdio: 'inherit',
+  });
+  return new Promise((resolve) => {
+    child.on('exit', (code) => resolve(code === 0 ? 0 : 2));
+  });
+}
+
 // ── Command: post-panels (deterministic panel normalizer) ────────────────────
 async function cmdPostPanels({ positional, flags }) {
   const runId = positional[0] || path.basename(readLatestRunDir() || '');
@@ -652,17 +799,33 @@ async function cmdQaTouchup({ positional, flags }) {
   const runDir = runDirFromId(runId);
   const { buildQaTouchupPrompt } = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'qa-touchup'));
 
-  console.log(c.bold(`[pipe] qa-touchup ${runId}`));
+  // Resolve --tier=app|slide (with `--app-only` / `--slides-only` aliases).
+  // The orchestrator's tier matrix maps these to single-tier task files;
+  // when omitted we emit the legacy combined qa-touchup-task.md.
+  let tierFilter = null;
+  if (typeof flags.tier === 'string') {
+    const v = flags.tier.toLowerCase().trim();
+    if (v === 'app' || v === 'slide') tierFilter = v;
+  }
+  if (!tierFilter && flags['app-only']) tierFilter = 'app';
+  if (!tierFilter && flags['slides-only']) tierFilter = 'slide';
+
+  console.log(c.bold(`[pipe] qa-touchup ${runId}${tierFilter ? ` --tier=${tierFilter}` : ''}`));
   let result;
   try {
     result = buildQaTouchupPrompt(runDir, {
       passThreshold: flags['qa-threshold'] ? Number(flags['qa-threshold']) : undefined,
+      tierFilter,
     });
   } catch (e) {
     console.error(c.red(`  ${e.message}`));
     return 2;
   }
-  const promptPath = path.join(runDir, 'qa-touchup-task.md');
+  const promptFilename =
+    tierFilter === 'slide' ? 'qa-slide-fix-task.md' :
+    tierFilter === 'app'   ? 'qa-app-touchup-task.md' :
+    'qa-touchup-task.md';
+  const promptPath = path.join(runDir, promptFilename);
   fs.writeFileSync(promptPath, result.promptMarkdown, 'utf8');
   const scoreFmt = result.summary.overallScore != null
     ? `${result.summary.overallScore}/${result.summary.passThreshold}`
@@ -1527,7 +1690,13 @@ ${H('LIFECYCLE & INSPECTION — observe and steer a run')}
 ${cmd('npm run pipe -- status   [RUN_ID] [--json]',
 `Print stage-by-stage state for a run (defaults to latest). --json emits
 the canonical structured object that scripts and Claude / Cursor agents
-use for recovery logic.`)}
+use for recovery logic. Includes lastHeartbeatAt / heartbeatStale when
+the orchestrator heartbeat timer is active.`)}
+${cmd('npm run pipe -- monitor   [RUN_ID] [--poll-ms=N]',
+`Poll pipeline-heartbeat.json and re-emit ::PIPE:: event=heartbeat lines
+to stdout (default poll 30s). Use in a background Shell when the
+orchestrator is backgrounded; attach notify_on_output to this stream.
+Exits when the orchestrator PID is gone.`)}
 ${cmd('npm run pipe -- logs   [RUN_ID] [--follow] [--since=STAGE]',
 `Tail the pipeline's stdout/stderr log for a run. --follow streams new
 output (good for monitoring); --since=STAGE jumps to where a specific
@@ -1573,7 +1742,23 @@ file (one frame per demo-script step) using the figma plugin
 (figma@claude-plugins-official → use_figma tool, MCP at mcp.figma.com).
 Writes <run>/figma-conversion-prompt.md and copies a paste-into-agent
 recipe to the clipboard. Works in both Cursor and Claude Code.`)}
-${cmd('npm run pipe -- qa-touchup   [RUN_ID] [--qa-threshold=N]   ' + c.dim('(alias: qt)'),
+${cmd('npm run pipe -- slide-fix   [RUN_ID] [--max-iters=N] [--skip-agent-task]',
+`Tier-scoped SLIDE recovery lane (app+slides runs only). Applies slide-tier
+patches (typography, layout, chrome), strips failing slides + re-inserts via
+post-slides --steps=…, then re-runs build-qa with BUILD_QA_STEP_SCOPE=slides.
+On residual failures under an AI agent, writes <run>/qa-slide-fix-task.md
+for surgical StrReplace edits. NEVER calls build-app / generateApp. Refuses
+to run when the app tier hasn't passed — run \`pipe app-touchup\` first.`)}
+${cmd('npm run pipe -- app-touchup   [RUN_ID] [--max-iters=N] [--skip-agent-task]',
+`Tier-scoped APP recovery lane. Applies app-tier patches (API panel toggle,
+launch-CTA icon ratio, link-token products prune, host-contract fixes),
+re-runs post-panels, then re-runs build-qa with BUILD_QA_STEP_SCOPE=app
+(or scope=all on app-only). On residual failures under an AI agent, writes
+<run>/qa-touchup-task.md (app-only) or <run>/qa-app-touchup-task.md
+(app+slides). NEVER calls build-app / generateApp. Primary recovery path
+for \`npm run demo\` (app-only) failures — replaces \`--build-fix-mode=touchup\`
+for localized issues.`)}
+${cmd('npm run pipe -- qa-touchup   [RUN_ID] [--qa-threshold=N] [--tier=app|slide]   ' + c.dim('(aliases: qt, qa-app-touchup, qa-slide-fix)'),
 `Generate an agent-ready prompt that fixes failing QA findings via surgical,
 single-step edits — instead of regenerating the whole index.html like the
 LLM-driven --build-fix-mode=touchup path. Reads the run's qa-report-build.json
@@ -1630,6 +1815,23 @@ ${c.dim(`  · ::PIPE:: lines on stdout mark stage_start / stage_end / prompt / p
       case 'stage':    code = await cmdStage(parsed);   break;
       case 'post-panels': code = await cmdPostPanels(parsed); break;
       case 'post-slides': code = await cmdPostSlides(parsed); break;
+      case 'slide-fix':   code = await cmdSlideFix(parsed);   break;
+      case 'app-touchup': code = await cmdAppTouchup(parsed); break;
+      case 'qa-slide-fix':
+        // Alias for `qa-touchup --tier=slide` so dashboards / docs have a
+        // memorable name parallel to `qa-touchup`.
+        code = await cmdQaTouchup({
+          ...parsed,
+          flags: { ...parsed.flags, tier: 'slide' },
+        });
+        break;
+      case 'qa-app-touchup':
+        // Alias for `qa-touchup --tier=app`.
+        code = await cmdQaTouchup({
+          ...parsed,
+          flags: { ...parsed.flags, tier: 'app' },
+        });
+        break;
       case 'whoami':   code = cmdWhoami(parsed);         break;
       case 'pull':     code = await cmdPull();           break;
       case 'publish':  code = await cmdPublish(parsed);  break;
@@ -1639,6 +1841,7 @@ ${c.dim(`  · ::PIPE:: lines on stdout mark stage_start / stage_end / prompt / p
       case 'qa-touchup':
       case 'qt':       code = await cmdQaTouchup(parsed);    break;
       case 'status':   code = cmdStatus(parsed);        break;
+      case 'monitor': code = await cmdMonitor(parsed); break;
       case 'logs':     code = await cmdLogs(parsed);    break;
       case 'list':     code = cmdList(parsed);          break;
       case 'stop':     code = cmdStop(parsed);          break;

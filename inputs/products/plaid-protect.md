@@ -1,9 +1,9 @@
 ---
-last_vp_research: "2026-05-21"
-last_api_verified: "2026-05-21"
+last_vp_research: "2026-05-22"
+last_api_verified: "2026-05-22"
 sources:
-  - "AskBill plaid_docs MCP (canonical public docs, 2024-2025 snapshots)"
-  - "Glean: GTM Playbook: Plaid Protect (2026), Plaid Protect Megadoc, Ti2 Deep Dive deck, internal Slack/Gong (2025-2026)"
+  - "AskBill plaid_docs MCP (canonical public docs, refreshed 2026-05-22)"
+  - "Glean: GTM Playbook: Plaid Protect (May 2026), Plaid Protect Megadoc (2025), Plaid Protect Testing & Integration Resources, Ti2 launch blog (plaid.com/blog/plaid-protect-trust-index/ — Oct 14 2025), Protect marketing page (plaid.com/products/protect/)"
 ---
 
 # Plaid Protect
@@ -33,18 +33,25 @@ Plaid Protect is the **umbrella solution** that packages and orchestrates severa
 
 ## Documented public API surface (use these in demos)
 
-### `/link/token/create` products
+### `/link/token/create` products — **`protect_linked_bank` is the default**
 
-**`'protect'` is NOT a valid product string.** Sending it causes an error. Use the component strings instead:
+**`'protect'` is NOT a valid product string.** Sending it causes an error. Use one of the component / Protect strings below. **`protect_linked_bank` and `protect_transactions` are public, documented Link product strings** as of 2026-05-22 (AskBill verified, Glean GTM Playbook confirmed). The earlier KB note treating them as NDA was stale.
 
-| Use case | Required `products[]` |
-|---|---|
-| Signal scoring on a connected account | `['signal']` (plus `'auth'` only if you also need routing/account numbers) |
-| Identity Verification at onboarding | `['identity_verification']` (separate token flow — see IDV docs) |
-| Monitor screening | `['monitor']` |
-| Bundled Protect on a single Item | Combine component strings as needed (`['signal', 'identity_verification']` is the documented pattern for a Protect-bundled flow) |
+| Mode | Required `products[]` | When to use |
+|------|----------------------|-------------|
+| **Protect (default — RECOMMENDED for new Protect demos)** | **`['protect_linked_bank']`** (US-only; add `'signal'` for transaction-time scoring; add `'monitor'` for sanctions/PEP) | Use whenever the prompt mentions Plaid Protect / Trust Index and **does not** explicitly include `identity_verification` / IDV. The Protect SDK + `/protect/event/send` pattern (see § Protect SDK below) is the canonical Ti2 surface. |
+| **Protect bundled with IDV** | `['protect_linked_bank', 'identity_verification', 'signal']` | Use only when the prompt explicitly mentions IDV / identity verification alongside Protect. Trust Index Ti2 scores also surface in `/identity_verification/get → link_sessions[].results.protect_results.trust_index`. |
+| Signal-only (legacy / transaction-time scoring without Protect umbrella) | `['signal']` (plus `'auth'` only if you also need routing/account numbers) | Use when the prompt is explicitly about Signal scoring (not Protect / Trust Index). |
+| Identity Verification standalone | `['identity_verification']` | Separate token flow — see IDV docs. |
+| Monitor screening | `['monitor']` | Sanctions / watchlist / PEP. |
+| `protect_transactions` (Protect Transaction Monitoring) | `['protect_linked_bank', 'protect_transactions']` | Post-Item ACH return / fraud monitoring. Fires `PROTECT_TX_MONITOR_RULE_TRIGGERED`. |
 
-AskBill follow-up referenced `protect_linked_bank` and `protect_transactions` as additional Protect Transaction Monitoring strings, but the public Link token docs do **not** list these. Treat them as NDA / private-docs surfaces — do NOT put them in a demo unless the host account has explicit Plaid Sales enablement and confirmed contract scope.
+**Default rule for the build pipeline:** when `productFamily === 'plaid_protect'`, the link-token-create resolver **must include `'protect_linked_bank'`**. Add `'identity_verification'` only when the prompt explicitly references IDV / identity verification as a featured product. Add `'signal'` whenever transaction-time scoring is shown.
+
+**Wrong patterns (do NOT emit):**
+- `['protect']` — invalid product string, hard reject from `/link/token/create`.
+- `['auth', 'signal']` for a Protect / Trust Index demo — narrates Trust Index but doesn't actually surface it; misleading to viewers and contract-violating per the demo's stated value proposition.
+- `'ti2'`, `'trust_index'`, `'cash_advance'`, `'signal_monitor'` — not valid product strings.
 
 ### `/signal/evaluate` — score retrieval
 
@@ -136,27 +143,84 @@ This is the only documented feedback endpoint for Protect/Signal flows.
 There is **no documented `reason_codes[]` array** on Signal / Protect responses. Explainability is delivered through:
 
 1. `core_attributes` — 80+ key/value behavioral signals (balance history, inflow stability, connection age, network counts, etc.).
-2. `ruleset.triggered_rule_details.internal_note` — the matched rule's free-text note.
-3. `ruleset.result` — the categorical decision.
+2. `ruleset.triggered_rule_details.internal_note` — the matched rule's free-text note. **THIS IS THE ONLY documented free-text field** under `triggered_rule_details`.
+3. `ruleset.triggered_rule_details.custom_action_key` — optional documented field (host can map to internal action keys).
+4. `ruleset.result` — the categorical decision (`ACCEPT` / `REROUTE` / `REVIEW` — `REJECT` not documented).
 
-**Demo rule:** Show 2–3 named `core_attributes` and/or the matched rule name. **Never** fabricate a top-level `reason_codes: ["...", "..."]` array — it violates the API panel contract.
+**Demo rules:**
 
-## Trust Index / Ti2 (Limited Availability)
+- Show 2–3 named `core_attributes` (always include `available_balance` and `current_balance` — they appear even in balance-only Signal models). Show **both** `bank_initiated_return_risk` AND `customer_initiated_return_risk` in `scores{}` — AskBill's canonical example always returns both.
+- Include `"warnings": []` in the response (always present, often empty).
+- **Never** fabricate a top-level `reason_codes: ["...", "..."]` array.
+- **Never** add `rule_name` (or other invented keys) under `ruleset.triggered_rule_details`. Only `internal_note` and `custom_action_key` are documented. If a demo wants to surface a rule's name, put it in the `internal_note` text itself (e.g. `"internal_note": "stable_inflows_low_network_risk — Stable inflows; low cross-network risk"`).
 
-**Source mix:** AskBill says the Ti2 *response field structure* is NOT in public docs and requires Sales / NDA engagement to integrate against. Glean confirms Limited Availability (March 2026 cohort) with three SKUs (TI Score Device, TI Score Identity, TI Score Full — $2.50/call for Full). Glean also confirms Ti2 added graph-based and transaction-history features for ~30% more fraud caught vs Ti1.
+## Trust Index / Ti2 (Limited Availability) — Protect SDK surface
 
-**What we do know:**
+**Status (verified 2026-05-22):** Ti2 shipped **Oct 14, 2025** (Plaid blog: "Introducing Ti2"). Limited Availability with three SKUs — see below. Public docs DO describe the integration pattern (Plaid Protect Megadoc + Testing & Integration Resources); only the **per-field response shapes** for `trust_index.subscores` and the full `fraud_attributes` catalog remain partly confidential (subset documented).
 
-- Score range **1–100, higher = safer** (opposite direction from Signal scores).
-- Surfaces ML-derived sub-scores covering device, identity, and transaction-graph signals.
-- Not enabled by any public Link product string. Requires Plaid Sales to provision per account.
+**The three TI SKUs (commercial — not API field names):**
 
-**Demo rule for Trust Index:**
+| SKU | Signals used | Where in funnel | Price (per event) |
+|-----|--------------|-----------------|-------------------|
+| **TI Score (Device)** | Device-only | Pre-PII (very early funnel) | `$0.10` |
+| **TI Score (Identity)** | Device + PII (name, dob, phone, email, addr) — can pair with IDV but doesn't require it | At identity collection | (between Device and Full) |
+| **TI Score (Full)** | Device + Identity + bank-account signals | Final decisions (account opening, transaction approval) | `$2.50` rack |
 
-- DO mention Trust Index by name when the prompt's primary product family is `plaid_protect` and the demo's scope explicitly includes Trust Index (per Plaid's current public marketing, this is the lead product term).
-- DO NOT fabricate a `/protect/event/send`, `/protect/user/insights/get`, or `trust_index.*` field structure in the demo's API panel. Real Ti2 response shapes are NDA / private docs.
-- When Trust Index is part of the narrative but the demo is sandbox, present the score as a top-line concept ("Trust Index: 87 — verified user") **with a host-app rendering** of synthesized fields, and route any underlying API panel to the documented `/signal/evaluate` response (where Signal scores live) plus IDV's `/identity_verification/get` (where identity outcomes live).
-- Do NOT use the Trust Index term in non-Protect demos — it can confuse with Signal score branding.
+**What's new in Ti2 (vs Ti1, May 2025):** transaction-history features + live user-graph analysis → catches **~30% more fraud** (Plaid marketing-approved stat from the Ti2 launch blog).
+
+### Documented Protect API surface (use these in demos)
+
+| Endpoint | Purpose | Returns `trust_index`? |
+|----------|---------|-----------------------|
+| **`POST /protect/event/send`** | Send a new event (Link session, transaction, login, PII collection) to enrich user data and **optionally get a Trust Index score back**. Used to score Protect SDK sessions and ad-hoc events. | Yes — `trust_index` block with `score`, `model`, `subscores`. |
+| **`POST /protect/user/insights/get`** | Retrieve current Trust Index + fraud attributes for an existing Plaid User. Used for periodic re-scoring or webhook-driven check-ins. | Yes — same `trust_index` block. |
+| **`POST /identity_verification/get`** (when bundled `['protect_linked_bank', 'identity_verification']`) | Returns `link_sessions[].results.protect_results.trust_index` + `fraud_attributes`. | Yes — same shape. |
+| **`POST /signal/evaluate`** | Signal transaction scoring. **Does NOT return a `trust_index` field** (AskBill verified). | **No** — Signal scores only. |
+
+### `trust_index` block shape (canonical — Plaid Protect Megadoc)
+
+```json
+{
+  "event": {
+    "event_id": "protect-event-2be8498f",
+    "timestamp": "2026-05-22T03:26:02Z",
+    "event_type": "LINK_EVENT_SESSION_FINISH",
+    "trust_index": {
+      "score": 87,
+      "model": "ti-pro-2.0",
+      "subscores": {
+        "device": 92,
+        "identity": 88,
+        "transaction_graph": 82
+      }
+    },
+    "fraud_attributes": {
+      "idv_session.email.breach_count": 1,
+      "user.linked_bank_accounts.num_owner_names": 3,
+      "session.ip.is_proxy": false
+    }
+  }
+}
+```
+
+- `trust_index.score`: **1–100, higher = SAFER user** (opposite direction from Signal scores).
+- `trust_index.model`: model id string (e.g. `ti-pro-2.0`, `ti-link-session-2.0`). Specific model is mapped per-customer per-event-type.
+- `trust_index.subscores`: object with sub-score keys; **the public catalog is partial** — don't enumerate fields beyond `device`, `identity`, `transaction_graph` in demos unless the prompt explicitly cites others.
+- `fraud_attributes`: key/value bag of behavioral signals. **Only present when the user/event is suspected fraudulent** in many cases — Plaid surfaces fraud signals selectively. In a happy-path demo (score 80+), this block may be empty or omitted.
+
+### Webhook events for Protect SDK
+
+- `LINK_EVENT_SESSION_FINISH` — internal Plaid event when a Link session completes and TI is computed.
+- `PROTECT_EVENT_RUN_FINISH` — internal event when `/protect/event/send` finishes TI computation.
+- For customer-side webhooks, use the Signal webhooks (`SIGNAL_SCORE_READY`, `SIGNAL_RULE_TRIGGERED`) and Protect Tx Monitor (`PROTECT_TX_MONITOR_RULE_TRIGGERED`).
+
+### Demo rule for Trust Index (updated)
+
+- **Default Protect demo path:** Link with `['protect_linked_bank']` (+ `'signal'` for tx scoring) → `/protect/event/send` after Link onSuccess → show `trust_index.{score, model, subscores}` in the API panel → optionally chain `/signal/evaluate` for transaction-time decisioning.
+- **Trust Index narrative is allowed AND wire-format accurate** — present the `trust_index` block directly in `#api-response-panel`. Do NOT route Trust Index narrative through `/signal/evaluate` (which doesn't return the field).
+- DO NOT enumerate `subscores` keys beyond the documented `device` / `identity` / `transaction_graph`. DO NOT enumerate `fraud_attributes` keys beyond the small list above without sourcing from the Megadoc.
+- Do NOT use the Trust Index term in non-Protect demos — it conflicts with Signal score branding.
+- Trust Index pricing ($0.10 / $2.50) belongs on slides only, never on host UI.
 
 ## Approved product-name guidance
 
@@ -166,16 +230,26 @@ There is **no documented `reason_codes[]` array** on Signal / Protect responses.
 
 ## Demo guidance — canonical happy path
 
+**Default mode:** Plaid Protect demos use **`protect_linked_bank`** in the Link products[] array — this is the canonical Protect SDK pattern documented in the Plaid Protect Megadoc and surfaces Trust Index Ti2 scores via `/protect/event/send`. Use the IDV bundle (`['protect_linked_bank', 'identity_verification', 'signal']`) **only** when the prompt explicitly references IDV / identity verification as a featured product.
+
 **Persona / scenario:** A fintech (neobank, BNPL, marketplace, crypto exchange) needs a single risk decision at user onboarding or transaction time, combining identity confidence + transaction risk.
 
 **Beats:**
 
 1. Host app — onboarding or payment confirmation screen.
-2. Plaid Link launches with `products: ['signal']` (or `['signal', 'identity_verification']` for the bundled flow). One real-SDK step; `plaidPhase: "launch"`.
-3. Host app — risk-decision screen calls `/signal/evaluate` with `client_transaction_id`, `amount`, ruleset.
-4. Insight reveal — API panel shows `scores.*` + 2–3 named `core_attributes` + `ruleset.result: ACCEPT` (or `REVIEW` / `REROUTE` for nuance demos).
-5. Outcome — host app confirms the decision; optionally show a follow-up call to `/signal/decision/report`.
-6. Value summary — single Plaid-branded slide tying Protect to consolidation (fewer vendors), explainability, and Trust Index as the differentiator.
+2. Plaid Link launches with **`products: ['protect_linked_bank', 'signal']`** (add `'identity_verification'` only if the prompt mentions IDV). One real-SDK step; `plaidPhase: "launch"`. US-only — `protect_linked_bank` requires US country code.
+3. After Link `onSuccess`, host calls **`POST /protect/event/send`** with `event_type: "LINK_EVENT_SESSION_FINISH"` to retrieve the Trust Index score.
+4. Insight reveal — API panel on host step shows the `trust_index` block: `score` (1–100, higher = safer), `model`, `subscores: { device, identity, transaction_graph }`. Optionally show `fraud_attributes: {}` (empty for happy-path).
+5. (Optional, transaction-time step) Call `/signal/evaluate` with `client_transaction_id`, `amount`, ruleset_key; API panel shows `scores.bank_initiated_return_risk` + `scores.customer_initiated_return_risk` + 2–3 `core_attributes` + `ruleset.result: ACCEPT`, `triggered_rule_details.internal_note` only (no `rule_name`), `warnings: []`.
+6. Outcome — host app confirms the decision; optionally show a follow-up call to `/signal/decision/report`.
+7. Value summary — single Plaid-branded slide tying Protect to consolidation (fewer vendors), explainability, and Trust Index as the differentiator (Ti2 catches 30% more fraud than Ti1 — Plaid marketing-approved stat from Oct 14 2025 launch blog).
+
+**Wire-format anti-patterns (build-app must NOT emit these):**
+
+- `products: ['auth', 'signal']` in a Plaid Protect demo — narrates Trust Index but the wire format only retrieves Signal scores. **Use `protect_linked_bank` instead** so the wire format actually carries the Trust Index payload.
+- `ruleset.triggered_rule_details.rule_name: "..."` — fabricated field. Use `internal_note` only.
+- A `trust_index` block on a `/signal/evaluate` response — Signal does not return that field. Put it under `/protect/event/send` or `/identity_verification/get` response instead.
+- A `reason_codes: [...]` array — not documented anywhere. Use `core_attributes` + `internal_note`.
 
 **What NOT to show:**
 

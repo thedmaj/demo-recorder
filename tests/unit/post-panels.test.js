@@ -62,6 +62,28 @@ describe('post-panels', () => {
     assert.match(html, /window\._stepApiResponses/);
   });
 
+  test('post-panels v9: patch IIFE injects canonical .disclosure CSS override + toggles body.api-panel-open', () => {
+    // Regression guard for the LLM-emitted CSS that gave renderjson's
+    // .disclosure toggles width + background, producing huge white blocks
+    // (build 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1).
+    // The v9 patch must include high-specificity overrides scoped to
+    // #api-response-panel with !important so the LLM rule cannot win.
+    const { html } = normalizePanelsInHtml(BASELINE_HTML, DEMO_SCRIPT);
+    // The patch ships with the canonical override rule and the harmless
+    // values we want for .disclosure.
+    assert.match(html, /#api-response-panel \.disclosure/);
+    assert.match(html, /background:transparent !important/);
+    assert.match(html, /width:auto !important/);
+    assert.match(html, /height:auto !important/);
+    assert.match(html, /color:rgba\(255,255,255,0\.55\) !important/);
+    // Patch version bumped to v9 (adds body.api-panel-open toggle for the
+    // slide-canvas hard contract — see slide.css `body.api-panel-open .step.active .slide-root`).
+    assert.match(html, /data-post-panels-patch="v9"/);
+    // v9 contract: setPanelVisibility() must toggle `body.api-panel-open`.
+    assert.match(html, /document\.body\.classList\.toggle\('api-panel-open'/);
+    assert.match(html, /document\.body\.classList\.remove\('api-panel-open'\)/);
+  });
+
   test('normalizePanelsInHtml is idempotent on a second pass', () => {
     const first = normalizePanelsInHtml(BASELINE_HTML, DEMO_SCRIPT);
     const second = normalizePanelsInHtml(first.html, DEMO_SCRIPT);

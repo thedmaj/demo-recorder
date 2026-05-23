@@ -25,15 +25,25 @@ npm run pipe -- resume   [RUN_ID] [--from=STAGE] [--to=STAGE]
                          [--with-slides|--app-only]
 npm run pipe -- stage    STAGE [RUN_ID]        # single-stage retry
 npm run pipe -- status   [RUN_ID] [--json]     # canonical run state
+npm run pipe -- monitor  [RUN_ID] [--poll-ms=N] # re-emit heartbeat lines for background runs
 npm run pipe -- logs     [RUN_ID] [--follow]
 npm run pipe -- stop     [RUN_ID] [--force]
 npm run pipe -- list     [--limit=N] [--json]
 npm run pipe -- continue [RUN_ID]              # resolve a pending prompt
 npm run pipe -- open     [RUN_ID]              # open dashboard to view-only
+
+# Tier-scoped QA recovery lanes (NEVER call build-app / generateApp)
+npm run pipe -- app-touchup [RUN_ID]          # primary recovery for app-tier failures
+                                              #   (npm run demo / app-only path included)
+npm run pipe -- slide-fix   [RUN_ID]          # slide-tier recovery for app+slides runs
+                                              #   (refuses to run when the app tier hasn't passed)
+npm run pipe -- qa-touchup  [RUN_ID] [--tier=app|slide]
+                                              # generate an agent-ready task .md for
+                                              # surgical edits (no orchestrator loop)
 ```
 
-Run IDs default to the latest run when omitted. Stage names are the 23 canonical stages from [CLAUDE.md](../../../CLAUDE.md):
-`research, ingest, script, brand-extract, script-critique, embed-script-validate, build, plaid-link-qa, build-qa, record, qa, figma-review, post-process, voiceover, coverage-check, auto-gap, resync-audio, embed-sync, audio-qa, ai-suggest-overlays, render, ppt, touchup`
+Run IDs default to the latest run when omitted. Stage names are the canonical stages from [CLAUDE.md](../../../CLAUDE.md):
+`research, ingest, script, brand-extract, script-critique, embed-script-validate, build, plaid-link-qa, build-qa, post-slides, post-panels, app-touchup, slide-fix, record, qa, figma-review, post-process, voiceover, coverage-check, auto-gap, resync-audio, embed-sync, audio-qa, ai-suggest-overlays, render, ppt, touchup`
 
 ## Structured events (`::PIPE::` markers)
 
@@ -46,6 +56,7 @@ The orchestrator emits stable machine-readable markers on stdout. Grep or stream
 ::PIPE:: event=stage_end       ts=… runId=… stage=record status=failed durationSec=310.0 message="…" recoveryHint="--from=record"
 ::PIPE:: event=prompt          ts=… runId=… kind=continue message="…" hint="npm run pipe -- continue"
 ::PIPE:: event=prompt_resolved ts=… runId=… kind=continue via=signal_file
+::PIPE:: event=heartbeat   ts=… runId=… tick=7 stage=build-qa stageElapsedSec=412 pipelineElapsedSec=1245 awaitingContinue=false lastLogActivitySec=28 at=…
 ::PIPE:: event=pipeline_end    ts=… runId=… status=ok totalSec=1842.6 outputDir=/…/out/demos/…
 ```
 
@@ -74,11 +85,21 @@ Values containing whitespace or `=` are double-quoted with `\"` escaping.
   "counts": { "total": 23, "completed": 7, "failed": 1, "pending": 15, "running": 0 },
   "firstPending": "plaid-link-qa",
   "firstFailed": "build",
-  "nextRecoveryCommand": "npm run pipe -- stage build 2026-04-23-…"
+  "tierSummary": {
+    "threshold": 80,
+    "app":   { "passed": true,  "skipped": false, "failingStepIds": [], "minScore": 92 },
+    "slide": { "passed": false, "skipped": false, "failingStepIds": ["network-insights-slide"], "minScore": 45 }
+  },
+  "recommendedRecovery": "slide-fix",
+  "nextRecoveryCommand": "npm run pipe -- slide-fix 2026-04-23-… --non-interactive",
+  "lastHeartbeatAt": "2026-05-22T12:34:56.789Z",
+  "lastHeartbeatAgeSec": 18,
+  "heartbeatStale": false,
+  "heartbeatIntervalMs": 300000
 }
 ```
 
-Statuses: `completed | running | failed | pending`. `nextRecoveryCommand` is the single command Claude should run next; follow it unless the user asks for something different.
+Statuses: `completed | running | failed | pending`. `nextRecoveryCommand` is the single command Claude should run next; follow it unless the user asks for something different. **`tierSummary`** + **`recommendedRecovery`** come from the latest `qa-report-build.json` and route the lanes documented below.
 
 ## Next best action (run automatically — stay transparent)
 
@@ -134,22 +155,28 @@ When a run hits trouble, choose one of these in order:
    - If the user wants to unblock: `npm run pipe -- continue <RUN_ID>`.
    - Do **not** re-run the stage — the orchestrator is still alive mid-stage.
 
-2. **Single stage failed** (`firstFailed` set):
+2. **Build-QA tier failure** (`recommendedRecovery` is `app-touchup` / `slide-fix` / `app-touchup+slide-fix`):
+   - **Always run this first** instead of `pipe stage build-qa` / `--build-fix-mode=touchup` — those re-trigger the full LLM regen path which can drift the passing tier.
+   - **`app-touchup`** (app-only OR `slide.passed`): `npm run pipe -- app-touchup <RUN_ID> --non-interactive`. Applies app patches (`api-panel-toggle-latest`, `plaid-launch-cta-icon-ratio`, `plaid-link-token-products-prune`, `zip-cra-host-contract`) → `post-panels` → build-qa `stepScope=app`. Writes `qa-touchup-task.md` / `qa-app-touchup-task.md` for residual failures.
+   - **`slide-fix`** (app+slides only, `app.passed && !slide.passed`): `npm run pipe -- slide-fix <RUN_ID> --non-interactive`. Patches → `strip-slide-roots --steps=…` → `post-slides --steps=…` → `post-panels` → build-qa `stepScope=slides`. Writes `qa-slide-fix-task.md`.
+   - **`app-touchup+slide-fix`** (both tiers failed, localized): run app-touchup first; slide-fix refuses while app tier is failing.
+
+3. **Single stage failed** (`firstFailed` set):
    - Inspect the failure's artifact (see the reading order below).
    - Retry that stage alone first: `npm run pipe -- stage <firstFailed> <RUN_ID>`.
    - Only escalate to `resume --from=…` if the single-stage retry succeeds but downstream stages also need to re-run.
 
-3. **QA threshold miss** (qa-report-* shows score below threshold):
+4. **QA threshold miss** (qa-report-* shows score below threshold):
    - Adjust the threshold: `--qa-threshold=N` on the retry.
    - Or raise refinement iterations: `--max-refinement-iterations=N`.
 
-4. **Build mismatches the script**:
-   - Stage `build` with `--build-fix-mode=smart` (patch existing) or `rebuild` (from scratch).
+5. **Build mismatches the script systemically** (`recommendedRecovery: 'fullbuild'` OR runtime/selector errors on ≥2 steps OR deterministic blocker gate):
+   - Stage `build` with `--build-fix-mode=fullbuild` (LLM regen). Tier lanes will NOT fix this.
 
-5. **No run identity known** (status shows "No latest run"):
+6. **No run identity known** (status shows "No latest run"):
    - Ask the user for the intended `RUN_ID`, or start a new build with `npm run pipe -- new`.
 
-When `nextRecoveryCommand` is already populated by `pipe status --json`, prefer it verbatim.
+When `nextRecoveryCommand` is already populated by `pipe status --json`, prefer it verbatim — it already reflects the tier matrix.
 
 ## Artifact reading order when stuck
 
@@ -174,16 +201,36 @@ Pass `--non-interactive` to skip all human prompts; the orchestrator will auto-a
 
 Combine with `--json` to parse events programmatically instead of scraping human logs.
 
-## Long-running builds — 5-minute heartbeat (agent behavior)
+## Long-running builds — orchestrator heartbeat (agent behavior)
 
-When monitoring a pipeline that may run for many minutes:
+The orchestrator emits **`::PIPE:: event=heartbeat`** every **5 minutes** (`PIPELINE_HEARTBEAT_MS`, default 300000) **mid-stage**, independent of stage completion. Each tick also writes `pipeline-heartbeat.json` and a `[HEARTBEAT]` log section.
 
-- At least **every 5 minutes**, run `npm run pipe -- status` (or `--json`) and **tell the user in chat** what stage is running, whether `awaitingContinue` is true, and any `firstFailed` / `nextRecoveryCommand`.
-- **Required cadence:** updates **must not** wait until the user asks “how’s it going?” — that pattern violates repo policy. Proactive heartbeat is the default (see [`CLAUDE.md`](../../../CLAUDE.md) **REQUIRED — Pipeline heartbeat**).
-- **Never wait silently** if logs have stalled ~5 minutes while status still shows activity — inspect `pipeline-build.log.md` or suggest `pipe stop` / recovery.
-- Use **`--non-interactive`** on `pipe new` / `resume` when possible so stdin gates do not hang.
+### How to observe the heartbeat
 
-Optional parallel terminal: `npm run pipe:status-loop` (prints status every 300s; `PIPE_STATUS_INTERVAL_SEC` to override). Does **not** replace chat updates.
+When supervising a pipeline in Cursor / Claude Code, configure your long-running Shell call:
+
+```
+notify_on_output: {
+  pattern: "::PIPE:: event=heartbeat",
+  reason: "5min pipeline heartbeat",
+  debounce_ms: 280000
+}
+```
+
+On each notification, post a one-line chat summary:
+`stage=<name>, elapsed=<s>s, lastLogActivity=<s>s ago, awaiting=<bool>`
+
+**Background orchestrator:** if the orchestrator Shell is backgrounded (`block_until_ms: 0`), run in parallel:
+
+```bash
+npm run pipe -- monitor [RUN_ID]
+```
+
+…with the same `notify_on_output` pattern. `pipe monitor` polls `pipeline-heartbeat.json` and re-emits heartbeat lines.
+
+**Stall detection:** `npm run pipe -- status --json` exposes `heartbeatStale: true` when `running` and no heartbeat for **>2× interval**. Investigate before suggesting `pipe stop`.
+
+Optional for humans only: `npm run pipe:status-loop` (prints status every 300s) — **redundant** for agents once orchestrator heartbeats are active.
 
 ## Worked example
 

@@ -318,6 +318,11 @@
               stageSummary = `${completed ?? 0}/${total ?? 0}` +
                 (failed ? ` · ${failed} failed` : '') +
                 (s.runningStage ? ` · ${s.runningStage}` : '');
+              if (s.lastHeartbeatAgeSec != null) {
+                stageSummary += s.heartbeatStale
+                  ? ` · hb ${s.lastHeartbeatAgeSec}s stale`
+                  : ` · hb ${s.lastHeartbeatAgeSec}s ago`;
+              }
             }
           } catch (_) { /* ignore */ }
           const cont = status.awaitingContinue ? ' ⚑' : '';

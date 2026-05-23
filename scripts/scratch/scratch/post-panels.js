@@ -270,6 +270,48 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       // Collapsed panel: keep the toggle pinned outside the thin strip and
       // centered vertically so it remains discoverable while the panel is hidden.
       '#api-response-panel.api-panel-collapsed .api-panel-edge-toggle{left:-36px !important;top:50% !important;transform:translateY(-50%) !important;}',
+      // ─────────────────────────────────────────────────────────────────────
+      // renderjson per-object disclosure toggles (added v8, 2026-05-21).
+      //
+      // renderjson v1.4 generates clickable <a class="disclosure">+</a> /
+      // <a class="disclosure">-</a> spans next to every JSON sub-tree. When
+      // LLM-generated host CSS gives .disclosure width, height, or
+      // background-color (often inherited from a generic button reset), the
+      // toggles render as huge solid white blocks — see the
+      // 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1
+      // regression. The high-specificity rules below override that with the
+      // documented inline-character form, regardless of what the LLM emitted.
+      //
+      // !important is required: the LLM rules typically also use !important
+      // on a-tag resets, so we have to win at specificity AND priority.
+      '#api-response-panel .disclosure,',
+      '#api-response-panel a.disclosure{',
+      '  display:inline-block !important;',
+      '  width:auto !important;height:auto !important;',
+      '  min-width:0 !important;min-height:0 !important;',
+      '  max-width:1.6em !important;max-height:1.4em !important;',
+      '  padding:0 !important;margin:0 4px 0 0 !important;',
+      '  background:transparent !important;background-color:transparent !important;',
+      '  background-image:none !important;',
+      '  color:rgba(255,255,255,0.55) !important;',
+      "  font-family:'SF Mono', Menlo, Monaco, Consolas, monospace !important;",
+      '  font-size:0.85em !important;font-weight:600 !important;',
+      '  line-height:1 !important;text-align:center !important;',
+      '  text-decoration:none !important;',
+      '  border:none !important;outline:none !important;box-shadow:none !important;',
+      '  cursor:pointer !important;user-select:none !important;',
+      '  vertical-align:baseline !important;',
+      '}',
+      '#api-response-panel .disclosure:hover,',
+      '#api-response-panel a.disclosure:hover{',
+      '  color:rgba(255,255,255,0.95) !important;',
+      '  background:transparent !important;background-color:transparent !important;',
+      '  text-decoration:none !important;',
+      '}',
+      // Belt-and-suspenders: some LLM builds wrap renderjson output in a
+      // container with explicit a/button resets. Force the disclosure to be
+      // text-like even if it is a <button> element in some renderjson fork.
+      '#api-response-panel button.disclosure{appearance:none !important;}',
       '',
     ].join('\\n');
     document.head.appendChild(st);
@@ -387,6 +429,12 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       panel.classList.add('api-panel-collapsed');
       panel.classList.remove('api-panel-open');
     }
+    // Mirror the OPEN (expanded JSON body) state onto <body> so the slide CSS
+    // hard contract (slide.css: "body.api-panel-open .step.active .slide-root")
+    // can shrink the slide canvas to reserve space for the expanded panel.
+    // When the panel is hidden (display:none, on steps with no apiResponse)
+    // or collapsed (chrome only, 48px edge), the slide returns to full-bleed.
+    try { document.body.classList.toggle('api-panel-open', !!open); } catch (_) {}
     ensurePanelToggle(panel);
   }
 
@@ -537,6 +585,9 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       panel.style.setProperty('display', 'none', 'important');
       panel.classList.remove('api-panel-collapsed');
       panel.classList.remove('api-panel-open');
+      // Remove body.api-panel-open whenever the current step has no apiResponse —
+      // pure-slide and pure-host steps stay at full-bleed slide canvas.
+      try { document.body.classList.remove('api-panel-open'); } catch (_) {}
     }
   };
 
@@ -709,7 +760,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     token-only mode, pre-link manual nav). When live data is present,
   //     the panel header label gets a " — live" suffix so operators can
   //     visually distinguish real vs synthesized in screen recordings.
-  const POST_PANELS_PATCH_VERSION = 'v7';
+  const POST_PANELS_PATCH_VERSION = 'v9';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);

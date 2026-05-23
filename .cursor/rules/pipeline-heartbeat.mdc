@@ -1,5 +1,5 @@
 ---
-description: "MANDATORY: While a Plaid pipeline build runs, agents MUST post chat status every ≤5 min (pipe status); never wait silently; prefer non-interactive. Not satisfied by pipe:status-loop alone."
+description: "MANDATORY: While a Plaid pipeline build runs, agents observe orchestrator heartbeats and post chat summaries; never wait silently; prefer non-interactive."
 alwaysApply: true
 ---
 
@@ -7,13 +7,27 @@ alwaysApply: true
 
 **Priority:** High. **Applies to:** Every Cursor / Claude agent session in this repo when a pipeline command is running or you are monitoring it.
 
-This rule exists because models often **skip** periodic updates unless reminded. **Incorrect:** posting status only after the user asks *“how’s the build?”* **Correct:** proactively posting at least **every 5 minutes** while the run is active.
+The orchestrator emits **`::PIPE:: event=heartbeat`** every **5 minutes** (configurable via `PIPELINE_HEARTBEAT_MS`) **mid-stage**, independent of stage completion. Agents should observe these ticks — not rely on memory or manual polling alone.
 
 When you **start or supervise** any command that may run many minutes (`npm run demo`, `npm run demo:full`, `npm run pipe -- new`, `npm run pipe -- resume`, orchestrator, log tailing):
 
-1. **MUST — Chat heartbeat:** At least **every 5 minutes**, give a short update **in this chat**. Run `npm run pipe -- status` or `npm run pipe -- status --json`. Summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and `nextRecoveryCommand` when present.
-2. **MUST — Stall detection:** If **no new stdout/stderr for ~5 minutes** while status still shows work in progress, investigate (`activePid`, tail `artifacts/logs/pipeline-build.log.md` under the run directory). Report what you found. Suggest `npm run pipe -- stop <RUN_ID>` only if the user wants to abort.
-3. **SHOULD — Stdin:** Prefer `npm run pipe -- new … --non-interactive` (and `SCRATCH_AUTO_APPROVE=true` in `.env` when appropriate). Warn if a gate needs their terminal.
-4. **Optional terminal helper:** `npm run pipe:status-loop` prints `pipe status` every 300s (`PIPE_STATUS_INTERVAL_SEC`). **Does not replace** rule 1 — users may not watch that terminal.
+1. **MUST — Observe heartbeats:** Configure your long-running Shell call with:
+   ```
+   notify_on_output: {
+     pattern: "::PIPE:: event=heartbeat",
+     reason: "5min pipeline heartbeat",
+     debounce_ms: 280000
+   }
+   ```
+   On each notification, end your turn and post a one-line chat summary:
+   `stage=<name>, elapsed=<s>s, lastLogActivity=<s>s ago, awaiting=<bool>`
 
-Canonical copy: **`CLAUDE.md`** (section **REQUIRED — Pipeline heartbeat** at top, and expanded subsection near **Pipeline Restartability**). Skill: **`.claude/skills/pipeline-cli/SKILL.md`** (heartbeat subsection).
+2. **Background orchestrator fallback:** If the orchestrator is backgrounded (`block_until_ms: 0`), run `npm run pipe -- monitor [RUN_ID]` in a parallel Shell with the same `notify_on_output` pattern. It re-emits heartbeat lines from `pipeline-heartbeat.json`.
+
+3. **MUST — Stall detection:** If **`heartbeatStale: true`** in `npm run pipe -- status --json`, or no heartbeat for **>2× interval** while `running: true`, investigate (`activePid`, tail `artifacts/logs/pipeline-build.log.md`). Suggest `npm run pipe -- stop <RUN_ID>` only if the user wants to abort.
+
+4. **SHOULD — Stdin:** Prefer `npm run pipe … --non-interactive` (and/or `SCRATCH_AUTO_APPROVE=true` in `.env` when appropriate). Warn if a gate needs their terminal.
+
+5. **Optional human helper:** `npm run pipe:status-loop` prints `pipe status` every 300s. **Redundant** once orchestrator heartbeats are wired — kept for human supervisors only.
+
+Canonical copy: **`CLAUDE.md`** (section **REQUIRED — Pipeline heartbeat**). Skill: **`.claude/skills/pipeline-cli/SKILL.md`**.

@@ -39,10 +39,14 @@ require('../utils/load-env').loadEnv();
 const fs = require('fs');
 const path = require('path');
 
-const { requireRunDir, getRunLayout } = require('../utils/run-io');
+const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind');
 const { buildSlideInsertionPrompt } = require('../utils/prompt-templates');
 const { scopeSlideCss } = require('../utils/slide-css-scoper');
+const {
+  normalizeSlideTypography,
+  injectSlideTypographyOverrides,
+} = require('../utils/normalize-slide-typography');
 
 const MODEL = process.env.POST_SLIDES_MODEL || 'claude-opus-4-7';
 const MAX_TOKENS = Number(process.env.POST_SLIDES_MAX_TOKENS || 6000);
@@ -300,22 +304,109 @@ function spliceSlideFragmentIntoHtml(html, stepId, fragment, options = {}) {
   return { html: workingHtml, applied: false, reason: 'no-insertion-point', styleCount: styles.length };
 }
 
+const SLIDE_TEMPLATE_DIR = 'templates/slide-template';
+
+function readUtf8File(p) {
+  try {
+    return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function loadSlideTemplates(PROJECT_ROOT) {
-  const cssPath = path.join(PROJECT_ROOT, 'templates/slide-template/slide.css');
-  const rulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md');
-  const shellPath = path.join(PROJECT_ROOT, 'templates/slide-template/pipeline-slide-shell.html');
-  const read = (p) => {
-    try {
-      return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
-    } catch (_) {
-      return '';
-    }
-  };
+  const base = path.join(PROJECT_ROOT, SLIDE_TEMPLATE_DIR);
+  const briefDir = path.join(base, 'brand-design-briefs');
   return {
-    slideTemplateCss: read(cssPath),
-    slideTemplateRules: read(rulesPath),
-    slideTemplateShellHtml: read(shellPath),
+    slideTemplateCss: readUtf8File(path.join(base, 'slide.css')),
+    colorsAndTypeCss: readUtf8File(path.join(base, 'colors_and_type.css')),
+    // Canonical pipeline contract — single source of truth for slide canvas
+    // sizing + inner overflow + typography ceilings. Injected AFTER slide.css
+    // so cascade order makes its rules authoritative. Replaces four prior
+    // competing patches (see file header).
+    pipelineSlideContractCss: readUtf8File(path.join(base, 'pipeline-slide-contract.css')),
+    slideTemplateRules: readUtf8File(path.join(base, 'PIPELINE_SLIDE_SHELL_RULES.md')),
+    slideTemplateShellHtml: readUtf8File(path.join(base, 'pipeline-slide-shell.html')),
+    deckDesignSystem: readUtf8File(path.join(briefDir, 'DECK_DESIGN_SYSTEM.md')),
+    deckTemplates: readUtf8File(path.join(briefDir, 'DECK_TEMPLATES.md')),
+    deckComposition: readUtf8File(path.join(briefDir, 'DECK_COMPOSITION.md')),
   };
+}
+
+/**
+ * Copy bundled fonts + logos into scratch-app once per post-slides run.
+ * Paths in slide HTML/CSS use assets/logos/... and fonts/... relative to scratch-app root.
+ */
+function copySlideDesignAssets(PROJECT_ROOT, scratchAppDir) {
+  const templateBase = path.join(PROJECT_ROOT, SLIDE_TEMPLATE_DIR);
+  const pairs = [
+    [path.join(templateBase, 'fonts'), path.join(scratchAppDir, 'fonts')],
+    [path.join(templateBase, 'assets', 'logos'), path.join(scratchAppDir, 'assets', 'logos')],
+  ];
+  let copied = 0;
+  for (const [srcDir, destDir] of pairs) {
+    if (!fs.existsSync(srcDir)) continue;
+    fs.mkdirSync(destDir, { recursive: true });
+    for (const name of fs.readdirSync(srcDir)) {
+      const src = path.join(srcDir, name);
+      if (!fs.statSync(src).isFile()) continue;
+      const dest = path.join(destDir, name);
+      if (!fs.existsSync(dest) || fs.statSync(src).mtimeMs > fs.statSync(dest).mtimeMs) {
+        fs.copyFileSync(src, dest);
+        copied += 1;
+      }
+    }
+  }
+  return { copied };
+}
+
+/** Extract T1–T11 from LLM fragment for post-slides-report templatesUsed. */
+function extractSlideTemplateId(fragment) {
+  if (!fragment) return null;
+  const m = String(fragment).match(/\bdata-slide-template\s*=\s*["'](T(?:1[01]|[1-9]))["']/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/**
+ * Ensure host <head> links slide design CSS once (colors + slide shell).
+ */
+function ensureSlideDesignStylesInHead(html, templates) {
+  if (!html || !templates) return html;
+  const markerStart = '<!-- POST-SLIDES DESIGN SYSTEM CSS -->';
+  const markerEnd = '<!-- /POST-SLIDES DESIGN SYSTEM CSS -->';
+  if (html.includes(markerStart)) return html;
+
+  const colors = String(templates.colorsAndTypeCss || '').trim();
+  const slide = String(templates.slideTemplateCss || '').trim();
+  const contract = String(templates.pipelineSlideContractCss || '').trim();
+  if (!colors && !slide && !contract) return html;
+
+  // Rewrite @import and font URLs for scratch-app layout (served from run root).
+  const scopedColors = colors
+    .replace(/@import\s+url\(["']?\.\/colors_and_type\.css["']?\)\s*;?/gi, '')
+    .replace(/url\(\s*["']?\.\/fonts\//gi, 'url("./fonts/');
+  const scopedSlide = slide
+    .replace(/@import\s+url\(["']?\.\/colors_and_type\.css["']?\)\s*;?/gi, '')
+    .replace(/url\(\s*["']?\.\/fonts\//gi, 'url("./fonts/');
+
+  // Cascade order matters: emit base design system FIRST, then the canonical
+  // pipeline contract as a SEPARATE marked block AFTER. The contract's
+  // selector specificity (`.step.active .slide-root`) beats slide.css's
+  // bare `.slide-root` rule, and the later position closes any tie.
+  const designBlock =
+    `${markerStart}\n` +
+    `<style data-post-slides-design-system="v1">\n${scopedColors}\n${scopedSlide}\n</style>\n` +
+    markerEnd;
+  const contractBlock = contract
+    ? `\n<!-- PIPELINE SLIDE CONTRACT v1 -->\n` +
+      `<style data-pipeline-slide-contract="v1">\n${contract}\n</style>\n` +
+      `<!-- /PIPELINE SLIDE CONTRACT v1 -->\n`
+    : '';
+  const block = designBlock + contractBlock;
+
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${block}\n</head>`);
+  if (/<body\b/i.test(html)) return html.replace(/<body\b/i, `${block}\n<body`);
+  return block + '\n' + html;
 }
 
 function loadBrand(outDir) {
@@ -358,9 +449,10 @@ function loadValueProps(outDir) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const out = { steps: null, maxIters: DEFAULT_MAX_ITERS, dryRun: false };
+  const out = { steps: null, maxIters: DEFAULT_MAX_ITERS, dryRun: false, allowPostRecord: false };
   for (const a of argv) {
     if (a === '--dry-run') out.dryRun = true;
+    else if (a === '--allow-post-record') out.allowPostRecord = true;
     else if (a.startsWith('--steps=')) {
       out.steps = a.slice('--steps='.length).split(',').map((s) => s.trim()).filter(Boolean);
     } else if (a.startsWith('--max-iters=')) {
@@ -406,6 +498,54 @@ async function main() {
     process.exit(1);
   }
 
+  // App-only invariant gate (manifest-authoritative).
+  // App-only runs must never produce slide artifacts. This gate is read from
+  // run-manifest.json (not env) so that the storyboard editor's app-only ->
+  // app+slides upgrade via stampInsertedStepKindAndMaybeUpgradeBuildMode is
+  // honored on the next stage invocation.
+  const manifest = readRunManifest(outDir);
+  const manifestBuildMode = String((manifest && manifest.buildMode) || '').toLowerCase().trim();
+  if (manifestBuildMode === 'app-only') {
+    const reason = 'app-only';
+    console.log(`[post-slides] Skipping: run-manifest.buildMode="app-only" (reason=${reason}).`);
+    const skipReport = {
+      at: new Date().toISOString(),
+      skipped: true,
+      reason,
+      buildMode: 'app-only',
+      noop: true,
+      slidesProcessed: [],
+      slidesSkipped: [],
+      templatesUsed: [],
+    };
+    writeReports(outDir, layout, skipReport);
+    return skipReport;
+  }
+
+  // Post-record freeze sentinel gate. After record/recording.webm exists,
+  // automated re-runs would clobber the slides the recording captured.
+  // The freeze is bypassable via opts.allowPostRecord (storyboard editor
+  // sets this when the operator confirmed they want to mutate post-record
+  // with the explicit understanding that they'll need to re-record).
+  const freezeSentinelPath = path.join(outDir, 'post-record-freeze.sentinel');
+  if (fs.existsSync(freezeSentinelPath) && !cli.allowPostRecord) {
+    const reason = 'post_record_freeze';
+    console.log(`[post-slides] Skipping: post-record-freeze.sentinel exists (reason=${reason}). Re-run "pipe stage record" to clear.`);
+    const skipReport = {
+      at: new Date().toISOString(),
+      skipped: true,
+      reason,
+      buildMode: manifestBuildMode || 'app+slides',
+      noop: true,
+      slidesProcessed: [],
+      slidesSkipped: [],
+      templatesUsed: [],
+      recoveryHint: 'Run `pipe stage record` to overwrite the freeze sentinel before mutating slides, or pass --allow-post-record to bypass (storyboard editor path).',
+    };
+    writeReports(outDir, layout, skipReport);
+    return skipReport;
+  }
+
   const demoScript = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
   annotateScriptWithStepKinds(demoScript);
 
@@ -419,9 +559,12 @@ async function main() {
     dryRun: cli.dryRun,
     onlyStepIds: cli.steps || null,
     model: MODEL,
+    buildMode: manifestBuildMode || 'app+slides',
     totalSlideSteps: slideSteps.length,
     slidesProcessed: [],
     slidesSkipped: [],
+    templatesUsed: [],
+    designAssetsCopied: null,
   };
 
   if (slideSteps.length === 0) {
@@ -464,6 +607,12 @@ async function main() {
   const templates = loadSlideTemplates(PROJECT_ROOT);
   const brand = loadBrand(outDir);
   const vps = loadValueProps(outDir);
+  const scratchAppDir = path.join(outDir, 'scratch-app');
+
+  if (!cli.dryRun) {
+    report.designAssetsCopied = copySlideDesignAssets(PROJECT_ROOT, scratchAppDir);
+    html = ensureSlideDesignStylesInHead(html, templates);
+  }
 
   // Map each slide step to its predecessor in script order so we can
   // splice it into the host HTML right after that step's div (preserves
@@ -496,6 +645,9 @@ async function main() {
           slideTemplateCss: hostHasExistingSlide ? '' : templates.slideTemplateCss,
           slideTemplateRules: hostHasExistingSlide ? '' : templates.slideTemplateRules,
           slideTemplateShellHtml: hostHasExistingSlide ? '' : templates.slideTemplateShellHtml,
+          deckDesignSystem: hostHasExistingSlide ? '' : templates.deckDesignSystem,
+          deckTemplates: hostHasExistingSlide ? '' : templates.deckTemplates,
+          deckComposition: hostHasExistingSlide ? '' : templates.deckComposition,
           hostHasExistingSlide,
           valuePropositionStatements: vps,
           narration: step.narration,
@@ -509,7 +661,13 @@ async function main() {
         );
         lastReason = reason;
         if (ok) {
-          html = updated;
+          const norm = normalizeSlideTypography(updated);
+          html = norm.html;
+          if (norm.capped || norm.stripped) {
+            console.log(
+              `[post-slides] Typography normalize "${step.id}": capped=${norm.capped}, stripped=${norm.stripped}`
+            );
+          }
           applied = true;
         } else {
           console.warn(`[post-slides] Splice attempt ${attempts} for "${step.id}" failed: ${reason}`);
@@ -520,8 +678,12 @@ async function main() {
       }
     }
     if (applied) {
-      report.slidesProcessed.push({ stepId: step.id, attempts, reason: lastReason });
-      console.log(`[post-slides] ✓ Inserted slide "${step.id}" on attempt ${attempts}.`);
+      const templateId = extractSlideTemplateId(lastRaw);
+      report.slidesProcessed.push({ stepId: step.id, attempts, reason: lastReason, templateId });
+      if (templateId) {
+        report.templatesUsed.push({ stepId: step.id, template: templateId });
+      }
+      console.log(`[post-slides] ✓ Inserted slide "${step.id}" on attempt ${attempts}${templateId ? ` (${templateId})` : ''}.`);
     } else {
       report.slidesSkipped.push({ stepId: step.id, attempts, reason: lastReason || 'unknown' });
       console.warn(`[post-slides] Skipped "${step.id}" after ${attempts} attempt(s).`);
@@ -536,6 +698,15 @@ async function main() {
   }
 
   if (!cli.dryRun && report.slidesProcessed.length > 0) {
+    const finalNorm = normalizeSlideTypography(html);
+    html = finalNorm.html;
+    if (finalNorm.capped || finalNorm.stripped) {
+      report.typographyNormalized = { capped: finalNorm.capped, stripped: finalNorm.stripped };
+      console.log(
+        `[post-slides] Final typography pass: capped=${finalNorm.capped}, stripped=${finalNorm.stripped}`
+      );
+    }
+    html = injectSlideTypographyOverrides(html);
     fs.writeFileSync(htmlPath, html, 'utf8');
     console.log(`[post-slides] Wrote updated HTML with ${report.slidesProcessed.length} slide(s).`);
   }
@@ -562,6 +733,10 @@ module.exports = {
   injectSlideStylesIntoHead,
   stepHasSlideRoot,
   hostAlreadyHasAnySlide,
+  loadSlideTemplates,
+  copySlideDesignAssets,
+  extractSlideTemplateId,
+  ensureSlideDesignStylesInHead,
 };
 
 if (require.main === module) {

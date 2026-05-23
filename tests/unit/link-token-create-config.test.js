@@ -31,6 +31,85 @@ test('inferPlaidLinkProductsFromPrompt picks transactions from prompt', () => {
   assert.ok(p.includes('transactions'));
 });
 
+// ── Plaid Protect default: protect_linked_bank ─────────────────────────────
+// Verified 2026-05-22 via AskBill + Glean GTM Playbook 2026 + Protect Megadoc.
+// Default Protect demos MUST emit `protect_linked_bank` (US-only, public)
+// unless the prompt explicitly references IDV / identity verification.
+
+test("Plaid Protect prompt defaults to ['protect_linked_bank'] (no IDV mention)", () => {
+  const p = inferPlaidLinkProductsFromPrompt(
+    'Tilt — Plaid Protect Trust Index for cash-advance and LOC fraud screening using TI Score Full'
+  );
+  assert.ok(p.includes('protect_linked_bank'), `expected protect_linked_bank, got: ${p.join(',')}`);
+  assert.ok(!p.includes('identity_verification'), `must NOT add identity_verification unless prompt mentions IDV: ${p.join(',')}`);
+});
+
+test('Plaid Protect prompt adds identity_verification ONLY when IDV explicitly mentioned', () => {
+  const p1 = inferPlaidLinkProductsFromPrompt(
+    'Plaid Protect with Trust Index and Plaid IDV at signup'
+  );
+  assert.ok(p1.includes('protect_linked_bank'));
+  assert.ok(p1.includes('identity_verification'), `IDV explicitly mentioned → expected identity_verification: ${p1.join(',')}`);
+
+  const p2 = inferPlaidLinkProductsFromPrompt(
+    'Plaid Protect for fraud screening. Use identity verification at onboarding.'
+  );
+  assert.ok(p2.includes('identity_verification'), `"identity verification" phrase → expected identity_verification: ${p2.join(',')}`);
+});
+
+test('Plaid Protect prompt with transaction-time scoring adds `signal`', () => {
+  const p = inferPlaidLinkProductsFromPrompt(
+    'Plaid Protect Trust Index for underwriting decisions; call /signal/evaluate at transaction time'
+  );
+  assert.ok(p.includes('protect_linked_bank'));
+  assert.ok(p.includes('signal'), `transaction scoring intent → expected signal: ${p.join(',')}`);
+});
+
+test('Plaid Protect prompt with monitor adds `monitor`', () => {
+  const p = inferPlaidLinkProductsFromPrompt(
+    'Plaid Protect plus Plaid Monitor for sanctions and PEP screening'
+  );
+  assert.ok(p.includes('protect_linked_bank'));
+  assert.ok(p.includes('monitor'));
+});
+
+test('EWA / Cash Advance Score prompts do NOT route to protect_linked_bank (separate family)', () => {
+  // Per CLAUDE.md, EWA Score is its own family `cash_advance_score` and uses
+  // `['auth', 'signal']` — not protect_linked_bank.
+  const p = inferPlaidLinkProductsFromPrompt(
+    'Plaid Protect Cash Advance Score for EWA underwriting using /signal/evaluate'
+  );
+  assert.ok(!p.includes('protect_linked_bank'), `EWA must NOT route to protect_linked_bank: ${p.join(',')}`);
+  assert.ok(p.includes('signal'));
+  assert.ok(p.includes('auth'));
+});
+
+test('protect_linked_bank and protect_transactions survive the CRA/Income mix sanitizer', () => {
+  // The sanitizer is for CRA-vs-Income conflict resolution; it must not strip
+  // Protect-family products (verified 2026-05-22 — these are public Link product
+  // strings per AskBill, not NDA as the prior KB had said).
+  const out = sanitizeProductsForLinkTokenMix(
+    ['protect_linked_bank', 'protect_transactions', 'signal', 'identity_verification', 'monitor'],
+    'auto'
+  );
+  assert.ok(out.products.includes('protect_linked_bank'), `protect_linked_bank must survive sanitizer: ${out.products.join(',')}`);
+  assert.ok(out.products.includes('protect_transactions'), `protect_transactions must survive sanitizer: ${out.products.join(',')}`);
+  assert.ok(out.products.includes('signal'));
+  assert.ok(out.products.includes('identity_verification'));
+  assert.ok(out.products.includes('monitor'));
+});
+
+test('inferProductsFromApiSignals routes /protect/event/send → protect_linked_bank', () => {
+  const out = inferProductsFromApiSignals(['protect/event/send', 'protect/user/insights/get']);
+  assert.ok(out.includes('protect_linked_bank'));
+});
+
+test("inferProductsFromApiSignals routes /identity_verification/get → 'identity_verification' (not 'identity')", () => {
+  const out = inferProductsFromApiSignals(['identity_verification/get']);
+  assert.ok(out.includes('identity_verification'), `expected identity_verification: ${out.join(',')}`);
+  assert.ok(!out.includes('identity'), `must NOT also emit 'identity' (different product): ${out.join(',')}`);
+});
+
 test('detectInvestmentsMoveInvestmentsAuthGetAskBillOnly requires Move + investments/auth/get', () => {
   assert.ok(
     detectInvestmentsMoveInvestmentsAuthGetAskBillOnly(
@@ -231,6 +310,20 @@ test("inferPlaidLinkProductsFromPrompt adds 'auth' + 'signal' for Earned Wage Ac
   );
   assert.ok(p.includes('signal'));
   assert.ok(p.includes('auth'));
+});
+
+test("inferPlaidLinkProductsFromPrompt adds signal for standalone Auth + Identity Match + Signal funding demos", () => {
+  const p = inferPlaidLinkProductsFromPrompt(
+    'Huntington external account funding with Plaid Auth POST /auth/get, Plaid Identity Match, and Plaid Signal. POST /signal/evaluate before ACH release.'
+  );
+  assert.ok(p.includes('identity'));
+  assert.ok(p.includes('auth'));
+  assert.ok(p.includes('signal'), `expected signal in products[]: ${p.join(',')}`);
+});
+
+test('inferProductsFromApiSignals maps /signal/evaluate to signal', () => {
+  const p = inferProductsFromApiSignals(['POST /signal/evaluate']);
+  assert.ok(p.includes('signal'));
 });
 
 test('sanitizeProductsForLinkTokenMix passes [auth, signal] through unchanged', () => {

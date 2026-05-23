@@ -25,6 +25,8 @@
 const fs = require('fs');
 const path = require('path');
 
+const LEGACY_NONCANONICAL_LOGO_SRC = /(?:plaid-logo-|\.\/plaid-logo|scratch-app\/plaid-logo)/i;
+
 // ─── Patch entries ──────────────────────────────────────────────────────────
 //
 // Each patch:
@@ -38,6 +40,7 @@ const path = require('path');
 const PATCHES = [
   {
     name: 'api-panel-toggle-latest',
+    tierScope: 'app',
     description:
       'Re-runs post-panels to apply the latest JSON panel patch (v7 as of ' +
       '2026-05-20). Cumulative fixes: renders apiData.response (not the ' +
@@ -101,6 +104,7 @@ const PATCHES = [
   },
   {
     name: 'plaid-link-token-products-prune',
+    tierScope: 'app',
     description:
       'Prunes incompatible CRA + non-CRA Income products from the host app\'s ' +
       '/api/create-link-token request body. Plaid rejects products lists that ' +
@@ -267,6 +271,7 @@ const PATCHES = [
   },
   {
     name: 'plaid-launch-cta-icon-ratio',
+    tierScope: 'app',
     description:
       'Re-injects the Plaid Link launch CTA layout stylesheet to enforce the ' +
       'modest inline-icon sizing contract (icon ≤40% of button height).',
@@ -303,9 +308,468 @@ const PATCHES = [
       };
     },
   },
+  {
+    // RETIRED 2026-05-22 — superseded by the always-on
+    // templates/slide-template/pipeline-slide-contract.css block, which is
+    // injected once by post-slides.ensureSlideDesignStylesInHead. Slide
+    // canvas sizing is now part of the immutable contract, so this patch
+    // is no longer needed as a recovery step. Retained as a stub so that
+    // any historical references in slide-fix-report.json don't dangle.
+    name: 'slide-canvas-fullbleed',
+    tierScope: 'slide',
+    description:
+      'RETIRED — slide canvas sizing is now owned by pipeline-slide-contract.css. ' +
+      'See templates/slide-template/pipeline-slide-contract.css.',
+    matchCategories: [],
+    matchIssuePatterns: [],
+    manualOnly: true,
+    retired: true,
+    apply: async () => ({
+      applied: false,
+      summary: 'slide-canvas-fullbleed is retired — sizing is owned by pipeline-slide-contract.css (injected by post-slides).',
+    }),
+  },
+  {
+    name: 'slide-design-tokens-inject',
+    tierScope: 'slide',
+    description:
+      'Opt-in: inject Plaid Deck Design System CSS (colors_and_type + slide.css) into scratch-app <head>. ' +
+      'Also copies fonts/ and assets/logos/ when missing. Does not auto-fire from QA.',
+    matchCategories: [],
+    matchIssuePatterns: [],
+    manualOnly: true,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      const PROJECT_ROOT = path.resolve(__dirname, '../../..');
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      const marker = '<!-- POST-SLIDES DESIGN SYSTEM CSS -->';
+      if (html.includes(marker)) {
+        return { applied: false, summary: 'Design-system CSS marker already present' };
+      }
+      try {
+        delete require.cache[require.resolve('../scratch/post-slides')];
+        const postSlides = require('../scratch/post-slides');
+        const templates = postSlides.loadSlideTemplates(PROJECT_ROOT);
+        postSlides.copySlideDesignAssets(PROJECT_ROOT, path.join(runDir, 'scratch-app'));
+        html = postSlides.ensureSlideDesignStylesInHead(html, templates);
+        fs.writeFileSync(htmlPath, html, 'utf8');
+        return { applied: true, summary: 'Injected POST-SLIDES DESIGN SYSTEM CSS + copied fonts/logos' };
+      } catch (e) {
+        return { applied: false, error: e.message };
+      }
+    },
+  },
+  {
+    name: 'slide-shell-chrome-inject',
+    tierScope: 'slide',
+    description:
+      'Opt-in: for each .slide-root step missing .chrome-logo / .eyebrow-tag / .chrome-foot, inject canonical chrome. ' +
+      'Does not auto-fire from QA.',
+    matchCategories: [],
+    matchIssuePatterns: [],
+    manualOnly: true,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      const scriptPath = path.join(runDir, 'demo-script.json');
+      let slideSteps = [];
+      try {
+        if (fs.existsSync(scriptPath)) {
+          const script = JSON.parse(fs.readFileSync(scriptPath, 'utf8'));
+          slideSteps = (script.steps || []).filter((s) => s && (s.sceneType === 'slide' || /slide/i.test(String(s.stepKind || ''))));
+        }
+      } catch (_) {}
+      if (!slideSteps.length) {
+        const re = /data-testid="step-([^"]+)"[^>]*>[\s\S]*?\bslide-root\b/gi;
+        let m;
+        while ((m = re.exec(html)) !== null) slideSteps.push({ id: m[1] });
+      }
+      let patched = 0;
+      for (let i = 0; i < slideSteps.length; i += 1) {
+        const stepId = slideSteps[i].id || slideSteps[i];
+        const safe = String(stepId).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+        const blockRe = new RegExp(
+          `(<div[^>]*data-testid="step-${safe}"[^>]*>[\\s\\S]*?<div[^>]*\\bslide-root\\b[^>]*>)([\\s\\S]*?)(<\\/div>\\s*<\\/div>)`,
+          'i'
+        );
+        const match = html.match(blockRe);
+        if (!match) continue;
+        let inner = match[2];
+        const isLight = /\bslide-root[^>]*\b(?:light|cream|holo)\b/i.test(match[0]);
+        const logo = isLight
+          ? 'assets/logos/plaid-horizontal-dark.png'
+          : 'assets/logos/plaid-horizontal-white.png';
+        if (!/\bchrome-logo\b/.test(inner)) {
+          inner = `<img class="chrome-logo" src="${logo}" alt="" />\n` + inner;
+          patched += 1;
+        }
+        if (!/\beyebrow-tag\b/.test(inner) && !/data-slide-template\s*=\s*["']T1["']/i.test(match[0])) {
+          const label = slideSteps[i].label || `Section ${i + 1}`;
+          inner = `<div class="eyebrow-tag" style="margin-top:24px;">${label}</div>\n` + inner;
+          patched += 1;
+        }
+        if (!/\bchrome-foot\b/.test(inner) && !/data-slide-template\s*=\s*["']T1["']/i.test(match[0])) {
+          const page = String(i + 1).padStart(2, '0');
+          inner = inner + `\n<div class="chrome-foot"><span>${page} / ${slideSteps.length} · Plaid</span></div>`;
+          patched += 1;
+        }
+        if (!/\bclass\s*=\s*["'][^"']*\bframe\b/.test(inner)) {
+          inner = `<div class="frame">\n${inner}\n</div>`;
+          patched += 1;
+        }
+        html = html.replace(blockRe, `$1${inner}$3`);
+      }
+      if (!patched) return { applied: false, summary: 'All slide steps already have shell chrome' };
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return { applied: true, summary: `Injected shell chrome on ${slideSteps.length} slide step(s)` };
+    },
+  },
+  {
+    name: 'slide-chrome-logo-canonical',
+    tierScope: 'slide',
+    description:
+      'Opt-in: replace invented slide logos (div/SVG/text chrome-logo, legacy paths) with canonical ' +
+      '<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png">. Does not auto-fire from QA.',
+    matchCategories: [],
+    matchIssuePatterns: [],
+    manualOnly: true,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      let patched = 0;
+      const slideRootRe = /<div[^>]*\bslide-root\b[^>]*>[\s\S]*?<\/div>\s*(?=<div[^>]*data-testid="step-|<\/body>|$)/gi;
+      html = html.replace(slideRootRe, (block) => {
+        const isLight =
+          /\bslide-root[^>]*\b(?:light|cream|holo)\b/i.test(block) ||
+          /\bclass="[^"]*\bslide-root\s+(?:light|cream|holo)\b/i.test(block);
+        const logo = isLight
+          ? 'assets/logos/plaid-horizontal-dark.png'
+          : 'assets/logos/plaid-horizontal-white.png';
+        const canonicalImg = `<img class="chrome-logo" src="${logo}" alt="" />`;
+        let next = block;
+        const needsFix =
+          /<(?!(?:img|img\/))[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>/i.test(block) ||
+          /<img[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>/i.test(block) &&
+            !/<img[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*\bsrc\s*=\s*["']assets\/logos\/plaid-horizontal-(?:white|dark|holograph)\.png["']/i.test(block) ||
+          LEGACY_NONCANONICAL_LOGO_SRC.test(block) ||
+          (/>?\s*PLAID\s*</i.test(block) && /<div[^>]*\bclass="[^"]*\bframe\b/i.test(block));
+        if (!needsFix) return block;
+        next = next.replace(/<(?!(?:img|img\/))[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>[\s\S]*?<\/[^>]+>/gi, canonicalImg);
+        next = next.replace(/<img[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>/gi, canonicalImg);
+        if (next !== block) patched += 1;
+        return next;
+      });
+      if (!patched) return { applied: false, summary: 'Slide chrome logos already canonical or absent' };
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return { applied: true, summary: `Replaced invented/non-canonical chrome-logo on ${patched} slide block(s)` };
+    },
+  },
+  {
+    name: 'zip-cra-host-contract',
+    tierScope: 'app',
+    description:
+      'Opt-in: Zip CRA demos — inject NMLS footer, host API-panel reserve CSS, and customer-app nav hints. ' +
+      'Does not auto-fire from QA.',
+    matchCategories: [],
+    matchIssuePatterns: [],
+    manualOnly: true,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      let patched = 0;
+      const marker = '/* ZIP-CRA-HOST-CONTRACT */';
+      if (!html.includes(marker)) {
+        const css =
+          `${marker}\n` +
+          '.step[data-testid="step-lendscore-reveal"] .zip-main,\n' +
+          '.step[data-testid="step-lendscore-reveal"] .underwriting-grid {\n' +
+          '  max-width: calc(100% - 520px);\n' +
+          '  padding-right: 24px;\n' +
+          '  box-sizing: border-box;\n' +
+          '}\n' +
+          '.step[data-testid="step-network-insights-slide"] .slide-body,\n' +
+          '.step[data-testid="step-report-ready-slide"] .slide-body {\n' +
+          '  padding-right: 520px;\n' +
+          '  box-sizing: border-box;\n' +
+          '}\n' +
+          '.zip-host-footer { font-size: 12px; color: var(--zip-muted, #6B5E80); padding: 16px 56px; }\n';
+        if (/<\/style>/i.test(html)) {
+          html = html.replace(/<\/style>/i, `${css}</style>`);
+        } else {
+          html = html.replace(/<\/head>/i, `<style>${css}</style></head>`);
+        }
+        patched += 1;
+      }
+      const nmls = '<div class="zip-host-footer" data-testid="host-regulatory-footer">NMLS ID 1963958</div>';
+      if (!/nmls\s*id\s*1963958/i.test(html)) {
+        const marker = '<!-- SIDE PANELS';
+        if (html.includes(marker)) {
+          html = html.replace(marker, `${nmls}\n${marker}`);
+        } else if (/<\/body>/i.test(html)) {
+          html = html.replace(/<\/body>/i, `${nmls}\n</body>`);
+        } else {
+          html += `\n${nmls}\n`;
+        }
+        patched += 1;
+      }
+      if (patched === 0) return { applied: false, summary: 'Zip CRA host contract already satisfied' };
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return { applied: true, summary: `Applied Zip CRA host contract (${patched} change group(s))` };
+    },
+  },
+  {
+    name: 'slide-typography-floor',
+    tierScope: 'slide',
+    description:
+      'Rewrite inline font-size declarations below 24px inside .slide-root to 24px ' +
+      '(skips mockup chrome). Auto-fires on slide-typography-floor QA category.',
+    matchCategories: ['slide-typography-floor'],
+    matchIssuePatterns: [/below the 24px floor inside \.slide-root/i],
+    manualOnly: false,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      const before = fs.readFileSync(htmlPath, 'utf8');
+      const allow = /\.(?:mockup-chrome|phone-mockup|avatar|confidence-pill)\b/i;
+      let changed = 0;
+      const parts = before.split(/(<div[^>]*\bslide-root\b[^>]*>)/gi);
+      let updated = parts[0] || '';
+      for (let i = 1; i < parts.length; i += 2) {
+        const open = parts[i] || '';
+        const body = parts[i + 1] || '';
+        if (allow.test(body)) {
+          updated += open + body;
+          continue;
+        }
+        const nextBody = body.replace(
+          /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi,
+          (decl, n) => {
+            const px = parseFloat(n);
+            if (px > 0 && px < 24) {
+              changed += 1;
+              return 'font-size:24px';
+            }
+            return decl;
+          }
+        );
+        updated += open + nextBody;
+      }
+      if (!changed) return { applied: false, summary: 'No sub-24px inline font-size rules found in slides' };
+      fs.writeFileSync(htmlPath, updated, 'utf8');
+      return { applied: true, summary: `Raised ${changed} inline font-size declaration(s) to 24px` };
+    },
+  },
+  {
+    name: 'slide-typography-ceiling',
+    tierScope: 'slide',
+    description:
+      'Cap oversized inline font-size inside .slide-root per DECK_DESIGN_SYSTEM ceilings ' +
+      'and inject slide-typography-ceilings CSS.',
+    matchCategories: ['slide-typography-ceiling', 'slide-template-misuse'],
+    matchIssuePatterns: [/exceeds the \d+px ceiling/i, /font-size above 180px/i],
+    manualOnly: false,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      const before = fs.readFileSync(htmlPath, 'utf8');
+      const {
+        normalizeSlideTypography,
+        injectSlideTypographyOverrides,
+      } = require('./normalize-slide-typography');
+      const norm = normalizeSlideTypography(before);
+      let html = injectSlideTypographyOverrides(norm.html);
+      if (!norm.capped && !norm.stripped && html === before) {
+        return { applied: false, summary: 'No oversized slide typography found' };
+      }
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return {
+        applied: true,
+        summary: `Capped ${norm.capped} and stripped ${norm.stripped} slide font-size declaration(s); injected ceiling CSS`,
+      };
+    },
+  },
+  {
+    name: 'slide-layout-patch',
+    tierScope: 'slide',
+    description:
+      'Deterministic slide layout fixes (patch mode): typography normalize, remove in-slide JSON ' +
+      'duplicating #api-response-panel, T4 single-column stack, attr-chip styling, bullet cleanup.',
+    matchCategories: [
+      'slide-template-misuse',
+      'panel-visibility',
+      'slide-typography-floor',
+      'slide-mint-overuse',
+    ],
+    matchIssuePatterns: [
+      /clipped.*API/i,
+      /collide with the global API JSON rail/i,
+      /in-slide JSON/i,
+      /double bullet/i,
+      /attribute chip/i,
+      /two-column T4/i,
+    ],
+    manualOnly: false,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      if (!/\bslide-root\b/.test(html)) {
+        return { applied: false, summary: 'No .slide-root blocks in HTML' };
+      }
+      let changed = 0;
+      const {
+        normalizeSlideTypography,
+        injectSlideTypographyOverrides,
+      } = require('./normalize-slide-typography');
+      const norm = normalizeSlideTypography(html);
+      html = injectSlideTypographyOverrides(norm.html);
+      if (norm.capped || norm.stripped) changed += 1;
+
+      const layoutMarker = '/* SLIDE-LAYOUT-PATCH */';
+      if (!html.includes(layoutMarker)) {
+        const css =
+          `${layoutMarker}\n` +
+          '.slide-root .t4-grid { display: flex; flex-direction: column; gap: 28px; flex: 1; min-height: 0; }\n' +
+          '.slide-root .attr-chip-slide {\n' +
+          '  display: inline-flex; align-items: center; gap: 10px;\n' +
+          '  background: rgba(66,240,205,0.14);\n' +
+          '  border: 1px solid rgba(66,240,205,0.35);\n' +
+          '  border-radius: 999px;\n' +
+          '  padding: 10px 18px;\n' +
+          '  font-family: var(--font-mono);\n' +
+          '  font-size: 24px;\n' +
+          '  color: #c6fff0;\n' +
+          '  max-width: 100%;\n' +
+          '  flex-wrap: wrap;\n' +
+          '}\n' +
+          '.slide-root .slide-stack > ul.slide-body-text { list-style: disc; padding-left: 1.25em; }\n' +
+          '.slide-root .slide-stack > ul.slide-body-text li::marker { color: var(--plaid-teal-500); }\n';
+        if (/<\/style>/i.test(html)) {
+          html = html.replace(/<\/style>/i, `${css}</style>`);
+        } else {
+          html = html.replace(/<\/head>/i, `<style>${css}</style></head>`);
+        }
+        changed += 1;
+      }
+
+      // Sub-24px floor inside slides (including json-snippet / pre)
+      html = html.replace(
+        /(<div[^>]*\bslide-root\b[^>]*>)([\s\S]*?)(?=<div[^>]*\bslide-root\b|$)/gi,
+        (full, open, body) => {
+          const next = body.replace(/font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi, (decl, n) => {
+            const px = parseFloat(n);
+            if (px > 0 && px < 24) {
+              changed += 1;
+              return 'font-size:24px';
+            }
+            return decl;
+          });
+          return open + next;
+        }
+      );
+
+      html = html.replace(/font-family:\s*"JetBrains Mono'/gi, () => {
+        changed += 1;
+        return "font-family:'JetBrains Mono'";
+      });
+
+      html = html.replace(
+        /<span style="color:#42F0CD;font-weight:700;?">\s*•\s*<\/span>/gi,
+        () => {
+          changed += 1;
+          return '';
+        }
+      );
+
+      const nextNetwork = html.replace(
+        /(<div data-testid="step-network-insights-slide"[\s\S]*?)<h1 class="h-title">([\s\S]*?)<\/h1>/i,
+        '$1<h2 class="h-title">$2</h2>'
+      );
+      if (nextNetwork !== html) {
+        html = nextNetwork;
+        changed += 1;
+      }
+
+      const nextAttr = html.replace(
+        /(<div data-testid="step-network-insights-slide"[\s\S]*?<div class="t4-grid">[\s\S]*?)<div>\s*<div>\s*<span style="font-family:[^<]*plaid_conn_user_lifetime_personal_lending_flag[\s\S]*?<\/div>\s*<div class="slide-body-text" style="opacity:0\.78">/i,
+        '$1<div class="attr-chip-slide">plaid_conn_user_lifetime_personal_lending_flag = false</div>\n            <div class="slide-body-text" style="opacity:0.78">'
+      );
+      if (nextAttr !== html) {
+        html = nextAttr;
+        changed += 1;
+      }
+
+      const stripInSlideJson = (stepId) => {
+        const safe = stepId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(
+          `(<div data-testid="step-${safe}"[\\s\\S]*?)<pre style="margin:0[\\s\\S]*?<\\/pre>(\\s*<\\/div>\\s*<\\/div>\\s*<div class="chrome-foot">)`,
+          'i'
+        );
+        const next = html.replace(re, '$1$2');
+        if (next !== html) {
+          html = next;
+          changed += 1;
+          return true;
+        }
+        const re2 = new RegExp(
+          `(<div data-testid="step-${safe}"[\\s\\S]*?)<div>\\s*<div class="slide-body-text" style="opacity:0\\.7[^"]*">POST[^<]*<\\/div>\\s*<pre[\\s\\S]*?<\\/pre>\\s*<\\/div>(\\s*<\\/div>\\s*<\\/div>\\s*<div class="chrome-foot">)`,
+          'i'
+        );
+        const next2 = html.replace(re2, '$1$2');
+        if (next2 !== html) {
+          html = next2;
+          changed += 1;
+          return true;
+        }
+        return false;
+      };
+
+      stripInSlideJson('report-ready-slide');
+      stripInSlideJson('network-insights-slide');
+
+      if (!changed) return { applied: false, summary: 'Slide layout patch: no changes needed' };
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return { applied: true, summary: `Applied slide layout patch (${changed} change group(s))` };
+    },
+  },
 ];
 
 // ─── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Default tier scope when a patch entry omits the explicit field. Existing
+ * entries that pre-date the tier-scoped recovery work default to 'any' so
+ * `findApplicablePatches` (the legacy API) keeps its current behavior.
+ */
+function patchTierScope(patch) {
+  const v = patch && typeof patch.tierScope === 'string' ? patch.tierScope.toLowerCase().trim() : '';
+  if (v === 'slide' || v === 'app' || v === 'any') return v;
+  return 'any';
+}
+
+/**
+ * Resolve a patch by name (for manual / dashboard invocation).
+ * @param {string} name
+ * @returns {object|null}
+ */
+function getPatchByName(name) {
+  return PATCHES.find((p) => p.name === String(name)) || null;
+}
+
+/**
+ * Build a manual patch match object for applyPatches().
+ * @param {string} name
+ * @returns {{ patch: object, matchedSteps: string[], matchedCategories: string[], matchedIssues: string[] }|null}
+ */
+function buildManualPatchMatch(name) {
+  const patch = getPatchByName(name);
+  if (!patch) return null;
+  return { patch, matchedSteps: [], matchedCategories: [], matchedIssues: [] };
+}
 
 /**
  * Inspect a qa-report-build.json (or post-record qa-report-N.json) and return
@@ -364,6 +828,62 @@ function findApplicablePatches(qaReport) {
 }
 
 /**
+ * Filter `findApplicablePatches` to slide-tier patches only and limit
+ * `matchedSteps` to step ids in the provided slide set. Returns the same
+ * shape as `findApplicablePatches`.
+ *
+ * @param {object} qaReport
+ * @param {object} opts
+ * @param {Set<string>|string[]} opts.failingSlideStepIds  optional whitelist of failing slide ids
+ * @returns {Array}
+ */
+function findSlideApplicablePatches(qaReport, opts = {}) {
+  const matches = findApplicablePatches(qaReport);
+  const slideSet =
+    opts.failingSlideStepIds instanceof Set
+      ? opts.failingSlideStepIds
+      : Array.isArray(opts.failingSlideStepIds)
+        ? new Set(opts.failingSlideStepIds.map(String))
+        : null;
+  return matches
+    .filter((m) => {
+      const scope = patchTierScope(m.patch);
+      return scope === 'slide' || scope === 'any';
+    })
+    .map((m) => {
+      if (!slideSet) return m;
+      const filteredSteps = (m.matchedSteps || []).filter((id) => slideSet.has(String(id)));
+      return { ...m, matchedSteps: filteredSteps };
+    })
+    .filter((m) => !slideSet || m.matchedSteps.length > 0 || m.matchedCategories.length > 0);
+}
+
+/**
+ * Filter `findApplicablePatches` to app-tier patches only and limit
+ * `matchedSteps` to step ids in the provided app set.
+ */
+function findAppApplicablePatches(qaReport, opts = {}) {
+  const matches = findApplicablePatches(qaReport);
+  const appSet =
+    opts.failingAppStepIds instanceof Set
+      ? opts.failingAppStepIds
+      : Array.isArray(opts.failingAppStepIds)
+        ? new Set(opts.failingAppStepIds.map(String))
+        : null;
+  return matches
+    .filter((m) => {
+      const scope = patchTierScope(m.patch);
+      return scope === 'app' || scope === 'any';
+    })
+    .map((m) => {
+      if (!appSet) return m;
+      const filteredSteps = (m.matchedSteps || []).filter((id) => appSet.has(String(id)));
+      return { ...m, matchedSteps: filteredSteps };
+    })
+    .filter((m) => !appSet || m.matchedSteps.length > 0 || m.matchedCategories.length > 0);
+}
+
+/**
  * Apply a list of patches in sequence. Each patch's `apply()` is awaited.
  * History is appended to `qa-patch-history.json` in the runDir.
  *
@@ -416,5 +936,10 @@ async function applyPatches({ runDir, matches, iteration }) {
 module.exports = {
   PATCHES,
   findApplicablePatches,
+  findSlideApplicablePatches,
+  findAppApplicablePatches,
   applyPatches,
+  getPatchByName,
+  buildManualPatchMatch,
+  patchTierScope,
 };

@@ -20,12 +20,24 @@ All pipeline commands run without human intervention by default (`SCRATCH_AUTO_A
 
 **What “heartbeat” means**
 
-1. **Post a short progress note in chat at least every 5 minutes** for as long as the run is active. Use `npm run pipe -- status` or `npm run pipe -- status --json`. Mention `running`, `runningStage`, `awaitingContinue`, `firstFailed`, and anything actionable from `nextRecoveryCommand`.
-2. **Do not wait for the user to ask “how’s it going?”** Silence until prompted is incorrect behavior. Proactive status is the default.
-3. **No silent waiting on stalls:** If there has been **no new stdout/stderr for ~5 minutes** while status still shows work in flight, treat as **possibly hung** — check `activePid`, tail `artifacts/logs/pipeline-build.log.md` under the run dir, report findings; only suggest `npm run pipe -- stop <RUN_ID>` if the user wants to kill the run.
-4. **Avoid stdin blocks:** Prefer `npm run pipe … --non-interactive` (and/or `SCRATCH_AUTO_APPROVE=true`) so orchestrator gates do not wait on **Enter** in the terminal.
+The orchestrator emits **`::PIPE:: event=heartbeat`** every **5 minutes** (override: `PIPELINE_HEARTBEAT_MS`) **while a stage is running**, independent of stage completion. Each tick also writes `pipeline-heartbeat.json` and a `[HEARTBEAT]` section in `artifacts/logs/pipeline-build.log.md`.
 
-**Optional parallel terminal:** `npm run pipe:status-loop` prints `pipe status` every **300s** (`PIPE_STATUS_INTERVAL_SEC` overrides). Run it in another shell if you like — **it does not replace** chat heartbeat.
+1. **Observe heartbeats (preferred):** When supervising a long-running Shell call, configure:
+   ```
+   notify_on_output: {
+     pattern: "::PIPE:: event=heartbeat",
+     reason: "5min pipeline heartbeat",
+     debounce_ms: 280000
+   }
+   ```
+   On each notification, post a one-line chat summary: `stage=<name>, elapsed=<s>s, lastLogActivity=<s>s ago, awaiting=<bool>`.
+2. **Background orchestrator:** Run `npm run pipe -- monitor [RUN_ID]` in parallel (same `notify_on_output` pattern) when the orchestrator itself is backgrounded.
+3. **Fallback poll:** `npm run pipe -- status --json` exposes `lastHeartbeatAt`, `lastHeartbeatAgeSec`, `heartbeatStale`. Summarize `running`, `runningStage`, `awaitingContinue`, `firstFailed`, `nextRecoveryCommand`.
+4. **Do not wait for the user to ask “how’s it going?”** Proactive status on every heartbeat tick is the default.
+5. **No silent waiting on stalls:** If `heartbeatStale: true` or no heartbeat for **>2× interval** while `running: true`, investigate (`activePid`, tail log). Suggest `npm run pipe -- stop <RUN_ID>` only if the user wants to abort.
+6. **Avoid stdin blocks:** Prefer `npm run pipe … --non-interactive` (and/or `SCRATCH_AUTO_APPROVE=true`) so orchestrator gates do not wait on **Enter** in the terminal.
+
+**Optional human terminal:** `npm run pipe:status-loop` prints `pipe status` every **300s** — **redundant** for agents once orchestrator heartbeats are active; kept for human supervisors who want a separate terminal.
 
 **Also read:** short mirror for tooling: [`AGENTS.md`](AGENTS.md); always-on Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc); agent-facing CLI reference: [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md).
 
@@ -363,6 +375,18 @@ Visual + behavior contract (enforced by post-panels patch `v6+`):
 - **Single source of truth**: `build-app.js` delegates to `post-panels.buildPanelPatchScript()` at build time. Both stages emit the same versioned IIFE, identified by `data-post-panels-patch="vN"`. The patch IIFE writes `window.__buildApiPanelPatchVersion = 'vN'` and short-circuits only on the exact same version — never on the older boolean `__buildApiPanelPatchApplied`. Older patch IIFEs and the legacy build-app unmarked emission are stripped automatically when post-panels re-runs on an existing scratch-app, so re-running the `post-panels` stage on any old run upgrades the toggle in <1s without a full rebuild.
 - **Hard contract enforcement**: a host app's panel toggle that violates this contract (text label visible, off-center vertically, missing arrow direction, hand-bound click listener, force-open on every nav) is patched by post-panels on the next run. The QA patch library entry `api-panel-toggle-latest` re-runs post-panels automatically when build-qa flags panel-visibility or panel-toggle issues.
 
+#### Renderjson `.disclosure` per-object toggle contract (v8+ — REQUIRED)
+
+`renderjson` (the JSON viewer library loaded from cdn.jsdelivr) emits clickable `<a class="disclosure">+</a>` / `<a class="disclosure">-</a>` spans next to every JSON sub-tree to let viewers expand/collapse individual objects and arrays. These are SEPARATE from the panel-level edge toggle above.
+
+The LLM build phase has produced CSS rules that gave `.disclosure` width/height/background-color, rendering the toggles as **large solid white blocks** instead of small inline characters (regression: `2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1`). Three layers of defense now prevent this:
+
+1. **post-panels v8 injects canonical override CSS at request time.** `#api-response-panel .disclosure` is forced to `display:inline-block; width:auto; height:auto; background:transparent; color:rgba(255,255,255,0.55); cursor:pointer` with `!important`. Even if the LLM emits broken CSS, the override wins at request time. See `ensureEdgeToggleStyles()` in `scripts/scratch/scratch/post-panels.js`.
+2. **Build-QA deterministic check** (`scanRenderjsonDisclosureStyling()` in `scripts/scratch/scratch/build-qa.js`) scans every `<style>` block in the generated HTML. Any `.disclosure` rule whose declarations include `width`, `height`, `min-width`, `min-height`, `background`, `background-color`, or `background-image` with a non-harmless value (anything other than `0`, `auto`, `none`, `transparent`, `inherit`) is flagged as `category: json-panel-styling`, `severity: critical`, `deterministicBlocker: true`. This surfaces the LLM's bug even though the runtime override masks the symptom.
+3. **Build prompt rule** in `prompt-templates.js` instructs the LLM not to style `.disclosure` beyond `color` and `cursor:pointer`. Explicit reference to the regression run is included so the LLM understands the consequence.
+
+Build rule for any human or LLM hand-editing the generated HTML: **do not add CSS for `.disclosure` beyond `color` and `cursor`.** Renderjson's defaults plus the post-panels override are sufficient.
+
 ### Plaid Link onSuccess Callback Panel Contract (v6+)
 
 When the demo-script contains a step with `plaidPhase: "launch"`, the host step immediately
@@ -532,11 +556,131 @@ npm run demo:full -- --from=record    # full pipeline starting at record
 
 **Build-QA scope by build mode** — In `app-only` builds, the vision QA judges app-tier steps (`stepKind: "app"`) strictly against each step's `visualState` description: it does **not** enforce that concrete narration values (scores, decisions, dollar amounts, percentages) appear on screen unless `visualState` explicitly describes them as visible. Those values are voiceover-only by design in app-only demos. In `app+slides` builds, and on `stepKind: "slide"` steps in any build mode, the legacy narration-strict gate ("concrete narration claims must be visibly evidenced in frames") still applies. All other QA checks (brand wordmark/nav fidelity, Plaid Link CTA icon ratio, asset authenticity, animation/state-progression when described in visualState, deterministic blockers, panel-visibility when `apiResponse` is declared) apply in both modes. Source: `scripts/scratch/utils/prompt-templates.js` `buildQAReviewPrompt()` + `scripts/scratch/scratch/qa-review.js` (gates `narrationStrict` on `runBuildMode === 'app+slides' || isSlideTier`).
 
-Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
+### Tier-aware QA recovery (REQUIRED — do not rebuild the whole app for one bad step)
+
+Every `qa-report-build.json` now carries `buildMode`, `tierSummary`, and `recommendedRecovery`. The orchestrator and `pipe status` consult these to route a **surgical** recovery lane instead of regenerating the entire `scratch-app/index.html` via `build-app` touchup / fullbuild.
+
+```
+buildMode  | app.passed | slide.passed       | recommendedRecovery       | Lane (no build-app)
+-----------|------------|--------------------|---------------------------|-----------------------------
+app-only   | true       | (skipped)          | null                      | stop
+app-only   | false      | (skipped)          | app-touchup               | npm run pipe -- app-touchup
+app+slides | true       | true               | null                      | stop
+app+slides | true       | false              | slide-fix                 | npm run pipe -- slide-fix
+app+slides | false      | true               | app-touchup               | npm run pipe -- app-touchup
+app+slides | false      | false              | app-touchup+slide-fix     | app-touchup first, then slide-fix
+either     | systemic*  |                    | fullbuild                 | (legacy LLM regen path)
+```
+
+\* Systemic = deterministic blocker, build-QA guardrail override, or runtime/selector errors on ≥2 steps. See `scripts/scratch/utils/qa-tier-summary.js`.
+
+**Lane contracts (load-bearing):**
+
+- **`pipe app-touchup`** ([`scripts/scratch/scratch/app-touchup.js`](scripts/scratch/scratch/app-touchup.js)) — app patches (`api-panel-toggle-latest`, `plaid-launch-cta-icon-ratio`, `plaid-link-token-products-prune`, `zip-cra-host-contract`) → `post-panels` → build-qa `stepScope=app` (or `all` on app-only). On residual failures under an AI agent, writes `qa-touchup-task.md` (app-only) or `qa-app-touchup-task.md` (app+slides). **Never** edits `.slide-root` blocks. Never calls `build-app`.
+- **`pipe slide-fix`** ([`scripts/scratch/scratch/slide-fix.js`](scripts/scratch/scratch/slide-fix.js)) — slide patches (typography ceiling/floor, layout, chrome-logo) → `strip-slide-roots --steps=…` → `post-slides --steps=…` → `post-panels` → build-qa `stepScope=slides`. Refuses to run on app-only and when the app tier hasn't passed. On residual failures, writes `qa-slide-fix-task.md`. **Never** edits non-slide step blocks. Never calls `build-app`.
+- **`pipe status`** surfaces `tierSummary` + `recommendedRecovery` and the `nextRecoveryCommand` field is tier-aware.
+
+**Do NOT** use `--build-fix-mode=touchup` (LLM full HTML regen) for tier-localized failures — that path rewrites the entire `index.html` and can regress passing tiers (see e.g. the Zip CRA LendScore slide regression `2026-05-21`). Use the tier lanes instead.
+
+Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `post-slides`, `post-panels`, `app-touchup`, `slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
 
 ### Claude Code / Cursor agents — long-running builds (heartbeat policy)
 
-See **[REQUIRED — Pipeline heartbeat](#required--pipeline-heartbeat-supervising-long-running-builds)** at the top of this file. Same rules (5-minute chat updates, no silent waits, prefer `--non-interactive`, `npm run pipe:status-loop` does not replace chat). Cursor/Claude agents: [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
+See **[REQUIRED — Pipeline heartbeat](#required--pipeline-heartbeat-supervising-long-running-builds)** at the top of this file. Orchestrator emits `::PIPE:: event=heartbeat` every 5 min mid-stage; agents observe via Shell `notify_on_output` or `pipe monitor`. Cursor/Claude agents: [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
+
+## Plaid Slide Design System (REQUIRED for new runs with slides)
+
+**App-only invariant (HARD):** Runs with `run-manifest.json.buildMode === 'app-only'` MUST produce zero slide artifacts. Slide steps are not generated, the canonical placeholder is not emitted, `post-slides` skips with `{ skipped: true, reason: 'app-only' }`, slide-tier QA scanners are gated off, and `scanAppOnlyNoSlides` fires `app-only-slide-leak` (critical deterministic blocker) on any leak. The only path from app-only to app+slides is the storyboard editor's `insert-library-slide` which flips the manifest via `stampInsertedStepKindAndMaybeUpgradeBuildMode`. See `tests/unit/app-only-zero-slides.test.js`.
+
+**Source of truth:** `templates/slide-template/brand-design-briefs/` (`DECK_DESIGN_SYSTEM.md`, `DECK_TEMPLATES.md`, `DECK_COMPOSITION.md`) + `colors_and_type.css` + `slide.css` + `pipeline-slide-contract.css` + `pipeline-slide-shell.html`.
+
+**Slide-fix as canonical residual recovery (REQUIRED):** When `build-qa.tierSummary.slide.passed === false`, the orchestrator dispatches the **slide-fix lane** ([`scripts/scratch/scratch/slide-fix.js`](scripts/scratch/scratch/slide-fix.js)): deterministic patches → `strip-slide-roots --steps=<failing>` → `post-slides --steps=<failing>` → scoped re-QA → optional `qa-slide-fix-task.md` for Agent Mode StrReplace edits. **Slides NEVER trigger `build-app` regeneration.** This locks in the app-first / slides-after architecture — host steps that already passed QA are not re-rolled when a slide fails. See `scripts/scratch/utils/strip-slide-roots-for-post-slides.js` (canonical placeholder shape lives here as `buildCanonicalSlidePlaceholder`).
+
+**Public API contract:** `scripts/scratch/scratch/post-slides.js` exports `spliceSlideFragmentIntoHtml` as a public function. Consumed by `scripts/dashboard/utils/insert-slide-html.js` (the storyboard editor's `/insert-library-slide` endpoint), `scripts/scratch/utils/qa-touchup.js`, and the canonical splice path. Do not break this export when refactoring post-slides.
+
+**Frozen runs:** Existing `out/demos/*` runs are **not** retrofitted. Only new pipeline runs (and `post-slides` insertions) adopt T1–T11 templates.
+
+### Shell + templates
+
+- Every slide step: `data-testid="step-{id}"` → `.slide-root` with `data-slide-template="T1"|…|"T11"`.
+- Canonical chrome: `.frame`, `.chrome-logo`, `.eyebrow-tag`, `.h-title` (one `<em>` Bowery italic accent), `.chrome-foot` (T1 may omit eyebrow/footer).
+- Background classes on `.slide-root`: default navy (`--plaid-ink-900`), or `.light` / `.cream` / `.holo`.
+- Assets copied per build: `scratch-app/fonts/`, `scratch-app/assets/logos/` (paths like `assets/logos/plaid-horizontal-white.png`).
+- `post-slides-report.json` records `templatesUsed[]` per inserted slide.
+
+### Canonical slide canvas (HARD CONTRACT, May 2026 — rebuilt 2026-05-22)
+
+Every active slide MUST render at a **Google-Slides-class size** that dominates the viewport. There is **no per-slide variability** — one contract, all slides, enforced by a deterministic blocker.
+
+| Property | Contract | Why |
+|----------|----------|-----|
+| **Width** | `max-width: min(1280px, calc(100vw - 80px))` → **≥ 75% viewport** | Slides are the deliverable on slide-tier steps; small slides are unreadable on screen capture. |
+| **Aspect ratio** | `16/10` (allowed: `[1.40, 1.85]` — covers 16:9 = 1.78 and 16:10 = 1.60) | Matches Google Slides default + Plaid Deck Design System. |
+| **Height** | Auto from aspect-ratio → **≥ 67% viewport** | On a 1440×900 viewport the slide is 1280×800. |
+| **API panel reservation** | Only when **`body.api-panel-open`** is set | Collapsed panel is 48px edge toggle — no need to reserve. Open panel needs space. |
+
+**Source of truth (rebuilt 2026-05-22):** [`templates/slide-template/pipeline-slide-contract.css`](templates/slide-template/pipeline-slide-contract.css), injected ONCE by `post-slides.ensureSlideDesignStylesInHead` inside the `<style data-pipeline-slide-contract="v1">` block. **Zero `!important` declarations** in the contract — cascade order is authoritative (the contract block is emitted AFTER `slide.css` in `<head>`). This replaces four prior competing patches:
+
+| Replaced layer | Status |
+|----------------|--------|
+| `build-app.js` `slide-root-responsive-override` | DELETED |
+| `normalize-slide-typography.js` `slide-typography-ceilings-v1` (`max-width` clause) | DELETED (font ceilings kept) |
+| `qa-patch-library.js` `slide-canvas-fullbleed` | RETIRED (stub kept for historical references) |
+| Per-step inline-style escapes (added during surgical slide-fix iterations) | DELETED |
+
+**Body class plumbing:** [`scripts/scratch/scratch/post-panels.js`](scripts/scratch/scratch/post-panels.js) `v9+` patch toggles `document.body.classList.toggle('api-panel-open', open)` inside `setPanelVisibility()`. When the active step has no `apiResponse`, the body class is removed on step navigation — slides return to full-bleed.
+
+**Enforced by:**
+
+- **`scanSlideCanvasSize`** in `build-qa.js` (deterministic blocker, category `slide-canvas-size`, severity `critical`). Measures rendered `.slide-root.getBoundingClientRect()` per slide step during the Playwright walk and fires if width < 75%, height < 67%, or aspect outside `[1.40, 1.85]`. Gated on `buildMode === 'app+slides'`.
+- **`scanSlideNarrationConcreteValues`** in `build-qa.js` (deterministic blocker, category `slide-narration-drift`, severity `critical`). Catches LLM hallucinations where the slide's rendered text doesn't match concrete claims in the step's narration (numeric tokens, ACCEPT/REVIEW/REROUTE decisions, product names like "Trust Index"). Voiceover sync depends on the rendered content matching the narrator's claims.
+
+**Hand-edits MUST NOT** add `min-height`, `aspect-ratio`, or width overrides on `.slide-root` (inline or in stylesheet) that would shrink the slide below the contract. The `scanSlideCanvasSize` blocker will fail the build. If you need to override the contract, edit `pipeline-slide-contract.css` directly — do not shadow it with a higher-priority `!important` block.
+
+### First-step bootstrap (REQUIRED — fixes blank-first-slide regression)
+
+`build-app.js` always injects an idempotent `<script id="pipeline-first-step-bootstrap-v1">` block before `</body>` that activates the first `.step[data-testid]` on `DOMContentLoaded` if no step is already `.active`. This fixes the regression where the LLM emitted `class="step"` (without `active`) on the first step → blank page on first paint. Idempotent with the storyboard editor's `STORYBOARD_SET_STEP` postMessage bridge: if the editor has already called `window.goToStep(sid)`, the `.active` flag is set and this bootstrap becomes a no-op.
+
+### Drift checkpoint (slide-content-hash.json + post-record-freeze.sentinel)
+
+After `build-qa` passes, [`scripts/scratch/utils/slide-content-hash.js`](scripts/scratch/utils/slide-content-hash.js) writes a SHA-256 of every `<div data-testid="step-{id}">` block to `slide-content-hash.json` with `source: 'build-qa'`. This locks the HTML at the QA-blessed state. On app-only runs the slide-tier section is **omitted** (no slides exist to hash).
+
+When `record` completes, it writes `post-record-freeze.sentinel`. While the sentinel exists:
+- Automated `post-slides` / `slide-fix` re-runs SKIP with `reason: 'post_record_freeze'` (and a recovery hint to re-run `pipe stage record`).
+- Storyboard editor mutations (`/script`, `/insert-library-slide`, `/remove-step`, `/reorder-steps`) are allowed but call `recordEditorMutation` to:
+  1. Recompute slide-content-hash with `source: 'storyboard-edit'`, `userModifiedSinceQa: true` for affected step ids
+  2. Append to `editor-mutation-log.json` with `voiceoverStale` / `recordingStale` flags
+
+`GET /api/runs/:runId/staleness` returns the dashboard-banner-ready summary with `recommendedRecovery` priority: `recordingStale > voiceoverStale > qaStale`. The dashboard surfaces this as yellow ("QA not re-run since edit") and red ("Recording stale") banners.
+
+### Record stage guard
+
+`record-local.js` refuses to start if `scratch-app/index.html` contains any `data-slide-pending="true"` placeholder (post-slides failed to fill it). Halts with a clear recovery hint pointing at `pipe stage post-slides` or `pipe slide-fix`.
+
+### Composition rules
+
+- Sentence-case headlines ending with a period; **one mint moment** per slide (`--plaid-teal-500` / `#42F0CD`).
+- Body text **≥ 24px**; flex/grid + `gap` only — **no `display: inline-block`** inside `.slide-root`.
+- Background rhythm: **≤ 4 consecutive navy** slides before a `.light` / `.cream` / `.holo` interlude.
+- Approved palette only; soft tints via `rgba()` on brand tokens.
+
+### PPTX export font swap (documented)
+
+Manrope (sans), Playfair Display (display), JetBrains Mono (mono) — export tooling is separate.
+
+### Build-QA — deterministic blockers + design warnings
+
+**Slide canvas size (hard contract — see § Canonical slide canvas above):** `scanSlideCanvasSize` in `build-qa.js`. Category `slide-canvas-size`, severity `critical`. Auto-fixed by the `slide-canvas-fullbleed` patch.
+
+**Logo (hard contract):** `scanSlidePlaidLogoAuthenticity` in `build-qa.js` is a **deterministic blocker** (`severity: 'critical'`). Slides must use bundled horizontal wordmarks only — `<img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png">` (navy), `plaid-horizontal-dark.png` (light/cream/holo), or `plaid-horizontal-holograph.png` — **or omit** `.chrome-logo` entirely. Never invent SVG/icon-grid logos or render "PLAID" as text/CSS.
+
+**CRA LendScore host (blockers when family is `cra_lend_score`):** `scanCraHostUnderwritingContracts` enforces Zip-style **NMLS ID 1963958** footer (via `inputs/brand-references/zip.md`), **520px** clearance for `#api-response-panel` on `lendscore-reveal`, visible `approve-plan-cta`, and `evaluateApiStoryAlignment` recognizes `POST /cra/check_report/lend_score/get` (not Base Report mis-label). Product KB: `inputs/products/plaid-cra-lend-score.md`.
+
+**Eight warning scanners** (not blockers): tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors — all `severity: 'warning'`, `deterministicBlocker: false`.
+
+### Opt-in patches (manual invoke)
+
+[`scripts/scratch/utils/qa-patch-library.js`](scripts/scratch/utils/qa-patch-library.js): `slide-design-tokens-inject`, `slide-shell-chrome-inject`, `slide-chrome-logo-canonical`, `slide-typography-floor` — use `buildManualPatchMatch(name)` + `applyPatches()`; they do **not** auto-fire from QA.
 
 ## Build mode (App-only vs App + Slides)
 

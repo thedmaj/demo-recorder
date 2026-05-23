@@ -34,6 +34,8 @@ const STAGES = [
   'build-qa',
   'post-slides',
   'post-panels',
+  'app-touchup',
+  'slide-fix',
   'record',
   'qa',
   'figma-review',
@@ -63,6 +65,8 @@ const STAGE_SENTINELS = {
   'build-qa':               ['build-qa-diagnostics.json', 'qa-report-build.json'],
   'post-slides':            ['post-slides-report.json', 'artifacts/build/post-slides-report.json'],
   'post-panels':            ['post-panels-report.json', 'artifacts/build/post-panels-report.json'],
+  'app-touchup':            ['app-touchup-report.json'],
+  'slide-fix':              ['slide-fix-report.json'],
   'record':                 ['recording.webm', 'recording.mp4'],
   'qa':                     ['qa-report-1.json'],
   'figma-review':           ['figma-review.json'],
@@ -166,6 +170,39 @@ function readManifest(runDir) {
   return safeReadJson(path.join(runDir, 'run-manifest.json'));
 }
 
+/**
+ * Read the latest qa-report-build.json. Returns null if missing or unreadable.
+ * Used by recovery-hint logic to surface tier-aware suggestions.
+ */
+function readBuildQaReport(runDir) {
+  return safeReadJson(path.join(runDir, 'qa-report-build.json'));
+}
+
+/**
+ * Tier-aware recovery-command resolver. Returns a `npm run pipe -- …`
+ * command tailored to the QA report's `recommendedRecovery` field, or null
+ * when no tier-scoped recovery applies. The caller should still apply the
+ * generic stage-state fallbacks (failed / pending) when this returns null.
+ */
+function resolveTierRecoveryCommand(runDir, runId) {
+  const report = readBuildQaReport(runDir);
+  if (!report) return null;
+  const rec = String(report.recommendedRecovery || '').toLowerCase();
+  if (!rec || rec === 'fullbuild') return null;
+  if (rec === 'app-touchup') {
+    return `npm run pipe -- app-touchup ${runId} --non-interactive`;
+  }
+  if (rec === 'slide-fix') {
+    return `npm run pipe -- slide-fix ${runId} --non-interactive`;
+  }
+  if (rec === 'app-touchup+slide-fix') {
+    // App-tier failures gate slide-fix (see slide-fix.main requireAppPassed).
+    // Recommend app-touchup first; slide-fix is the natural follow-up.
+    return `npm run pipe -- app-touchup ${runId} --non-interactive`;
+  }
+  return null;
+}
+
 function readPid(runDir) {
   const raw = safeRead(path.join(runDir, '.pipeline.pid'));
   if (!raw) return null;
@@ -192,6 +229,17 @@ function readContinueSignal(runDir) {
 }
 
 /**
+ * Stages that only run when build-qa indicates the matching tier failed.
+ * When the QA report's tierSummary says the tier already passed (or is
+ * skipped on app-only), the stage is treated as "skipped" rather than
+ * "pending" so `firstPending` and `nextRecoveryCommand` ignore it.
+ */
+const CONDITIONAL_STAGES = {
+  'app-touchup': (tierSummary) => tierSummary && tierSummary.app && tierSummary.app.passed,
+  'slide-fix':   (tierSummary) => tierSummary && tierSummary.slide && (tierSummary.slide.passed || tierSummary.slide.skipped),
+};
+
+/**
  * Compute stage list with status, durations, and error hints.
  * Returns the canonical stage array (always length === STAGES.length).
  */
@@ -201,6 +249,8 @@ function computeStageList(runDir) {
     progress && Array.isArray(progress.completedStages) ? progress.completedStages : []
   );
   const milestones = parseMilestonesFromLog(runDir);
+  const qaReport = readBuildQaReport(runDir);
+  const tierSummary = qaReport && qaReport.tierSummary ? qaReport.tierSummary : null;
   const out = [];
   let firstPending = null;
   let firstFailed = null;
@@ -214,6 +264,15 @@ function computeStageList(runDir) {
     else if (m.status === 'completed' || completedSet.has(stage) || sentinel) status = 'completed';
     else if (m.status === 'running') status = 'running';
     else status = 'pending';
+
+    // Tier-conditional stages: when the precondition (matching tier already
+    // passed in the latest build-qa report) is met, treat as 'skipped'.
+    // This stops `pipe status` from advertising app-touchup / slide-fix as
+    // pending on green builds, which would falsely look like work to do.
+    if (status === 'pending' && CONDITIONAL_STAGES[stage]) {
+      const precondition = CONDITIONAL_STAGES[stage];
+      if (precondition(tierSummary)) status = 'skipped';
+    }
 
     if (status === 'running' && !runningStage) runningStage = stage;
     if (status === 'failed' && !firstFailed) firstFailed = stage;
@@ -249,23 +308,53 @@ function computeStatus(runDir) {
   const continueReq = readContinueSignal(runDir);
 
   // Recovery hint logic:
-  //   failed stage    → `pipe stage <that>` (single-stage retry first)
-  //   awaiting cont.  → `pipe continue`
-  //   has pending     → `pipe resume --from=<next>`
-  //   all complete    → null
+  //   awaiting cont.   → `pipe continue`                  (highest priority)
+  //   tier failure     → `pipe app-touchup / slide-fix`   (tier-scoped, no build-app)
+  //   failed stage     → `pipe stage <that>`
+  //   has pending      → `pipe resume --from=<next>`
+  //   all complete     → null
   let nextRecoveryCommand = null;
   if (continueReq && activePid) {
     nextRecoveryCommand = `npm run pipe -- continue ${runId}`;
-  } else if (firstFailed) {
-    nextRecoveryCommand = `npm run pipe -- stage ${firstFailed} ${runId}`;
-  } else if (firstPending && !activePid) {
-    nextRecoveryCommand = `npm run pipe -- resume ${runId} --from=${firstPending}`;
+  } else {
+    // Prefer the tier-aware lane when the most recent build-qa report says so.
+    // This keeps the recovery command surgical (no `build-app`) when the
+    // failure is localized to one tier.
+    const tierCmd = !activePid ? resolveTierRecoveryCommand(runDir, runId) : null;
+    if (tierCmd) {
+      nextRecoveryCommand = tierCmd;
+    } else if (firstFailed) {
+      nextRecoveryCommand = `npm run pipe -- stage ${firstFailed} ${runId}`;
+    } else if (firstPending && !activePid) {
+      nextRecoveryCommand = `npm run pipe -- resume ${runId} --from=${firstPending}`;
+    }
   }
+
+  // Surface tier summary so dashboards / agents can read it without parsing
+  // the full QA report.
+  const qaReport = readBuildQaReport(runDir);
+  const tierSummary = qaReport && qaReport.tierSummary ? qaReport.tierSummary : null;
+  const recommendedRecovery = qaReport ? qaReport.recommendedRecovery || null : null;
+
+  let heartbeatFields = {
+    lastHeartbeatAt: null,
+    lastHeartbeatAgeSec: null,
+    heartbeatStale: false,
+    heartbeatIntervalMs: null,
+  };
+  try {
+    const {
+      readHeartbeatSentinel,
+      computeHeartbeatFreshness,
+    } = require('./pipeline-heartbeat');
+    const sentinel = readHeartbeatSentinel(runDir);
+    heartbeatFields = computeHeartbeatFreshness(sentinel, !!activePid);
+  } catch (_) { /* ignore */ }
 
   return {
     runId,
     runDir: path.resolve(runDir),
-    buildMode: manifest ? manifest.buildMode || null : null,
+    buildMode: (manifest ? manifest.buildMode : null) || (qaReport ? qaReport.buildMode || null : null),
     mode: manifest ? manifest.mode || null : null,
     createdAt: manifest ? manifest.createdAt || null : null,
     updatedAt: manifest ? manifest.updatedAt || null : null,
@@ -281,10 +370,17 @@ function computeStatus(runDir) {
       failed: stages.filter(s => s.status === 'failed').length,
       pending: stages.filter(s => s.status === 'pending').length,
       running: stages.filter(s => s.status === 'running').length,
+      skipped: stages.filter(s => s.status === 'skipped').length,
     },
     firstPending,
     firstFailed,
+    tierSummary,
+    recommendedRecovery,
     nextRecoveryCommand,
+    lastHeartbeatAt: heartbeatFields.lastHeartbeatAt,
+    lastHeartbeatAgeSec: heartbeatFields.lastHeartbeatAgeSec,
+    heartbeatStale: heartbeatFields.heartbeatStale,
+    heartbeatIntervalMs: heartbeatFields.heartbeatIntervalMs,
   };
 }
 
@@ -295,4 +391,6 @@ module.exports = {
   computeStageList,
   readManifest,
   readPid,
+  readBuildQaReport,
+  resolveTierRecoveryCommand,
 };
