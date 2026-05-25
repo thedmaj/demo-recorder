@@ -45,6 +45,7 @@ const { buildSlideInsertionPrompt } = require('../utils/prompt-templates');
 const { loadSlideDesignSkill } = require('../utils/slide-design-skill');
 const { routeSlideTemplate } = require('../utils/slide-template-router');
 const { stripChromeFootFromHtml } = require('../utils/slide-chrome-foot');
+const { capSlideMint } = require('../utils/slide-mint-cap');
 const { getShowcaseTemplateSkeletonForRouting } = require('../utils/showcase-template-extract');
 const { scopeSlideCss } = require('../utils/slide-css-scoper');
 const {
@@ -332,6 +333,13 @@ function loadSlideTemplates(PROJECT_ROOT) {
     // so cascade order makes its rules authoritative. Replaces four prior
     // competing patches (see file header).
     pipelineSlideContractCss: readUtf8File(path.join(base, 'pipeline-slide-contract.css')),
+    // Showcase classes (.sc-card, .sc-eyebrow, .sc-grid-3, .sc-grid-4, etc.)
+    // mirrored out of showcase/index.html so the runtime gets the same
+    // styling the gallery preview shows. Without this, LLM-emitted slides
+    // that use `.sc-grid-3` markup fall back to `display: block` and stack
+    // vertically with no styling — which was the source of the
+    // network-insights / value-summary text-overlap reports on May 2026.
+    showcaseClassesCss: readUtf8File(path.join(base, 'showcase-classes.css')),
     slideTemplateRules: readUtf8File(path.join(base, 'PIPELINE_SLIDE_SHELL_RULES.md')),
     slideTemplateShellHtml: readUtf8File(path.join(base, 'pipeline-slide-shell.html')),
     deckDesignSystem: readUtf8File(path.join(briefDir, 'DECK_DESIGN_SYSTEM.md')),
@@ -397,16 +405,41 @@ function stampShowcaseTemplateId(fragment, showcaseTemplateId) {
 /**
  * Ensure host <head> links slide design CSS once (colors + slide shell).
  */
+function escapeForRegex(s) {
+  return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+}
+
 function ensureSlideDesignStylesInHead(html, templates) {
   if (!html || !templates) return html;
   const markerStart = '<!-- POST-SLIDES DESIGN SYSTEM CSS -->';
   const markerEnd = '<!-- /POST-SLIDES DESIGN SYSTEM CSS -->';
-  if (html.includes(markerStart)) return html;
 
   const colors = String(templates.colorsAndTypeCss || '').trim();
   const slide = String(templates.slideTemplateCss || '').trim();
+  const showcase = String(templates.showcaseClassesCss || '').trim();
   const contract = String(templates.pipelineSlideContractCss || '').trim();
-  if (!colors && !slide && !contract) return html;
+  if (!colors && !slide && !showcase && !contract) return html;
+
+  // If the markers already exist, REMOVE the old block(s) so the latest CSS
+  // (typography ceilings, contract rules, showcase classes, etc.) is what
+  // ends up in <head>. Without this, edits to template CSS files never reach
+  // existing scratch-app/index.html — the function would skip injection
+  // because the marker is present, leaving stale CSS frozen from the first
+  // build.
+  if (html.includes(markerStart)) {
+    html = html.replace(
+      new RegExp(`${escapeForRegex(markerStart)}[\\s\\S]*?${escapeForRegex(markerEnd)}\\s*`, 'i'),
+      ''
+    );
+    html = html.replace(
+      /<!--\s*PIPELINE SLIDE CONTRACT v1\s*-->[\s\S]*?<!--\s*\/PIPELINE SLIDE CONTRACT v1\s*-->\s*/i,
+      ''
+    );
+    html = html.replace(
+      /<!--\s*POST-SLIDES SHOWCASE CLASSES v1\s*-->[\s\S]*?<!--\s*\/POST-SLIDES SHOWCASE CLASSES v1\s*-->\s*/i,
+      ''
+    );
+  }
 
   // Rewrite @import and font URLs for scratch-app layout (served from run root).
   const scopedColors = colors
@@ -416,20 +449,27 @@ function ensureSlideDesignStylesInHead(html, templates) {
     .replace(/@import\s+url\(["']?\.\/colors_and_type\.css["']?\)\s*;?/gi, '')
     .replace(/url\(\s*["']?\.\/fonts\//gi, 'url("./fonts/');
 
-  // Cascade order matters: emit base design system FIRST, then the canonical
-  // pipeline contract as a SEPARATE marked block AFTER. The contract's
-  // selector specificity (`.step.active .slide-root`) beats slide.css's
-  // bare `.slide-root` rule, and the later position closes any tie.
+  // Cascade order matters: emit base design system FIRST, then showcase
+  // classes (.sc-*), then the canonical pipeline contract LAST. The
+  // contract's selector specificity (`.step.active .slide-root`) beats
+  // slide.css's bare `.slide-root` rule, and its later position closes any
+  // tie. Showcase classes sit in the middle so contract rules can still
+  // override them when contracts require (e.g. typography ceilings).
   const designBlock =
     `${markerStart}\n` +
     `<style data-post-slides-design-system="v1">\n${scopedColors}\n${scopedSlide}\n</style>\n` +
     markerEnd;
+  const showcaseBlock = showcase
+    ? `\n<!-- POST-SLIDES SHOWCASE CLASSES v1 -->\n` +
+      `<style data-pipeline-showcase-classes="v1">\n${showcase}\n</style>\n` +
+      `<!-- /POST-SLIDES SHOWCASE CLASSES v1 -->\n`
+    : '';
   const contractBlock = contract
     ? `\n<!-- PIPELINE SLIDE CONTRACT v1 -->\n` +
       `<style data-pipeline-slide-contract="v1">\n${contract}\n</style>\n` +
       `<!-- /PIPELINE SLIDE CONTRACT v1 -->\n`
     : '';
-  const block = designBlock + contractBlock;
+  const block = designBlock + showcaseBlock + contractBlock;
 
   if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${block}\n</head>`);
   if (/<body\b/i.test(html)) return html.replace(/<body\b/i, `${block}\n<body`);
@@ -703,9 +743,9 @@ async function main() {
         if (ok) {
           const norm = normalizeSlideTypography(updated);
           html = norm.html;
-          if (norm.capped || norm.stripped) {
+          if (norm.capped || norm.stripped || norm.floored) {
             console.log(
-              `[post-slides] Typography normalize "${step.id}": capped=${norm.capped}, stripped=${norm.stripped}`
+              `[post-slides] Typography normalize "${step.id}": capped=${norm.capped}, stripped=${norm.stripped}, floored=${norm.floored || 0}`
             );
           }
           applied = true;
@@ -745,12 +785,42 @@ async function main() {
   }
 
   if (!cli.dryRun && report.slidesProcessed.length > 0) {
+    // Strip any `.chrome-foot` blocks left over from prior LLM insertions on
+    // *non-failing* slides. spliceSlideFragmentIntoHtml only strips chrome-foot
+    // from the fragment being inserted, so legacy slides keep their footer
+    // until they're regenerated. The footer rows overlap body copy and trigger
+    // build-QA slide-text-overlap blockers; stripping them globally on every
+    // post-slides run keeps the document in compliance with the contract
+    // "Pipeline slides omit .chrome-foot."
+    const beforeStrip = html;
+    html = stripChromeFootFromHtml(html);
+    if (html !== beforeStrip) {
+      const removed = (beforeStrip.match(/<div\b[^>]*\bclass="[^"]*\bchrome-foot\b/gi) || []).length;
+      report.chromeFootStripped = removed;
+      console.log(`[post-slides] Stripped ${removed} legacy .chrome-foot block(s) from non-failing slides.`);
+    }
+
     const finalNorm = normalizeSlideTypography(html);
     html = finalNorm.html;
-    if (finalNorm.capped || finalNorm.stripped) {
-      report.typographyNormalized = { capped: finalNorm.capped, stripped: finalNorm.stripped };
+    if (finalNorm.capped || finalNorm.stripped || finalNorm.floored) {
+      report.typographyNormalized = {
+        capped: finalNorm.capped,
+        stripped: finalNorm.stripped,
+        floored: finalNorm.floored || 0,
+      };
       console.log(
-        `[post-slides] Final typography pass: capped=${finalNorm.capped}, stripped=${finalNorm.stripped}`
+        `[post-slides] Final typography pass: capped=${finalNorm.capped}, stripped=${finalNorm.stripped}, floored=${finalNorm.floored || 0}`
+      );
+    }
+    const mintCap = capSlideMint(html);
+    if (mintCap.demoted > 0) {
+      html = mintCap.html;
+      report.mintCap = {
+        demoted: mintCap.demoted,
+        perSlide: mintCap.perSlide.filter((s) => s.before !== s.after),
+      };
+      console.log(
+        `[post-slides] Mint cap: demoted ${mintCap.demoted} reference(s) across ${report.mintCap.perSlide.length} slide(s) (keeping <=3 per slide).`
       );
     }
     html = injectSlideTypographyOverrides(html);

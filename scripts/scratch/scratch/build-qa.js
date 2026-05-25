@@ -297,12 +297,22 @@ function scanMissingBrandLogo(html, demoScript) {
 
 // ─── Plaid Slide Design System scanners (warning-only) ─────────────────────
 
+// Source of truth: templates/slide-template/colors_and_type.css.
+// Keep in sync with the documented Plaid palette there (sans the gradient
+// definitions). Missing entries here surface as false-positive
+// `slide-invented-color` warnings on slides that use legitimate holo accents.
 const SLIDE_DESIGN_APPROVED_HEX = new Set([
+  // Core surfaces / type
   '#111112', '#ffffff', '#f9f9f9', '#f2f2f2', '#f4f0e6',
-  '#022544', '#043c65', '#07578d', '#0b7bbc', '#3a80e2', '#5fa8e2',
+  // Plaid blues (ink + scale)
+  '#022544', '#031c34', '#043c65', '#07578d', '#0b7bbc', '#3a80e2', '#5fa8e2', '#e6f1fb',
+  // Mint (Plaid teal scale)
   '#05565c', '#42f0cd', '#71fbe3',
-  '#e6e6ff', '#d8fef3', '#fff6d8', '#ffc0ff', '#98a5ff',
+  // Holograph pastels (full set from colors_and_type.css)
+  '#e6e6ff', '#d8fef3', '#fff6d8', '#f9dbff', '#8bffff', '#ffc0ff', '#ffffc7', '#98a5ff', '#e373ff', '#affeef',
+  // Neutral scale
   '#1d1d1b', '#2a2a28', '#474747', '#747677', '#a8aaab', '#d4d4d4', '#e6e6e6',
+  // Status accents
   '#d83232', '#8b1f1f', '#ffe5e5', '#8f6a00',
 ]);
 
@@ -322,7 +332,13 @@ function extractStepHtmlBlocks(html, stepIds, { requireSlideRoot = false } = {})
     if (!open) continue;
     const start = open.index;
     const tail = html.slice(start + open[0].length);
-    const nextRe = /<div[^>]*\bdata-testid=["']step-[^"']+["'][^>]*>/gi;
+    // Find the next step OR a documented host-level boundary so the LAST step
+    // (no following step div) does not absorb the global side-panel chrome,
+    // the post-panels <script>, or any trailing assets. These regions contain
+    // mint tokens, holo colors, and other slide-only constructs by design;
+    // counting them against an actual slide's content produces phantom
+    // warnings (e.g., slide-mint-overuse caused by panel toggle CSS).
+    const nextRe = /<div[^>]*\bdata-testid=["']step-[^"']+["'][^>]*>|<!--\s*={3,}[\s\S]*?SIDE PANELS|<div[^>]*\bid=["'](?:link-events-panel|api-response-panel)["']|<\/body>/gi;
     const next = nextRe.exec(tail);
     const end = start + open[0].length + (next ? next.index : tail.length);
     const block = html.slice(start, end);

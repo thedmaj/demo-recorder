@@ -94,9 +94,10 @@ Author with DECK templates; do **not** set fixed `width:1440px;height:900px` on 
 </div>
 ```
 
-- One mint moment per slide (`--plaid-teal-500`)
-- Body text ≥ 24px; flex/grid + `gap` only — **no `display:inline-block`**
-- Headline: sentence case, ends with period, one Bowery `<em>` accent
+- **Mint cap (≤ 3 references per slide).** Combined count of `--plaid-teal-500` + `#42F0CD` across class names, inline styles, and inline CSS must stay ≤ 3 per `.slide-root`. Reserve mint for ONE primary eye-draw — usually a hero stat, a single CTA accent, or a value-summary mint card. Supporting text uses `var(--plaid-white)` / `rgba(255,255,255,0.78)` on navy, or `var(--plaid-ink-900)` on light/cream/holo. post-slides demotes excess mint to `var(--plaid-white)` automatically; relying on that as a crutch still loses visual hierarchy — write within the cap from the start.
+- Body text ≥ 24px (hard floor — sub-24px inline `font-size` gets rewritten to 24px on insert).
+- Flex/grid + `gap` only — **no `display:inline-block`**.
+- Headline: sentence case, ends with period, one Bowery `<em>` accent.
 
 ## Forbidden sales CTAs (pipeline demos — HARD)
 
@@ -131,6 +132,7 @@ These patterns caused the most **deterministic** failures in showcase-router rer
 | **Duplicate JSON rail** | Do not embed JSON snippets inside `.slide-root` when `step.apiResponse` exists — use global `#api-response-panel` only. |
 | **Mint overuse** | One `--plaid-teal-500` eye-draw per slide; stats on cream/white unless that stat *is* the mint moment. |
 | **Overlap autofix regression** | Never inflate font-size above ceilings to “fix” overlap — increase `gap` / `padding-bottom` on `.slide-stack` instead. |
+| **Bottom row clipped by `.frame { overflow: hidden }`** | The headline is too large for a text-heavy template. T4–T11 (card grids, stat highlights, CTA closes) cap `.h-title` at **64px** so the cards/body have room to breathe. T1–T3 keep the larger title clamp. Pipeline contract enforces this via `clamp(32px, 4.0vw, 64px)` on `.slide-root[data-slide-template="T4..T11"] .h-title`. |
 
 ## Template selection
 

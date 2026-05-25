@@ -1,0 +1,115 @@
+/*
+ * Showcase template classes — runtime CSS for `.sc-*` class names that the
+ * showcase gallery (templates/slide-template/showcase/index.html) defines
+ * and that the post-slides LLM emits when adapting any t1–t11 skeleton.
+ *
+ * BEFORE THIS FILE EXISTED:
+ *   - Only the showcase gallery preview had .sc-card / .sc-eyebrow / .sc-grid-*
+ *     CSS. The pipeline injected colors_and_type.css, slide.css, and
+ *     pipeline-slide-contract.css — none of which defined .sc-* rules.
+ *   - LLM-generated slides faithfully used .sc-grid-3 / .sc-card markup but
+ *     got `display: block` (browser default) at runtime → cards stacked
+ *     vertically with no grid, .sc-eyebrow had no font-size, and rendered
+ *     layouts diverged from what the showcase skeleton previewed.
+ *   - build-qa Playwright then reported overlap/clipping for slides whose
+ *     HTML looked correct but whose styling was missing.
+ *
+ * AFTER:
+ *   - post-slides.ensureSlideDesignStylesInHead injects this file inside the
+ *     `<style data-pipeline-showcase-classes="v1">` block, after slide.css
+ *     and before pipeline-slide-contract.css. So .sc-* rules apply at
+ *     runtime exactly as the showcase preview shows them, and the contract
+ *     overrides win where they need to.
+ *
+ * KEEP IN SYNC: the same rules live in templates/slide-template/showcase/
+ * index.html for the gallery. When you change one, change both.
+ */
+
+.sc-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.slide-root.light .sc-card,
+.slide-root.cream .sc-card,
+.slide-root.holo .sc-card {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(2, 37, 68, 0.1);
+}
+
+.sc-eyebrow {
+  font-family: var(--font-mono);
+  /* Pipeline floor: ≥ 24px on .slide-root body text. */
+  font-size: 24px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--plaid-teal-400);
+}
+.slide-root.light .sc-eyebrow,
+.slide-root.cream .sc-eyebrow,
+.slide-root.holo .sc-eyebrow {
+  color: var(--plaid-blue-600);
+}
+
+.sc-stat {
+  font-family: var(--font-display);
+  font-size: clamp(56px, 7vw, 128px);
+  line-height: 1;
+  font-weight: 500;
+  color: var(--plaid-white);
+}
+.slide-root.light .sc-stat,
+.slide-root.cream .sc-stat,
+.slide-root.holo .sc-stat {
+  color: var(--plaid-ink-900);
+}
+
+.sc-stat-label {
+  /* Pipeline floor: ≥ 24px. */
+  font-size: 24px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 6px;
+}
+.slide-root.light .sc-stat-label,
+.slide-root.cream .sc-stat-label,
+.slide-root.holo .sc-stat-label {
+  color: rgba(2, 37, 68, 0.62);
+}
+
+.sc-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+}
+.sc-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+.sc-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+
+.sc-row {
+  display: flex;
+  gap: 24px;
+  align-items: stretch;
+}
+
+/* Pipeline floor: ≥ 24px on .slide-root body text. */
+.sc-delta-up {
+  color: var(--plaid-teal-500);
+  font-family: var(--font-mono);
+  font-size: 24px;
+}
+.sc-delta-down {
+  color: var(--holo-pink);
+  font-family: var(--font-mono);
+  font-size: 24px;
+}

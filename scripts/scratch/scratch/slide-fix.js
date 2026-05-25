@@ -226,12 +226,23 @@ async function main(opts = {}) {
     const failingSlideIds = (tier.tierSummary.slide.failingStepIds || []).slice();
     console.log(`[slide-fix] iteration ${iter}/${maxIterations} — failing slides: ${failingSlideIds.join(', ') || '(none)'}`);
 
-    const patchOut = await runPatches(runDir, tier.report, failingSlideIds, iter);
+    // 1) Strip + LLM re-insert FIRST. The patches are mostly CSS-overlay fixes
+    //    that target the *current* HTML state — applying them before strip+
+    //    reinsert means the LLM regeneration immediately wipes them. So we
+    //    swap the order: regenerate the failing slides first, then apply
+    //    deterministic patches to the fresh output, then re-QA.
     const stripOut = stripSlides(runDir, failingSlideIds);
     if (stripOut.stripped.length > 0) {
       await runPostSlides(runDir, stripOut.stripped);
     }
     await runPostPanels(runDir);
+
+    // 2) Apply deterministic patches (typography, overlap autofix, etc.) to
+    //    the freshly inserted slides. Uses the tier-summary's diagnostics
+    //    from the previous QA pass — fine since the patches target either
+    //    universal contracts (typography ceilings/floors) or per-step CSS
+    //    overrides that the LLM does not own.
+    const patchOut = await runPatches(runDir, tier.report, failingSlideIds, iter);
 
     const qaResult = await runSlidesScopedBuildQa(runDir);
     tier = readTierSummary(runDir);

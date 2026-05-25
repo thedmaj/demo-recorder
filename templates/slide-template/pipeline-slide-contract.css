@@ -55,12 +55,39 @@
   overflow: visible;
 }
 
+/* Frame inner padding floor — keep at least 24px below the slide-stack so
+ * the bottom row of body text isn't kissed by the .frame { overflow: hidden }
+ * edge. This was the source of the "border-bottom clips text" report on
+ * dense T4/T11 cards. */
+.slide-root .frame {
+  padding-bottom: max(40px, var(--pad-bottom, 40px));
+}
+
 /* Typography ceilings — single-source font sizing for slide headlines + body.
  * These ceilings prevent the LLM from emitting absurdly large hero numbers
  * that overflow the canvas at narrow widths. */
 .slide-root .h-title {
   font-size: clamp(40px, 5.4vw, 96px);
   line-height: 1.05;
+}
+
+/* Text-heavy templates — T4 (stat + cards grid) and T11 (CTA / action cards)
+ * carry 2-4 body cards beneath the headline. At the default h-title clamp
+ * the title eats vertical real estate that the cards need, pushing body copy
+ * past the .frame { overflow: hidden } edge and clipping the last row of
+ * text. Cap the title clamp to 32–64px on these templates so cards have room.
+ * T1 (cover), T2 (statement), and T3 (quote) keep the larger clamp because
+ * those layouts ARE the title. */
+.slide-root[data-slide-template="T4"] .h-title,
+.slide-root[data-slide-template="T5"] .h-title,
+.slide-root[data-slide-template="T6"] .h-title,
+.slide-root[data-slide-template="T7"] .h-title,
+.slide-root[data-slide-template="T8"] .h-title,
+.slide-root[data-slide-template="T9"] .h-title,
+.slide-root[data-slide-template="T10"] .h-title,
+.slide-root[data-slide-template="T11"] .h-title {
+  font-size: clamp(32px, 4.0vw, 64px);
+  line-height: 1.1;
 }
 
 .slide-root .h-section,

@@ -67,16 +67,21 @@ function stripFontSizeFromStyle(styleAttr) {
 
 /**
  * @param {string} html
- * @param {{ stripCanonicalInline?: boolean }} [opts]
- * @returns {{ html: string, capped: number, stripped: number }}
+ * @param {{ stripCanonicalInline?: boolean, floorPx?: number }} [opts]
+ * @returns {{ html: string, capped: number, stripped: number, floored: number }}
  */
 function normalizeSlideTypography(html, opts = {}) {
   const stripCanonical = opts.stripCanonicalInline !== false;
+  // Plaid body typography floor (DECK_DESIGN_SYSTEM.md §1.4). LLM-generated
+  // slides routinely emit 16-19px on cards / footnotes; the floor brings them
+  // up to the readable minimum. Default to 24; allow opt-out via floorPx=0.
+  const floorPx = opts.floorPx === undefined ? 24 : Number(opts.floorPx) || 0;
   let capped = 0;
   let stripped = 0;
+  let floored = 0;
 
   const parts = String(html || '').split(/(<div[^>]*\bslide-root\b[^>]*>)/gi);
-  if (parts.length < 2) return { html, capped: 0, stripped: 0 };
+  if (parts.length < 2) return { html, capped: 0, stripped: 0, floored: 0 };
 
   let out = parts[0] || '';
   for (let i = 1; i < parts.length; i += 2) {
@@ -90,7 +95,7 @@ function normalizeSlideTypography(html, opts = {}) {
       continue;
     }
 
-    // Cap inline font-size on any tag inside this slide-root block.
+    // Cap/floor inline font-size on any tag inside this slide-root block.
     body = body.replace(
       /style\s*=\s*["']([^"']*)["']/gi,
       (match, styleVal, offset) => {
@@ -111,9 +116,16 @@ function normalizeSlideTypography(html, opts = {}) {
           /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi,
           (decl, n) => {
             const px = parseFloat(n);
-            if (!Number.isFinite(px) || px <= maxPx) return decl;
-            capped += 1;
-            return `font-size:${maxPx}px`;
+            if (!Number.isFinite(px)) return decl;
+            if (px > maxPx) {
+              capped += 1;
+              return `font-size:${maxPx}px`;
+            }
+            if (floorPx > 0 && px > 0 && px < floorPx) {
+              floored += 1;
+              return `font-size:${floorPx}px`;
+            }
+            return decl;
           }
         );
         if (nextStyle === styleVal) return match;
@@ -121,7 +133,7 @@ function normalizeSlideTypography(html, opts = {}) {
       }
     );
 
-    // Cap bare style blocks inside slide (rare LLM <style> in fragment)
+    // Cap/floor bare style blocks inside slide (rare LLM <style> in fragment)
     body = body.replace(
       /(\.[^{]+)\{([^}]*)\}/g,
       (rule, sel, decls) => {
@@ -137,9 +149,16 @@ function normalizeSlideTypography(html, opts = {}) {
           /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi,
           (d, n) => {
             const px = parseFloat(n);
-            if (!Number.isFinite(px) || px <= maxPx) return d;
-            capped += 1;
-            return `font-size:${maxPx}px`;
+            if (!Number.isFinite(px)) return d;
+            if (px > maxPx) {
+              capped += 1;
+              return `font-size:${maxPx}px`;
+            }
+            if (floorPx > 0 && px > 0 && px < floorPx) {
+              floored += 1;
+              return `font-size:${floorPx}px`;
+            }
+            return d;
           }
         );
         return `${sel}{${nextDecls}}`;
@@ -149,7 +168,7 @@ function normalizeSlideTypography(html, opts = {}) {
     out += open + body;
   }
 
-  return { html: out, capped, stripped };
+  return { html: out, capped, stripped, floored };
 }
 
 /** Export ceilings for build-QA scanner parity */
@@ -198,7 +217,7 @@ const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
 }
 .slide-root .h-title {
   font-size: min(var(--type-title, 72px), 84px) !important;
-  margin-bottom: 40px !important;
+  margin-bottom: 32px !important;
   flex-shrink: 0;
 }
 .slide-root[data-slide-template="T1"] .h-title {
@@ -207,6 +226,20 @@ const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
 .slide-root[data-slide-template="T2"] .h-title,
 .slide-root[data-slide-template="T3"] .h-title {
   font-size: min(96px, var(--type-title, 72px)) !important;
+}
+/* Text-heavy templates (cards / CTA) — keep headlines compact so the body
+ * grid fits inside .frame { overflow: hidden }. Matches the clamp in
+ * templates/slide-template/pipeline-slide-contract.css. */
+.slide-root[data-slide-template="T4"] .h-title,
+.slide-root[data-slide-template="T5"] .h-title,
+.slide-root[data-slide-template="T6"] .h-title,
+.slide-root[data-slide-template="T7"] .h-title,
+.slide-root[data-slide-template="T8"] .h-title,
+.slide-root[data-slide-template="T9"] .h-title,
+.slide-root[data-slide-template="T10"] .h-title,
+.slide-root[data-slide-template="T11"] .h-title {
+  font-size: min(64px, var(--type-title, 56px)) !important;
+  margin-bottom: 24px !important;
 }
 .slide-root .hero-stat-value {
   font-size: min(var(--type-mega, 180px), 180px) !important;

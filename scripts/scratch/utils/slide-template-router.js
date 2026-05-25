@@ -19,6 +19,16 @@ const ENDPOINT_CATEGORY_HINTS = [
   { pattern: /\/liabilities\//i, category: 'metrics', layouts: ['table', 'kpi-grid'] },
   { pattern: /\/link\/token\/create/i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
   { pattern: /\/identity\//i, category: 'explainer', layouts: ['bullets', 'three-column'] },
+  // CRA / consumer report endpoints — webhook-driven lifecycles + score reveal slides.
+  { pattern: /\/cra\/check_report\/(?:lend_score|base_report)/i, category: 'metrics', layouts: ['stat-highlight', 'kpi-grid'] },
+  { pattern: /\/cra\/check_report\/network_insights/i, category: 'metrics', layouts: ['kpi-grid', 'stat-highlight'] },
+  { pattern: /\/webhooks?\b/i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
+  // Plaid Protect / Trust Index — fraud risk explainer + score reveal.
+  { pattern: /\/protect\//i, category: 'metrics', layouts: ['stat-highlight', 'kpi-grid'] },
+  { pattern: /\/monitor\//i, category: 'explainer', layouts: ['bullets', 'three-column'] },
+  // Transfer / ACATS / move endpoints — process/flow.
+  { pattern: /\/transfer\//i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
+  { pattern: /\/investments\/auth/i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
 ];
 
 const LAYOUT_KEYWORDS = {
@@ -35,12 +45,130 @@ const LAYOUT_KEYWORDS = {
   'big-quote': ['quote', 'testimonial', 'pull quote'],
   cover: ['hero', 'title', 'opener'],
   'section-divider': ['section', 'chapter', 'break'],
-  cta: ['next step', 'action', 'recap', 'close', 'value summary'],
+  // Expanded cta keywords — value-summary copy often re-phrases "value summary"
+  // as "retro graduates", "production ready", "close · value" or similar.
+  cta: ['next step', 'action', 'recap', 'close', 'value summary', 'retro graduates', 'production ready', 'close · value', 'production decisioning'],
   code: ['snippet', 'curl', 'json', 'endpoint', 'api call'],
   timeline: ['timeline', 'milestone', 'phase', 'quarter'],
   roadmap: ['roadmap', 'now next later', 'vision'],
   'customer-proof': ['customer', 'logo bar', 'proof'],
 };
+
+// Content-aware signal regexes — added May 2026 to fix routing misses observed
+// across Tilt / Betterment / Zip slide-tier QA runs. Each detector returns a
+// number > 0 when the signal is present; scoreTemplate multiplies that into a
+// template-shape preference (see `applyContentSignals`).
+
+/** Match meaningful numerics (percentages, durations, dollar amounts, multipliers). */
+const NUMERIC_TOKEN_RE = /(?:\$\d[\d,]*(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:%|x|×|seconds?|secs?|ms|days?|bps|hrs?|hours?|weeks?))/gi;
+
+/** Comparison/contrast cues — semantic, not just "before/after" tokens. */
+const COMPARISON_CUES_RE = /\b(?:vs\.?|versus|instead of|compared to|rather than|over [a-z- ]+(?:bureau|baseline|status quo)|old way[^.]+new way|before[^.]{0,40}after)\b/i;
+
+/** Lifecycle / process cues — arrows, ordinals, webhook lifecycles. */
+const LIFECYCLE_CUES_RE = /(?:→|->|\bthen\b|\bnext\b|\bfirst[^.]+(?:second|then)\b|\bstep\s+\d|\brequested[^.]{0,60}(?:generating|ready)\b|\bwebhook[s]?\b|\b(?:requested|generating|ready)\s*(?:→|->|then|,)\s*(?:requested|generating|ready))/i;
+
+/** Strip HTML so word counts reflect rendered copy, not markup volume. */
+function _wordCount(text) {
+  if (!text) return 0;
+  return String(text)
+    .replace(/<[^>]+>/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+/**
+ * Score a template against the content-aware signals derived from the step's
+ * narration + visualState. Pure additive — never subtracts (recent-layout dedup
+ * already handles negative scoring in scoreTemplate).
+ *
+ * @param {object} template registry entry
+ * @param {object} ctx scoring context
+ * @returns {{ score: number, reasons: string[] }}
+ */
+function applyContentSignals(template, ctx) {
+  const text = ctx.text;
+  const layout = template.workhorseLayout;
+  let score = 0;
+  const reasons = [];
+
+  // 1) Text density — biases toward layouts that fit the volume of copy.
+  const wc = ctx.wordCount;
+  if (wc > 0) {
+    if (wc < 25) {
+      if (['cover', 'big-quote', 'section-divider'].includes(layout)) {
+        score += 4;
+        reasons.push(`density-short:${wc}w`);
+      }
+    } else if (wc < 60) {
+      if (['stat-highlight', 'big-quote'].includes(layout)) {
+        score += 2;
+        reasons.push(`density-medium:${wc}w`);
+      }
+    } else if (wc < 110) {
+      if (['kpi-grid', 'bullets', 'three-column'].includes(layout)) {
+        score += 2;
+        reasons.push(`density-long:${wc}w`);
+      }
+    } else {
+      if (['bullets', 'cta', 'three-column'].includes(layout)) {
+        score += 3;
+        reasons.push(`density-xlong:${wc}w`);
+      }
+    }
+  }
+
+  // 2) Numeric density — quantified narration belongs in stat/kpi layouts.
+  const numCount = ctx.numericCount;
+  if (numCount >= 3) {
+    if (layout === 'kpi-grid') {
+      score += 4;
+      reasons.push(`numerics:${numCount}→kpi-grid`);
+    } else if (layout === 'stat-highlight') {
+      score += 2;
+      reasons.push(`numerics:${numCount}→stat-highlight`);
+    }
+  } else if (numCount === 2) {
+    if (layout === 'stat-highlight') {
+      score += 3;
+      reasons.push(`numerics:2→stat-highlight`);
+    } else if (layout === 'kpi-grid') {
+      score += 2;
+      reasons.push(`numerics:2→kpi-grid`);
+    }
+  } else if (numCount === 1) {
+    if (layout === 'stat-highlight') {
+      score += 2;
+      reasons.push(`numerics:1→stat-highlight`);
+    }
+  }
+
+  // 3) Comparison / contrast cues.
+  if (ctx.hasComparison) {
+    if (layout === 'comparison') {
+      score += 4;
+      reasons.push('comparison-cue');
+    } else if (layout === 'stat-highlight') {
+      score += 1;
+      reasons.push('comparison-cue-secondary');
+    }
+  }
+
+  // 4) Lifecycle / process cues — fixes the report-ready-slide case where
+  //    the "requested → generating → ready" lifecycle should pick process-steps,
+  //    not a 3-card stat grid.
+  if (ctx.hasLifecycle) {
+    if (layout === 'process-steps') {
+      score += 5;
+      reasons.push('lifecycle-cue');
+    } else if (layout === 'flow-diagram') {
+      score += 3;
+      reasons.push('lifecycle-cue-flow');
+    }
+  }
+
+  return { score, reasons };
+}
 
 function normalizeText(step) {
   return [
@@ -122,6 +250,13 @@ function scoreTemplate(template, ctx) {
   if (ctx.hardLayout && template.workhorseLayout === ctx.hardLayout) score += 100;
   if (ctx.hardSlideTemplate && template.slideTemplate === ctx.hardSlideTemplate) score += 50;
 
+  // Content-aware signals (density, numerics, comparison, lifecycle). Pure
+  // additive — never penalize; the rest of scoreTemplate already handles
+  // negative scoring (recent-layout dedup, peer-benchmark avoid-table).
+  const signals = applyContentSignals(template, ctx);
+  score += signals.score;
+  for (const r of signals.reasons) reasons.push(r);
+
   return { score, reasons };
 }
 
@@ -188,6 +323,16 @@ function routeSlideTemplate(step, deckContext = {}, opts = {}) {
         endpointHint: epHint,
       });
 
+  // Pre-compute content-aware features once per step so each scored template
+  // can reuse them. Cheap regex / split passes (<1ms total per deck).
+  const narrationText = String(step?.narration || '');
+  const visualStateText = String(step?.visualState || '');
+  const contentText = `${narrationText} ${visualStateText}`.trim();
+  const wordCount = _wordCount(contentText);
+  const numericCount = (contentText.match(NUMERIC_TOKEN_RE) || []).length;
+  const hasComparison = COMPARISON_CUES_RE.test(contentText);
+  const hasLifecycle = LIFECYCLE_CUES_RE.test(contentText);
+
   const ctx = {
     text,
     stepIndex,
@@ -197,6 +342,11 @@ function routeSlideTemplate(step, deckContext = {}, opts = {}) {
     endpointHint: epHint,
     recentLayouts,
     hardTemplateId,
+    // Content-aware signal features (consumed by applyContentSignals).
+    wordCount,
+    numericCount,
+    hasComparison,
+    hasLifecycle,
     hardLayout,
     hardSlideTemplate: step?.slideTemplate && /^T\d+$/i.test(String(step.slideTemplate))
       ? String(step.slideTemplate).trim().toUpperCase()
@@ -249,4 +399,8 @@ module.exports = {
   inferPreferredCategory,
   endpointHint,
   scoreTemplate,
+  applyContentSignals,
+  NUMERIC_TOKEN_RE,
+  COMPARISON_CUES_RE,
+  LIFECYCLE_CUES_RE,
 };

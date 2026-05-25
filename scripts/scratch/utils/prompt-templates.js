@@ -2840,6 +2840,25 @@ function buildSlideInsertionPrompt({
 
   const slideSkillBlock = String(slideDesignSkillMarkdown || '').trim();
 
+  // Extract Plaid product names from the narration so the LLM has a focused
+  // checklist for the narration-concrete-values scanner (slide-narration-drift).
+  // The same product phrases that build-qa's scanSlideNarrationConcreteValues
+  // looks for in the rendered slide text. Keep in sync with that list.
+  const NARRATION_PRODUCT_PHRASES = [
+    'Trust Index', 'Ti2',
+    'Plaid Layer', 'Plaid Signal', 'Plaid Identity Verification', 'Plaid IDV',
+    'Plaid Monitor', 'Plaid Assets', 'Plaid Protect', 'Plaid Instant Auth',
+    'Plaid Liabilities', 'Plaid Investments Move', 'Plaid Investments',
+    'Bank Income', 'Cash Advance Score', 'Earned Wage Access',
+  ];
+  const narrationProducts = [];
+  if (effectiveNarration) {
+    for (const phrase of NARRATION_PRODUCT_PHRASES) {
+      const re = new RegExp(`\\b${phrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+      if (re.test(effectiveNarration)) narrationProducts.push(phrase);
+    }
+  }
+
   let userText =
     `# SLIDE INSERTION — step "${stepId}"\n\n` +
     `Customer context (copy only — NOT slide palette): ${brandName}\n` +
@@ -2847,6 +2866,9 @@ function buildSlideInsertionPrompt({
     (endpoint ? `API endpoint: ${endpoint}\n` : '') +
     (effectiveNarration ? `Narration: ${effectiveNarration}\n` : '') +
     (stepVisual ? `Expected visual: ${stepVisual}\n` : '') +
+    (narrationProducts.length
+      ? `\nProduct names the narration mentions — these MUST appear in the slide's rendered text (eyebrow, headline, bullets, or footer label): ${narrationProducts.map((p) => `"${p}"`).join(', ')}.\n`
+      : '') +
     `\n## ${SLIDE_HOST_ISOLATION_BLOCK}\n\n`;
 
   if (slideSkillBlock) {
@@ -2857,14 +2879,16 @@ function buildSlideInsertionPrompt({
     `\n## OUTPUT CONTRACT (REQUIRED)\n` +
     `- Emit ONLY <div data-testid="step-${stepId}" class="step"> ... </div>.\n` +
     `- Exactly ONE child: <div class="slide-root" data-slide-template="T1|T2|...|T11" data-workhorse-layout="layout-name"> with optional background class light|cream|holo on .slide-root.\n` +
-    `- Inner structure: .frame > .chrome-logo + .eyebrow-tag + .h-title + template body in .slide-stack (T1 title may omit eyebrow). Do NOT add .chrome-foot.\n` +
+    `- Inner structure: .frame > .chrome-logo + .eyebrow-tag + .h-title + template body in .slide-stack (T1 title may omit eyebrow). **NEVER add .chrome-foot** — pipeline slides have NO footer row. Footer-style partnership labels overlap body copy at 1280×800 and trigger a build-QA blocker. WRONG: \`<div class="chrome-foot"><span>Plaid × {brand}</span></div>\`. RIGHT: put "Plaid × {brand} · {section}" inside .eyebrow-tag only.\n` +
     `- Headline: sentence case, ends with period, exactly one <em> Bowery Street italic accent in .h-title.\n` +
     `- **Typography ceilings (REQUIRED — do NOT exceed):** use slide.css classes, not oversized inline font-size. ` +
-    `Class .h-title max 72px (T3 statement max 96px; T1 title max 140px). Class .hero-stat-value max 180px (Bowery). ` +
+    `Class .h-title max 72px on T1/T2/T3 (T1 title may reach 140px; T2/T3 statement max 96px). ` +
+    `**Templates T4–T11 (card grids, stat highlights, CTA closes) cap .h-title at 64px** — those layouts carry multiple body cards beneath the headline and a larger title eats vertical space the cards need, clipping the bottom row against the .frame overflow boundary. ` +
+    `Class .hero-stat-value max 180px (Bowery). ` +
     `Body .slide-body-text max 30–36px. Eyebrow 24px. Never put font-size above 180px anywhere in .slide-root.\n` +
     `- Wrap main body (headline + stats + cards) in <div class="slide-stack">.\n` +
-    `- Body text minimum 24px; flex/grid + gap only (no inline-block).\n` +
-    `- One mint moment per slide (--plaid-teal-500 / #42F0CD as primary highlight).\n` +
+    `- Body text minimum 24px; flex/grid + gap only (no inline-block). **No inline \`font-size\` below 24px anywhere inside .slide-root** — even on small captions / footnotes. Use 24px as the floor.\n` +
+    `- **Mint cap (HARD):** maximum 3 total references to \`--plaid-teal-500\` or \`#42F0CD\` per slide — counted across class names, inline styles, and CSS. Reserve mint for ONE primary eye-draw moment (a single stat, a single CTA accent, or a single chip). For supporting text, use \`var(--plaid-white)\` or \`rgba(255,255,255,0.78)\` on navy; \`var(--plaid-ink-900)\` on light/cream/holo. **WRONG**: 8+ mint hex/var references stacked across cards. **RIGHT**: 1–3 mint references, all clustered on the focal element.\n` +
     `- **Forbidden sales CTAs (HARD — build-QA blocker):** Do NOT add buttons, pill CTAs, or prominent action lines for: contact Plaid, contact Account Manager, start a free trial, Start a POC, perform a retro analysis / run the production retro / start your retro. Value-summary slides close with product outcome bullets + declarative copy only.\n` +
     `- **Partnership / section labels:** put "Plaid × {customer}" and product names in .eyebrow-tag only — never in a footer row.\n` +
     `- **Plaid logo (HARD — build-QA blocker):** NEVER invent a logo (no SVG, no four-dot icon grid, no "PLAID" text, no CSS shapes). ` +

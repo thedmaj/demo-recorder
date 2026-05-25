@@ -262,7 +262,11 @@
     }
     .sc-eyebrow {
       font-family: var(--font-mono);
-      font-size: 13px;
+      /* Pipeline floor: body text in .slide-root must be ≥ 24px (build-qa
+       * slide-typography-floor blocker). The gallery preview at 1920×1080
+       * tolerates 13px but pipeline recordings render at 1280×800 where
+       * 13px is below the readable threshold and triggers QA failures. */
+      font-size: 24px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       color: var(--plaid-teal-400);
@@ -285,7 +289,8 @@
       color: var(--plaid-ink-900);
     }
     .sc-stat-label {
-      font-size: 18px;
+      /* Pipeline floor: ≥ 24px (build-qa slide-typography-floor blocker). */
+      font-size: 24px;
       color: rgba(255,255,255,0.6);
       margin-top: 6px;
     }
@@ -309,8 +314,9 @@
       gap: 24px;
       align-items: stretch;
     }
-    .sc-delta-up { color: var(--plaid-teal-500); font-family: var(--font-mono); font-size: 14px; }
-    .sc-delta-down { color: var(--holo-pink); font-family: var(--font-mono); font-size: 14px; }
+    /* Pipeline floor: ≥ 24px on .slide-root body text. */
+    .sc-delta-up { color: var(--plaid-teal-500); font-family: var(--font-mono); font-size: 24px; }
+    .sc-delta-down { color: var(--holo-pink); font-family: var(--font-mono); font-size: 24px; }
   </style>
 </head>
 <body>
