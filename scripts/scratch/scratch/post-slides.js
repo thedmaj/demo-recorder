@@ -43,6 +43,8 @@ const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-i
 const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind');
 const { buildSlideInsertionPrompt } = require('../utils/prompt-templates');
 const { loadSlideDesignSkill } = require('../utils/slide-design-skill');
+const { routeSlideTemplate } = require('../utils/slide-template-router');
+const { getShowcaseTemplateSkeletonForRouting } = require('../utils/showcase-template-extract');
 const { scopeSlideCss } = require('../utils/slide-css-scoper');
 const {
   normalizeSlideTypography,
@@ -238,7 +240,8 @@ function spliceSlideFragmentIntoHtml(html, stepId, fragment, options = {}) {
     : '';
 
   const { html: cleaned, styles } = sanitizeSlideFragment(fragment, stepId);
-  if (!cleaned) {
+  const stamped = stampShowcaseTemplateId(cleaned, options.showcaseTemplateId);
+  if (!stamped) {
     return { html, applied: false, reason: 'empty-fragment', styleCount: 0 };
   }
 
@@ -251,7 +254,7 @@ function spliceSlideFragmentIntoHtml(html, stepId, fragment, options = {}) {
     const m = workingHtml.match(re);
     if (m) {
       return {
-        html: workingHtml.replace(m[0], cleaned + '\n'),
+        html: workingHtml.replace(m[0], stamped + '\n'),
         applied: true,
         reason: 'replaced-existing-step-block',
         styleCount: styles.length,
@@ -276,7 +279,7 @@ function spliceSlideFragmentIntoHtml(html, stepId, fragment, options = {}) {
       // step's div starts on its own line — keeps stepBlockRegex sentinels
       // happy on subsequent splices.
       return {
-        html: before + cleaned + '\n' + after,
+        html: before + stamped + '\n' + after,
         applied: true,
         reason: 'inserted-after-prev-step',
         styleCount: styles.length,
@@ -296,7 +299,7 @@ function spliceSlideFragmentIntoHtml(html, stepId, fragment, options = {}) {
     '</body>';
   if (workingHtml.includes(beforeEndMarker)) {
     return {
-      html: workingHtml.replace(beforeEndMarker, `${cleaned}\n${beforeEndMarker}`),
+      html: workingHtml.replace(beforeEndMarker, `${stamped}\n${beforeEndMarker}`),
       applied: true,
       reason: 'appended-before-side-panels',
       styleCount: styles.length,
@@ -361,11 +364,31 @@ function copySlideDesignAssets(PROJECT_ROOT, scratchAppDir) {
   return { copied };
 }
 
+function extractWorkhorseLayout(fragment) {
+  if (!fragment) return null;
+  const m = String(fragment).match(/\bdata-workhorse-layout\s*=\s*["']([^"']+)["']/i);
+  return m ? m[1] : null;
+}
+
 /** Extract T1–T11 from LLM fragment for post-slides-report templatesUsed. */
 function extractSlideTemplateId(fragment) {
   if (!fragment) return null;
   const m = String(fragment).match(/\bdata-slide-template\s*=\s*["'](T(?:1[01]|[1-9]))["']/i);
   return m ? m[1].toUpperCase() : null;
+}
+
+/** Stamp routed showcase template id on `.slide-root` for auditability in scratch-app HTML. */
+function stampShowcaseTemplateId(fragment, showcaseTemplateId) {
+  if (!fragment || !showcaseTemplateId) return fragment;
+  const id = String(showcaseTemplateId).replace(/"/g, '');
+  if (/\bdata-showcase-template\s*=/.test(fragment)) return fragment;
+  return String(fragment).replace(
+    /(<motion\b[^>]*\bclass="[^"]*\bslide-root\b[^"]*"[^>]*)/i,
+    (tag) => (/\bdata-showcase-template\b/.test(tag) ? tag : `${tag} data-showcase-template="${id}"`)
+  ).replace(
+    /(<div\b[^>]*\bclass="[^"]*\bslide-root\b[^"]*"[^>]*)/i,
+    (tag) => (/\bdata-showcase-template\b/.test(tag) ? tag : `${tag} data-showcase-template="${id}"`)
+  );
 }
 
 /**
@@ -565,6 +588,7 @@ async function main() {
     slidesProcessed: [],
     slidesSkipped: [],
     templatesUsed: [],
+    routing: [],
     designAssetsCopied: null,
   };
 
@@ -627,11 +651,22 @@ async function main() {
     return steps[idx - 1] && steps[idx - 1].id ? steps[idx - 1].id : null;
   };
 
+  const slideIndexById = new Map(slideSteps.map((s, i) => [s.id, i]));
+  const recentLayouts = [];
+
   for (const step of targets) {
-    const hostHasExistingSlide = hostAlreadyHasAnySlide(html);
+    const slideIdx = slideIndexById.get(step.id) ?? 0;
+    const routing = routeSlideTemplate(step, {
+      stepIndex: slideIdx,
+      totalSlides: slideSteps.length,
+      recentLayouts: recentLayouts.slice(-2),
+    });
+    if (routing?.workhorseLayout) recentLayouts.push(routing.workhorseLayout);
+    const showcaseTemplate = getShowcaseTemplateSkeletonForRouting(routing, { projectRoot: PROJECT_ROOT });
     if (cli.dryRun) {
+      report.routing.push({ stepId: step.id, ...routing });
       report.slidesSkipped.push({ stepId: step.id, reason: 'dry-run' });
-      console.log(`[post-slides] (dry-run) would insert slide "${step.id}"`);
+      console.log(`[post-slides] (dry-run) would insert slide "${step.id}" → ${routing.templateId} (${routing.workhorseLayout})`);
       continue;
     }
     let applied = false;
@@ -644,23 +679,22 @@ async function main() {
         const raw = await generateSlideFragment(client, {
           step,
           brand,
-          slideTemplateCss: hostHasExistingSlide ? '' : templates.slideTemplateCss,
-          slideTemplateRules: hostHasExistingSlide ? '' : templates.slideTemplateRules,
-          slideTemplateShellHtml: hostHasExistingSlide ? '' : templates.slideTemplateShellHtml,
+          slideTemplateCss: templates.slideTemplateCss,
+          slideTemplateRules: templates.slideTemplateRules,
           deckDesignSystem: templates.deckDesignSystem,
-          deckTemplates: hostHasExistingSlide ? '' : templates.deckTemplates,
-          deckComposition: hostHasExistingSlide ? '' : templates.deckComposition,
-          hostHasExistingSlide,
+          deckComposition: templates.deckComposition,
           valuePropositionStatements: vps,
           narration: step.narration,
           slideDesignSkillMarkdown: slideDesignSkill.text,
+          templateRouting: routing,
+          showcaseTemplate,
         });
         lastRaw = raw;
         const { html: updated, applied: ok, reason } = spliceSlideFragmentIntoHtml(
           html,
           step.id,
           raw,
-          { insertAfterId: prevStepIdFor(step.id) }
+          { insertAfterId: prevStepIdFor(step.id), showcaseTemplateId: routing.templateId }
         );
         lastReason = reason;
         if (ok) {
@@ -682,11 +716,18 @@ async function main() {
     }
     if (applied) {
       const templateId = extractSlideTemplateId(lastRaw);
-      report.slidesProcessed.push({ stepId: step.id, attempts, reason: lastReason, templateId });
+      const workhorseLayout = extractWorkhorseLayout(lastRaw);
+      report.routing.push({ stepId: step.id, ...routing, renderedTemplate: templateId, renderedWorkhorseLayout: workhorseLayout });
+      report.slidesProcessed.push({ stepId: step.id, attempts, reason: lastReason, templateId, workhorseLayout });
       if (templateId) {
-        report.templatesUsed.push({ stepId: step.id, template: templateId });
+        report.templatesUsed.push({
+          stepId: step.id,
+          template: templateId,
+          workhorseLayout: workhorseLayout || routing.workhorseLayout,
+          showcaseTemplateId: routing.templateId,
+        });
       }
-      console.log(`[post-slides] ✓ Inserted slide "${step.id}" on attempt ${attempts}${templateId ? ` (${templateId})` : ''}.`);
+      console.log(`[post-slides] ✓ Inserted slide "${step.id}" on attempt ${attempts}${templateId ? ` (${templateId}/${workhorseLayout || routing.workhorseLayout})` : ''}.`);
     } else {
       report.slidesSkipped.push({ stepId: step.id, attempts, reason: lastReason || 'unknown' });
       console.warn(`[post-slides] Skipped "${step.id}" after ${attempts} attempt(s).`);

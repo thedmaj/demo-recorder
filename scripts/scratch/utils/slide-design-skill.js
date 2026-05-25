@@ -33,6 +33,9 @@ function getSlideDesignBriefPaths(projectRoot = PROJECT_ROOT) {
     deckDesignSystem: path.join(brief, 'DECK_DESIGN_SYSTEM.md'),
     deckTemplates: path.join(brief, 'DECK_TEMPLATES.md'),
     deckComposition: path.join(brief, 'DECK_COMPOSITION.md'),
+    workhorseTemplateCatalog: path.join(brief, 'WORKHORSE_TEMPLATE_CATALOG.md'),
+    slideTemplateRegistry: path.join(base, 'slide-template-registry.json'),
+    showcaseIndexHtml: path.join(base, 'showcase', 'index.html'),
     pipelineShellRules: path.join(base, 'PIPELINE_SLIDE_SHELL_RULES.md'),
     colorsAndTypeCss: path.join(base, 'colors_and_type.css'),
     slideCss: path.join(base, 'slide.css'),
@@ -53,8 +56,10 @@ function loadSlideDesignSkill(opts = {}) {
   const projectRoot = opts.projectRoot || PROJECT_ROOT;
   const paths = getSlideDesignBriefPaths(projectRoot);
   const hybridMax = Number(opts.workhorseHybridMaxChars || process.env.PLAID_WORKHORSE_SKILL_MAX_CHARS || 8000);
+  const catalogMax = Number(opts.workhorseCatalogMaxChars || process.env.PLAID_WORKHORSE_CATALOG_MAX_CHARS || 5000);
   let text = readUtf8(paths.skillMarkdown).trim();
   const hybrid = readUtf8(paths.workhorseHybridMarkdown).trim();
+  const catalog = readUtf8(paths.workhorseTemplateCatalog).trim();
   const maxChars = Number(
     opts.maxChars ||
       process.env.SLIDE_DESIGN_SKILL_MAX_CHARS ||
@@ -67,6 +72,13 @@ function loadSlideDesignSkill(opts = {}) {
       hybridBlock = `${hybridBlock.slice(0, Math.max(0, hybridMax - 80))}\n\n… [plaid-workhorse-slides SKILL.md truncated]\n`;
     }
     text = text ? `${text}\n\n---\n\n${hybridBlock}` : hybridBlock;
+  }
+  if (catalog) {
+    let catalogBlock = catalog;
+    if (catalogBlock.length > catalogMax) {
+      catalogBlock = `${catalogBlock.slice(0, Math.max(0, catalogMax - 80))}\n\n… [WORKHORSE_TEMPLATE_CATALOG.md truncated]\n`;
+    }
+    text = text ? `${text}\n\n---\n\n## Workhorse template catalog\n${catalogBlock}` : catalogBlock;
   }
   if (text.length > maxChars) {
     text = `${text.slice(0, Math.max(0, maxChars - 80))}\n\n… [slide design skills truncated]\n`;

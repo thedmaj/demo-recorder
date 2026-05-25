@@ -468,6 +468,34 @@ const PATCHES = [
     },
   },
   {
+    name: 'slide-chrome-logo-placement',
+    tierScope: 'slide',
+    description:
+      'Strip inline left:/height: styles from .chrome-logo so slide.css top-right 28px placement wins. ' +
+      'Auto-fires on build-qa category slide-chrome-logo-placement.',
+    matchCategories: ['slide-chrome-logo-placement'],
+    matchIssuePatterns: [/chrome-logo.*inline/i, /top-left placement/i, /showcase preview leak/i],
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      let patched = 0;
+      const next = html.replace(
+        /<img([^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*)>/gi,
+        (full, attrs) => {
+          if (!/\bstyle\s*=/i.test(attrs)) return full;
+          const cleaned = attrs.replace(/\s*\bstyle\s*=\s*["'][^"']*["']/gi, '').trim();
+          if (cleaned === attrs.trim()) return full;
+          patched += 1;
+          return `<img ${cleaned}>`;
+        }
+      );
+      if (!patched) return { applied: false, summary: 'chrome-logo tags already rely on CSS placement' };
+      fs.writeFileSync(htmlPath, next, 'utf8');
+      return { applied: true, summary: `Removed inline placement styles from ${patched} chrome-logo tag(s)` };
+    },
+  },
+  {
     name: 'host-nav-logo-contrast',
     tierScope: 'app',
     description:

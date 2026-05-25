@@ -29,24 +29,45 @@ description: >-
 
 ## Layout selection (agent decides at runtime)
 
-Read [`.claude/skills/tosea-slide-workhorse/references/layouts.md`](../../tosea-slide-workhorse/references/layouts.md) and the matching `templates/single-page/<name>.html` for structure **only** — never copy Workhorse `<link>` tags, themes, or `runtime.js`.
+Read [`.claude/skills/tosea-slide-workhorse/references/layouts.md`](../../tosea-slide-workhorse/references/layouts.md), the matching `templates/single-page/<name>.html` for structure **only** (never copy Workhorse themes/runtime), and the **20-template showcase catalog** in `templates/slide-template/brand-design-briefs/WORKHORSE_TEMPLATE_CATALOG.md` (sourced from `tmp-showcase/index.html`).
 
-| Narrative job | Workhorse layout | Set `data-workhorse-layout` | Nearest `data-slide-template` (QA metadata) |
-|---------------|------------------|----------------------------|---------------------------------------------|
-| Opening / title | `cover` | `cover` | T1 |
-| Section break | `section-divider` | `section-divider` | T2 |
-| One idea + body | `bullets`, `two-column` | same | T3 |
-| Three pillars | `three-column` | `three-column` | T5 |
-| Hero metrics | `stat-highlight`, `kpi-grid` | same | T4 |
-| Before / after | `comparison`, `pros-cons` | same | T6 / T7 |
-| Process / flow | `process-steps`, `flow-diagram` | same | T8 |
-| Architecture | `arch-diagram`, `mindmap` | same | T9 |
-| Proof / quote | `big-quote`, `table` | same | T10 |
-| Close / CTA | `cta`, `thanks`, `roadmap` | same | T11 |
-| API / code insight | `code`, `diff`, `terminal` | same | T3 (+ mono) |
-| Timeline / plan | `timeline`, `gantt` | same | T8 |
+| Narrative job | Workhorse layout | Set `data-workhorse-layout` | Nearest `data-slide-template` | Showcase # |
+|---------------|------------------|----------------------------|------------------------------|------------|
+| Opening / title | `cover` | `cover` | T1 | 01 Title Hero |
+| Section break | `section-divider` | `section-divider` | T2 | 02 Section Beat |
+| One idea + body | `bullets`, `two-column` | same | T3 | 03 Statement / 04 Bullets |
+| Three pillars | `three-column` | `three-column` | T5 | 05 Three Pillars |
+| Hero metrics | `stat-highlight`, `kpi-grid` | same | T4 | 07 Triple Stat / 08 KPI Grid |
+| Tabular data | `table` | `table` | T7 | 09 Data Table |
+| Chart insight | `chart-bar` | `chart-bar` | T4 | 10 Bar Chart (SVG only) |
+| Before / after | `comparison` | `comparison` | T6 / T7 | 11 Before/After / 12 Old vs New |
+| Process / flow | `process-steps`, `flow-diagram` | same | T8 | 13 Step Flow / 14 Flow Diagram |
+| Architecture | `arch-diagram` | `arch-diagram` | T9 | 15 Architecture Map |
+| Timeline / plan | `timeline`, `roadmap` | same | T8 / T11 | 16 Timeline / 17 Roadmap |
+| Proof / quote | `big-quote`, `customer-proof` | same | T3 / T10 | 06 Pull Quote / 18 Proof Quote |
+| Close / CTA | `cta` | `cta` | T11 | 20 Action Cards |
+| API / code insight | `code`, `diff`, `terminal` | same | T3 (+ mono) | 19 Code Window |
 
 Pick the layout that best conveys the step's **value prop and product understanding**, then wrap in Plaid shell.
+
+## Chrome logo (production — not showcase preview)
+
+`tmp-showcase/index.html` scales `.chrome-logo` to ~140px for gallery readability. **Pipeline slides use 28px** at **top-right**, **75px above the topmost text row**:
+
+```css
+.slide-root .chrome-logo {
+  position: absolute;
+  top: calc(var(--pad-top) - 75px);
+  right: var(--pad-x);
+  height: 28px;
+  width: auto;
+  opacity: 0.85;
+}
+```
+
+- Never inline `left:` or oversized `height:` on `.chrome-logo` — build-QA `scanSlideChromeLogoPlacement` is a **critical blocker**.
+- Logo variant: `plaid-horizontal-white.png` (navy), `-dark.png` (light/cream/holo), `-holograph.png` (holo).
+- T1 may omit `.chrome-logo`.
 
 ## Required pipeline DOM
 
@@ -95,6 +116,13 @@ Use `var(--plaid-teal-500)` not `#42F0CD` literals when possible. No customer/ho
 | **Canvas** | 1280×800 via `pipeline-slide-contract.css` — not 100vw Workhorse deck |
 | **Typography** | Plaid ceilings in `pipeline-slide-contract.css`; body **≥ 24px** |
 | **Host bleed** | Slides Plaid-only; customer name is partnership copy only |
+| **Sales CTAs** | **Forbidden** on pipeline slides — no contact Plaid / Account Manager / free trial / Start a POC / retro-analysis buttons or faux CTAs (see plaid-slide-design SKILL) |
+
+### Layout pitfalls (from slide QA)
+
+- **Two-stat peer benchmarks** → `stat-highlight` (T4), not `data-table` (T7).
+- **Hero metrics** → one `.hero-stat-value` mint moment; do not bury the narration’s lead stat in a small grid cell.
+- **Chrome-foot clearance** → `.slide-stack { padding-bottom: 32–48px }`; never let body copy share a row with `.chrome-foot`.
 
 ## Forbidden in pipeline `.slide-root`
 
@@ -104,6 +132,7 @@ Use `var(--plaid-teal-500)` not `#42F0CD` literals when possible. No customer/ho
 - Chart.js / highlight.js CDNs
 - Customer brand colors or fonts
 - JSON panel inside slide (use global `#api-response-panel`)
+- **Sales CTAs** — contact Plaid, contact Account Manager, start a free trial, Start a POC, perform a retro analysis (buttons or prominent action lines)
 
 ## Standalone export (outside scratch-app)
 

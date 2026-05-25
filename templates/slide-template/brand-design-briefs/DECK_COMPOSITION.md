@@ -32,6 +32,19 @@ Match the rhetorical purpose to the template:
 - **T6 (before/after)** can run 2–3 times in sequence for a "tour of examples" section. Keep the layout identical so the audience pattern-matches.
 - **T2 (section dividers)** should be rare — 3–5 in a 20-slide deck, no more.
 
+### Pipeline product demos (2–4 slides) — not sales decks
+
+Short demos embedded in the Plaid Demo Pipeline use the same T1–T11 vocabulary but **different closing rules**:
+
+| Sales deck habit | Pipeline demo rule |
+|------------------|-------------------|
+| T11 with “contact us” / Account Manager CTAs | **Forbidden** — no contact Plaid, contact Account Manager, free trial, Start a POC, or perform a retro analysis |
+| Faux button pills (“Start your Retro →”) | **Forbidden** — use declarative copy or outcome bullets only |
+| Three audience-segment action cards | Three **product value** cards (capabilities unlocked in the demo) |
+| Peer proof as dense table | Two hero stats → **T4 stat-highlight**, not T7 table |
+
+**Spacing:** wrap body in `.slide-stack` with `padding-bottom: 32–48px` so `.chrome-foot` never overlaps body copy (top QA failure: `slide-text-overlap`).
+
 ---
 
 ## 2. Sequencing a deck

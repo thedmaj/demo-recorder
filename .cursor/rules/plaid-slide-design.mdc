@@ -40,6 +40,9 @@ blocks customer/host brand colors from leaking into `.slide-root`.
    (#42F0CD), navy/cream/holo backgrounds, `#E8E4D8` cream text.
 6. **Bundled logos only**: `assets/logos/plaid-horizontal-{white,dark,holograph}.png`.
    Never invent SVG, icon grids, or "PLAID" text.
+7. **No sales CTAs on slides** — forbidden: contact Plaid, contact Account Manager,
+   start a free trial, Start a POC, perform a retro analysis (buttons or faux CTAs).
+   Value-summary slides recap product outcomes only.
 
 ## Pipeline integration
 

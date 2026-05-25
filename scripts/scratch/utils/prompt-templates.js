@@ -1525,7 +1525,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
         `- Slide content must summarize only high-signal attributes (3-6 bullets) that support the story decision; raw payload remains in global panel.\n` +
         `- API request/response shown in panel must match the slide's claim and endpoint context (no mismatched endpoint narrative).\n` +
         `- **Slide surface:** keep \`.slide-root\` **responsive** per PIPELINE_SLIDE_SHELL_RULES / slide template contract (fluid width/height capped at 1440×900, \`aspect-ratio: 16/10\`). Do not set fixed \`width:1440px;height:900px\` on \`.slide-root\`.\n` +
-        `- **Plaid chrome logo (HARD):** On slides, never fabricate the Plaid mark. Use only \`<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png">\` from the bundled logo library, or omit the logo. No inline SVG, icon grids, or "PLAID" text labels.\n\n`
+        `- **Plaid chrome logo (HARD):** On slides, never fabricate the Plaid mark. Use only \`<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png">\` from the bundled logo library, or omit the logo. No inline SVG, icon grids, or "PLAID" text labels. **Placement:** top-right via CSS only (\`top: calc(var(--pad-top) - 75px); right: var(--pad-x); height: 28px\`) — never inline \`left:\` or showcase-scale \`height:\`.\n\n`
       : '') +
     (!includeFullSlideTemplate
       ? `SLIDE TRACK (minimal contract — slide insertion is deferred to post-slides stage):\n` +
@@ -1550,13 +1550,8 @@ contract that the next stage knows how to fill.\n` +
           ? `- A slides follow-up phase will upgrade slide visuals; prioritize host-app richness now.\n\n`
           : '\n')
       : '') +
-    (includeFullSlideTemplate && slideTemplateShellHtml
-      ? `CANONICAL SLIDE + API PANEL HTML SHELL (structure reference from pipeline-slide-shell.html — merge patterns into index.html; adapt copy per demo-script; omit preview-only script blocks if present):\n` +
-        `[[[PIPELINE_SLIDE_SHELL_HTML_BEGIN]]]\n${slideTemplateShellHtml}\n[[[PIPELINE_SLIDE_SHELL_HTML_END]]]\n\n` +
-        `SHELL MERGE RULES:\n` +
-        `- Match header/body/footer regions, side panels, and JSON control wiring (\`api-panel-toggle\` edge icon + \`toggleApiPanel\`).\n` +
-        `- Use renderjson with \`set_show_to_level('all')\` (or deep numeric level) so JSON is fully expanded when the panel is shown.\n` +
-        `- Production demos: keep \`__API_PANEL_CONFIG.collapsedByDefault: true\` unless the prompt specifies otherwise.\n\n`
+    (includeFullSlideTemplate
+      ? `Slide steps are filled by post-slides using templates from templates/slide-template/showcase/index.html (20 Workhorse layouts). Do NOT embed pipeline-slide-shell.html as the slide layout default.\n\n`
       : '') +
     `- Desktop responsive requirement (MANDATORY): support 1280×800, 1440×900, and 1728×1117 without horizontal clipping or overflow.\n` +
     `  Keep recording parity at 1440×900, but do NOT hard-lock html/body to fixed pixel width/height.\n` +
@@ -2812,14 +2807,13 @@ function buildSlideInsertionPrompt({
   brand,
   slideTemplateCss = '',
   slideTemplateRules = '',
-  slideTemplateShellHtml = '',
   deckDesignSystem = '',
-  deckTemplates = '',
   deckComposition = '',
-  hostHasExistingSlide = false,
   valuePropositionStatements = [],
   narration = '',
   slideDesignSkillMarkdown = '',
+  templateRouting = null,
+  showcaseTemplate = null,
 } = {}) {
   const brandName = (brand && brand.name) || 'Plaid';
   const stepId = String(step?.id || '').trim();
@@ -2827,11 +2821,15 @@ function buildSlideInsertionPrompt({
   const stepVisual = String(step?.visualState || '').trim();
   const effectiveNarration = String(narration || step?.narration || '').trim();
   const endpoint = String(step?.apiResponse?.endpoint || '').trim();
+  const routing = templateRouting || {};
+  const recommendedLayout = routing.workhorseLayout || showcaseTemplate?.workhorseLayout || '';
+  const recommendedT = routing.slideTemplate || showcaseTemplate?.slideTemplate || 'T3';
 
   const system =
     `You are generating ONE Plaid Deck Design System slide as a surgical insertion into an existing demo app. ` +
-    `Choose the best Workhorse layout pattern for this step's narrative (see plaid-workhorse-slides skill): set data-workhorse-layout on .slide-root and the nearest data-slide-template="T#" for QA. ` +
-    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="T#" data-workhorse-layout="...">...</div></div>. ` +
+    `Use the RECOMMENDED showcase template below (data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}") — copy its skeleton structure exactly and adapt copy from the step narration. ` +
+    `Do NOT invent a different layout or fall back to a generic T3 statement shell. ` +
+    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}">...</div></div>. ` +
     `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), .slide-stack body, .chrome-foot. ` +
     `Slides are Plaid-branded ONLY — never use customer/host brand colors, Workhorse themes, runtime.js, data-anim, or Chart.js inside .slide-root. ` +
     `Do NOT include <script>, do NOT use display:inline-block inside .slide-root, do NOT add inline display on the step div, do NOT wrap output in markdown fences.`;
@@ -2867,9 +2865,13 @@ function buildSlideInsertionPrompt({
     `- Wrap main body (headline + stats + cards) in <div class="slide-stack"> so .chrome-foot stays at the bottom without overlap.\n` +
     `- Body text minimum 24px; flex/grid + gap only (no inline-block).\n` +
     `- One mint moment per slide (--plaid-teal-500 / #42F0CD as primary highlight).\n` +
+    `- **Forbidden sales CTAs (HARD — build-QA blocker):** Do NOT add buttons, pill CTAs, or prominent action lines for: contact Plaid, contact Account Manager, start a free trial, Start a POC, perform a retro analysis / run the production retro / start your retro. Value-summary slides close with product outcome bullets + declarative copy only.\n` +
+    `- **Chrome-foot spacing:** .slide-stack must include padding-bottom 32–48px so .chrome-foot never overlaps body text.\n` +
     `- **Plaid logo (HARD — build-QA blocker):** NEVER invent a logo (no SVG, no four-dot icon grid, no "PLAID" text, no CSS shapes). ` +
     `Either use exactly one bundled horizontal wordmark: <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt=""> ` +
     `(navy), plaid-horizontal-dark.png (light/cream/holo), or plaid-horizontal-holograph.png on holo — OR omit .chrome-logo entirely (T1 may omit).\n` +
+    `- **Logo placement (HARD):** Do NOT inline style on .chrome-logo. CSS sets top-right placement (75px above eyebrow) at 28px height via slide.css / pipeline-slide-contract.css. Showcase preview uses ~140px for gallery only — never copy that scale.\n` +
+    `- REQUIRED attrs on .slide-root: data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}".\n` +
     `- Do NOT add JSON rail inside the step (#api-response-panel is global).\n` +
     `- Do NOT include emojis.\n\n`;
 
@@ -2879,46 +2881,37 @@ function buildSlideInsertionPrompt({
       vps.map((v) => `- ${v}`).join('\n') + '\n\n';
   }
 
-  if (hostHasExistingSlide) {
+  if (slideTemplateRules) {
+    userText += `## PIPELINE SLIDE RULES\n${String(slideTemplateRules).slice(0, 4000)}\n\n`;
+  }
+  if (deckDesignSystem) {
+    userText += `## DESIGN SYSTEM (tokens + shell)\n${String(deckDesignSystem).slice(0, 6000)}\n\n`;
+  }
+  if (deckComposition) {
+    userText += `## COMPOSITION RULES\n${String(deckComposition).slice(0, 4000)}\n\n`;
+  }
+  if (showcaseTemplate?.skeletonHtml) {
     userText +=
-      `## HOST ALREADY HAS SLIDE MARKUP\n` +
-      `Mirror existing .slide-root structure and data-slide-template usage. Do NOT re-emit shared <style> blocks.\n` +
-      `Do NOT mirror customer/host hex colors or fonts — use Plaid deck tokens only.\n\n`;
-    if (deckDesignSystem) {
-      userText +=
-        `## DESIGN SYSTEM (palette + shell — required even when mirroring)\n` +
-        `${String(deckDesignSystem).slice(0, 4000)}\n\n`;
-    }
-  } else {
-    if (slideTemplateRules) {
-      userText += `## PIPELINE SLIDE RULES\n${String(slideTemplateRules).slice(0, 5000)}\n\n`;
-    }
-    if (deckDesignSystem) {
-      userText += `## DESIGN SYSTEM (tokens + shell)\n${String(deckDesignSystem).slice(0, 8000)}\n\n`;
-    }
-    if (deckTemplates) {
-      // Per-slide insertion = one LLM call per slide. Token budget gets a
-      // single slide, so we can afford the full T1-T11 library here. The
-      // legacy 12,000-char truncation was clipping T9-T11 from the prompt
-      // and contributing to slide quality regressions on later templates.
-      // Future work (post-slides-prompt-refocus follow-up): switch to
-      // per-T# exemplar HTML only, with composition rules separate.
-      userText +=
-        `## TEMPLATE LIBRARY T1–T11 (pick exactly ONE — copy skeleton structure, adapt copy)\n` +
-        `${String(deckTemplates)}\n\n`;
-    }
-    if (deckComposition) {
-      userText += `## COMPOSITION RULES\n${String(deckComposition).slice(0, 6000)}\n\n`;
-    }
-    if (slideTemplateShellHtml) {
-      userText += `## REFERENCE SHELL (T3 statement — structure only)\n\`\`\`html\n${String(slideTemplateShellHtml).slice(0, 3500)}\n\`\`\`\n\n`;
-    }
-    if (slideTemplateCss) {
-      userText +=
-        `## SLIDE CSS (injected in host <head> — do NOT re-emit <style>)\n` +
-        `PPTX export font swap: Manrope / Playfair Display / JetBrains Mono.\n` +
-        `\`\`\`css\n${String(slideTemplateCss).slice(0, 3000)}\n\`\`\`\n\n`;
-    }
+      `## RECOMMENDED SHOWCASE TEMPLATE (REQUIRED — adapt copy only)\n` +
+      `Template: ${showcaseTemplate.name || routing.templateId} · category: ${routing.category || showcaseTemplate.category} · ` +
+      `${recommendedT} · workhorse-layout: ${recommendedLayout}\n` +
+      (routing.whenToUse || showcaseTemplate.whenToUse ? `When: ${routing.whenToUse || showcaseTemplate.whenToUse}\n` : '') +
+      (routing.avoidWhen || showcaseTemplate.avoidWhen ? `Avoid: ${routing.avoidWhen || showcaseTemplate.avoidWhen}\n` : '') +
+      (routing.rationale ? `Router rationale: ${routing.rationale}\n` : '') +
+      `Rules: Copy skeleton structure exactly; replace {HEADLINE}/{BODY}/{EYEBROW} tokens with step narration; do NOT invent a different layout.\n` +
+      `\`\`\`html\n${String(showcaseTemplate.skeletonHtml).slice(0, 6000)}\n\`\`\`\n\n`;
+  }
+  if (Array.isArray(routing.alternates) && routing.alternates.length) {
+    userText +=
+      `## ALTERNATE TEMPLATES (only if clearly better fit)\n` +
+      routing.alternates.map((a) => `- ${a.templateId} (${a.workhorseLayout}, score ${a.score})`).join('\n') +
+      '\n\n';
+  }
+  if (slideTemplateCss) {
+    userText +=
+      `## SLIDE CSS (injected in host <head> — do NOT re-emit <style>)\n` +
+      `PPTX export font swap: Manrope / Playfair Display / JetBrains Mono.\n` +
+      `\`\`\`css\n${String(slideTemplateCss).slice(0, 2500)}\n\`\`\`\n\n`;
   }
 
   userText +=

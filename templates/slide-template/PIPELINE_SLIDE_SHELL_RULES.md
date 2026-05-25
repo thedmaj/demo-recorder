@@ -48,6 +48,20 @@ Pipeline-generated **slide** steps (`sceneType: "slide"`, `.slide-root`) follow 
 - Body text **≥ 24px** (mockup chrome excepted — see build-QA allowlist).
 - **Typography ceilings:** `.h-title` max **72px** (T3 **96px**, T1 **140px**); `.hero-stat-value` max **180px**; body max **36px**. Prefer `slide.css` classes — post-slides runs `normalize-slide-typography.js` to cap LLM oversizing.
 - Wrap slide body in `.slide-stack` so `.chrome-foot` (flex `margin-top: auto`) does not overlap content.
+- Add **`padding-bottom: 32–48px`** on `.slide-stack` when body copy is long — prevents `slide-text-overlap` with `.chrome-foot` (common QA failure).
+
+## Forbidden sales CTAs (pipeline demos)
+
+Recorded demos are **product walkthroughs**, not outbound sales decks. Inside `.slide-root`, **never** add buttons, pill CTAs, or prominent action lines that tell the viewer to:
+
+- Contact Plaid / contact Account Manager / contact your Plaid Account Manager
+- Start a free trial
+- Start a POC / POC scoping
+- Perform a retro analysis / run the production retro / start your retro
+
+**Value-summary slides (T11):** close with **product outcome bullets** and a declarative line — not faux “Start your Retro →” buttons or “schedule with your Account Manager” copy.
+
+Enforced by `scanSlideForbiddenSalesCta` in build-QA (critical blocker).
 
 ## Composition (required)
 
@@ -74,10 +88,12 @@ When exporting to PowerPoint: **Manrope** (sans), **Playfair Display** (display)
 Nine slide-design scanners in `build-qa.js` (`scanSlideDesignSystem`):
 
 - **`scanSlidePlaidLogoAuthenticity`** — **critical / deterministic blocker**. Flags invented logos and non-library `chrome-logo` src paths. Omitting `.chrome-logo` is allowed.
+- **`scanSlideChromeLogoPlacement`** — **critical / deterministic blocker**. Flags inline `left:` or oversized `height:` on `.chrome-logo` (legacy top-left or tmp-showcase preview scale). Production placement is top-right 28px via CSS.
+- **`scanSlideForbiddenSalesCta`** — **critical / deterministic blocker**. Flags contact/trial/POC/retro sales CTAs on slides.
 - **Eight warning scanners** — tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors (`severity: 'warning'`, not blockers).
 
 See `CLAUDE.md` § Plaid Slide Design System.
 
 ## Opt-in patches
 
-`qa-patch-library.js`: `slide-design-tokens-inject`, `slide-shell-chrome-inject`, `slide-chrome-logo-canonical`, `slide-typography-floor` — manual invoke only.
+`qa-patch-library.js`: `slide-design-tokens-inject`, `slide-shell-chrome-inject`, `slide-chrome-logo-canonical`, `slide-chrome-logo-placement`, `slide-typography-floor` — manual invoke only except `slide-chrome-logo-placement` (auto-fires from QA).

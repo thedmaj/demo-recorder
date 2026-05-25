@@ -31,6 +31,7 @@ All paths relative to repo root:
 | `templates/slide-template/brand-design-briefs/DECK_DESIGN_SYSTEM.md` | Tokens, fonts, palette, shell, typography ceilings |
 | `templates/slide-template/brand-design-briefs/DECK_TEMPLATES.md` | T1–T11 skeletons — pick **exactly one** per slide |
 | `templates/slide-template/brand-design-briefs/DECK_COMPOSITION.md` | Headlines, pacing, background rhythm |
+| `templates/slide-template/brand-design-briefs/WORKHORSE_TEMPLATE_CATALOG.md` | 20 showcase templates → T1–T11 + Workhorse layout routing |
 | `templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md` | DOM merge contract for build + post-slides |
 | `templates/slide-template/colors_and_type.css` | CSS custom properties (injected in `<head>`) |
 | `templates/slide-template/slide.css` | Scoped rules under `.slide-root` only |
@@ -69,6 +70,7 @@ The host demo app is **customer-branded** (Huntington, Zip, Chime, etc.). Slides
 - Approved Plaid palette (see DECK_DESIGN_SYSTEM §1.3): `--plaid-ink-900`, `--plaid-teal-500` / `#42F0CD`, navy/cream/holo backgrounds
 - Plaid Sans + Bowery Street (one `<em>` italic accent per headline)
 - Bundled logos only: `assets/logos/plaid-horizontal-white.png` (navy), `-dark.png` (light/cream), `-holograph.png` (holo)
+- **Logo placement:** top-right, **28px** height, **75px above** the topmost text row — set by `slide.css` / `pipeline-slide-contract.css`. Do **not** inline `left:` or showcase-scale `height:` on `.chrome-logo`.
 - Partnership **text** naming the customer (e.g. "Plaid × Huntington") — still Plaid-styled, no customer color swatches
 
 ## Pipeline canvas (not 1920×1080)
@@ -97,6 +99,40 @@ Author with DECK templates; do **not** set fixed `width:1440px;height:900px` on 
 - Body text ≥ 24px; flex/grid + `gap` only — **no `display:inline-block`**
 - Headline: sentence case, ends with period, one Bowery `<em>` accent
 
+## Forbidden sales CTAs (pipeline demos — HARD)
+
+Recorded product demos are **not** sales decks. Slides must **never** invite the viewer to contact Plaid, start a trial/POC, or kick off a retro/champion-challenger program.
+
+**Do not render** (as buttons, pill CTAs, faux `<button>` spans, or prominent action lines):
+
+- Contact Plaid / talk to Plaid / reach out to Plaid
+- Contact Account Manager / contact your Plaid Account Manager / schedule with your Account Manager
+- Start a free trial / free trial
+- Start a POC / POC scoping / technical review and POC scoping
+- Perform a retro analysis / run the production retro / start your retro / greenlight the retro
+
+**Allowed on value-summary / T11 closes instead:**
+
+- Three **product outcome** bullets (risk lift, compliance, operational wins)
+- A **declarative** closing line tied to the demo story (no faux button chrome)
+- Partnership footer copy in `.chrome-foot` only (`Plaid × {customer}`)
+
+Build-QA enforces this via `scanSlideForbiddenSalesCta` (critical blocker).
+
+## Layout & spacing (lessons from slide QA — May 2026)
+
+These patterns caused the most **deterministic** failures in showcase-router reruns:
+
+| Failure mode | Prevention |
+|--------------|------------|
+| **`slide-text-overlap`** (body vs `.chrome-foot`) | Wrap all body content in `.slide-stack` with `padding-bottom: 32–48px`. Never place long body paragraphs, API endpoint labels, or captions in the same row as `.chrome-foot`. |
+| **Peer benchmark misuse** | Two hero stats side-by-side → `stat-highlight` (T4), **not** `data-table` (T7). Tables need ≥3 rows and right-aligned numerics — not a pair of callouts. |
+| **Metric hero buried** | When narration cites a hero stat (+25%, ~90% fewer), put it in `.hero-stat-value` / mint moment — not a small card in a 4-up grid. |
+| **API endpoint in footer row** | Put `POST /…` in a card column or `.chrome-foot` right span — never inline between body copy and footer. |
+| **Duplicate JSON rail** | Do not embed JSON snippets inside `.slide-root` when `step.apiResponse` exists — use global `#api-response-panel` only. |
+| **Mint overuse** | One `--plaid-teal-500` eye-draw per slide; stats on cream/white unless that stat *is* the mint moment. |
+| **Overlap autofix regression** | Never inflate font-size above ceilings to “fix” overlap — increase `gap` / `padding-bottom` on `.slide-stack` instead. |
+
 ## Template selection
 
 Pick **one** of T1–T11 from DECK_TEMPLATES.md. Set `data-slide-template="T#"` on `.slide-root`.
@@ -108,9 +144,11 @@ Warnings/blockers to respect:
 
 - `slide-invented-color` — hex outside approved Plaid palette
 - `slide-plaid-logo-invented` — fabricated Plaid marks
+- `slide-chrome-logo-placement` — inline top-left or oversized logo (showcase leak)
 - `slide-canvas-size` — slide too small or wrong aspect
 - `slide-shell-chrome` — missing `.chrome-logo` / `.eyebrow-tag` / `.chrome-foot`
 - `slide-narration-drift` — rendered text must match narration claims
+- `slide-forbidden-sales-cta` — contact/trial/POC/retro action prompts on slides
 
 ## Quick palette reference
 

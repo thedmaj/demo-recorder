@@ -36,6 +36,7 @@ const {
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
 const { writePipelineRunContext, buildRunContextPayload } = require('../utils/run-context');
 const { annotateScriptWithStepKinds } = require('../utils/step-kind');
+const { routeSlideTemplate } = require('../utils/slide-template-router');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ const OUT_FILE        = path.join(OUT_DIR, 'demo-script.json');
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const MODEL          = 'claude-opus-4-7';
+const MODEL          = 'claude-opus-4-6';
 const BUDGET_TOKENS  = 8000;
 const MAX_TOKENS     = 16000;
 
@@ -110,6 +111,22 @@ const GENERATE_DEMO_SCRIPT_TOOL = {
                 endpoint: { type: 'string' },
                 response: { type: 'object' },
               },
+            },
+            slideTemplate: {
+              type: 'string',
+              description: 'Optional Plaid deck template id T1–T11 (hard override for post-slides router)',
+            },
+            workhorseLayout: {
+              type: 'string',
+              description: 'Optional showcase workhorse layout slug (e.g. kpi-grid, stat-highlight)',
+            },
+            slideCategory: {
+              type: 'string',
+              description: 'Optional router category hint: opening|explainer|metrics|comparison_flow|plans_proof|close',
+            },
+            showcaseTemplateId: {
+              type: 'string',
+              description: 'Optional showcase section id from templates/slide-template/showcase/index.html',
             },
           },
           required: ['id', 'label', 'narration', 'durationHintMs'],
@@ -736,6 +753,50 @@ function ensureFinalValueSummarySlide(demoScript, productResearch) {
   return { action, id: normalized.id };
 }
 
+/**
+ * Prefill optional slide template hint fields on slide steps when the script
+ * author omitted them. Router treats explicit fields as hard overrides.
+ */
+function enrichSlideTemplateHints(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return { steps: 0 };
+  const slideSteps = demoScript.steps.filter(
+    (s) => String(s?.sceneType || '').toLowerCase() === 'slide' || s?.stepKind === 'slide'
+  );
+  if (!slideSteps.length) return { steps: 0 };
+  const recentLayouts = [];
+  let touched = 0;
+  for (let slideIdx = 0; slideIdx < slideSteps.length; slideIdx++) {
+    const step = slideSteps[slideIdx];
+    const hasAll = step.showcaseTemplateId && step.workhorseLayout && step.slideTemplate && step.slideCategory;
+    if (hasAll) continue;
+    const routing = routeSlideTemplate(step, {
+      stepIndex: slideIdx,
+      totalSlides: slideSteps.length,
+      recentLayouts: recentLayouts.slice(-2),
+    });
+    if (routing?.workhorseLayout) recentLayouts.push(routing.workhorseLayout);
+    let changed = false;
+    if (!step.showcaseTemplateId && routing.templateId) {
+      step.showcaseTemplateId = routing.templateId;
+      changed = true;
+    }
+    if (!step.workhorseLayout && routing.workhorseLayout) {
+      step.workhorseLayout = routing.workhorseLayout;
+      changed = true;
+    }
+    if (!step.slideTemplate && routing.slideTemplate) {
+      step.slideTemplate = routing.slideTemplate;
+      changed = true;
+    }
+    if (!step.slideCategory && routing.category) {
+      step.slideCategory = routing.category;
+      changed = true;
+    }
+    if (changed) touched += 1;
+  }
+  return { steps: touched };
+}
+
 function validateDemoScript(demoScript, opts = {}) {
   const errors = [];
   const warnings = [];
@@ -1056,7 +1117,7 @@ async function main() {
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 300000 });
 
   console.log('[Script] Calling Claude (claude-opus-4-7 with extended thinking + structured output)...');
 
@@ -1116,10 +1177,8 @@ async function main() {
     model:      MODEL,
     max_tokens: MAX_TOKENS,
     thinking: {
-      type: 'adaptive',
-    },
-    output_config: {
-      effort: 'high',
+      type: 'enabled',
+      budget_tokens: BUDGET_TOKENS,
     },
     system:      systemPrompt,
     messages:    messagesWithToolDirective,
@@ -1321,6 +1380,11 @@ async function main() {
     }
   }
 
+  const slideHints = enrichSlideTemplateHints(demoScript);
+  if (slideHints.steps > 0) {
+    console.log(`[Script] Prefilled showcase template hints on ${slideHints.steps} slide step(s).`);
+  }
+
   const launchIdAfterFix = enforceCanonicalLaunchInteraction(demoScript);
   if (launchIdAfterFix) {
     const mode = String(demoScript.plaidLinkMode || '').toLowerCase() === 'embedded' ? 'goToStep' : 'click';
@@ -1492,6 +1556,7 @@ module.exports = {
   buildValueSummaryNarration,
   isValueSummaryStep,
   ensureFinalValueSummarySlide,
+  enrichSlideTemplateHints,
 };
 
 if (require.main === module) {

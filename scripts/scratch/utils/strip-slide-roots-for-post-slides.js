@@ -23,6 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const { annotateScriptWithStepKinds, isSlideStep } = require('./step-kind');
+const { routeSlideTemplate } = require('./slide-template-router');
 
 /**
  * Single source of truth for the canonical slide-pending placeholder.
@@ -34,11 +35,17 @@ const { annotateScriptWithStepKinds, isSlideStep } = require('./step-kind');
  *                               .slideTemplate)
  * @returns {string}             HTML fragment
  */
-function buildCanonicalSlidePlaceholder(step) {
+function buildCanonicalSlidePlaceholder(step, routing = null) {
   const id = String((step && step.id) || '').trim();
   if (!id) throw new Error('buildCanonicalSlidePlaceholder: step.id is required');
-  const tmplRaw = (step && step.slideTemplate) ? String(step.slideTemplate).trim().toUpperCase() : '';
+  const tmplRaw = (step && step.slideTemplate)
+    ? String(step.slideTemplate).trim().toUpperCase()
+    : routing?.slideTemplate
+      ? String(routing.slideTemplate).trim().toUpperCase()
+      : '';
   const tmpl = /^T\d+$/.test(tmplRaw) ? tmplRaw : 'T1';
+  const layout = String(step?.workhorseLayout || routing?.workhorseLayout || '').trim();
+  const showcaseId = String(step?.showcaseTemplateId || routing?.templateId || '').trim();
   const labelRaw = (step && step.label) ? String(step.label) : '';
   const label = labelRaw
     .replace(/&/g, '&amp;')
@@ -46,9 +53,11 @@ function buildCanonicalSlidePlaceholder(step) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
   const labelLine = label ? ` &middot; ${label}` : '';
+  const layoutAttr = layout ? ` data-workhorse-layout="${layout.replace(/"/g, '')}"` : '';
+  const showcaseAttr = showcaseId ? ` data-showcase-template="${showcaseId.replace(/"/g, '')}"` : '';
   return (
     `<div data-testid="step-${id}" class="step">\n` +
-    `  <div class="slide-pending-host" data-slide-pending="true" data-slide-template="${tmpl}">` +
+    `  <div class="slide-pending-host" data-slide-pending="true" data-slide-template="${tmpl}"${layoutAttr}${showcaseAttr}>` +
     `<p style="font-size:24px">Slide placeholder${labelLine} &middot; awaiting post-slides.</p></div>\n</div>`
   );
 }
@@ -87,11 +96,19 @@ function stripSlideRoots({ runDir, steps = null } = {}) {
   const targets = whitelist ? allSlides.filter((s) => whitelist.has(String(s.id))) : allSlides;
   const stripped = [];
   const skipped = [];
-  for (const s of targets) {
+  const recentLayouts = [];
+  for (let slideIdx = 0; slideIdx < targets.length; slideIdx++) {
+    const s = targets[slideIdx];
+    const routing = routeSlideTemplate(s, {
+      stepIndex: slideIdx,
+      totalSlides: targets.length,
+      recentLayouts: recentLayouts.slice(-2),
+    });
+    if (routing?.workhorseLayout) recentLayouts.push(routing.workhorseLayout);
     const re = stepBlockRegex(s.id);
     const m = html.match(re);
     if (!m) { skipped.push(s.id); continue; }
-    html = html.replace(m[0], buildCanonicalSlidePlaceholder(s));
+    html = html.replace(m[0], buildCanonicalSlidePlaceholder(s, routing));
     stripped.push(s.id);
   }
   if (stripped.length > 0) fs.writeFileSync(htmlPath, html);

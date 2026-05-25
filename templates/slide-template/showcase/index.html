@@ -1,0 +1,1243 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plaid × Workhorse — Slide Template Showcase</title>
+  <link rel="stylesheet" href="./colors_and_type.css">
+  <link rel="stylesheet" href="./slide.css">
+  <link rel="stylesheet" href="./pipeline-slide-contract.css">
+  <style>
+    /* Showcase chrome — NOT part of the slide system. Plaid tokens only.
+       This file is temporary scaffolding under templates/slide-template/showcase/ for skill review. */
+
+    :root {
+      --showcase-sidebar-w: 320px;
+      --showcase-meta-h: 132px;
+    }
+
+    html, body {
+      background: var(--plaid-ink-900);
+      color: var(--fg-inverse);
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    .showcase-app {
+      display: grid;
+      grid-template-columns: var(--showcase-sidebar-w) 1fr;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ──────────────────────────────────────────────────────────── */
+    .showcase-sidebar {
+      position: sticky;
+      top: 0;
+      max-height: 100vh;
+      overflow-y: auto;
+      background: #03182C;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      padding: 28px 24px;
+      font-family: var(--font-sans);
+    }
+    .showcase-sidebar-title {
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: 22px;
+      line-height: 1.1;
+      letter-spacing: -0.01em;
+      color: var(--plaid-white);
+    }
+    .showcase-sidebar-title em {
+      font-style: italic;
+      color: var(--plaid-teal-500);
+    }
+    .showcase-sidebar-subtitle {
+      font-size: 13px;
+      color: rgba(255,255,255,0.54);
+      margin-top: 6px;
+      letter-spacing: 0.04em;
+    }
+    .showcase-cat {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--plaid-teal-400);
+      margin: 28px 0 8px;
+    }
+    .showcase-sidebar ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .showcase-sidebar li {
+      padding: 8px 10px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.74);
+      cursor: pointer;
+      border-radius: 6px;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+    }
+    .showcase-sidebar li:hover { background: rgba(255,255,255,0.06); }
+    .showcase-sidebar li.active {
+      background: rgba(66,240,205,0.12);
+      color: var(--plaid-white);
+    }
+    .showcase-sidebar li .num {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: rgba(255,255,255,0.4);
+      min-width: 22px;
+    }
+    .showcase-sidebar li.active .num { color: var(--plaid-teal-500); }
+    .showcase-sidebar-footer {
+      margin-top: 36px;
+      padding-top: 18px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      font-size: 12px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.55;
+    }
+    .showcase-sidebar-footer kbd {
+      font-family: var(--font-mono);
+      background: rgba(255,255,255,0.08);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+    .showcase-sidebar-footer a {
+      color: var(--plaid-teal-400);
+      text-decoration: underline;
+    }
+
+    /* ── Main pane ────────────────────────────────────────────────────────── */
+    .showcase-main {
+      padding: 24px 32px 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .showcase-meta {
+      background: #051F37;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 16px 20px;
+      font-family: var(--font-sans);
+    }
+    .showcase-meta-row {
+      display: flex;
+      gap: 18px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+    .showcase-name {
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: 22px;
+      line-height: 1.2;
+      color: var(--plaid-white);
+    }
+    .showcase-name em {
+      font-style: italic;
+      color: var(--plaid-teal-500);
+    }
+    .showcase-tags {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.6);
+    }
+    .showcase-tag {
+      background: rgba(66,240,205,0.1);
+      color: var(--plaid-teal-400);
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-right: 4px;
+    }
+    .showcase-when, .showcase-avoid {
+      font-size: 13px;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.78);
+      margin-top: 8px;
+    }
+    .showcase-when strong, .showcase-avoid strong {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-right: 8px;
+    }
+    .showcase-when strong { color: var(--plaid-teal-500); }
+    .showcase-avoid strong { color: var(--holo-pink); }
+
+    /* ── Slide canvas wrapper ─────────────────────────────────────────────── */
+    .showcase-stage {
+      background: var(--plaid-ink-900);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 800px;
+    }
+    .showcase-slide {
+      display: none;
+      width: 100%;
+    }
+    .showcase-slide.active {
+      display: block;
+    }
+    /* Make .step.active visibility kick in inside the showcase */
+    .showcase-slide .step {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      min-height: 720px;
+    }
+
+    /* ── Body styling primitives used inside .slide-root for showcase clarity */
+    .showcase-slide .slide-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      width: 100%;
+    }
+    .showcase-slide .slide-body-text {
+      font-size: 24px;
+      line-height: 1.5;
+      color: rgba(255,255,255,0.84);
+      max-width: 1000px;
+    }
+    .showcase-slide .slide-root.light .slide-body-text,
+    .showcase-slide .slide-root.cream .slide-body-text,
+    .showcase-slide .slide-root.holo .slide-body-text {
+      color: rgba(2,37,68,0.8);
+    }
+    .showcase-slide .slide-root.light,
+    .showcase-slide .slide-root.cream,
+    .showcase-slide .slide-root.holo {
+      color: var(--plaid-ink-900);
+    }
+    .showcase-slide .slide-root.light {
+      background: var(--gray-50);
+    }
+    .showcase-slide .slide-root.cream {
+      background: var(--holo-buttercream);
+    }
+    .showcase-slide .slide-root.holo {
+      background: var(--gradient-holo-soft);
+    }
+
+    /* Mint moment helper */
+    .mint { color: var(--plaid-teal-500); }
+    .mint-bg { background: rgba(66,240,205,0.14); color: var(--plaid-teal-500); }
+
+    /* Showcase override: scale chrome-logo 5x (canonical 28px -> 140px).
+       Position inherits from slide.css (top: var(--pad-top), right: var(--pad-x))
+       so the logo top-edge aligns with the topmost text on the slide. */
+    .showcase-slide .slide-root .chrome-logo {
+      height: 140px;
+    }
+
+    /* Generic card */
+    .sc-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px;
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .slide-root.light .sc-card,
+    .slide-root.cream .sc-card,
+    .slide-root.holo .sc-card {
+      background: rgba(255,255,255,0.6);
+      border-color: rgba(2,37,68,0.1);
+    }
+    .sc-eyebrow {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--plaid-teal-400);
+    }
+    .slide-root.light .sc-eyebrow,
+    .slide-root.cream .sc-eyebrow,
+    .slide-root.holo .sc-eyebrow {
+      color: var(--plaid-blue-600);
+    }
+    .sc-stat {
+      font-family: var(--font-display);
+      font-size: clamp(56px, 7vw, 128px);
+      line-height: 1;
+      font-weight: 500;
+      color: var(--plaid-white);
+    }
+    .slide-root.light .sc-stat,
+    .slide-root.cream .sc-stat,
+    .slide-root.holo .sc-stat {
+      color: var(--plaid-ink-900);
+    }
+    .sc-stat-label {
+      font-size: 18px;
+      color: rgba(255,255,255,0.6);
+      margin-top: 6px;
+    }
+    .slide-root.light .sc-stat-label,
+    .slide-root.cream .sc-stat-label,
+    .slide-root.holo .sc-stat-label {
+      color: rgba(2,37,68,0.62);
+    }
+    .sc-grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .sc-grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+    .sc-row {
+      display: flex;
+      gap: 24px;
+      align-items: stretch;
+    }
+    .sc-delta-up { color: var(--plaid-teal-500); font-family: var(--font-mono); font-size: 14px; }
+    .sc-delta-down { color: var(--holo-pink); font-family: var(--font-mono); font-size: 14px; }
+  </style>
+</head>
+<body>
+<div class="showcase-app">
+
+  <aside class="showcase-sidebar">
+    <div class="showcase-sidebar-title">Plaid <em>×</em> Workhorse</div>
+    <div class="showcase-sidebar-subtitle">20 templates · slide skill review</div>
+
+    <div class="showcase-cat">Opening</div>
+    <ul>
+      <li data-target="t1-title-hero" class="active"><span class="num">01</span>Title Hero</li>
+      <li data-target="t2-section-beat"><span class="num">02</span>Section Beat</li>
+    </ul>
+
+    <div class="showcase-cat">Explainer</div>
+    <ul>
+      <li data-target="t3-statement-slide"><span class="num">03</span>Statement Slide</li>
+      <li data-target="bullet-list"><span class="num">04</span>Bullet List</li>
+      <li data-target="t5-three-pillars"><span class="num">05</span>Three Pillars</li>
+      <li data-target="big-pull-quote"><span class="num">06</span>Big Pull Quote</li>
+    </ul>
+
+    <div class="showcase-cat">Metrics &amp; Data</div>
+    <ul>
+      <li data-target="t4-triple-stat"><span class="num">07</span>Triple Stat</li>
+      <li data-target="kpi-grid"><span class="num">08</span>KPI Grid</li>
+      <li data-target="data-table"><span class="num">09</span>Data Table</li>
+      <li data-target="bar-chart-insight"><span class="num">10</span>Bar Chart Insight</li>
+    </ul>
+
+    <div class="showcase-cat">Comparison &amp; Flow</div>
+    <ul>
+      <li data-target="t6-before-after"><span class="num">11</span>Before / After</li>
+      <li data-target="t7-comparison-table"><span class="num">12</span>Old Way vs New Way</li>
+      <li data-target="t8-step-flow"><span class="num">13</span>Step Flow</li>
+      <li data-target="flow-diagram"><span class="num">14</span>Flow Diagram</li>
+      <li data-target="t9-architecture-map"><span class="num">15</span>Architecture Map</li>
+    </ul>
+
+    <div class="showcase-cat">Plans &amp; Proof</div>
+    <ul>
+      <li data-target="timeline"><span class="num">16</span>Timeline</li>
+      <li data-target="roadmap"><span class="num">17</span>Roadmap</li>
+      <li data-target="t10-proof-quote"><span class="num">18</span>Proof Quote</li>
+      <li data-target="code-window"><span class="num">19</span>Code Window</li>
+    </ul>
+
+    <div class="showcase-cat">Close</div>
+    <ul>
+      <li data-target="t11-action-cards"><span class="num">20</span>Action Cards</li>
+    </ul>
+
+    <div class="showcase-sidebar-footer">
+      Navigate: <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd><br>
+      <br>
+      Edit <a href="./STATUS.md">STATUS.md</a> to mark each template
+      keep / remove / needs-guidance and capture rationale.<br>
+      <br>
+      Temporary review surface — delete <code>tmp-showcase/</code> when done.
+    </div>
+  </aside>
+
+  <main class="showcase-main">
+    <div class="showcase-meta" id="showcase-meta">
+      <div class="showcase-meta-row">
+        <div class="showcase-name" id="meta-name"></div>
+        <div class="showcase-tags" id="meta-tags"></div>
+      </div>
+      <div class="showcase-when" id="meta-when"></div>
+      <div class="showcase-avoid" id="meta-avoid"></div>
+    </div>
+
+    <div class="showcase-stage">
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           01 · TITLE HERO (T1 · Workhorse: cover)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide active"
+        data-name="Title Hero"
+        data-tags='<span class="showcase-tag">T1</span><span class="showcase-tag">Workhorse: cover</span><span class="showcase-tag">Opening</span>'
+        data-when="Deck openers, hero moments, brand statements where a single emotional payoff carries the slide."
+        data-avoid="When you need to introduce multiple ideas at once — use Three Pillars or Bullet List instead."
+        id="t1-title-hero">
+        <div data-testid="step-t1-title-hero" class="step active">
+          <div class="slide-root holo" data-slide-template="T1" data-workhorse-layout="cover">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="">
+              <div class="slide-stack" style="padding-top: 80px;">
+                <h2 class="h-title" style="font-family: var(--font-display); font-weight: 500; max-width: 14ch;">
+                  From bank data to <em>financial intelligence.</em>
+                </h2>
+                <p class="slide-body-text" style="max-width: 60ch; color: rgba(2,37,68,0.7);">
+                  How Plaid turns linked accounts into decisions you can ship in production.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           02 · SECTION BEAT (T2 · Workhorse: section-divider)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Section Beat"
+        data-tags='<span class="showcase-tag">T2</span><span class="showcase-tag">Workhorse: section-divider</span><span class="showcase-tag">Opening</span>'
+        data-when="Major chapter breaks in long decks. Gives the audience a 'here's where we are' moment with one giant numeral."
+        data-avoid="Decks shorter than 8 slides — every break costs pacing. Use sparingly: 3–5 in a 20-slide deck."
+        id="t2-section-beat">
+        <div data-testid="step-t2-section-beat" class="step active">
+          <div class="slide-root" data-slide-template="T2" data-workhorse-layout="section-divider">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Section 02 · Verification</div>
+              <div class="slide-stack" style="flex-direction: row; align-items: baseline; gap: 56px;">
+                <div style="font-family: var(--font-display); font-weight: 500; font-size: 240px; line-height: 0.85; color: var(--plaid-blue-400); letter-spacing: -0.03em;">02</div>
+                <div style="max-width: 720px;">
+                  <h2 class="h-title">How we verify <em>ownership</em>.</h2>
+                  <p class="slide-body-text">Identity Match scores name, address, phone, and email in one call — no manual review.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           03 · STATEMENT SLIDE (T3 · Workhorse: two-column)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Statement Slide"
+        data-tags='<span class="showcase-tag">T3</span><span class="showcase-tag">Workhorse: bullets / two-column</span><span class="showcase-tag">Explainer</span>'
+        data-when="One headline, one paragraph, lots of breathing room. Best for the single most important point in a section."
+        data-avoid="When you have 3+ supporting points — use Bullet List or Three Pillars instead."
+        id="t3-statement-slide">
+        <div data-testid="step-t3-statement-slide" class="step active">
+          <div class="slide-root" data-slide-template="T3" data-workhorse-layout="bullets">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Product story</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Plaid turns linked accounts into <em>actionable intelligence.</em></h2>
+                <p class="slide-body-text" style="max-width: 56ch;">
+                  Every connected account becomes a structured signal — identity confirmed, balances current,
+                  transactions categorized — ready for your decision engine on the very next request.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           04 · BULLET LIST (Workhorse: bullets — no T# exact map)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Bullet List"
+        data-tags='<span class="showcase-tag">Workhorse: bullets</span><span class="showcase-tag">Aliases T3</span><span class="showcase-tag">Explainer</span>'
+        data-when="Classic agenda or capability rundown — 3–6 enumerated points. Reach for this when the items are peers, not a process."
+        data-avoid="When the items are sequential (use Step Flow) or comparative (use Old Way vs New Way)."
+        id="bullet-list">
+        <div data-testid="step-bullet-list" class="step active">
+          <div class="slide-root" data-slide-template="T3" data-workhorse-layout="bullets">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">What Plaid gives you</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Four signals, one <em>connection.</em></h2>
+                <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 18px;">
+                  <li class="sc-card" style="flex-direction: row; align-items: baseline; gap: 18px;">
+                    <span class="sc-eyebrow" style="min-width: 60px;">01</span>
+                    <div><strong style="font-size: 22px;">Identity confirmed</strong> — KYC fields scored on every link.</div>
+                  </li>
+                  <li class="sc-card" style="flex-direction: row; align-items: baseline; gap: 18px;">
+                    <span class="sc-eyebrow" style="min-width: 60px;">02</span>
+                    <div><strong style="font-size: 22px;">Balances current</strong> — real-time available funds for risk.</div>
+                  </li>
+                  <li class="sc-card" style="flex-direction: row; align-items: baseline; gap: 18px;">
+                    <span class="sc-eyebrow" style="min-width: 60px;">03</span>
+                    <div><strong style="font-size: 22px;">Transactions categorized</strong> — 12-month cash-flow ready.</div>
+                  </li>
+                  <li class="sc-card" style="flex-direction: row; align-items: baseline; gap: 18px; border-color: rgba(66,240,205,0.4);">
+                    <span class="sc-eyebrow" style="min-width: 60px; color: var(--plaid-teal-500);">04</span>
+                    <div><strong style="font-size: 22px;" class="mint">Signal score returned</strong> — ACH return risk on every transfer.</div>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           05 · THREE PILLARS (T5 · Workhorse: three-column)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Three Pillars"
+        data-tags='<span class="showcase-tag">T5</span><span class="showcase-tag">Workhorse: three-column</span><span class="showcase-tag">Explainer</span>'
+        data-when="Three peer concepts of equal weight — capabilities, customer segments, value props. The rhythm of the deck loves the rule of three here."
+        data-avoid="Two ideas (use Before / After) or four+ (drop to Bullet List). Forcing three when only two fit reads as filler."
+        id="t5-three-pillars">
+        <div data-testid="step-t5-three-pillars" class="step active">
+          <div class="slide-root light" data-slide-template="T5" data-workhorse-layout="three-column">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="">
+              <div class="eyebrow-tag" style="color: var(--plaid-blue-600);">Three ways Plaid plugs in</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Embed once. Compose <em>anywhere.</em></h2>
+                <div class="sc-grid-3">
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Modal Link</div>
+                    <strong style="font-size: 24px; color: var(--plaid-ink-900);">Drop-in modal</strong>
+                    <p style="color: rgba(2,37,68,0.7); font-size: 18px; line-height: 1.5;">Full-screen Link experience with one CDN script and a token request.</p>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Embedded Link</div>
+                    <strong style="font-size: 24px; color: var(--plaid-ink-900);">In-page widget</strong>
+                    <p style="color: rgba(2,37,68,0.7); font-size: 18px; line-height: 1.5;">Institution search lives inside your own pre-link surface, modal opens on tap.</p>
+                  </div>
+                  <div class="sc-card" style="border-color: rgba(66,240,205,0.6);">
+                    <div class="sc-eyebrow" style="color: var(--plaid-teal-500);">Layer</div>
+                    <strong style="font-size: 24px; color: var(--plaid-ink-900);" class="mint">One-tap return</strong>
+                    <p style="color: rgba(2,37,68,0.7); font-size: 18px; line-height: 1.5;">Recognized users skip Link entirely — phone number verifies and the connection completes.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           06 · BIG PULL QUOTE (Workhorse: big-quote)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Big Pull Quote"
+        data-tags='<span class="showcase-tag">Workhorse: big-quote</span><span class="showcase-tag">Aliases T3</span><span class="showcase-tag">Explainer</span>'
+        data-when="A single quote that earns full-bleed treatment — internal voice, customer testimonial, or industry thinker. Use after a data slide to soften the rhythm."
+        data-avoid="Generic platitudes — the quote needs to land. If it doesn't quote-tweet itself, cut it."
+        id="big-pull-quote">
+        <div data-testid="step-big-pull-quote" class="step active">
+          <div class="slide-root cream" data-slide-template="T3" data-workhorse-layout="big-quote">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="">
+              <div class="eyebrow-tag" style="color: var(--plaid-blue-600);">Voice of the customer</div>
+              <div class="slide-stack" style="justify-content: center;">
+                <blockquote style="margin: 0; font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: 56px; line-height: 1.15; color: var(--plaid-ink-900); max-width: 22ch;">
+                  &ldquo;Plaid replaced six vendors and three legal reviews — <em class="mint" style="font-style: italic;">that's the win.</em>&rdquo;
+                </blockquote>
+                <div style="margin-top: 36px; font-family: var(--font-mono); font-size: 16px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(2,37,68,0.62);">
+                  Head of Risk · Top-50 US Bank
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           07 · TRIPLE STAT (T4 · Workhorse: stat-highlight stack)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Triple Stat"
+        data-tags='<span class="showcase-tag">T4</span><span class="showcase-tag">Workhorse: stat-highlight</span><span class="showcase-tag">Metrics</span>'
+        data-when="Three hero numbers side-by-side at maximum size. The flagship metrics slide of a deck."
+        data-avoid="Four+ metrics (use KPI Grid) or qualitative claims dressed as numbers. Each stat must be defensible."
+        id="t4-triple-stat">
+        <div data-testid="step-t4-triple-stat" class="step active">
+          <div class="slide-root" data-slide-template="T4" data-workhorse-layout="stat-highlight">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">By the numbers</div>
+              <div class="slide-stack">
+                <h2 class="h-title" style="margin-bottom: 24px;">What scale looks <em>like.</em></h2>
+                <div class="sc-grid-3">
+                  <div>
+                    <div class="sc-stat mint">7,000+</div>
+                    <div class="sc-stat-label">institutions connected via Plaid Link in the US, UK, and EU.</div>
+                  </div>
+                  <div>
+                    <div class="sc-stat">98%</div>
+                    <div class="sc-stat-label">US deposit-account coverage — including the long tail of credit unions.</div>
+                  </div>
+                  <div>
+                    <div class="sc-stat">&lt; 2s</div>
+                    <div class="sc-stat-label">median time from token request to onSuccess in production.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           08 · KPI GRID (Workhorse: kpi-grid)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="KPI Grid"
+        data-tags='<span class="showcase-tag">Workhorse: kpi-grid</span><span class="showcase-tag">Aliases T4</span><span class="showcase-tag">Metrics</span>'
+        data-when="Four metrics in a denser grid with QoQ deltas. Engineering reviews, ops dashboards, board updates."
+        data-avoid="Marketing decks where three big numbers tell a stronger story — switch to Triple Stat."
+        id="kpi-grid">
+        <div data-testid="step-kpi-grid" class="step active">
+          <div class="slide-root" data-slide-template="T4" data-workhorse-layout="kpi-grid">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Q2 metrics · platform team</div>
+              <div class="slide-stack">
+                <h2 class="h-title">A quarter of <em>compounding gains.</em></h2>
+                <div class="sc-grid-4">
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Link success rate</div>
+                    <div style="font-family: var(--font-display); font-size: 64px; line-height: 1; font-weight: 500;" class="mint">93.4%</div>
+                    <div class="sc-delta-up">↑ 1.2 pts QoQ</div>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">p95 latency</div>
+                    <div style="font-family: var(--font-display); font-size: 64px; line-height: 1; font-weight: 500;">412<span style="font-size: 28px; opacity: 0.6;">ms</span></div>
+                    <div class="sc-delta-up">↓ 88ms QoQ</div>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Active integrations</div>
+                    <div style="font-family: var(--font-display); font-size: 64px; line-height: 1; font-weight: 500;">2,184</div>
+                    <div class="sc-delta-up">↑ 184 QoQ</div>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Support tickets / 1k links</div>
+                    <div style="font-family: var(--font-display); font-size: 64px; line-height: 1; font-weight: 500;">3.1</div>
+                    <div class="sc-delta-down">↑ 0.4 QoQ</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           09 · DATA TABLE (Workhorse: table)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Data Table"
+        data-tags='<span class="showcase-tag">Workhorse: table</span><span class="showcase-tag">Aliases T7</span><span class="showcase-tag">Metrics</span>'
+        data-when="When the comparison needs rows and right-aligned numerics — pricing tiers, plan comparisons, API limits, score thresholds."
+        data-avoid="Three peers (use Three Pillars) or before/after (use Before / After). Tables are dense by design — earn the density."
+        id="data-table">
+        <div data-testid="step-data-table" class="step active">
+          <div class="slide-root light" data-slide-template="T7" data-workhorse-layout="table">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="">
+              <div class="eyebrow-tag" style="color: var(--plaid-blue-600);">Plaid Signal · risk score thresholds</div>
+              <div class="slide-stack">
+                <h2 class="h-title">One score, three <em>decisions.</em></h2>
+                <table style="width: 100%; border-collapse: collapse; font-size: 20px; color: var(--plaid-ink-900);">
+                  <thead>
+                    <tr style="text-align: left; border-bottom: 2px solid var(--plaid-ink-900);">
+                      <th style="padding: 14px 16px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;">Score band</th>
+                      <th style="padding: 14px 16px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;">Ruleset result</th>
+                      <th style="padding: 14px 16px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; text-align: right;">Action</th>
+                      <th style="padding: 14px 16px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; text-align: right;">% of volume</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style="border-bottom: 1px solid rgba(2,37,68,0.1);">
+                      <td style="padding: 14px 16px;">1 – 25</td>
+                      <td style="padding: 14px 16px;"><span class="mint-bg" style="padding: 2px 10px; border-radius: 4px; font-family: var(--font-mono); font-size: 14px;">ACCEPT</span></td>
+                      <td style="padding: 14px 16px; text-align: right; font-family: var(--font-mono);">Same-day ACH</td>
+                      <td style="padding: 14px 16px; text-align: right; font-family: var(--font-mono);">82%</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid rgba(2,37,68,0.1);">
+                      <td style="padding: 14px 16px;">26 – 65</td>
+                      <td style="padding: 14px 16px;"><span style="background: rgba(255,246,216,0.6); color: #8F6A00; padding: 2px 10px; border-radius: 4px; font-family: var(--font-mono); font-size: 14px;">REVIEW</span></td>
+                      <td style="padding: 14px 16px; text-align: right; font-family: var(--font-mono);">Manual queue</td>
+                      <td style="padding: 14px 16px; text-align: right; font-family: var(--font-mono);">15%</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 14px 16px;">66 – 99</td>
+                      <td style="padding: 14px 16px;"><span style="background: rgba(216,50,50,0.12); color: #8B1F1F; padding: 2px 10px; border-radius: 4px; font-family: var(--font-mono); font-size: 14px;">REROUTE</span></td>
+                      <td style="padding: 14px 16px; text-align: right; font-family: var(--font-mono);">Standard ACH</td>
+                      <td style="padding: 14px 16px; text-align: right; font-family: var(--font-mono);">3%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           10 · BAR CHART INSIGHT (Workhorse: chart-bar — SVG ONLY)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Bar Chart Insight"
+        data-tags='<span class="showcase-tag">Workhorse: chart-bar</span><span class="showcase-tag">SVG only</span><span class="showcase-tag">Metrics</span>'
+        data-when="Bounded categorical comparisons where ordering matters — top-N institutions, error categories, monthly cohorts."
+        data-avoid="Continuous trends (use Timeline). Pipeline contract: SVG only — Chart.js is blocked by build-QA."
+        id="bar-chart-insight">
+        <div data-testid="step-bar-chart-insight" class="step active">
+          <div class="slide-root" data-slide-template="T4" data-workhorse-layout="chart-bar">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Where users connect</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Top five institutions by <em>link volume.</em></h2>
+                <svg viewBox="0 0 1000 380" style="width: 100%; height: auto; max-height: 420px;">
+                  <!-- y-axis labels -->
+                  <g font-family="var(--font-mono)" font-size="14" fill="rgba(255,255,255,0.5)">
+                    <text x="20" y="40">100%</text>
+                    <text x="20" y="110">75%</text>
+                    <text x="20" y="180">50%</text>
+                    <text x="20" y="250">25%</text>
+                    <text x="20" y="320">0</text>
+                  </g>
+                  <!-- baseline -->
+                  <line x1="90" y1="320" x2="980" y2="320" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+                  <!-- bars -->
+                  <g>
+                    <rect x="130" y="80" width="120" height="240" rx="6" fill="#42F0CD"/>
+                    <rect x="290" y="110" width="120" height="210" rx="6" fill="#5FA8E2"/>
+                    <rect x="450" y="170" width="120" height="150" rx="6" fill="#5FA8E2"/>
+                    <rect x="610" y="200" width="120" height="120" rx="6" fill="#5FA8E2"/>
+                    <rect x="770" y="240" width="120" height="80"  rx="6" fill="#5FA8E2"/>
+                  </g>
+                  <!-- labels -->
+                  <g font-family="var(--font-sans)" font-size="16" fill="rgba(255,255,255,0.85)" text-anchor="middle">
+                    <text x="190" y="350">Chase</text>
+                    <text x="350" y="350">BofA</text>
+                    <text x="510" y="350">Wells</text>
+                    <text x="670" y="350">Citi</text>
+                    <text x="830" y="350">Capital One</text>
+                  </g>
+                </svg>
+                <p class="slide-body-text" style="font-size: 20px; color: rgba(255,255,255,0.62);">
+                  Top five institutions account for <span class="mint">63%</span> of links across the platform — the long tail of 6,995 institutions covers the rest.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           11 · BEFORE / AFTER (T6 · Workhorse: comparison)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Before / After"
+        data-tags='<span class="showcase-tag">T6</span><span class="showcase-tag">Workhorse: comparison</span><span class="showcase-tag">Comparison</span>'
+        data-when="Two-panel transformation — old way vs new way, raw data vs enriched, manual review vs automated. The narrative arc lives in the contrast."
+        data-avoid="Three-panel comparisons (use Three Pillars). The 50/50 split is what makes the rhetoric work."
+        id="t6-before-after">
+        <div data-testid="step-t6-before-after" class="step active">
+          <div class="slide-root" data-slide-template="T6" data-workhorse-layout="comparison">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">From micro-deposits to instant</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Two days, or <em>two seconds.</em></h2>
+                <div class="sc-row">
+                  <div class="sc-card" style="flex: 1;">
+                    <div class="sc-eyebrow" style="color: rgba(255,255,255,0.5);">Before · Yodlee-era</div>
+                    <div style="font-family: var(--font-mono); font-size: 18px; color: rgba(255,255,255,0.78); line-height: 1.7;">
+                      Manual routing entry<br>
+                      → Two micro-deposits<br>
+                      → Wait 1–2 business days<br>
+                      → User returns to confirm<br>
+                      → 38% drop-off after step 2
+                    </div>
+                  </div>
+                  <div class="sc-card" style="flex: 1; border-color: rgba(66,240,205,0.5); background: rgba(66,240,205,0.08);">
+                    <div class="sc-eyebrow" style="color: var(--plaid-teal-500);">After · Plaid Instant Auth</div>
+                    <div style="font-family: var(--font-mono); font-size: 18px; color: rgba(255,255,255,0.92); line-height: 1.7;">
+                      Bank login through Link<br>
+                      → Instant routing &amp; account<br>
+                      → Identity Match in parallel<br>
+                      → Signal score returned<br>
+                      → <span class="mint">93% complete on first try</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           12 · OLD WAY vs NEW WAY (T7 · Workhorse: comparison table)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Old Way vs New Way"
+        data-tags='<span class="showcase-tag">T7</span><span class="showcase-tag">Workhorse: comparison</span><span class="showcase-tag">Comparison</span>'
+        data-when="Three to five matched rows showing transformation — process, latency, cost, accuracy. The arrow does the rhetorical work."
+        data-avoid="More than five rows (collapse to fewer pairs) or qualitative-only rows that don't earn their place (cut them)."
+        id="t7-comparison-table">
+        <div data-testid="step-t7-comparison-table" class="step active">
+          <div class="slide-root light" data-slide-template="T7" data-workhorse-layout="comparison">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="">
+              <div class="eyebrow-tag" style="color: var(--plaid-blue-600);">What Plaid replaces</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Four steps, <em>collapsed.</em></h2>
+                <div style="display: flex; flex-direction: column; gap: 14px;">
+                  <div style="display: grid; grid-template-columns: 1fr 80px 1fr; gap: 24px; align-items: center; padding: 18px 24px; background: rgba(255,255,255,0.5); border-radius: 12px;">
+                    <div style="font-size: 20px;">Manual routing &amp; account entry</div>
+                    <div style="text-align: center; font-size: 24px;" class="mint">→</div>
+                    <div style="font-size: 20px;"><strong>Bank-side login</strong> via Link</div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1fr 80px 1fr; gap: 24px; align-items: center; padding: 18px 24px; background: rgba(255,255,255,0.5); border-radius: 12px;">
+                    <div style="font-size: 20px;">Two micro-deposits (1–2 days)</div>
+                    <div style="text-align: center; font-size: 24px;" class="mint">→</div>
+                    <div style="font-size: 20px;"><strong>Instant Auth</strong> (~1.8s)</div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1fr 80px 1fr; gap: 24px; align-items: center; padding: 18px 24px; background: rgba(255,255,255,0.5); border-radius: 12px;">
+                    <div style="font-size: 20px;">Vendor 1: Identity check</div>
+                    <div style="text-align: center; font-size: 24px;" class="mint">→</div>
+                    <div style="font-size: 20px;"><strong>Identity Match</strong> on first call</div>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1fr 80px 1fr; gap: 24px; align-items: center; padding: 18px 24px; background: rgba(66,240,205,0.14); border-radius: 12px;">
+                    <div style="font-size: 20px;">Vendor 2: ACH risk model</div>
+                    <div style="text-align: center; font-size: 24px;" class="mint">→</div>
+                    <div style="font-size: 20px;"><strong class="mint">Signal score</strong> on same Link token</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           13 · STEP FLOW (T8 · Workhorse: process-steps)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Step Flow"
+        data-tags='<span class="showcase-tag">T8</span><span class="showcase-tag">Workhorse: process-steps</span><span class="showcase-tag">Flow</span>'
+        data-when="Three sequential cards — process, evolution, lifecycle. Numbered, left-to-right, narrative carries the eye."
+        data-avoid="Loose categories that aren't actually a process (use Three Pillars). Sequencing without causality reads as filler."
+        id="t8-step-flow">
+        <div data-testid="step-t8-step-flow" class="step active">
+          <div class="slide-root" data-slide-template="T8" data-workhorse-layout="process-steps">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">From token to transfer</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Three calls, one <em>verified payout.</em></h2>
+                <div class="sc-grid-3">
+                  <div class="sc-card">
+                    <div style="font-family: var(--font-display); font-size: 80px; font-weight: 500; line-height: 1; color: var(--plaid-blue-400);">01</div>
+                    <strong style="font-size: 22px;">/link/token/create</strong>
+                    <p style="color: rgba(255,255,255,0.65); font-size: 17px; line-height: 1.5;">Server mints the Link token with products, user_id, and ruleset_id.</p>
+                  </div>
+                  <div class="sc-card">
+                    <div style="font-family: var(--font-display); font-size: 80px; font-weight: 500; line-height: 1; color: var(--plaid-blue-400);">02</div>
+                    <strong style="font-size: 22px;">/identity/match</strong>
+                    <p style="color: rgba(255,255,255,0.65); font-size: 17px; line-height: 1.5;">Match KYC fields to bank record — name, address, email, phone.</p>
+                  </div>
+                  <div class="sc-card" style="border-color: rgba(66,240,205,0.5);">
+                    <div style="font-family: var(--font-display); font-size: 80px; font-weight: 500; line-height: 1; color: var(--plaid-teal-500);">03</div>
+                    <strong style="font-size: 22px;" class="mint">/signal/evaluate</strong>
+                    <p style="color: rgba(255,255,255,0.65); font-size: 17px; line-height: 1.5;">Score returns ACCEPT — funds released same-day.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           14 · FLOW DIAGRAM (Workhorse: flow-diagram)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Flow Diagram"
+        data-tags='<span class="showcase-tag">Workhorse: flow-diagram</span><span class="showcase-tag">Aliases T8</span><span class="showcase-tag">Flow</span>'
+        data-when="A 4–6 node pipeline with arrows and one highlighted node. Better than Step Flow when the path branches or one node deserves emphasis."
+        data-avoid="Strict three-step process (use Step Flow). Long chains (>6 nodes) — break them into two slides."
+        id="flow-diagram">
+        <div data-testid="step-flow-diagram" class="step active">
+          <div class="slide-root" data-slide-template="T8" data-workhorse-layout="flow-diagram">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Risk decision pipeline</div>
+              <div class="slide-stack">
+                <h2 class="h-title">Where Plaid <em>sits.</em></h2>
+                <svg viewBox="0 0 1100 220" style="width: 100%; height: auto;">
+                  <defs>
+                    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+                      <path d="M0,0 L10,5 L0,10 z" fill="rgba(255,255,255,0.5)"/>
+                    </marker>
+                  </defs>
+                  <g font-family="var(--font-sans)" font-size="15" fill="var(--plaid-white)" text-anchor="middle">
+                    <g>
+                      <rect x="20"  y="80" width="160" height="60" rx="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+                      <text x="100" y="115">User opens app</text>
+                    </g>
+                    <g>
+                      <rect x="220" y="80" width="160" height="60" rx="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+                      <text x="300" y="115">Plaid Link</text>
+                    </g>
+                    <g>
+                      <rect x="420" y="80" width="160" height="60" rx="10" fill="rgba(66,240,205,0.18)" stroke="#42F0CD"/>
+                      <text x="500" y="108">Plaid Signal</text>
+                      <text x="500" y="128" font-size="11" fill="rgba(255,255,255,0.6)">/signal/evaluate</text>
+                    </g>
+                    <g>
+                      <rect x="620" y="80" width="160" height="60" rx="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+                      <text x="700" y="115">Decision engine</text>
+                    </g>
+                    <g>
+                      <rect x="820" y="80" width="160" height="60" rx="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+                      <text x="900" y="115">ACH transfer</text>
+                    </g>
+                  </g>
+                  <g stroke="rgba(255,255,255,0.5)" stroke-width="2" marker-end="url(#arr)">
+                    <line x1="180" y1="110" x2="218" y2="110"/>
+                    <line x1="380" y1="110" x2="418" y2="110"/>
+                    <line x1="580" y1="110" x2="618" y2="110"/>
+                    <line x1="780" y1="110" x2="818" y2="110"/>
+                  </g>
+                </svg>
+                <p class="slide-body-text" style="font-size: 20px; color: rgba(255,255,255,0.62);">
+                  Signal returns in <span class="mint">~280ms</span> — your decision engine never waits.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           15 · ARCHITECTURE MAP (T9 · Workhorse: arch-diagram)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Architecture Map"
+        data-tags='<span class="showcase-tag">T9</span><span class="showcase-tag">Workhorse: arch-diagram</span><span class="showcase-tag">Flow</span>'
+        data-when="One central block (the platform) with many connected dependencies below. The 'big picture' slide."
+        data-avoid="Linear process (use Step Flow or Flow Diagram). Architecture means hierarchy + multiplicity, not just sequence."
+        id="t9-architecture-map">
+        <div data-testid="step-t9-architecture-map" class="step active">
+          <div class="slide-root" data-slide-template="T9" data-workhorse-layout="arch-diagram">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Platform map</div>
+              <div class="slide-stack">
+                <h2 class="h-title">One link, <em>four products.</em></h2>
+                <div style="display: flex; flex-direction: column; gap: 20px; align-items: center;">
+                  <div class="sc-card" style="width: 340px; align-items: center; border-color: rgba(66,240,205,0.6);">
+                    <div class="sc-eyebrow" style="color: var(--plaid-teal-500); text-align: center; width: 100%;">Plaid Link</div>
+                    <strong style="font-size: 26px;" class="mint">One token, all signals</strong>
+                  </div>
+                  <svg viewBox="0 0 600 40" style="width: 600px; height: 40px;">
+                    <line x1="300" y1="0"  x2="300" y2="20" stroke="rgba(66,240,205,0.5)" stroke-width="2"/>
+                    <line x1="80"  y1="20" x2="520" y2="20" stroke="rgba(66,240,205,0.5)" stroke-width="2"/>
+                    <line x1="80"  y1="20" x2="80"  y2="40" stroke="rgba(66,240,205,0.5)" stroke-width="2"/>
+                    <line x1="227" y1="20" x2="227" y2="40" stroke="rgba(66,240,205,0.5)" stroke-width="2"/>
+                    <line x1="373" y1="20" x2="373" y2="40" stroke="rgba(66,240,205,0.5)" stroke-width="2"/>
+                    <line x1="520" y1="20" x2="520" y2="40" stroke="rgba(66,240,205,0.5)" stroke-width="2"/>
+                  </svg>
+                  <div class="sc-grid-4" style="width: 100%; max-width: 1000px;">
+                    <div class="sc-card" style="align-items: center;"><div class="sc-eyebrow">Auth</div><strong style="font-size: 20px;">Routing &amp; account</strong></div>
+                    <div class="sc-card" style="align-items: center;"><div class="sc-eyebrow">Identity Match</div><strong style="font-size: 20px;">KYC scores</strong></div>
+                    <div class="sc-card" style="align-items: center;"><div class="sc-eyebrow">Signal</div><strong style="font-size: 20px;">Return-risk score</strong></div>
+                    <div class="sc-card" style="align-items: center;"><div class="sc-eyebrow">Transactions</div><strong style="font-size: 20px;">12-mo history</strong></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           16 · TIMELINE (Workhorse: timeline)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Timeline"
+        data-tags='<span class="showcase-tag">Workhorse: timeline</span><span class="showcase-tag">Aliases T8</span><span class="showcase-tag">Plans</span>'
+        data-when="A 4–6 point horizontal timeline — product history, integration milestones, rollout phases. Time is the spine."
+        data-avoid="Items that aren't on a true time axis (use Step Flow). 'Future plans' slides — use Roadmap, it's more honest."
+        id="timeline">
+        <div data-testid="step-timeline" class="step active">
+          <div class="slide-root" data-slide-template="T8" data-workhorse-layout="timeline">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Rollout timeline</div>
+              <div class="slide-stack">
+                <h2 class="h-title">From pilot to <em>GA in six months.</em></h2>
+                <svg viewBox="0 0 1100 200" style="width: 100%; height: auto;">
+                  <line x1="60" y1="100" x2="1040" y2="100" stroke="rgba(255,255,255,0.18)" stroke-width="2"/>
+                  <g font-family="var(--font-sans)" font-size="14" fill="rgba(255,255,255,0.78)" text-anchor="middle">
+                    <g><circle cx="90"  cy="100" r="10" fill="#5FA8E2"/><text x="90"  y="60">Jan</text><text x="90"  y="140" font-size="13" fill="rgba(255,255,255,0.6)">Discovery</text></g>
+                    <g><circle cx="290" cy="100" r="10" fill="#5FA8E2"/><text x="290" y="60">Mar</text><text x="290" y="140" font-size="13" fill="rgba(255,255,255,0.6)">Sandbox</text></g>
+                    <g><circle cx="490" cy="100" r="10" fill="#5FA8E2"/><text x="490" y="60">May</text><text x="490" y="140" font-size="13" fill="rgba(255,255,255,0.6)">Pilot · 5% traffic</text></g>
+                    <g><circle cx="690" cy="100" r="10" fill="#5FA8E2"/><text x="690" y="60">Jul</text><text x="690" y="140" font-size="13" fill="rgba(255,255,255,0.6)">Beta · 50%</text></g>
+                    <g><circle cx="890" cy="100" r="14" fill="#42F0CD"/><text x="890" y="60" fill="#42F0CD">Sept</text><text x="890" y="140" font-size="13" fill="rgba(66,240,205,0.9)">General availability</text></g>
+                  </g>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           17 · ROADMAP (Workhorse: roadmap)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Roadmap"
+        data-tags='<span class="showcase-tag">Workhorse: roadmap</span><span class="showcase-tag">Aliases T11</span><span class="showcase-tag">Plans</span>'
+        data-when="Four-column NOW / NEXT / LATER / VISION. The honest planning slide — communicates commitment levels without overpromising."
+        data-avoid="If the columns are equally weighted, you're not really planning. Earlier columns should be denser; later columns shorter."
+        id="roadmap">
+        <div data-testid="step-roadmap" class="step active">
+          <div class="slide-root" data-slide-template="T11" data-workhorse-layout="roadmap">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">2026 product roadmap</div>
+              <div class="slide-stack">
+                <h2 class="h-title">What ships <em>when.</em></h2>
+                <div class="sc-grid-4">
+                  <div class="sc-card">
+                    <div class="sc-eyebrow mint">Now</div>
+                    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; font-size: 17px; color: rgba(255,255,255,0.86);">
+                      <li>Embedded Link GA</li>
+                      <li>Signal v3 thresholds</li>
+                      <li>Identity Match scoring</li>
+                    </ul>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Next · Q3</div>
+                    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; font-size: 17px; color: rgba(255,255,255,0.86);">
+                      <li>Layer 2.0</li>
+                      <li>CRA Income Insights</li>
+                    </ul>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Later · Q4</div>
+                    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; font-size: 17px; color: rgba(255,255,255,0.86);">
+                      <li>Trust Index GA</li>
+                    </ul>
+                  </div>
+                  <div class="sc-card">
+                    <div class="sc-eyebrow">Vision · 2027</div>
+                    <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; font-size: 17px; color: rgba(255,255,255,0.86);">
+                      <li>Cross-border Link</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           18 · PROOF QUOTE (T10 · Workhorse: big-quote + stat)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Proof Quote"
+        data-tags='<span class="showcase-tag">T10</span><span class="showcase-tag">Workhorse: customer-proof</span><span class="showcase-tag">Proof</span>'
+        data-when="Customer testimonial paired with a hero stat — the 'why this is real' moment in a pitch deck."
+        data-avoid="Quotes without a named source. The attribution is the credibility. Vague 'a customer said' kills it."
+        id="t10-proof-quote">
+        <div data-testid="step-t10-proof-quote" class="step active">
+          <div class="slide-root" data-slide-template="T10" data-workhorse-layout="customer-proof">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Customer outcome</div>
+              <div class="slide-stack" style="flex-direction: row; align-items: center; gap: 56px;">
+                <div style="flex: 1.2;">
+                  <div class="sc-stat mint">+38%</div>
+                  <div class="sc-stat-label" style="font-size: 20px;">funding conversion lift in the first quarter after switching from micro-deposits to Plaid Instant Auth.</div>
+                </div>
+                <div style="flex: 1.4;">
+                  <blockquote style="margin: 0; font-family: var(--font-display); font-style: italic; font-weight: 400; font-size: 32px; line-height: 1.3; color: var(--plaid-white);">
+                    &ldquo;We stopped losing users at step two — and the back-office team stopped chasing reversals. <em class="mint" style="font-style: italic;">Instant just works.</em>&rdquo;
+                  </blockquote>
+                  <div style="margin-top: 24px; font-family: var(--font-mono); font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.6);">
+                    Maya Patel · VP Product · Acme Neobank
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           19 · CODE WINDOW (Workhorse: code/terminal — static, no highlight.js)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Code Window"
+        data-tags='<span class="showcase-tag">Workhorse: code</span><span class="showcase-tag">Aliases T3</span><span class="showcase-tag">Proof</span>'
+        data-when="Show one API call or one component snippet — the developer experience proof point. Keep to 10–15 lines max."
+        data-avoid="Whole files (post a gist instead). Or runtime libraries (highlight.js is blocked by build-QA — use pre/code with monospace)."
+        id="code-window">
+        <div data-testid="step-code-window" class="step active">
+          <div class="slide-root" data-slide-template="T3" data-workhorse-layout="code">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
+              <div class="eyebrow-tag">Three lines to verified funding</div>
+              <div class="slide-stack">
+                <h2 class="h-title">One token, <em>five products.</em></h2>
+                <pre style="background: #021627; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 28px 32px; font-family: var(--font-mono); font-size: 18px; line-height: 1.65; color: rgba(255,255,255,0.88); margin: 0; overflow-x: auto;"><span style="color: #71FBE3;">const</span> token = <span style="color: #71FBE3;">await</span> plaid.linkTokenCreate({
+  user: { client_user_id: <span style="color: #FFC0FF;">'usr_8f2x'</span> },
+  products: [<span style="color: #FFC0FF;">'auth'</span>, <span style="color: #FFC0FF;">'identity'</span>, <span style="color: #FFC0FF;">'signal'</span>],
+  ruleset_id: <span style="color: #FFC0FF;">'instant_funding_v3'</span>,
+});
+
+<span style="color: rgba(255,255,255,0.5);">// onSuccess → exchange public_token → /signal/evaluate → ACH</span>
+<span style="color: #42F0CD;">// → median round-trip 1.8s in production</span></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────────────────────────────────────────────────────────────────
+           20 · ACTION CARDS (T11 · Workhorse: cta)
+           ──────────────────────────────────────────────────────────────── -->
+      <section class="showcase-slide"
+        data-name="Action Cards"
+        data-tags='<span class="showcase-tag">T11</span><span class="showcase-tag">Workhorse: cta</span><span class="showcase-tag">Close</span>'
+        data-when="The closer. Three audience-segmented action cards — engineering, product, executive. Or three rollout phases. The deck ends on a doable next step."
+        data-avoid="A single generic 'thanks' slide — that wastes the closing real estate. Always end with what to do next."
+        id="t11-action-cards">
+        <div data-testid="step-t11-action-cards" class="step active">
+          <div class="slide-root holo" data-slide-template="T11" data-workhorse-layout="cta">
+            <div class="frame">
+              <img class="chrome-logo" src="assets/logos/plaid-horizontal-dark.png" alt="">
+              <div class="eyebrow-tag" style="color: var(--plaid-blue-700);">Next steps</div>
+              <div class="slide-stack">
+                <h2 class="h-title">What to do <em>this week.</em></h2>
+                <div class="sc-grid-3">
+                  <div class="sc-card" style="background: rgba(255,255,255,0.7); border-color: rgba(2,37,68,0.1);">
+                    <div class="sc-eyebrow" style="color: var(--plaid-blue-600);">For engineering</div>
+                    <strong style="font-size: 22px; color: var(--plaid-ink-900);">Spin up sandbox</strong>
+                    <p style="color: rgba(2,37,68,0.7); font-size: 17px; line-height: 1.5;">Mint a token, wire Link, validate the Signal payload locally.</p>
+                  </div>
+                  <div class="sc-card" style="background: rgba(255,255,255,0.7); border-color: rgba(2,37,68,0.1);">
+                    <div class="sc-eyebrow" style="color: var(--plaid-blue-600);">For product</div>
+                    <strong style="font-size: 22px; color: var(--plaid-ink-900);">Map the funnel</strong>
+                    <p style="color: rgba(2,37,68,0.7); font-size: 17px; line-height: 1.5;">Identify which existing step Plaid replaces and what changes for the user.</p>
+                  </div>
+                  <div class="sc-card" style="background: rgba(66,240,205,0.18); border-color: rgba(66,240,205,0.7);">
+                    <div class="sc-eyebrow" style="color: var(--plaid-teal-600);">For execs</div>
+                    <strong style="font-size: 22px; color: var(--plaid-ink-900);" class="mint">Book a deep dive</strong>
+                    <p style="color: rgba(2,37,68,0.78); font-size: 17px; line-height: 1.5;">90 minutes with the platform team to model conversion and unit economics.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var slides = Array.from(document.querySelectorAll('.showcase-slide'));
+  var sidebarItems = Array.from(document.querySelectorAll('.showcase-sidebar li[data-target]'));
+  var metaName = document.getElementById('meta-name');
+  var metaTags = document.getElementById('meta-tags');
+  var metaWhen = document.getElementById('meta-when');
+  var metaAvoid = document.getElementById('meta-avoid');
+
+  function updateMeta(slide) {
+    metaName.innerHTML = slide.dataset.name || '';
+    metaTags.innerHTML = slide.dataset.tags || '';
+    metaWhen.innerHTML = '<strong>When to use</strong>' + (slide.dataset.when || '');
+    metaAvoid.innerHTML = '<strong>Avoid when</strong>' + (slide.dataset.avoid || '');
+  }
+
+  function activate(idx) {
+    if (idx < 0 || idx >= slides.length) return;
+    slides.forEach(function (s, i) { s.classList.toggle('active', i === idx); });
+    sidebarItems.forEach(function (li, i) { li.classList.toggle('active', i === idx); });
+    var item = sidebarItems[idx];
+    if (item && item.scrollIntoView) item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    updateMeta(slides[idx]);
+    window.location.hash = item ? item.dataset.target : '';
+  }
+
+  // Sidebar clicks
+  sidebarItems.forEach(function (li, idx) {
+    li.addEventListener('click', function () { activate(idx); });
+  });
+
+  // Keyboard navigation
+  document.addEventListener('keydown', function (e) {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    var current = slides.findIndex(function (s) { return s.classList.contains('active'); });
+    if (current < 0) current = 0;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'j' || e.key === ' ') {
+      e.preventDefault();
+      activate(Math.min(slides.length - 1, current + 1));
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'k') {
+      e.preventDefault();
+      activate(Math.max(0, current - 1));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      activate(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      activate(slides.length - 1);
+    }
+  });
+
+  // Open via hash on load
+  var initial = 0;
+  if (window.location.hash) {
+    var hashIdx = sidebarItems.findIndex(function (li) {
+      return '#' + li.dataset.target === window.location.hash;
+    });
+    if (hashIdx >= 0) initial = hashIdx;
+  }
+  activate(initial);
+})();
+</script>
+
+</body>
+</html>

@@ -186,13 +186,19 @@ section.holo {
 }
 .chrome-logo {
   position: absolute;
-  top: 60px; left: 120px;
+  /* Top-right, 75px above the topmost text row (eyebrow / h-title). */
+  top: calc(var(--pad-top) - 75px);
+  right: var(--pad-x);
   height: 28px;
+  width: auto;
   opacity: 0.85;
+  z-index: 2;
 }
 .chrome-foot {
-  position: absolute;
-  bottom: 48px; left: 120px; right: 120px;
+  position: relative;
+  margin-top: auto;
+  flex-shrink: 0;
+  padding-top: 32px;
   display: flex; justify-content: space-between; align-items: baseline;
   font-family: var(--font-sans);
   font-size: 24px; font-weight: 500;

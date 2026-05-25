@@ -788,6 +788,8 @@ Templates by purpose:
 
 **When to use:** the closing slide. Three audience segments with different next actions.
 
+**Pipeline product demos:** use T11 layout for **value summary** — three product-outcome cards recap what the viewer just saw. **Do not** add sales follow-up CTAs (contact Plaid, Account Manager, free trial, Start a POC, retro analysis). Close with declarative outcome copy; partnership attribution stays in `.chrome-foot` only.
+
 **Layout:**
 - `.holo` background
 - Massive Bowery Street headline ("Let's get *specific.*")

@@ -38,6 +38,7 @@ const { loadTimingContract } = require('../../timing-contract');
 const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../../validate-narration-sync');
 const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { isSlideStep: isSlideStepShared } = require('../utils/step-kind');
+const { isKnownWorkhorseLayout } = require('../utils/slide-template-registry');
 const { getSlideTypographyCeilings } = require('../utils/normalize-slide-typography');
 const {
   appendPipelineLogSection,
@@ -133,6 +134,7 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'slide-workhorse-theme-leak',
   'slide-workhorse-runtime-leak',
   'slide-text-overlap',
+  'slide-forbidden-sales-cta',
   'cra-lendscore-host-layout',
   'host-logo-contrast',
 ]);
@@ -632,6 +634,55 @@ function scanSlidePlaidLogoAuthenticity(html, slideStepIds) {
   return out;
 }
 
+/**
+ * Chrome logo placement — top-right, 28px height via CSS (not inline showcase scale).
+ * @param {string} html
+ * @param {string[]} slideStepIds
+ */
+function scanSlideChromeLogoPlacement(html, slideStepIds) {
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const out = [];
+
+  for (const [stepId, block] of blocks) {
+    const imgTags = block.match(/<img[^>]*\bclass="[^"]*chrome-logo[^"]*"[^>]*>/gi) || [];
+    for (const tag of imgTags) {
+      const style = (tag.match(/\bstyle\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+      if (!style) continue;
+
+      if (/\bleft\s*:/i.test(style)) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-chrome-logo-placement',
+          'chrome-logo has inline left: positioning (legacy top-left placement).',
+          'Remove inline style on .chrome-logo. Placement is top-right via slide.css: top: calc(var(--pad-top) - 75px); right: var(--pad-x); height: 28px.'
+        ));
+        continue;
+      }
+
+      const heightMatch = style.match(/\bheight\s*:\s*(\d+(?:\.\d+)?)\s*px/i);
+      if (heightMatch && parseFloat(heightMatch[1], 10) > 36) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-chrome-logo-placement',
+          `chrome-logo inline height ${heightMatch[1]}px exceeds production 28px (showcase preview leak).`,
+          'Remove inline height on .chrome-logo — pipeline logo is 28px via slide.css / pipeline-slide-contract.css.'
+        ));
+      }
+
+      if (/\btop\s*:\s*60px\b/i.test(style) && /\bleft\s*:\s*120px\b/i.test(style)) {
+        out.push(slideDesignCritical(
+          stepId,
+          'slide-chrome-logo-placement',
+          'chrome-logo uses stale DECK_DESIGN_SYSTEM top-left coordinates (60px / 120px).',
+          'Remove inline style; use canonical top-right placement from slide.css.'
+        ));
+      }
+    }
+  }
+
+  return out;
+}
+
 /** @param {string} html */
 function scanSlideDesignTokens(html) {
   if (!html || !/\bslide-root\b/.test(html)) return [];
@@ -897,6 +948,68 @@ function scanSlideMintOveruse(html, slideStepIds) {
         'Reserve --plaid-teal-500 / #42F0CD for a single eye-draw per slide.'
       ));
     }
+  }
+  return out;
+}
+
+/** Forbidden sales / outbound CTAs on pipeline slides (not sales decks). */
+const SLIDE_FORBIDDEN_SALES_CTA_PATTERNS = [
+  { re: /\bcontact\s+plaid\b/i, label: 'contact Plaid' },
+  { re: /\bcontact\s+(?:your\s+)?(?:plaid\s+)?account\s+manager\b/i, label: 'contact Account Manager' },
+  { re: /\bstart\s+a\s+free\s+trial\b/i, label: 'start a free trial' },
+  { re: /\bfree\s+trial\b/i, label: 'free trial' },
+  { re: /\bstart\s+a\s+poc\b/i, label: 'Start a POC' },
+  { re: /\bpoc\s+scoping\b/i, label: 'POC scoping' },
+  { re: /\bperform\s+a\s+retro\s+analysis\b/i, label: 'perform a retro analysis' },
+  { re: /\brun\s+the\s+production\s+retro\b/i, label: 'run the production retro' },
+  { re: /\bstart\s+your\s+retro\b/i, label: 'start your retro' },
+  { re: /\bgreenlight\s+(?:the\s+)?(?:protect\s+)?retro\b/i, label: 'greenlight the retro' },
+];
+
+function stripHtmlToText(fragment) {
+  return String(fragment || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** @param {string} html @param {string[]} slideStepIds */
+function scanSlideForbiddenSalesCta(html, slideStepIds) {
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const out = [];
+  for (const [stepId, block] of blocks) {
+    const text = stripHtmlToText(block);
+    const buttonLike = /<button\b[^>]*>[\s\S]*?<\/button>/gi;
+    const pillLike = /<(?:button|span|a)\b[^>]*(?:border-radius:\s*999|class="[^"]*(?:btn|cta|pill)[^"]*")[^>]*>[\s\S]*?<\/(?:button|span|a)>/gi;
+    const hits = new Set();
+    for (const { re, label } of SLIDE_FORBIDDEN_SALES_CTA_PATTERNS) {
+      if (re.test(text)) hits.add(label);
+    }
+    let m;
+    while ((m = buttonLike.exec(block)) !== null) {
+      const btnText = stripHtmlToText(m[0]);
+      for (const { re, label } of SLIDE_FORBIDDEN_SALES_CTA_PATTERNS) {
+        if (re.test(btnText)) hits.add(label);
+      }
+    }
+    while ((m = pillLike.exec(block)) !== null) {
+      const pillText = stripHtmlToText(m[0]);
+      for (const { re, label } of SLIDE_FORBIDDEN_SALES_CTA_PATTERNS) {
+        if (re.test(pillText)) hits.add(label);
+      }
+    }
+    if (hits.size === 0) continue;
+    out.push({
+      stepId,
+      category: 'slide-forbidden-sales-cta',
+      severity: 'critical',
+      deterministicBlocker: true,
+      issue: `Forbidden sales CTA on slide: ${[...hits].join(', ')}.`,
+      suggestion:
+        'Remove contact/trial/POC/retro action buttons and lines. Value-summary slides should recap product outcomes with declarative copy — see plaid-slide-design SKILL § Forbidden sales CTAs.',
+    });
   }
   return out;
 }
@@ -1217,19 +1330,64 @@ function scanSlideMotionAttributes(html, slideStepIds) {
   return out;
 }
 
+/** Ensure each slide uses a registered showcase workhorse layout. */
+function scanSlideShowcaseTemplate(html, demoScript, buildMode) {
+  const mode = String(buildMode || '').toLowerCase().trim();
+  if (mode !== 'app+slides') return [];
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  const slideStepIds = steps.filter((s) => isSlideLikeStep(s)).map((s) => s.id);
+  if (!slideStepIds.length) return [];
+  const out = [];
+  for (const stepId of slideStepIds) {
+    const re = new RegExp(
+      `<div[^>]*\\bdata-testid="step-${String(stepId).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}"[^>]*>[\\s\\S]*?(?=<div[^>]*\\bdata-testid="step-|<!--[\\s\\S]*?SIDE PANELS|<div[^>]*\\bid="(?:link-events-panel|api-response-panel)"|<\\/body>)`,
+      'i'
+    );
+    const m = String(html || '').match(re);
+    if (!m) continue;
+    const block = m[0];
+    if (/\bdata-slide-pending\s*=\s*"true"/i.test(block)) continue;
+    const layoutM = block.match(/\bdata-workhorse-layout\s*=\s*["']([^"']+)["']/i);
+    const layout = layoutM ? layoutM[1] : '';
+    if (!layout) {
+      out.push({
+        category: 'slide-showcase-template',
+        severity: 'warning',
+        deterministicBlocker: false,
+        stepId,
+        issue: `Slide "${stepId}" missing data-workhorse-layout (must match templates/slide-template/showcase registry).`,
+      });
+      continue;
+    }
+    if (!isKnownWorkhorseLayout(layout)) {
+      out.push({
+        category: 'slide-showcase-template',
+        severity: 'warning',
+        deterministicBlocker: false,
+        stepId,
+        issue: `Slide "${stepId}" uses unknown workhorse layout "${layout}" — not in showcase registry.`,
+      });
+    }
+  }
+  return out;
+}
+
 /** Run all slide-design scanners when the build includes slides. */
-function scanSlideDesignSystem(html, demoScript) {
+function scanSlideDesignSystem(html, demoScript, buildMode) {
   const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
   const slideStepIds = steps.filter((s) => isSlideLikeStep(s)).map((s) => s.id);
   if (!slideStepIds.length || !/\bslide-root\b/.test(html || '')) return [];
   return [
+    ...scanSlideShowcaseTemplate(html, demoScript, buildMode),
     ...scanSlidePlaidLogoAuthenticity(html, slideStepIds),
+    ...scanSlideChromeLogoPlacement(html, slideStepIds),
     ...scanSlideDesignTokens(html),
     ...scanSlideShellChrome(html, slideStepIds),
     ...scanSlideTypographyFloor(html),
     ...scanSlideTypographyCeiling(html),
     ...scanSlideHeadlineItalicAccent(html, slideStepIds),
     ...scanSlideMintOveruse(html, slideStepIds),
+    ...scanSlideForbiddenSalesCta(html, slideStepIds),
     ...scanSlideInlineBlockLayout(html),
     ...scanSlideBackgroundRhythm(demoScript, html),
     ...scanSlideInventedColors(html),
@@ -3605,7 +3763,7 @@ async function main(opts = {}) {
     // On app-only runs we instead run scanAppOnlyNoSlides, which asserts
     // zero slide artifacts (any leak is a critical blocker).
     if (!isAppOnlyRun) {
-      diagnostics.push(...scanSlideDesignSystem(html, demoScript));
+      diagnostics.push(...scanSlideDesignSystem(html, demoScript, resolvedBuildMode));
       // Narration-vs-rendered concrete-values drift scanner. Fires only on
       // app+slides; catches LLM hallucinated claims before recording.
       diagnostics.push(...scanSlideNarrationConcreteValues(html, demoScript, resolvedBuildMode));
@@ -4563,6 +4721,7 @@ module.exports = {
   scanSlideHostChromeLeak,
   scanSlideHeadlineItalicAccent,
   scanSlideMintOveruse,
+  scanSlideForbiddenSalesCta,
   scanSlideInlineBlockLayout,
   scanSlideBackgroundRhythm,
   scanSlideInventedColors,
@@ -4570,12 +4729,14 @@ module.exports = {
   scanSlideWorkhorseRuntimeLeak,
   scanSlideMotionAttributes,
   scanSlideTextOverlap,
+  scanSlideShowcaseTemplate,
   scanSlideDesignSystem,
   scanAppOnlyNoSlides,
   scanSlideNarrationConcreteValues,
   scanCraHostUnderwritingContracts,
   scanPanelOverlayContract,
   scanSlidePlaidLogoAuthenticity,
+  scanSlideChromeLogoPlacement,
   extractStepHtmlBlocks,
   extractSlideStepHtmlBlocks,
   isCanonicalSlidePlaidLogoSrc,

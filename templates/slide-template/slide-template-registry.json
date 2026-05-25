@@ -1,0 +1,603 @@
+{
+  "meta": {
+    "generatedAt": "2026-05-25T19:10:00.643Z",
+    "source": "templates/slide-template/showcase/index.html",
+    "templateCount": 20
+  },
+  "templates": [
+    {
+      "id": "t1-title-hero",
+      "name": "Title Hero",
+      "category": "opening",
+      "categories": [
+        "Opening"
+      ],
+      "slideTemplate": "T1",
+      "workhorseLayout": "cover",
+      "backgroundClass": "holo",
+      "whenToUse": "Deck openers, hero moments, brand statements where a single emotional payoff carries the slide.",
+      "avoidWhen": "When you need to introduce multiple ideas at once — use Three Pillars or Bullet List instead.",
+      "signals": {
+        "keywords": [
+          "intro",
+          "overview",
+          "welcome",
+          "hero",
+          "opener",
+          "opening",
+          "openers"
+        ],
+        "workhorseLayout": "cover",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t2-section-beat",
+      "name": "Section Beat",
+      "category": "opening",
+      "categories": [
+        "Opening"
+      ],
+      "slideTemplate": "T2",
+      "workhorseLayout": "section-divider",
+      "backgroundClass": null,
+      "whenToUse": "Major chapter breaks in long decks. Gives the audience a 'here's where we are' moment with one giant numeral.",
+      "avoidWhen": "Decks shorter than 8 slides — every break costs pacing. Use sparingly: 3–5 in a 20-slide deck.",
+      "signals": {
+        "keywords": [
+          "intro",
+          "overview",
+          "welcome",
+          "hero",
+          "opener",
+          "opening"
+        ],
+        "workhorseLayout": "section-divider",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t3-statement-slide",
+      "name": "Statement Slide",
+      "category": "explainer",
+      "categories": [
+        "Explainer"
+      ],
+      "slideTemplate": "T3",
+      "workhorseLayout": "bullets",
+      "backgroundClass": null,
+      "whenToUse": "One headline, one paragraph, lots of breathing room. Best for the single most important point in a section.",
+      "avoidWhen": "When you have 3+ supporting points — use Bullet List or Three Pillars instead.",
+      "signals": {
+        "keywords": [
+          "explain",
+          "why",
+          "how it works",
+          "capability",
+          "feature",
+          "bullet",
+          "pillar",
+          "statement",
+          "bullets"
+        ],
+        "workhorseLayout": "bullets",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "bullet-list",
+      "name": "Bullet List",
+      "category": "explainer",
+      "categories": [
+        "Explainer"
+      ],
+      "slideTemplate": "T3",
+      "workhorseLayout": "bullets",
+      "backgroundClass": null,
+      "whenToUse": "Classic agenda or capability rundown — 3–6 enumerated points. Reach for this when the items are peers, not a process.",
+      "avoidWhen": "When the items are sequential (use Step Flow) or comparative (use Old Way vs New Way).",
+      "signals": {
+        "keywords": [
+          "explain",
+          "why",
+          "how it works",
+          "capability",
+          "feature",
+          "bullet",
+          "pillar",
+          "statement",
+          "bullets"
+        ],
+        "workhorseLayout": "bullets",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t5-three-pillars",
+      "name": "Three Pillars",
+      "category": "explainer",
+      "categories": [
+        "Explainer"
+      ],
+      "slideTemplate": "T5",
+      "workhorseLayout": "three-column",
+      "backgroundClass": "light",
+      "whenToUse": "Three peer concepts of equal weight — capabilities, customer segments, value props. The rhythm of the deck loves the rule of three here.",
+      "avoidWhen": "Two ideas (use Before / After) or four+ (drop to Bullet List). Forcing three when only two fit reads as filler.",
+      "signals": {
+        "keywords": [
+          "explain",
+          "why",
+          "how it works",
+          "capability",
+          "feature",
+          "bullet",
+          "pillar",
+          "statement",
+          "pillars"
+        ],
+        "workhorseLayout": "three-column",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "big-pull-quote",
+      "name": "Big Pull Quote",
+      "category": "explainer",
+      "categories": [
+        "Explainer"
+      ],
+      "slideTemplate": "T3",
+      "workhorseLayout": "big-quote",
+      "backgroundClass": "cream",
+      "whenToUse": "A single quote that earns full-bleed treatment — internal voice, customer testimonial, or industry thinker. Use after a data slide to soften the rhythm.",
+      "avoidWhen": "Generic platitudes — the quote needs to land. If it doesn't quote-tweet itself, cut it.",
+      "signals": {
+        "keywords": [
+          "explain",
+          "why",
+          "how it works",
+          "capability",
+          "feature",
+          "bullet",
+          "pillar",
+          "statement"
+        ],
+        "workhorseLayout": "big-quote",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t4-triple-stat",
+      "name": "Triple Stat",
+      "category": "metrics",
+      "categories": [
+        "Metrics & Data"
+      ],
+      "slideTemplate": "T4",
+      "workhorseLayout": "stat-highlight",
+      "backgroundClass": null,
+      "whenToUse": "Three hero numbers side-by-side at maximum size. The flagship metrics slide of a deck.",
+      "avoidWhen": "Four+ metrics (use KPI Grid) or qualitative claims dressed as numbers. Each stat must be defensible.",
+      "signals": {
+        "keywords": [
+          "percent",
+          "%",
+          "kpi",
+          "metric",
+          "score",
+          "stat",
+          "number",
+          "rate",
+          "reduction",
+          "increase",
+          "table",
+          "chart",
+          "data",
+          "numbers",
+          "metrics"
+        ],
+        "workhorseLayout": "stat-highlight",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "kpi-grid",
+      "name": "KPI Grid",
+      "category": "metrics",
+      "categories": [
+        "Metrics & Data"
+      ],
+      "slideTemplate": "T4",
+      "workhorseLayout": "kpi-grid",
+      "backgroundClass": null,
+      "whenToUse": "Four metrics in a denser grid with QoQ deltas. Engineering reviews, ops dashboards, board updates.",
+      "avoidWhen": "Marketing decks where three big numbers tell a stronger story — switch to Triple Stat.",
+      "signals": {
+        "keywords": [
+          "percent",
+          "%",
+          "kpi",
+          "metric",
+          "score",
+          "stat",
+          "number",
+          "rate",
+          "reduction",
+          "increase",
+          "table",
+          "chart",
+          "data",
+          "metrics"
+        ],
+        "workhorseLayout": "kpi-grid",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "data-table",
+      "name": "Data Table",
+      "category": "metrics",
+      "categories": [
+        "Metrics & Data"
+      ],
+      "slideTemplate": "T7",
+      "workhorseLayout": "table",
+      "backgroundClass": "light",
+      "whenToUse": "When the comparison needs rows and right-aligned numerics — pricing tiers, plan comparisons, API limits, score thresholds.",
+      "avoidWhen": "Three peers (use Three Pillars) or before/after (use Before / After). Tables are dense by design — earn the density.",
+      "signals": {
+        "keywords": [
+          "percent",
+          "%",
+          "kpi",
+          "metric",
+          "score",
+          "stat",
+          "number",
+          "rate",
+          "reduction",
+          "increase",
+          "table",
+          "chart",
+          "data"
+        ],
+        "workhorseLayout": "table",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "bar-chart-insight",
+      "name": "Bar Chart Insight",
+      "category": "metrics",
+      "categories": [
+        "Metrics & Data"
+      ],
+      "slideTemplate": "T4",
+      "workhorseLayout": "chart-bar",
+      "backgroundClass": null,
+      "whenToUse": "Bounded categorical comparisons where ordering matters — top-N institutions, error categories, monthly cohorts.",
+      "avoidWhen": "Continuous trends (use Timeline). Pipeline contract: SVG only — Chart.js is blocked by build-QA.",
+      "signals": {
+        "keywords": [
+          "percent",
+          "%",
+          "kpi",
+          "metric",
+          "score",
+          "stat",
+          "number",
+          "rate",
+          "reduction",
+          "increase",
+          "table",
+          "chart",
+          "data"
+        ],
+        "workhorseLayout": "chart-bar",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t6-before-after",
+      "name": "Before / After",
+      "category": "comparison_flow",
+      "categories": [
+        "Comparison & Flow"
+      ],
+      "slideTemplate": "T6",
+      "workhorseLayout": "comparison",
+      "backgroundClass": null,
+      "whenToUse": "Two-panel transformation — old way vs new way, raw data vs enriched, manual review vs automated. The narrative arc lives in the contrast.",
+      "avoidWhen": "Three-panel comparisons (use Three Pillars). The 50/50 split is what makes the rhetoric work.",
+      "signals": {
+        "keywords": [
+          "before",
+          "after",
+          "vs",
+          "versus",
+          "old way",
+          "new way",
+          "compare",
+          "flow",
+          "step",
+          "process",
+          "architecture",
+          "integration",
+          "pipeline"
+        ],
+        "workhorseLayout": "comparison",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t7-comparison-table",
+      "name": "Old Way vs New Way",
+      "category": "comparison_flow",
+      "categories": [
+        "Comparison & Flow"
+      ],
+      "slideTemplate": "T7",
+      "workhorseLayout": "comparison",
+      "backgroundClass": "light",
+      "whenToUse": "Three to five matched rows showing transformation — process, latency, cost, accuracy. The arrow does the rhetorical work.",
+      "avoidWhen": "More than five rows (collapse to fewer pairs) or qualitative-only rows that don't earn their place (cut them).",
+      "signals": {
+        "keywords": [
+          "before",
+          "after",
+          "vs",
+          "versus",
+          "old way",
+          "new way",
+          "compare",
+          "flow",
+          "step",
+          "process",
+          "architecture",
+          "integration",
+          "pipeline"
+        ],
+        "workhorseLayout": "comparison",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t8-step-flow",
+      "name": "Step Flow",
+      "category": "comparison_flow",
+      "categories": [
+        "Comparison & Flow"
+      ],
+      "slideTemplate": "T8",
+      "workhorseLayout": "process-steps",
+      "backgroundClass": null,
+      "whenToUse": "Three sequential cards — process, evolution, lifecycle. Numbered, left-to-right, narrative carries the eye.",
+      "avoidWhen": "Loose categories that aren't actually a process (use Three Pillars). Sequencing without causality reads as filler.",
+      "signals": {
+        "keywords": [
+          "before",
+          "after",
+          "vs",
+          "versus",
+          "old way",
+          "new way",
+          "compare",
+          "flow",
+          "step",
+          "process",
+          "architecture",
+          "integration",
+          "pipeline",
+          "steps"
+        ],
+        "workhorseLayout": "process-steps",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "flow-diagram",
+      "name": "Flow Diagram",
+      "category": "comparison_flow",
+      "categories": [
+        "Comparison & Flow"
+      ],
+      "slideTemplate": "T8",
+      "workhorseLayout": "flow-diagram",
+      "backgroundClass": null,
+      "whenToUse": "A 4–6 node pipeline with arrows and one highlighted node. Better than Step Flow when the path branches or one node deserves emphasis.",
+      "avoidWhen": "Strict three-step process (use Step Flow). Long chains (>6 nodes) — break them into two slides.",
+      "signals": {
+        "keywords": [
+          "before",
+          "after",
+          "vs",
+          "versus",
+          "old way",
+          "new way",
+          "compare",
+          "flow",
+          "step",
+          "process",
+          "architecture",
+          "integration",
+          "pipeline"
+        ],
+        "workhorseLayout": "flow-diagram",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t9-architecture-map",
+      "name": "Architecture Map",
+      "category": "comparison_flow",
+      "categories": [
+        "Comparison & Flow"
+      ],
+      "slideTemplate": "T9",
+      "workhorseLayout": "arch-diagram",
+      "backgroundClass": null,
+      "whenToUse": "One central block (the platform) with many connected dependencies below. The 'big picture' slide.",
+      "avoidWhen": "Linear process (use Step Flow or Flow Diagram). Architecture means hierarchy + multiplicity, not just sequence.",
+      "signals": {
+        "keywords": [
+          "before",
+          "after",
+          "vs",
+          "versus",
+          "old way",
+          "new way",
+          "compare",
+          "flow",
+          "step",
+          "process",
+          "architecture",
+          "integration",
+          "pipeline"
+        ],
+        "workhorseLayout": "arch-diagram",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "timeline",
+      "name": "Timeline",
+      "category": "plans_proof",
+      "categories": [
+        "Plans & Proof"
+      ],
+      "slideTemplate": "T8",
+      "workhorseLayout": "timeline",
+      "backgroundClass": null,
+      "whenToUse": "A 4–6 point horizontal timeline — product history, integration milestones, rollout phases. Time is the spine.",
+      "avoidWhen": "Items that aren't on a true time axis (use Step Flow). 'Future plans' slides — use Roadmap, it's more honest.",
+      "signals": {
+        "keywords": [
+          "timeline",
+          "roadmap",
+          "quote",
+          "testimonial",
+          "proof",
+          "code",
+          "api",
+          "snippet",
+          "customer"
+        ],
+        "workhorseLayout": "timeline",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "roadmap",
+      "name": "Roadmap",
+      "category": "plans_proof",
+      "categories": [
+        "Plans & Proof"
+      ],
+      "slideTemplate": "T11",
+      "workhorseLayout": "roadmap",
+      "backgroundClass": null,
+      "whenToUse": "Four-column NOW / NEXT / LATER / VISION. The honest planning slide — communicates commitment levels without overpromising.",
+      "avoidWhen": "If the columns are equally weighted, you're not really planning. Earlier columns should be denser; later columns shorter.",
+      "signals": {
+        "keywords": [
+          "timeline",
+          "roadmap",
+          "quote",
+          "testimonial",
+          "proof",
+          "code",
+          "api",
+          "snippet",
+          "customer"
+        ],
+        "workhorseLayout": "roadmap",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t10-proof-quote",
+      "name": "Proof Quote",
+      "category": "plans_proof",
+      "categories": [
+        "Plans & Proof"
+      ],
+      "slideTemplate": "T10",
+      "workhorseLayout": "customer-proof",
+      "backgroundClass": null,
+      "whenToUse": "Customer testimonial paired with a hero stat — the 'why this is real' moment in a pitch deck.",
+      "avoidWhen": "Quotes without a named source. The attribution is the credibility. Vague 'a customer said' kills it.",
+      "signals": {
+        "keywords": [
+          "timeline",
+          "roadmap",
+          "quote",
+          "testimonial",
+          "proof",
+          "code",
+          "api",
+          "snippet",
+          "customer"
+        ],
+        "workhorseLayout": "customer-proof",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "code-window",
+      "name": "Code Window",
+      "category": "plans_proof",
+      "categories": [
+        "Plans & Proof"
+      ],
+      "slideTemplate": "T3",
+      "workhorseLayout": "code",
+      "backgroundClass": null,
+      "whenToUse": "Show one API call or one component snippet — the developer experience proof point. Keep to 10–15 lines max.",
+      "avoidWhen": "Whole files (post a gist instead). Or runtime libraries (highlight.js is blocked by build-QA — use pre/code with monospace).",
+      "signals": {
+        "keywords": [
+          "timeline",
+          "roadmap",
+          "quote",
+          "testimonial",
+          "proof",
+          "code",
+          "api",
+          "snippet",
+          "customer"
+        ],
+        "workhorseLayout": "code",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "t11-action-cards",
+      "name": "Action Cards",
+      "category": "close",
+      "categories": [
+        "Close"
+      ],
+      "slideTemplate": "T11",
+      "workhorseLayout": "cta",
+      "backgroundClass": "holo",
+      "whenToUse": "The closer. Three audience-segmented action cards — engineering, product, executive. Or three rollout phases. The deck ends on a doable next step.",
+      "avoidWhen": "A single generic 'thanks' slide — that wastes the closing real estate. Always end with what to do next.",
+      "signals": {
+        "keywords": [
+          "summary",
+          "next step",
+          "cta",
+          "recap",
+          "value",
+          "outcome",
+          "action"
+        ],
+        "workhorseLayout": "cta",
+        "stepRoles": [
+          "value-summary"
+        ]
+      }
+    }
+  ]
+}

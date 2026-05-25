@@ -107,6 +107,18 @@
   color: var(--plaid-teal-500);
 }
 
+/* Chrome logo — production placement (matches slide.css; tmp-showcase scales
+ * to ~140px for gallery preview only — pipeline recordings stay 28px). */
+.slide-root .chrome-logo {
+  position: absolute;
+  top: calc(var(--pad-top) - 75px);
+  right: var(--pad-x);
+  height: 28px;
+  width: auto;
+  opacity: 0.85;
+  z-index: 2;
+}
+
 /* ── Slide vs host app — full-screen takeover (no Huntington chrome) ─────────
  * Host nav/banner/footer live OUTSIDE `.step` divs. When a slide step is
  * active, `body.pipeline-slide-active` (toggled by post-panels script) hides

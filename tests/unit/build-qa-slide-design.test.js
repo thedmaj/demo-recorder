@@ -86,6 +86,26 @@ describe('slide design scanners', () => {
     assert.equal(d[0].category, 'slide-mint-overuse');
   });
 
+  test('scanSlideForbiddenSalesCta blocks contact and retro CTAs', () => {
+    const html = `
+<div data-testid="step-v" class="step"><motion class="slide-root">
+  <p>Next step: contact your Plaid Account Manager to Start a POC.</p>
+  <span style="padding:14px 28px;border-radius:999px;background:#42F0CD">Start your Retro →</span>
+</div></motion>`.replace(/<\/?motion\b/g, (t) => t.replace('motion', 'div'));
+    const d = bq.scanSlideForbiddenSalesCta(html, ['v']);
+    assert.ok(d.length >= 1);
+    assert.equal(d[0].category, 'slide-forbidden-sales-cta');
+    assert.equal(d[0].deterministicBlocker, true);
+  });
+
+  test('scanSlideForbiddenSalesCta passes product outcome copy', () => {
+    const html = `
+<div data-testid="step-v" class="step"><div class="slide-root">
+  <p style="font-size:26px">Verified ACATS data reduces transfer failures across the funnel.</p>
+</div></div>`.replace(/<\/?div/g, (t) => t.replace('div', 'div'));
+    assert.equal(bq.scanSlideForbiddenSalesCta(html, ['v']).length, 0);
+  });
+
   test('scanSlideInlineBlockLayout flags inline-block under slide-root', () => {
     const html = '<style>.slide-root .row { display: inline-block; }</style><div class="slide-root"></div>';
     const d = bq.scanSlideInlineBlockLayout(html);
@@ -183,5 +203,35 @@ describe('slide design scanners', () => {
 </div></div>`;
     const d = bq.scanSlidePlaidLogoAuthenticity(html, ['icon']);
     assert.ok(d.some((x) => x.category === 'slide-plaid-logo-noncanonical'));
+  });
+
+  test('scanSlideChromeLogoPlacement blocks inline left positioning', () => {
+    const html = `
+<div data-testid="step-bad" class="step"><div class="slide-root">
+  <div class="frame">
+    <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" style="left:120px;top:60px;height:28px" />
+    <h2 class="h-title">Headline <em>accent.</em></h2>
+  </div>
+</div></div>`;
+    const d = bq.scanSlideChromeLogoPlacement(html, ['bad']);
+    assert.equal(d.length, 1);
+    assert.equal(d[0].category, 'slide-chrome-logo-placement');
+    assert.equal(d[0].deterministicBlocker, true);
+  });
+
+  test('scanSlideChromeLogoPlacement blocks showcase-scale inline height', () => {
+    const html = `
+<div data-testid="step-big" class="step"><div class="slide-root">
+  <div class="frame">
+    <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" style="height:140px" />
+    <h2 class="h-title">Headline <em>accent.</em></h2>
+  </div>
+</div></div>`;
+    const d = bq.scanSlideChromeLogoPlacement(html, ['big']);
+    assert.ok(d.some((x) => x.category === 'slide-chrome-logo-placement'));
+  });
+
+  test('scanSlideChromeLogoPlacement passes canonical img without inline style', () => {
+    assert.equal(bq.scanSlideChromeLogoPlacement(SLIDE_SHELL_OK, ['summary']).length, 0);
   });
 });

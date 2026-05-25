@@ -120,6 +120,8 @@ describe('stripSlideRoots — replaces .slide-root with canonical placeholder', 
       assert.match(html, /data-testid="step-opener"/);
       assert.match(html, /data-slide-pending="true"/);
       assert.match(html, /data-slide-template="T3"/);
+      assert.match(html, /data-workhorse-layout="/);
+      assert.match(html, /data-showcase-template="/);
       assert.equal(/old slide content/.test(html), false);
       assert.equal(/<div class="slide-root"/.test(html), false);
     } finally {

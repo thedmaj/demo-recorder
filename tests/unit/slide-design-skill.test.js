@@ -44,19 +44,41 @@ test('getSlideDesignBriefPaths points at brand-design-briefs', () => {
   assert.ok(fs.existsSync(paths.deckComposition));
 });
 
+test('buildSlideInsertionPrompt injects showcase template skeleton, not T3 shell', () => {
+  const { getShowcaseTemplateSkeletonForRouting } = require('../../scripts/scratch/utils/showcase-template-extract');
+  const { routeSlideTemplate } = require('../../scripts/scratch/utils/slide-template-router');
+  const routing = routeSlideTemplate(
+    { id: 'insight-kpi', narration: 'Three KPI tiles show 94% acceptance rate.' },
+    { stepIndex: 1, totalSlides: 3 }
+  );
+  const showcaseTemplate = getShowcaseTemplateSkeletonForRouting(routing, { projectRoot: ROOT });
+  const { userMessages } = buildSlideInsertionPrompt({
+    step: { id: 'insight-kpi', label: 'KPI', sceneType: 'slide', stepKind: 'slide' },
+    brand: { name: 'Huntington Bank' },
+    slideDesignSkillMarkdown: 'SKILL EXCERPT',
+    deckDesignSystem: '# Plaid Deck Design System\n--plaid-teal-500',
+    templateRouting: routing,
+    showcaseTemplate,
+  });
+  const user = userMessages[0].content;
+  assert.match(user, /RECOMMENDED SHOWCASE TEMPLATE/);
+  assert.match(user, /workhorse-layout/);
+  assert.doesNotMatch(user, /REFERENCE SHELL \(T3 statement/);
+  assert.doesNotMatch(user, /pipeline-slide-shell\.html/);
+});
+
 test('buildSlideInsertionPrompt always injects host isolation + skill', () => {
   const { userMessages } = buildSlideInsertionPrompt({
     step: { id: 'auth-insight', label: 'Auth', sceneType: 'insight', stepKind: 'slide' },
     brand: { name: 'Huntington Bank' },
     slideDesignSkillMarkdown: 'SKILL EXCERPT',
-    hostHasExistingSlide: true,
     deckDesignSystem: '# Plaid Deck Design System\n--plaid-teal-500',
   });
   const user = userMessages[0].content;
   assert.match(user, /Customer context \(copy only/);
   assert.match(user, /SLIDE vs HOST/);
   assert.match(user, /SKILL EXCERPT/);
-  assert.match(user, /DESIGN SYSTEM \(palette \+ shell — required even when mirroring\)/);
+  assert.match(user, /DESIGN SYSTEM \(tokens \+ shell\)/);
   assert.doesNotMatch(user, /^Brand: Huntington/m);
 });
 
