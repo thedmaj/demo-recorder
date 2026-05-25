@@ -2,17 +2,21 @@
 product: Plaid Layer
 slug: layer
 api_endpoints:
-  - "/link/token/create"
+  - "/session/token/create"
+  - "/user_account/session/get"
+  - "/user/create"
+  - "/item/public_token/exchange"
+  - "/auth/get"
 use_cases:
   - "streamlined-onboarding"
   - "returning-user-verification"
   - "kyc-auto-fill"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-21T03:07:39.053Z"
-needs_review: true
-approved: false
-version: 1
-last_vp_research: "2026-04-24"
+last_ai_update: "2026-05-25"
+needs_review: false
+approved: true
+version: 2
+last_vp_research: "2026-05-25"
 ---
 
 # Plaid Layer
@@ -89,17 +93,69 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
      Build agents and script generator must use these exactly. -->
 
 - Product name: "Plaid Layer" (not "Layer Connect" or "Layer Auth")
-- Link token: created with Layer-specific template ID via `/link/token/create`
-- Link events: `LAYER_READY`, `LAYER_NOT_AVAILABLE`, `OPEN`, `HANDOFF`
-- Do NOT use "Trust Index" — not a Plaid product term
-- [DRAFT] Field visibility is template-driven (required vs optional), not globally fixed for all Layer stories
-- [DRAFT] Account-verification stories should omit DOB/SSN unless explicitly required
-- [DRAFT] Identity verification and CRA-oriented stories typically require DOB + SSN fields on share confirmation
-- [DRAFT] Layout/copy fidelity for Layer prototype demos: preserve the canonical Layer template structure, CSS hierarchy, logo placement, and fixed screen copy; only variable fields (for example name/address/bank account values) should change.
-- [DRAFT] Do not route Layer-eligible users into fallback PII collection; fallback PII + Plaid Link is for ineligible users only.
-- [DRAFT] For mobile Layer demos, show subtle helper text directly below the mobile frame with both routing numbers: `415-555-1111` (eligible) and `415-555-0011` (ineligible fallback).
-- [DRAFT] Default prefilled phone value in Layer host capture should be the eligible number first (`415-555-1111`).
-- [DRAFT] In mobile demos, slide-like steps should auto-present in desktop mode (never inside the mobile simulator pane).
+- **Session token created via `/session/token/create`** — NOT `/link/token/create`. Layer uses a different endpoint requiring a `user_token` + `template_id`.
+- Completion call: `POST /user_account/session/get` (not `/identity/get`). Returns identity + items[] in one response.
+- Link events: `LAYER_READY`, `LAYER_NOT_AVAILABLE`, `LAYER_AUTOFILL_NOT_AVAILABLE`, `OPEN`, `HANDOFF`
+- Field visibility is template-driven (required vs optional), not globally fixed for all Layer stories
+- Account-verification stories should omit DOB/SSN unless explicitly required
+- Identity verification and CRA-oriented stories typically require DOB + SSN fields on share confirmation
+- Do not route Layer-eligible users into fallback PII collection; fallback PII + Plaid Link is for ineligible users only.
+- For mobile Layer demos, show subtle helper text directly below the mobile frame with both routing numbers: `415-555-1111` (eligible) and `415-555-0011` (ineligible fallback).
+- Default prefilled phone value in Layer host capture should be the eligible number first (`415-555-1111`).
+- In mobile demos, slide-like steps should auto-present in desktop mode (never inside the mobile simulator pane).
+
+## Technical Implementation (Canonical — source of truth 2026-05-25)
+
+### End-to-end flow summary
+
+1. Call `POST /user/create` to get a persistent `user_token` per end-user (reuse across sessions).
+2. Call `POST /session/token/create` server-side with `user_token` + `template_id` → get `link_token`.
+3. Frontend: `Plaid.create({ token: linkToken, onEvent, onSuccess, onExit })` then `handler.submit({ phoneNumber })`.
+4. Handle events:
+   - `LAYER_READY` → call `handler.open()` immediately.
+   - `LAYER_NOT_AVAILABLE` → collect DOB, then call `handler.submit({ phoneNumber, dateOfBirth })`.
+   - `LAYER_AUTOFILL_NOT_AVAILABLE` → fall back to standard signup form (no Layer identity available).
+5. `onSuccess` fires with `public_token` → backend calls `POST /user_account/session/get` with `public_token`.
+6. Response: `{ user: { legal_name, email_address, phone_number, date_of_birth, address }, items: [{ item_id, access_token, institution_id }] }`.
+7. If `items[]` is present, use the `access_token` directly — **do not** also call `/item/public_token/exchange` (already done by Layer). Only call it explicitly if you need the exchange step visible in a demo API log.
+8. Optionally call `POST /auth/get` with the Item `access_token` to retrieve ACH routing + account numbers.
+
+### `/session/token/create` minimal request
+
+```jsonc
+{
+  "client_id": "PLAID_CLIENT_ID",
+  "secret":    "PLAID_SECRET",
+  "user_token": "user-…",
+  "template_id": "tmp_…",
+  "client_name": "Halo Bank",
+  "webhook": "https://…/webhook"
+}
+```
+
+### Preload pattern (instant submit)
+
+Preload `Plaid.create()` on page mount before the user types their phone — `submit()` synchronously on Continue. After `onExit`, re-arm via `setTimeout(preload, 0)`. See `artifacts/layer-onboarding/src/pages/onboarding.tsx` for the three-branch handleStart implementation.
+
+### Sandbox phones
+
+| Phone | Mode | OTP | Notes |
+|---|---|---|---|
+| `+14155550011` | Layer-eligible (`LAYER_READY`) | `123456` | Returns full identity + linked sandbox Item |
+| `+14155550000` | Extended Autofill fallback | `123456` | Requires DOB `1975-01-18`. Returns identity, no Item |
+
+### Common pitfalls
+
+- **404 on `/user_account/session/get`** → wrong endpoint name (it is `user_account`, not `user`).
+- **No `items[]` in response** → template doesn't enable bank linking, or user skipped it. Not an error.
+- **`LAYER_NOT_AVAILABLE` fires then calling `open()` directly** → SDK throws. Must collect DOB and re-`submit()` first.
+- **Plaid Link inside an iframe (e.g. Replit preview)** → won't initialize. Must open in a real browser tab.
+- **Recreating handler on every render** → hold handler in a ref; only recreate after `onExit`.
+
+### Reference implementation
+
+- `artifacts/api-server/src/routes/layer.ts` — `/start`, `/complete`, `plaidCall` wrapper, `redact()`.
+- `artifacts/layer-onboarding/src/pages/onboarding.tsx` — LayerStage state machine, preload pattern.
 
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->

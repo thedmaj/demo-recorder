@@ -296,24 +296,57 @@ function autoFixDemoScript(demoScript) {
     }
   }
 
-  // Infer missing plaidPhase:"launch" on the obvious Link step — the LLM often
-  // emits sceneType:"link" (or an embedded-link beat) without plaidPhase when
-  // Plaid Link mode is embedded.
-  if (!steps.some((s) => s && s.plaidPhase === 'launch') && !isLayerUseCase(demoScript)) {
-    let candidate = steps.find((s) => s && String(s.sceneType || '').toLowerCase() === 'link');
-    if (!candidate) {
-      candidate = steps.find((s) => {
-        if (!s || String(s.sceneType || '').toLowerCase() === 'slide') return false;
-        const text = [s.id, s.label, s.visualState, s.narration].filter(Boolean).join(' ').toLowerCase();
-        return /\b(embed(?:ded)?\s+plaid\s+link|plaid\s+link|link-launch|wf-link|link embedded|plaid-embedded-link-container|connect (?:your )?(?:bank|account)|link (?:your )?(?:bank|account|checking)|external account)\b/.test(text);
+  // Promote mislabeled marketing slides that are actually the embedded Link beat.
+  for (const step of steps) {
+    if (!step || isValueSummaryStep(step)) continue;
+    const scene = String(step.sceneType || '').toLowerCase();
+    if (scene !== 'slide') continue;
+    const text = [step.id, step.label, step.visualState, step.narration].filter(Boolean).join(' ').toLowerCase();
+    if (
+      /plaid-embedded-link-container/.test(text) ||
+      (/\bplaid\s+link\b/.test(text) && /\b(institution search|embedded|connect|external account)\b/.test(text))
+    ) {
+      step.sceneType = 'link';
+      fixes.push({
+        stepId: step.id || '(no-id)',
+        rule: 'promote-embedded-link-slide-to-link',
+        before: 'sceneType:"slide" on embedded Link beat',
+        after: 'sceneType:"link"',
       });
     }
+  }
+
+  // Infer missing plaidPhase:"launch" on the obvious Link step — the LLM often
+  // emits sceneType:"host" for embedded pre-link + link beats without plaidPhase.
+  if (!steps.some((s) => s && s.plaidPhase === 'launch') && !isLayerUseCase(demoScript)) {
+    const scoreLaunchInfer = (step) => {
+      if (!step || isValueSummaryStep(step)) return -1;
+      const scene = String(step.sceneType || '').toLowerCase();
+      if (scene === 'slide') return -1;
+      let n = 0;
+      if (scene === 'link') n += 100;
+      const text = [step.id, step.label, step.visualState, step.narration].filter(Boolean).join(' ').toLowerCase();
+      if (/plaid-embedded-link-container/.test(text)) n += 95;
+      if (/\b(embed(?:ded)?\s+plaid\s+link|plaid\s+link|link-launch|plaid-link-launch|wf-link|institution search|link(?:ing)?\s+(?:your\s+)?external|external account|connect (?:your )?(?:bank|account)|link (?:your )?(?:bank|account|checking))\b/.test(text)) {
+        n += 85;
+      }
+      if (/\b(add external|fund(?:ing)?.*external|recommended.*instant)\b/.test(text)) n += 50;
+      if (scene === 'host') n += 15;
+      return n;
+    };
+
+    let candidate = steps.find((s) => s && String(s.sceneType || '').toLowerCase() === 'link');
     if (!candidate) {
-      candidate = steps.find((s) => {
-        if (!s || String(s.sceneType || '').toLowerCase() === 'slide') return false;
-        const hay = String(s.visualState || '').toLowerCase();
-        return hay.includes('plaid-embedded-link-container') || hay.includes('data-testid="step-') && /\blink\b/.test(String(s.id || '').toLowerCase());
-      });
+      let best = null;
+      let bestScore = 0;
+      for (const s of steps) {
+        const sc = scoreLaunchInfer(s);
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = s;
+        }
+      }
+      if (best && bestScore >= 40) candidate = best;
     }
     if (candidate) {
       candidate.plaidPhase = 'launch';
@@ -389,7 +422,70 @@ function isPreLinkExplainerStep(step) {
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
+  if (
+    /\b(plaid-embedded-link-container|embedded plaid link)\b/.test(text) &&
+    /\b(add external account|link your external|external account|institution search)\b/.test(text)
+  ) {
+    return true;
+  }
   return /\b(pre[-\s]?link|link (?:your )?bank|connect (?:your )?bank|add (?:a )?bank(?: account)?|open plaid|launch plaid|continue with plaid|link externally)\b/.test(text);
+}
+
+function isEmbeddedPreLinkHostStep(step) {
+  if (!step || step.plaidPhase === 'launch') return false;
+  if (step.apiResponse?.endpoint) return false;
+  const scene = String(step.sceneType || '').toLowerCase();
+  if (scene === 'link' || scene === 'slide' || scene === 'insight') return false;
+  const text = [step?.id, step?.label, step?.narration, step?.visualState]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return (
+    /\bplaid-embedded-link-container\b/.test(text) ||
+    (/\b(embedded|embed)\b/.test(text) &&
+      /\b(add external account|external account|link your external|institution search|plaid link)\b/.test(text))
+  );
+}
+
+/**
+ * Embedded mode: collapse host pre-link + separate plaid-link-launch into one integrated launch step.
+ * Keeps the host-named step id (e.g. add-external-account-embedded) as the canonical launch step.
+ */
+function mergeEmbeddedPreLinkSplit(demoScript) {
+  if (!demoScript || !Array.isArray(demoScript.steps)) return null;
+  if (String(demoScript.plaidLinkMode || '').toLowerCase() !== 'embedded') return null;
+  const launchIdx = demoScript.steps.findIndex((s) => s && s.plaidPhase === 'launch');
+  if (launchIdx <= 0) return null;
+  const launchStep = demoScript.steps[launchIdx];
+  const preStep = demoScript.steps[launchIdx - 1];
+  if (!isEmbeddedPreLinkHostStep(preStep)) return null;
+  if (preStep.plaidPhase === 'launch') return null;
+
+  preStep.plaidPhase = 'launch';
+  preStep.sceneType = 'link';
+  if (!preStep.label && launchStep.label) preStep.label = launchStep.label;
+  if (preStep.visualState && launchStep.visualState) {
+    preStep.visualState = `${preStep.visualState} Then ${launchStep.visualState}`;
+  } else if (!preStep.visualState && launchStep.visualState) {
+    preStep.visualState = launchStep.visualState;
+  }
+  if (preStep.narration && launchStep.narration) {
+    preStep.narration = `${preStep.narration} ${launchStep.narration}`.replace(/\s{2,}/g, ' ').trim();
+  } else if (!preStep.narration && launchStep.narration) {
+    preStep.narration = launchStep.narration;
+  }
+  const preMs = Number(preStep.durationHintMs || 0);
+  const launchMs = Number(launchStep.durationHintMs || 0);
+  if (preMs > 0 || launchMs > 0) {
+    preStep.durationHintMs = preMs + launchMs;
+  }
+  if (typeof launchStep.durationMs === 'number' || typeof preStep.durationMs === 'number') {
+    preStep.durationMs = Number(preStep.durationMs || 0) + Number(launchStep.durationMs || 0);
+  }
+
+  demoScript.steps.splice(launchIdx, 1);
+  enforceCanonicalLaunchInteraction(demoScript);
+  return { removedStepId: launchStep.id, launchStepId: preStep.id };
 }
 
 function mergePreLinkIntoLaunchStep(demoScript) {
@@ -1065,6 +1161,14 @@ async function main() {
     }
   }
 
+  const mergedEmbedded = mergeEmbeddedPreLinkSplit(demoScript);
+  if (mergedEmbedded) {
+    console.log(
+      `[Script] Merged embedded pre-link "${mergedEmbedded.launchStepId}" with separate launch ` +
+        `"${mergedEmbedded.removedStepId}" into one integrated launch step.`
+    );
+  }
+
   const mergedLaunch = mergeAllPreLinkExplainersBeforeLaunch(demoScript);
   if (mergedLaunch) {
     console.log(
@@ -1073,7 +1177,11 @@ async function main() {
   }
   const canonicalLaunchId = enforceCanonicalLaunchInteraction(demoScript);
   if (canonicalLaunchId) {
-    console.log(`[Script] Normalized launch interaction target for "${canonicalLaunchId}" to data-testid="link-external-account-btn".`);
+    const modeLabel =
+      String(demoScript.plaidLinkMode || '').toLowerCase() === 'embedded'
+        ? 'goToStep → launch step id'
+        : 'data-testid="link-external-account-btn"';
+    console.log(`[Script] Normalized launch interaction target for "${canonicalLaunchId}" (${modeLabel}).`);
   }
   if (requireFinalValueSummarySlide) {
     const summarySlide = ensureFinalValueSummarySlide(demoScript, productResearchForPrompt);
@@ -1221,13 +1329,71 @@ async function main() {
 
   // ── Required Plaid Link launch step ───────────────────────────────────────
   if (process.env.PLAID_LINK_LIVE === 'true') {
-    const launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
+    let launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
+    if (!launchStep) {
+      const rescue = autoFixDemoScript(demoScript);
+      if (rescue.fixed > 0) {
+        console.warn(`[Script] Launch rescue auto-fixed ${rescue.fixed} issue(s):`);
+        for (const f of rescue.fixes) {
+          console.warn(`  · ${f.stepId} — ${f.rule}: ${f.before} → ${f.after}`);
+        }
+        enforceCanonicalLaunchInteraction(demoScript);
+        launchStep = demoScript.steps.find(s => s.plaidPhase === 'launch');
+      }
+    }
+    if (!launchStep) {
+      const steps = (demoScript.steps || []).filter((s) => {
+        if (!s || isValueSummaryStep(s)) return false;
+        const scene = String(s.sceneType || '').toLowerCase();
+        if (scene === 'slide') return false;
+        return true;
+      });
+      const score = (step) => {
+        const text = [step.id, step.label, step.visualState, step.narration].filter(Boolean).join(' ').toLowerCase();
+        let n = 0;
+        if (/plaid-embedded-link-container|institution search/.test(text)) n += 100;
+        if (/\b(plaid link|embedded link|link external|external account|connect.*bank)\b/.test(text)) n += 70;
+        if (/\blink\b/.test(String(step.id || '').toLowerCase())) n += 40;
+        if (String(step.sceneType || '').toLowerCase() === 'host') n += 10;
+        return n;
+      };
+      let best = null;
+      let bestScore = 0;
+      for (const s of steps) {
+        const sc = score(s);
+        if (sc > bestScore) {
+          bestScore = sc;
+          best = s;
+        }
+      }
+      if (best && bestScore >= 30) {
+        best.plaidPhase = 'launch';
+        best.sceneType = 'link';
+        enforceCanonicalLaunchInteraction(demoScript);
+        launchStep = best;
+        console.warn(
+          `[Script] Emergency launch assign on "${best.id}" (score=${bestScore}) — LLM omitted plaidPhase:"launch".`
+        );
+      }
+    }
     if (!launchStep) {
       if (isLayerUseCase(demoScript)) {
         console.log('[Script] No plaidPhase:"launch" step found; allowing Layer-native flow without launch step.');
       } else {
+        try {
+          fs.writeFileSync(
+            path.join(OUT_DIR, 'demo-script.failed.json'),
+            JSON.stringify(demoScript, null, 2)
+          );
+        } catch (_) { /* ignore */ }
         console.error('[Script] No step with plaidPhase:"launch" found in demo-script.json.');
-        console.error('[Script] Add plaidPhase:"launch" to the step that opens Plaid Link.');
+        console.error('[Script] Steps in failed script:');
+        for (const s of demoScript.steps || []) {
+          console.error(
+            `  · ${s.id || '(no-id)'}: sceneType=${s.sceneType || '?'} plaidPhase=${s.plaidPhase || '(none)'}`
+          );
+        }
+        console.error('[Script] Wrote out/demo-script.failed.json — add plaidPhase:"launch" to the Link step.');
         process.exit(1);
       }
     } else {
@@ -1318,8 +1484,10 @@ module.exports = {
   normalizeSceneType,
   enforceCanonicalLaunchInteraction,
   isPreLinkExplainerStep,
+  isEmbeddedPreLinkHostStep,
   mergePreLinkIntoLaunchStep,
   mergeAllPreLinkExplainersBeforeLaunch,
+  mergeEmbeddedPreLinkSplit,
   extractTopValuePropositions,
   buildValueSummaryNarration,
   isValueSummaryStep,

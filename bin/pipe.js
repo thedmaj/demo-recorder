@@ -62,7 +62,7 @@ const ORCHESTRATOR = path.join(PROJECT_ROOT, 'scripts', 'scratch', 'orchestrator
 const stageState = require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'stage-state.js'));
 const { STAGES, computeStatus } = stageState;
 
-const VALID_RESEARCH = new Set(['gapfill', 'broad', 'deep']);
+const VALID_RESEARCH = new Set(['gapfill', 'broad', 'deep', 'messaging', 'skip']);
 
 // Two vocabularies in play here:
 //   - User-friendly (this CLI, README, dashboard): smart | rebuild | patch | agent-touchup

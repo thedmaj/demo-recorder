@@ -71,6 +71,8 @@ test('skill documents unified 430×390, overflow, iframe 150px default, and inte
   assert.match(md, /Pre-link page = live embed/);
   assert.match(md, /Institution search preview/);
   assert.match(md, /opens on the next step/);
+  assert.match(md, /duplicate the Plaid SDK/);
+  assert.match(md, /Connect manually/);
   assert.doesNotMatch(md, /preload steps use static preview mocks only/);
   assert.doesNotMatch(md, /The next step \(`plaid-link-launch`/);
 });

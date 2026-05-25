@@ -10,6 +10,7 @@ const {
   validateDemoScript,
   mergePreLinkIntoLaunchStep,
   mergeAllPreLinkExplainersBeforeLaunch,
+  mergeEmbeddedPreLinkSplit,
 } = require(path.join(__dirname, '../../scripts/scratch/scratch/generate-script'));
 
 describe('plaid-link-launch-validation', () => {
@@ -113,6 +114,52 @@ describe('plaid-link-launch-validation', () => {
     assert.equal(script.steps[0].interaction.target, '[data-testid="link-your-bank"]');
     assert.ok(/Pre-link trust screen/.test(script.steps[0].visualState));
     assert.deepEqual(merged, { removedStepId: 'pre-link-explainer', launchStepId: 'plaid-link-flow' });
+  });
+
+  test('mergeEmbeddedPreLinkSplit collapses Huntington two-step split into integrated launch', () => {
+    const script = {
+      plaidLinkMode: 'embedded',
+      steps: [
+        { id: 'huntington-dashboard', sceneType: 'host', narration: 'Jordan taps Add external account.' },
+        {
+          id: 'add-external-account-embedded',
+          sceneType: 'host',
+          label: 'Add external account with embedded Plaid Link',
+          narration: 'Embedded Plaid Link loads in the page — institution search is ready.',
+          durationHintMs: 8000,
+          visualState:
+            "Huntington Add External Account page with data-testid='plaid-embedded-link-container' and trust copy.",
+        },
+        {
+          id: 'plaid-link-launch',
+          sceneType: 'link',
+          plaidPhase: 'launch',
+          narration:
+            'Inside Plaid Link, Jordan picks his bank, confirms with OTP, and connects in seconds.',
+          durationHintMs: 18000,
+          visualState: 'Live Plaid Link SDK inside embedded container.',
+          interaction: { action: 'goToStep', target: 'plaid-link-launch', waitMs: 120000 },
+        },
+        { id: 'verifying-account', sceneType: 'host', narration: 'Huntington verifies ownership.' },
+      ],
+    };
+    const merged = mergeEmbeddedPreLinkSplit(script);
+    assert.ok(merged);
+    assert.equal(script.steps.length, 3);
+    assert.equal(script.steps[1].id, 'add-external-account-embedded');
+    assert.equal(script.steps[1].plaidPhase, 'launch');
+    assert.equal(script.steps[1].sceneType, 'link');
+    assert.equal(script.steps[1].interaction.target, 'add-external-account-embedded');
+    assert.equal(script.steps[1].durationHintMs, 26000);
+    assert.deepEqual(merged, {
+      removedStepId: 'plaid-link-launch',
+      launchStepId: 'add-external-account-embedded',
+    });
+    const after = validateDemoScript(script, { plaidLinkLive: true });
+    assert.deepEqual(
+      after.errors.filter((e) => /Merge pre-Link explainer/.test(e)),
+      []
+    );
   });
 
   test('mergeAllPreLinkExplainersBeforeLaunch removes non-adjacent explainer; validation passes', () => {

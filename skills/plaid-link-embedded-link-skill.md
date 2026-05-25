@@ -59,9 +59,12 @@ Link modal by clicking an institution tile inside the widget.
   - No "Link bank account" / "Connect bank" / "Add account" / "Launch Plaid"
     button whose onclick calls `Plaid.createEmbedded`, `_plaidEmbeddedInstance.open()`,
     or a bespoke `window.launchPlaid()` wrapper.
-- Trust copy ("256-bit encryption", "Plaid never stores credentials", a
-  "Recommended · Instant verification via Plaid" tile) is fine — a redundant
-  clickable CTA is not.
+- Trust copy ("256-bit encryption", "Plaid never stores credentials", headline,
+  subtitle) is fine — a redundant clickable CTA is not.
+- Do **NOT** duplicate the Plaid SDK's **"Recommended · Instant verification"**
+  tile in the host trust column. The live embedded widget owns that recommendation.
+- Offer manual verification only as a **subtle text link** (e.g. "Connect manually")
+  below or beside the embed — not as a competing primary card/tile.
 
 ## Sizing Requirement (Single Default — All Use Cases)
 
@@ -131,8 +134,9 @@ The launch step is the **full pre-link UX page**:
 | Region | Content |
 |--------|---------|
 | Host chrome | Customer nav / logo (minimal) |
-| Trust column | “Recommended · Instant verification via Plaid”, encryption bullets, consent copy |
-| Embed column | **Live** `#plaid-embedded-link-container` with `Plaid.createEmbedded(...)` mounted |
+| Trust column | Headline + subtitle, encryption bullets, consent copy — **no** host-side “Recommended” tile |
+| Embed column | **Live** `#plaid-embedded-link-container` with `Plaid.createEmbedded(...)` mounted; Plaid SDK shows the Recommended path |
+| Manual path | Subtle **“Connect manually”** text link below/adjacent to the embed (requires `auth.auth_type_select_enabled`) |
 | Footer | Plaid privacy policy link as needed |
 
 - **Exactly ONE** `data-testid="plaid-embedded-link-container"` in the entire app — on this step.
@@ -148,6 +152,8 @@ Do **not** split pre-link marketing and live Link across two steps. These patter
 - A host pre-link step with a gray preview box **while** a separate bare `plaid-link-launch` step owns the real embed
 - Static institution-search mocks, fake search inputs, or empty containers where the SDK should render
 - Two containers with the same testid on different steps
+- **Duplicate “Recommended / Instant verification” tiles** — one in the host trust column **and** again inside or beside the embed (the SDK tile is sufficient)
+- Host-rendered fake institution-search UI (mock search bars, preview tiles) where the live SDK should render
 
 **Wrong (two-step split):**
 
@@ -157,7 +163,7 @@ Do **not** split pre-link marketing and live Link across two steps. These patter
 **Correct (integrated — matches standard Link pre-link UX):**
 
 1. `huntington-dashboard` — host overview; CTA navigates to pre-link page
-2. `add-external-account-embedded` — **`sceneType: "link"`, `plaidPhase: "launch"`** — trust copy **and** live embed on the **same** step
+2. `add-external-account-embedded` — **`sceneType: "link"`, `plaidPhase: "launch"`** — trust headline/bullets **and** live embed on the **same** step (Recommended path comes from the SDK; subtle “Connect manually” link only)
 3. *(no separate embed-only launch step)*
 
 If the demo script already names the step `plaid-link-launch`, that step must still

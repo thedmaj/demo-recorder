@@ -3344,11 +3344,8 @@ async function main(opts = {}) {
   }
   if (Object.keys(stepApiResponses).length > 0 && html.includes('</body>')) {
     // Single source of truth for the panel-viewer IIFE lives in post-panels.js;
-    // build-app's own emission used to duplicate that code and drift over time
-    // (the v5 toggle-bug regression was caused by a stale build-app IIFE
-    // beating post-panels' newer patch to the `__buildApiPanelPatchApplied`
-    // flag). We now delegate to post-panels' buildPanelPatchScript at build
-    // time. post-panels still runs later as its own stage and is idempotent
+    // build-app delegates to post-panels.buildPanelPatchScript at build time.
+    // post-panels still runs later as its own stage and is idempotent
     // (versioned via __buildApiPanelPatchVersion), so a single live IIFE
     // remains in the HTML.
     let apiPatch;
@@ -3362,197 +3359,12 @@ async function main(opts = {}) {
     } catch (e) {
       console.warn(`[Build] Could not delegate to post-panels.buildPanelPatchScript: ${e.message}. Falling back to inline IIFE.`);
     }
-    if (!apiPatch) apiPatch = `<script>
-(function() {
-  if (window.__buildApiPanelPatchApplied) return;
-  window.__buildApiPanelPatchApplied = true;
-  var _resp = ${JSON.stringify(stepApiResponses).replace(/</g, '\\u003c')};
-  var _eps  = ${JSON.stringify(stepApiEndpoints).replace(/</g, '\\u003c')};
-  window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _resp);
-  window.__API_PANEL_CONFIG = Object.assign({
-    collapsedByDefault: true,
-    jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
-    autoResize: true,
-    minWidthPx: 420,
-    maxWidthViewportRatio: 0.62
-  }, window.__API_PANEL_CONFIG || {});
-  if (typeof window.__apiPanelUserOpen !== 'boolean') {
-    window.__apiPanelUserOpen = !window.__API_PANEL_CONFIG.collapsedByDefault;
-  }
-  function ensureEdgeToggleStyles() {
-    if (document.getElementById('api-panel-edge-toggle-style')) return;
-    var st = document.createElement('style');
-    st.id = 'api-panel-edge-toggle-style';
-    st.textContent =
-      '.api-panel-edge-toggle{position:absolute;left:-20px;top:50%;transform:translateY(-50%);width:20px;height:64px;border-radius:10px 0 0 10px;border:1px solid rgba(0,166,126,0.55);border-right:none;background:rgba(0,166,126,0.22);color:#9cf8df;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,0.28);z-index:6;}' +
-      '.api-panel-edge-toggle:hover{background:rgba(0,166,126,0.30);color:#c6ffef;}' +
-      '.api-panel-toggle-icon{width:8px;height:8px;border-top:2px solid currentColor;border-right:2px solid currentColor;transform:rotate(-135deg);display:block;}' +
-      '.api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}' +
-      '#api-response-panel.api-panel-collapsed{width:22px !important;min-width:22px !important;max-width:22px !important;}' +
-      '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}' +
-      '#api-response-panel{overflow:visible;}';
-    document.head.appendChild(st);
-  }
-  ensureEdgeToggleStyles();
-
-  function ensurePanelToggle(panel) {
-    if (!panel) return null;
-    var candidates = Array.from(panel.querySelectorAll('button, [role="button"]')).filter(function(el) {
-      if (!el) return false;
-      if (el.id === 'api-panel-toggle' || el.getAttribute('data-testid') === 'api-panel-toggle') return true;
-      var txt = String(el.textContent || '').trim().toLowerCase();
-      return txt === 'show json' || txt === 'hide json';
-    });
-    var btn = candidates[0] || null;
-    if (candidates.length > 1) {
-      for (var i = 1; i < candidates.length; i += 1) {
-        try { candidates[i].remove(); } catch (_) {}
-      }
-    }
-    if (!btn) {
-      btn = document.createElement('button');
-      btn.id = 'api-panel-toggle';
-      btn.setAttribute('data-testid', 'api-panel-toggle');
-      btn.className = 'api-panel-edge-toggle';
-      btn.type = 'button';
-      btn.innerHTML = '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
-      btn.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.toggleApiPanel();
-      });
-      panel.appendChild(btn);
-    }
-    if (btn.id !== 'api-panel-toggle') btn.id = 'api-panel-toggle';
-    if (btn.getAttribute('data-testid') !== 'api-panel-toggle') btn.setAttribute('data-testid', 'api-panel-toggle');
-    if (!String(btn.className || '').includes('api-panel-edge-toggle')) btn.classList.add('api-panel-edge-toggle');
-    if (!btn.querySelector('.api-panel-toggle-icon')) {
-      btn.innerHTML = '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
-    }
-    btn.setAttribute('aria-expanded', window.__apiPanelUserOpen ? 'true' : 'false');
-    btn.setAttribute(
-      'aria-label',
-      window.__apiPanelUserOpen ? 'Collapse API JSON panel' : 'Expand API JSON panel'
-    );
-    if (window.__apiPanelUserOpen) btn.classList.add('is-open');
-    else btn.classList.remove('is-open');
-    return btn;
-  }
-
-  function applyPanelSize(panel, content) {
-    if (!panel || !content || !window.__API_PANEL_CONFIG.autoResize || !window.__apiPanelUserOpen) return;
-    var cfg = window.__API_PANEL_CONFIG;
-    var maxPx = Math.floor(window.innerWidth * Number(cfg.maxWidthViewportRatio || 0.62));
-    var minPx = Number(cfg.minWidthPx || 420);
-    var target = Math.min(maxPx, Math.max(minPx, Math.ceil((content.scrollWidth || minPx) + 80)));
-    panel.style.width = target + 'px';
-    panel.style.maxWidth = 'calc(100vw - 32px)';
-    panel.style.overflow = 'hidden';
-    content.style.maxWidth = '100%';
-    content.style.overflowX = 'auto';
-    content.style.overflowY = 'auto';
-    content.style.wordBreak = 'break-word';
-  }
-
-  function renderApiJson(target, data) {
-    if (!target) return;
-    target.innerHTML = '';
-    target.style.maxWidth = '100%';
-    target.style.overflowX = 'auto';
-    target.style.overflowY = 'auto';
-    try {
-      if (window.renderjson && typeof window.renderjson === 'function') {
-        if (typeof window.renderjson.set_show_to_level === 'function') window.renderjson.set_show_to_level(window.__API_PANEL_CONFIG.jsonExpandLevel);
-        if (typeof window.renderjson.set_icons === 'function') window.renderjson.set_icons('+', '-');
-        if (typeof window.renderjson.set_sort_objects === 'function') window.renderjson.set_sort_objects(false);
-        target.appendChild(window.renderjson(data));
-        applyPanelSize(document.getElementById('api-response-panel'), target);
-        return;
-      }
-    } catch (_) {}
-    var pretty = JSON.stringify(data, null, 2);
-    try {
-      if (typeof window.syntaxHighlight === 'function') target.innerHTML = window.syntaxHighlight(pretty);
-      else target.textContent = pretty;
-    } catch (_) {
-      target.textContent = pretty;
-    }
-    applyPanelSize(document.getElementById('api-response-panel'), target);
-  }
-
-  function setPanelVisibility(panel, open) {
-    if (!panel) return;
-    if (open) {
-      panel.style.removeProperty('display');
-      panel.style.display = 'flex';
-      panel.classList.remove('api-panel-collapsed');
-      panel.classList.add('api-panel-open');
+    if (!apiPatch) {
+      console.warn('[Build] Could not delegate to post-panels.buildPanelPatchScript — API panel patch skipped');
     } else {
-      panel.style.removeProperty('display');
-      panel.style.display = 'flex';
-      panel.classList.add('api-panel-collapsed');
-      panel.classList.remove('api-panel-open');
+      html = html.replace('</body>', `${apiPatch}\n</body>`);
+      console.log(`[Build] Injected _stepApiResponses patch for ${Object.keys(stepApiResponses).length} step(s)`);
     }
-    ensurePanelToggle(panel);
-  }
-
-  function rerenderCurrentApiJson() {
-    var panel = document.getElementById('api-response-panel');
-    var content = document.getElementById('api-response-content');
-    var data = window.__lastApiJsonData;
-    if (!panel || !content || !data) return;
-    renderApiJson(content, data);
-    setPanelVisibility(panel, window.__apiPanelUserOpen);
-  }
-
-  window.toggleApiPanel = function(forceOpen) {
-    var panel = document.getElementById('api-response-panel');
-    if (!panel) return false;
-    if (typeof forceOpen === 'boolean') window.__apiPanelUserOpen = forceOpen;
-    else window.__apiPanelUserOpen = !window.__apiPanelUserOpen;
-    setPanelVisibility(panel, window.__apiPanelUserOpen);
-    if (window.__apiPanelUserOpen) rerenderCurrentApiJson();
-    return window.__apiPanelUserOpen;
-  };
-
-  if (!window.renderjson) {
-    var existing = document.querySelector('script[data-renderjson-lib]');
-    if (existing) existing.addEventListener('load', rerenderCurrentApiJson, { once: true });
-  }
-
-  var _origGoToStep = window.goToStep;
-  if (typeof _origGoToStep !== 'function') return;
-  window.goToStep = function(id) {
-    _origGoToStep(id);
-    var panel = document.getElementById('api-response-panel');
-    if (!panel) return;
-    var content = document.getElementById('api-response-content');
-    var endpoint = document.getElementById('api-panel-endpoint');
-    var data = window._stepApiResponses && window._stepApiResponses[id];
-    if (data) {
-      if (endpoint && _eps[id]) endpoint.textContent = _eps[id];
-      window.__lastApiJsonData = data;
-      if (content) renderApiJson(content, data);
-      // Insight steps must show an expanded JSON rail for build-qa / vision QA (not the 22px collapsed strip).
-      window.__apiPanelUserOpen = true;
-      setPanelVisibility(panel, true);
-    } else {
-      panel.style.setProperty('display', 'none', 'important');
-      panel.classList.remove('api-panel-collapsed');
-      panel.classList.remove('api-panel-open');
-    }
-  };
-
-  window.addEventListener('resize', function() {
-    if (!window.__apiPanelUserOpen) return;
-    var panel = document.getElementById('api-response-panel');
-    var content = document.getElementById('api-response-content');
-    applyPanelSize(panel, content);
-  });
-})();
-</script>`;
-    html = html.replace('</body>', `${apiPatch}\n</body>`);
-    console.log(`[Build] Injected _stepApiResponses patch for ${Object.keys(stepApiResponses).length} step(s)`);
   } else if (html.includes('api-response-panel') && html.includes('</body>') && !html.includes('window.__apiPanelGlobalConfigApplied')) {
     const collapsePatch = `<script>
 (function() {

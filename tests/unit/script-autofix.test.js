@@ -165,6 +165,26 @@ describe('autoFixDemoScript — infer-plaid-launch-phase', () => {
     assert.equal(out.fixed, 0);
   });
 
+  test('infers launch on host step with external-account embedded copy (Huntington pattern)', () => {
+    const ds = {
+      steps: [
+        hostStep('huntington-dashboard', 'Dashboard'),
+        {
+          id: 'add-external-account-embedded',
+          sceneType: 'host',
+          label: 'Add external account with embedded Plaid Link',
+          visualState: "Huntington Add External Account page with data-testid='plaid-embedded-link-container' and institution search.",
+          narration: 'Embedded Plaid Link loads in the page — institution search is ready.',
+        },
+        hostStep('verifying-account', 'Verifying'),
+      ],
+    };
+    const out = autoFixDemoScript(ds);
+    assert.equal(out.fixed, 1);
+    assert.equal(ds.steps[1].plaidPhase, 'launch');
+    assert.equal(ds.steps[1].sceneType, 'link');
+  });
+
   test('strips launch from slides when LLM marks multiple steps as launch', () => {
     const ds = {
       steps: [

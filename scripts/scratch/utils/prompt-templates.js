@@ -23,6 +23,9 @@
 
 const { getProductProfile, inferProductFamilyFromText } = require('./product-profiles');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('./product-knowledge');
+const { parseColor, relativeLuminance } = require('./brand-contrast');
+const { pickDarkWordmarkUrl } = require('./host-nav-logo-contrast');
+const { SLIDE_HOST_ISOLATION_BLOCK } = require('./slide-design-skill');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -260,11 +263,23 @@ function renderBrandBlock(brand) {
   const a  = brand.atmosphere  || {};
   const sp = brand.sidePanels  || {};
   const logo = brand.logo      || {};
-  const logoShellBg = logo.shellBg || 'transparent';
-  const logoShellBorder = logo.shellBorder || 'transparent';
+  const hb = brand.hostBanner || null;
+  const bannerBg = (hb && hb.bg) || c.navBg || '#ffffff';
+  const bannerParsed = parseColor(bannerBg);
+  const bannerLum = bannerParsed ? relativeLuminance(bannerParsed) : 1;
+  const useLightBanner = bannerLum > 0.6 || !!(hb && hb.fallback);
+  const logoShellBg = useLightBanner
+    ? '#ffffff'
+    : (logo.shellBg || 'transparent');
+  const logoShellBorder = useLightBanner
+    ? 'rgba(0, 0, 0, 0.08)'
+    : (logo.shellBorder || 'transparent');
+  const primaryWordmark = useLightBanner ? pickDarkWordmarkUrl(brand) : null;
   const logoCandidates = Array.from(
     new Set(
-      [logo.imageUrl, logo.darkImageUrl, logo.iconUrl]
+      (useLightBanner
+        ? [primaryWordmark, logo.imageUrl, logo.iconUrl]
+        : [logo.darkImageUrl, logo.imageUrl, logo.iconUrl])
         .map((u) => String(u || '').trim())
         .filter((u) => /^https?:\/\//i.test(u))
     )
@@ -293,10 +308,6 @@ function renderBrandBlock(brand) {
   if (c.navAccentStripe)  lines.push(`    Nav accent stripe: ${c.navAccentStripe}`);
   if (c.footerBg)         lines.push(`    Footer background: ${c.footerBg}`);
 
-  // Host banner contrast guardrail. Computed by `brand-contrast.js` during
-  // brand-extract so downstream prompts have a single authoritative signal
-  // for "where may I place the logo?".
-  const hb = brand.hostBanner || null;
   if (hb && hb.bg) {
     lines.push('');
     lines.push(`    HOST BANNER / NAV BACKGROUND — authoritative:`);
@@ -307,7 +318,7 @@ function renderBrandBlock(brand) {
     lines.push(`      reason:          ${hb.reason || 'no reason supplied'}`);
     lines.push(`      RULE: the host top-nav / banner MUST use bg=${hb.bg}. Do NOT place the logo image or text wordmark on a background of similar luminance.`);
     if (hb.fallback) {
-      lines.push(`      FALLBACK MODE: brand tokens could not guarantee logo visibility on the brand's preferred nav color. Use a WHITE banner with the accent stripe (${hb.accentStripe || 'brand accent'}) as a bottom border or left-side stripe.`);
+      lines.push(`      FALLBACK MODE: brand tokens could not guarantee logo visibility on the brand's preferred nav color. Use a WHITE banner with the accent stripe (${hb.accentStripe || 'brand accent'}) as a bottom border. Logo shell MUST use background #ffffff — never place a dark wordmark on a dark nav.`);
     }
   }
 
@@ -794,12 +805,20 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `Canonical arc structure (apply to the user's scenario):\n` +
       `1. Problem — the friction the user described (do NOT invent a different problem)\n` +
       `2. Solution entry — Plaid enters AT the moment the user said it should\n` +
-      `3. Frictionless experience — the specific flow the user pitched (not a generic happy path)\n` +
+      `3. Product reveals — ONE dedicated insight step per Plaid product in the demo.\n` +
+      `   Each step shows that product's specific API output and narrates the business implication.\n` +
+      `   Never combine two product reveals into one step. Every product named in the prompt\n` +
+      `   must appear as a distinct step with its own apiResponse block.\n` +
+      `   Examples: Auth → verified account/routing + coverage stat; Identity Match → per-field\n` +
+      `   scores (NAME 88 / EMAIL 62) + ownership confirmed; Signal → score + ruleset.result.\n` +
       `4. Key reveal — the wow moment that resolves the user's specific friction (with a real metric)\n` +
-      `5. Outcome — the specific outcome the user described (faster, approved, verified — be concrete)\n\n` +
+      `5. Outcome — close with a concrete business result tied to this demo's opening problem.\n` +
+      `   Format: "[Product(s)] deliver [specific metric or capability] — enabling [customer outcome\n` +
+      `   from the opening hook]." Must callback to beat 1. Do NOT close with a generic mantra\n` +
+      `   ("faster, safer, more compliant") — use the scenario's specific numbers and stakes.\n\n` +
       `Quality standards:\n` +
-      `- 8–14 steps, 2–3 minutes total\n` +
-      `- Narration: 20–35 words per step\n` +
+      `- Step count by product count: 1 product → 6–9 steps; 2 products → 8–11 steps; 3+ products → 10–14 steps\n` +
+      `- Narration: 20–35 words per step (including loading/wait steps — see rule below)\n` +
       `- Include a climactic reveal with a quantified outcome\n` +
       `- Use realistic persona data (never generic placeholders)\n` +
       `- No error states, declined flows, or unresolved loading spinners\n\n`;
@@ -807,14 +826,22 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
     // Tier 3 — generic fallback. Today's behavior, kept as the safety net.
     narrativeArcBlock =
       `Narrative arc (always follow):\n` +
-      `1. Problem — friction or compliance challenge\n` +
+      `1. Problem — friction or compliance challenge specific to this demo's scenario\n` +
       `2. Solution entry — Plaid introduced as the answer\n` +
-      `3. Frictionless experience — key flow steps\n` +
-      `4. Key reveal — the "wow moment" (score, approval, matched data)\n` +
-      `5. Outcome — faster, safer, more compliant\n\n` +
+      `3. Product reveals — ONE dedicated insight step per Plaid product in the demo.\n` +
+      `   Each step shows that product's specific API output and narrates the business implication.\n` +
+      `   Never combine two product reveals into one step. Every product named in the prompt\n` +
+      `   must appear as a distinct step with its own apiResponse block.\n` +
+      `   Examples: Auth → verified account/routing + coverage stat; Identity Match → per-field\n` +
+      `   scores (NAME 88 / EMAIL 62) + ownership confirmed; Signal → score + ruleset.result.\n` +
+      `4. Key reveal — the "wow moment" (score, approval, matched data) with a real metric\n` +
+      `5. Outcome — close with a concrete business result tied to the opening problem.\n` +
+      `   Format: "[Product(s)] deliver [specific metric or capability] — enabling [customer outcome\n` +
+      `   from beat 1]." Must callback to the problem in beat 1. Do NOT close with a generic mantra\n` +
+      `   ("faster, safer, more compliant") — use the scenario's specific numbers and stakes.\n\n` +
       `Quality standards:\n` +
-      `- 8–14 steps, 2–3 minutes total\n` +
-      `- Narration: 20–35 words per step\n` +
+      `- Step count by product count: 1 product → 6–9 steps; 2 products → 8–11 steps; 3+ products → 10–14 steps\n` +
+      `- Narration: 20–35 words per step (including loading/wait steps — see rule below)\n` +
       `- Include a climactic reveal with a quantified outcome\n` +
       `- Use realistic persona data (never generic placeholders)\n` +
       `- No error states, declined flows, or unresolved loading spinners\n\n`;
@@ -897,7 +924,11 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       type: 'text',
       text:
         `${linkUxSkillBlock}\n\n` +
-        `Use this specifically for pre-Link and pre-Plaid UX composition, copy hierarchy, CTA labels, and security/value framing.`,
+        (embeddedLinkMode === 'embedded'
+          ? `Use modal pre-Link UX patterns only where they do NOT conflict with the embedded Link skill above. ` +
+            `In embedded mode: do NOT duplicate the SDK "Recommended" tile in the host trust column; ` +
+            `the live embed owns instant verification. Manual path = subtle "Connect manually" link only.\n\n`
+          : `Use this specifically for pre-Link and pre-Plaid UX composition, copy hierarchy, CTA labels, and security/value framing.`),
     });
   }
   if (embeddedLinkSkillBlock) {
@@ -1071,7 +1102,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `      "id": "<kebab-case string>",\n` +
       `      "label": "<string>",\n` +
       `      "sceneType": "<host|link|insight|slide>",\n` +
-      `      "narration": "<20–35 words, active voice, quantified outcomes>",\n` +
+      `      "narration": "<20–35 words, active voice, quantified outcomes — ALL steps including loading/wait states>",\n` +
       `      "durationMs": <number>,\n` +
       `      "interaction": {\n` +
       `        "type": "<click|fill|wait|navigate>",\n` +
@@ -1089,6 +1120,18 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `  "ctaText": "<string>",\n` +
       `  "ctaOutcome": "<string>"\n` +
       `}\n\n` +
+      `LOADING / WAIT STEP NARRATION RULE:\n` +
+      `Steps showing progress spinners or async wait states (report-generating, verifying, processing)\n` +
+      `must narrate WHAT Plaid is doing under the hood — not just that it is doing it.\n` +
+      `Target 18–25 words explaining the data pull, analysis, or scoring happening off-screen.\n` +
+      `Good: "Plaid pulls 24 months of cash-flow data — income deposits, recurring bills, payroll\n` +
+      `timing — and scores repayment likelihood in real time." (24 words)\n` +
+      `Bad: "The CRA base report generates." (6 words — tells the viewer nothing)\n\n` +
+      `CLOSING STEP CALLBACK RULE:\n` +
+      `The final non-slide step (or value-summary-slide narration) must tie back to the specific\n` +
+      `problem stated in step 1. Format: "[Product(s)] deliver [metric] — enabling [outcome from\n` +
+      `opening hook]." Generic mantras ("faster, safer, more compliant") without scenario-specific\n` +
+      `numbers are not acceptable as a closing beat.\n\n` +
       `PLAID LINK STEP RULE (CRITICAL — non-negotiable):\n` +
       `When the demo includes Plaid Link, use EXACTLY ONE step for the entire Plaid flow.\n` +
       `Set "plaidPhase": "launch" on that step. Do NOT create separate sub-steps for\n` +
@@ -1139,6 +1182,21 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `- If mode is "embedded": output "plaidLinkMode":"embedded" and keep Link narration/UI assumptions aligned to embedded in-page flow.\n` +
       `- If mode is "modal": output "plaidLinkMode":"modal" and use standard in-page Plaid Link assumptions.\n`,
   });
+
+  if (embeddedLinkMode === 'embedded') {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## EMBEDDED LINK SCRIPT RULE (mode-specific — overrides modal pre-Link patterns)\n\n` +
+        `When plaidLinkMode is "embedded":\n` +
+        `- Exactly ONE step with sceneType:"link" and plaidPhase:"launch" — the integrated pre-link page.\n` +
+        `- That step combines host trust copy (headline, encryption bullets, consent) AND the live embedded widget.\n` +
+        `- Do NOT create a separate host pre-link step before a bare plaid-link-launch step.\n` +
+        `- Do NOT describe a host-side "Recommended · Instant verification" tile — the Plaid SDK shows that inside the embed.\n` +
+        `- Manual verification is a subtle "Connect manually" link only (not a competing primary card).\n` +
+        `- Launch step interaction: goToStep → launch step id, waitMs: 120000 (no link-external-account-btn click).\n`,
+    });
+  }
 
   if (pipelineAppOnlyHostUi) {
     contentBlocks.push({
@@ -1450,7 +1508,9 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     (includeFullSlideTemplate && slideTemplateCss
       ? `SLIDE TEMPLATE CSS (scoped — embed verbatim in <style>):\n${slideTemplateCss}\n\n` +
         `SLIDE VS HOST APP (critical):\n` +
-        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\`. Do not put host/link flows inside slide shells. **Plaid insight** steps may reuse the **pipeline slide shell regions** (\`.slide-root\`, \`.slide-header\`, \`.slide-body\`, \`.slide-footer\` from pipeline-slide-shell.html) for deck-style API reveals—especially Plaid Signal / ACH return risk (\`/signal/evaluate\`): use a scoped modifier on \`.slide-root\` (e.g. \`slide-root--signal-insight\`) and reserve ~520px right padding on \`.slide-body\` for the global JSON rail. Give header/footer testids a **step-unique suffix** (e.g. \`-signal-risk\`) so they never duplicate \`value-summary-slide\` testids. Raw JSON only in \`#api-response-panel\`.\n` +
+        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\`. Do not put host/link flows inside slide shells. **Plaid insight** steps may reuse the **pipeline slide shell regions** (\`.slide-root\`, \`.slide-header\`, \`.slide-body\`, \`.slide-footer\` from pipeline-slide-shell.html) for deck-style API reveals—especially Plaid Signal / ACH return risk (\`/signal/evaluate\`): use a scoped modifier on \`.slide-root\` (e.g. \`slide-root--signal-insight\`). Give header/footer testids a **step-unique suffix** (e.g. \`-signal-risk\`) so they never duplicate \`value-summary-slide\` testids. Raw JSON only in \`#api-response-panel\`. JSON panel is a fixed overlay (z-index 2100) — slides and host steps must NOT reserve space for it.\n` +
+        `- **SLIDE FULL-SCREEN ISOLATION (hard rule):** Wrap ALL host-only chrome (FDIC bar, top nav, sub-nav, footer) in elements with class \`host-app-chrome\`. Slide steps (\`.slide-root\` inside \`data-testid="step-*"\`) must NEVER show host chrome — post-panels toggles \`body.pipeline-slide-active\` to hide \`.host-app-chrome\` and reset the canvas to Plaid navy. Do NOT nest slides inside \`.page-inner\`, sidebars, or host cards.\n` +
+        `- Host global CSS (\`html, body, h1–h4\`) uses customer tokens ONLY. Slide typography/colors come from \`.slide-root\` + pipeline-slide-contract.css — never inherit Huntington serif or host hex inside slides.\n` +
         `- The slide CSS above applies ONLY inside a step div that contains \`.slide-root\` (marketing \`sceneType:slide\` steps **or** Plaid insight steps that adopt the shell).\n` +
         `- Do NOT restyle \`html\` or \`body\` using slide tokens. The HOST BANK UI (nav, cards, TD/chrome, consumer screens, Plaid Link host page) MUST follow the HOST APP DESIGN SYSTEM block only.\n` +
         `- Full-viewport Plaid insight steps: use **either** legacy \`insight-screen\` + \`insight-content\` **or** the slide shell pattern above for Signal-style evaluations; never host chrome. \`sceneType\` in demo-script stays \`insight\` when using the shell for API steps.\n` +
@@ -1709,7 +1769,7 @@ contract that the next stage knows how to fill.\n` +
         `- Hero host step (e.g. lendscore-reveal): white/light ${brand?.name || 'host'} chrome — NOT Plaid deck slides.\n` +
         `- Show LendScore score (1–99, higher = safer), APPROVE (or review) outcome, **LendScore — beta** badge, 2–3 **reason_codes** chips (PCS-prefixed).\n` +
         `- \`apiResponse.endpoint\` MUST be \`POST /cra/check_report/lend_score/get\` with \`report.lend_score.score\` + \`reason_codes[]\` in JSON — even when Base Report summary chips appear beside the gauge.\n` +
-        `- Reserve **520px** right margin on the host main column (\`max-width: calc(100% - 520px)\` or \`padding-right: 520px\` on \`.zip-main\` / \`.underwriting-grid\`) so #api-response-panel never covers the decision card or \`data-testid="approve-plan-cta"\`.\n` +
+        `- JSON panel is a fixed overlay (z-index 2100). Slides and host steps must NOT reserve right padding or max-width for #api-response-panel — it floats above content when expanded.\n` +
         `- Zip host footer on at least one screen: verbatim **NMLS ID 1963958** (see inputs/brand-references/zip.md).\n` +
         `- Host nav: customer checkout/underwriting labels only — **never** paste marketing mega-menu labels from brand-extract crawl.\n`,
     });
@@ -2231,8 +2291,12 @@ contract that the next stage knows how to fill.\n` +
             `   - Do NOT emit <button data-testid="link-external-account-btn">…</button>.\n` +
             `   - Do NOT emit any other button whose onclick calls Plaid.createEmbedded or\n` +
             `     _plaidEmbeddedInstance.open() or window.launchPlaid().\n` +
-            `   - Trust copy ("256-bit encryption", "Plaid never stores credentials") and a short\n` +
-            `     "Recommended · Instant verification via Plaid" tile are fine; a clickable CTA is not.\n` +
+            `   - Trust copy ("256-bit encryption", "Plaid never stores credentials", headline/subtitle) is fine;\n` +
+            `     a clickable CTA is not. Do NOT duplicate the SDK "Recommended · Instant verification"\n` +
+            `     tile in the host trust column — the live embed owns that recommendation.\n` +
+            `   - Manual verification: subtle text link only (e.g. data-testid="connect-manually-link"\n` +
+            `     or class connect-manually-link) below/adjacent to the embed; requires\n` +
+            `     auth.auth_type_select_enabled in token config.\n` +
             `7. **CONTAINER SIZING — single pipeline default (all embedded use cases):**\n` +
             `   Use **~430×390px** for #plaid-embedded-link-container: min-width, min-height, height,\n` +
             `   max-width (and width:100% inside the column). This matches the build normalizer and\n` +
@@ -2248,10 +2312,14 @@ contract that the next stage knows how to fill.\n` +
             `   the container forces the widget to the centre with whitespace below). Never use\n` +
             `   overflow:hidden (or overflow-x/y:hidden) on the embed container — it clips the iframe.\n` +
             `   The container should be a normal block element so the Plaid-rendered iframe fills it naturally.\n` +
-            `9. **NO HOST "CONNECTING / WAITING" WRAPPER on the launch step.** Launch step = live embed\n` +
-            `   mount only — no "Connecting your bank…", host spinners, or "Waiting for Plaid Link".\n` +
-            `   onSuccess → first post-Link host step. One data-testid="plaid-embedded-link-container"\n` +
-            `   on the launch step; preload steps use static preview mocks only.\n`,
+            `9. **PRE-LINK PAGE = LIVE INSTITUTION SEARCH (parity with standard Link).** The launch step is the\n` +
+            `   integrated pre-link UX: trust headline/bullets/consent **and** the live #plaid-embedded-link-container\n` +
+            `   on the **same** step. The Plaid SDK renders the Recommended path — do NOT mirror it in the host column.\n` +
+            `   FORBIDDEN: placeholder copy ("Institution search preview", "opens on the next step"),\n` +
+            `   static preview mocks, fake institution-search inputs, duplicate Recommended tiles, or splitting\n` +
+            `   trust copy on one host step and the SDK on a later bare launch step. One plaidPhase:"launch" step only.\n` +
+            `   No "Connecting your bank…" / host spinners where the widget belongs. onSuccess → first\n` +
+            `   post-Link host step. Exactly one data-testid="plaid-embedded-link-container" in the app.\n`,
         });
       }
 
@@ -2751,6 +2819,7 @@ function buildSlideInsertionPrompt({
   hostHasExistingSlide = false,
   valuePropositionStatements = [],
   narration = '',
+  slideDesignSkillMarkdown = '',
 } = {}) {
   const brandName = (brand && brand.name) || 'Plaid';
   const stepId = String(step?.id || '').trim();
@@ -2761,25 +2830,35 @@ function buildSlideInsertionPrompt({
 
   const system =
     `You are generating ONE Plaid Deck Design System slide as a surgical insertion into an existing demo app. ` +
-    `Pick exactly ONE template T1–T11 from DECK_TEMPLATES.md and set data-slide-template="T#" on .slide-root. ` +
-    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="T#">...</div></div>. ` +
-    `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), body, .chrome-foot. ` +
+    `Choose the best Workhorse layout pattern for this step's narrative (see plaid-workhorse-slides skill): set data-workhorse-layout on .slide-root and the nearest data-slide-template="T#" for QA. ` +
+    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="T#" data-workhorse-layout="...">...</div></div>. ` +
+    `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), .slide-stack body, .chrome-foot. ` +
+    `Slides are Plaid-branded ONLY — never use customer/host brand colors, Workhorse themes, runtime.js, data-anim, or Chart.js inside .slide-root. ` +
     `Do NOT include <script>, do NOT use display:inline-block inside .slide-root, do NOT add inline display on the step div, do NOT wrap output in markdown fences.`;
 
   const vps = Array.isArray(valuePropositionStatements)
     ? valuePropositionStatements.slice(0, 4)
     : [];
 
+  const slideSkillBlock = String(slideDesignSkillMarkdown || '').trim();
+
   let userText =
     `# SLIDE INSERTION — step "${stepId}"\n\n` +
-    `Brand: ${brandName}\n` +
+    `Customer context (copy only — NOT slide palette): ${brandName}\n` +
     (stepLabel ? `Label: ${stepLabel}\n` : '') +
     (endpoint ? `API endpoint: ${endpoint}\n` : '') +
     (effectiveNarration ? `Narration: ${effectiveNarration}\n` : '') +
     (stepVisual ? `Expected visual: ${stepVisual}\n` : '') +
+    `\n## ${SLIDE_HOST_ISOLATION_BLOCK}\n\n`;
+
+  if (slideSkillBlock) {
+    userText += `## PLAID SLIDE DESIGN SKILL (authoritative)\n${slideSkillBlock}\n\n`;
+  }
+
+  userText +=
     `\n## OUTPUT CONTRACT (REQUIRED)\n` +
     `- Emit ONLY <div data-testid="step-${stepId}" class="step"> ... </div>.\n` +
-    `- Exactly ONE child: <div class="slide-root" data-slide-template="T1|T2|...|T11"> with optional background class light|cream|holo on .slide-root.\n` +
+    `- Exactly ONE child: <div class="slide-root" data-slide-template="T1|T2|...|T11" data-workhorse-layout="layout-name"> with optional background class light|cream|holo on .slide-root.\n` +
     `- Inner structure: .frame > .chrome-logo + .eyebrow-tag + .h-title + template body + .chrome-foot (T1 title may omit eyebrow/footer per brief).\n` +
     `- Headline: sentence case, ends with period, exactly one <em> Bowery Street italic accent in .h-title.\n` +
     `- **Typography ceilings (REQUIRED — do NOT exceed):** use slide.css classes, not oversized inline font-size. ` +
@@ -2803,7 +2882,13 @@ function buildSlideInsertionPrompt({
   if (hostHasExistingSlide) {
     userText +=
       `## HOST ALREADY HAS SLIDE MARKUP\n` +
-      `Mirror existing .slide-root patterns and data-slide-template usage. Do NOT re-emit shared <style> blocks.\n\n`;
+      `Mirror existing .slide-root structure and data-slide-template usage. Do NOT re-emit shared <style> blocks.\n` +
+      `Do NOT mirror customer/host hex colors or fonts — use Plaid deck tokens only.\n\n`;
+    if (deckDesignSystem) {
+      userText +=
+        `## DESIGN SYSTEM (palette + shell — required even when mirroring)\n` +
+        `${String(deckDesignSystem).slice(0, 4000)}\n\n`;
+    }
   } else {
     if (slideTemplateRules) {
       userText += `## PIPELINE SLIDE RULES\n${String(slideTemplateRules).slice(0, 5000)}\n\n`;
