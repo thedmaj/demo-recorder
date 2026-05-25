@@ -44,6 +44,7 @@ const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind
 const { buildSlideInsertionPrompt } = require('../utils/prompt-templates');
 const { loadSlideDesignSkill } = require('../utils/slide-design-skill');
 const { routeSlideTemplate } = require('../utils/slide-template-router');
+const { stripChromeFootFromHtml } = require('../utils/slide-chrome-foot');
 const { getShowcaseTemplateSkeletonForRouting } = require('../utils/showcase-template-extract');
 const { scopeSlideCss } = require('../utils/slide-css-scoper');
 const {
@@ -183,6 +184,8 @@ function sanitizeSlideFragment(fragment, stepId) {
   // `.step.active { display: ... }` rule once the slide becomes the active
   // step. Any other inline styles are preserved.
   s = s.replace(/\sstyle="[^"]*\bdisplay\s*:[^";]+;?[^"]*"/gi, '');
+
+  s = stripChromeFootFromHtml(s);
 
   return { html: s.trim(), styles };
 }

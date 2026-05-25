@@ -15,7 +15,6 @@ const SLIDE_SHELL_OK = `
       <div class="eyebrow-tag">Section 1 — Story</div>
       <h2 class="h-title">From data to <em>intelligence.</em></h2>
       <p style="font-size:30px">Body copy.</p>
-      <div class="chrome-foot"><span>01 / 05</span></div>
     </div>
   </div>
 </div>`;

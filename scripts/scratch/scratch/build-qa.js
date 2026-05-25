@@ -708,13 +708,12 @@ function scanSlideShellChrome(html, slideStepIds) {
     const missing = [];
     if (!/\bchrome-logo\b/.test(block)) missing.push('.chrome-logo');
     if (!/\beyebrow-tag\b/.test(block)) missing.push('.eyebrow-tag');
-    if (!/\bchrome-foot\b/.test(block)) missing.push('.chrome-foot');
     if (missing.length) {
       out.push(slideDesignWarning(
         stepId,
         'slide-shell-chrome',
         `Slide missing canonical shell chrome: ${missing.join(', ')}.`,
-        'Use .frame + .chrome-logo + .eyebrow-tag + .chrome-foot per DECK_DESIGN_SYSTEM.md (T1 may omit eyebrow/footer).'
+        'Use .frame + .chrome-logo + .eyebrow-tag per DECK_DESIGN_SYSTEM.md (T1 may omit eyebrow). Pipeline slides omit .chrome-foot.'
       ));
     }
   }

@@ -2830,7 +2830,7 @@ function buildSlideInsertionPrompt({
     `Use the RECOMMENDED showcase template below (data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}") — copy its skeleton structure exactly and adapt copy from the step narration. ` +
     `Do NOT invent a different layout or fall back to a generic T3 statement shell. ` +
     `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}">...</div></div>. ` +
-    `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), .slide-stack body, .chrome-foot. ` +
+    `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), .slide-stack body. Do NOT include .chrome-foot. ` +
     `Slides are Plaid-branded ONLY — never use customer/host brand colors, Workhorse themes, runtime.js, data-anim, or Chart.js inside .slide-root. ` +
     `Do NOT include <script>, do NOT use display:inline-block inside .slide-root, do NOT add inline display on the step div, do NOT wrap output in markdown fences.`;
 
@@ -2857,16 +2857,16 @@ function buildSlideInsertionPrompt({
     `\n## OUTPUT CONTRACT (REQUIRED)\n` +
     `- Emit ONLY <div data-testid="step-${stepId}" class="step"> ... </div>.\n` +
     `- Exactly ONE child: <div class="slide-root" data-slide-template="T1|T2|...|T11" data-workhorse-layout="layout-name"> with optional background class light|cream|holo on .slide-root.\n` +
-    `- Inner structure: .frame > .chrome-logo + .eyebrow-tag + .h-title + template body + .chrome-foot (T1 title may omit eyebrow/footer per brief).\n` +
+    `- Inner structure: .frame > .chrome-logo + .eyebrow-tag + .h-title + template body in .slide-stack (T1 title may omit eyebrow). Do NOT add .chrome-foot.\n` +
     `- Headline: sentence case, ends with period, exactly one <em> Bowery Street italic accent in .h-title.\n` +
     `- **Typography ceilings (REQUIRED — do NOT exceed):** use slide.css classes, not oversized inline font-size. ` +
     `Class .h-title max 72px (T3 statement max 96px; T1 title max 140px). Class .hero-stat-value max 180px (Bowery). ` +
-    `Body .slide-body-text max 30–36px. Eyebrow/chrome-foot 24px. Never put font-size above 180px anywhere in .slide-root.\n` +
-    `- Wrap main body (headline + stats + cards) in <div class="slide-stack"> so .chrome-foot stays at the bottom without overlap.\n` +
+    `Body .slide-body-text max 30–36px. Eyebrow 24px. Never put font-size above 180px anywhere in .slide-root.\n` +
+    `- Wrap main body (headline + stats + cards) in <div class="slide-stack">.\n` +
     `- Body text minimum 24px; flex/grid + gap only (no inline-block).\n` +
     `- One mint moment per slide (--plaid-teal-500 / #42F0CD as primary highlight).\n` +
     `- **Forbidden sales CTAs (HARD — build-QA blocker):** Do NOT add buttons, pill CTAs, or prominent action lines for: contact Plaid, contact Account Manager, start a free trial, Start a POC, perform a retro analysis / run the production retro / start your retro. Value-summary slides close with product outcome bullets + declarative copy only.\n` +
-    `- **Chrome-foot spacing:** .slide-stack must include padding-bottom 32–48px so .chrome-foot never overlaps body text.\n` +
+    `- **Partnership / section labels:** put "Plaid × {customer}" and product names in .eyebrow-tag only — never in a footer row.\n` +
     `- **Plaid logo (HARD — build-QA blocker):** NEVER invent a logo (no SVG, no four-dot icon grid, no "PLAID" text, no CSS shapes). ` +
     `Either use exactly one bundled horizontal wordmark: <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt=""> ` +
     `(navy), plaid-horizontal-dark.png (light/cream/holo), or plaid-horizontal-holograph.png on holo — OR omit .chrome-logo entirely (T1 may omit).\n` +

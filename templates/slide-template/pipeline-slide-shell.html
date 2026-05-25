@@ -9,7 +9,7 @@
   Pipeline contract:
   - One <div data-testid="step-{id}" class="step"> per slide scene
   - Child: <div class="slide-root"> with optional .light | .cream | .holo
-  - Inner: .frame + .chrome-logo + .eyebrow-tag + .h-title + body + .chrome-foot
+  - Inner: .frame + .chrome-logo + .eyebrow-tag + .h-title + body (.slide-stack). No .chrome-foot in pipeline slides.
   - Global #api-response-panel for JSON (not inside .slide-root)
 -->
 <head>
@@ -51,9 +51,6 @@
           Reserve mint for a single highlight phrase if needed.
         </p>
 
-        <div class="chrome-foot">
-          <span>03 / 12 &nbsp;·&nbsp; Product story</span>
-        </div>
       </div>
     </div>
   </div>

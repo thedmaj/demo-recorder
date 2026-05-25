@@ -364,8 +364,8 @@ const PATCHES = [
     name: 'slide-shell-chrome-inject',
     tierScope: 'slide',
     description:
-      'Opt-in: for each .slide-root step missing .chrome-logo / .eyebrow-tag / .chrome-foot, inject canonical chrome. ' +
-      'Does not auto-fire from QA.',
+      'Opt-in: for each .slide-root step missing .chrome-logo / .eyebrow-tag, inject canonical chrome. ' +
+      'Does not auto-fire from QA. Pipeline slides omit .chrome-foot.',
     matchCategories: [],
     matchIssuePatterns: [],
     manualOnly: true,
@@ -410,11 +410,6 @@ const PATCHES = [
           inner = `<div class="eyebrow-tag" style="margin-top:24px;">${label}</div>\n` + inner;
           patched += 1;
         }
-        if (!/\bchrome-foot\b/.test(inner) && !/data-slide-template\s*=\s*["']T1["']/i.test(match[0])) {
-          const page = String(i + 1).padStart(2, '0');
-          inner = inner + `\n<div class="chrome-foot"><span>${page} / ${slideSteps.length} · Plaid</span></div>`;
-          patched += 1;
-        }
         if (!/\bclass\s*=\s*["'][^"']*\bframe\b/.test(inner)) {
           inner = `<div class="frame">\n${inner}\n</div>`;
           patched += 1;
@@ -424,6 +419,27 @@ const PATCHES = [
       if (!patched) return { applied: false, summary: 'All slide steps already have shell chrome' };
       fs.writeFileSync(htmlPath, html, 'utf8');
       return { applied: true, summary: `Injected shell chrome on ${slideSteps.length} slide step(s)` };
+    },
+  },
+  {
+    name: 'slide-chrome-foot-strip',
+    tierScope: 'slide',
+    description:
+      'Opt-in: remove all .chrome-foot blocks from slide steps (prevents overlap with body copy).',
+    matchCategories: [],
+    matchIssuePatterns: [],
+    manualOnly: true,
+    apply: async ({ runDir }) => {
+      const { stripChromeFootFromHtml } = require('./slide-chrome-foot');
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
+      const html = fs.readFileSync(htmlPath, 'utf8');
+      if (!/\bchrome-foot\b/.test(html)) {
+        return { applied: false, summary: 'No .chrome-foot blocks found' };
+      }
+      const next = stripChromeFootFromHtml(html);
+      fs.writeFileSync(htmlPath, next, 'utf8');
+      return { applied: true, summary: 'Removed .chrome-foot from slide HTML' };
     },
   },
   {

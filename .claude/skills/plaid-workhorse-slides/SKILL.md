@@ -80,13 +80,12 @@ Pick the layout that best conveys the step's **value prop and product understand
       <div class="slide-stack">
         <!-- Workhorse grid/cards/diagram markup here — Plaid tokens only -->
       </div>
-      <div class="chrome-foot"><span>03 / 12 · Section</span></div>
     </div>
   </div>
 </div>
 ```
 
-- **T1** may omit eyebrow/footer per DECK_TEMPLATES.
+- **T1** may omit eyebrow per DECK_TEMPLATES. Pipeline slides omit `.chrome-foot`.
 - Set **both** `data-slide-template` (nearest T#) and `data-workhorse-layout` (actual pattern).
 
 ## Token bridge (mandatory — no Workhorse themes)
@@ -122,7 +121,7 @@ Use `var(--plaid-teal-500)` not `#42F0CD` literals when possible. No customer/ho
 
 - **Two-stat peer benchmarks** → `stat-highlight` (T4), not `data-table` (T7).
 - **Hero metrics** → one `.hero-stat-value` mint moment; do not bury the narration’s lead stat in a small grid cell.
-- **Chrome-foot clearance** → `.slide-stack { padding-bottom: 32–48px }`; never let body copy share a row with `.chrome-foot`.
+- **No footers** — pipeline slides omit `.chrome-foot`; put partnership labels in `.eyebrow-tag`.
 
 ## Forbidden in pipeline `.slide-root`
 

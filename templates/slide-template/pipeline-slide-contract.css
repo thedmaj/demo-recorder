@@ -198,3 +198,8 @@ body.pipeline-slide-active .step.active {
  * layout — they MUST NOT redefine `.slide-root` max-width or the inner
  * overflow rules above. build-qa.scanSlideCanvasSize will flag canvas
  * violations as `slide-canvas-size` critical blockers. */
+
+/* Pipeline slides omit chrome-foot — footers overlap body copy at 1280×800. */
+.slide-root .chrome-foot {
+  display: none;
+}

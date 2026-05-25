@@ -31,8 +31,7 @@ Pipeline-generated **slide** steps (`sceneType: "slide"`, `.slide-root`) follow 
       <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="" />
       <div class="eyebrow-tag">Section X — Name</div>
       <h2 class="h-title">Headline with <em>italic accent.</em></h2>
-      <!-- template body (T1–T11) -->
-      <div class="chrome-foot"><span>NN / TOTAL · Section</span></div>
+      <!-- template body (T1–T11) in .slide-stack -->
     </div>
   </div>
 </div>
@@ -47,8 +46,8 @@ Pipeline-generated **slide** steps (`sceneType: "slide"`, `.slide-root`) follow 
 - **Never** use `display: inline-block` inside `.slide-root` — flex/grid + `gap` only.
 - Body text **≥ 24px** (mockup chrome excepted — see build-QA allowlist).
 - **Typography ceilings:** `.h-title` max **72px** (T3 **96px**, T1 **140px**); `.hero-stat-value` max **180px**; body max **36px**. Prefer `slide.css` classes — post-slides runs `normalize-slide-typography.js` to cap LLM oversizing.
-- Wrap slide body in `.slide-stack` so `.chrome-foot` (flex `margin-top: auto`) does not overlap content.
-- Add **`padding-bottom: 32–48px`** on `.slide-stack` when body copy is long — prevents `slide-text-overlap` with `.chrome-foot` (common QA failure).
+- Wrap slide body in `.slide-stack`. **Do not** add `.chrome-foot` — pipeline slides omit footers to prevent overlap with body copy.
+- Partnership labels (`Plaid × {customer}`, product names) belong in `.eyebrow-tag` only.
 
 ## Forbidden sales CTAs (pipeline demos)
 

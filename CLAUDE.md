@@ -509,7 +509,7 @@ Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `emb
 ### Shell + templates
 
 - Every slide step: `data-testid="step-{id}"` → `.slide-root` with `data-slide-template="T1"|…|"T11"`.
-- Canonical chrome: `.frame`, `.chrome-logo`, `.eyebrow-tag`, `.h-title` (one `<em>` Bowery italic accent), `.chrome-foot` (T1 may omit eyebrow/footer).
+- Canonical chrome: `.frame`, `.chrome-logo`, `.eyebrow-tag`, `.h-title` (one `<em>` Bowery italic accent). Pipeline slides omit `.chrome-foot` (T1 may omit eyebrow).
 - Background classes on `.slide-root`: default navy (`--plaid-ink-900`), or `.light` / `.cream` / `.holo`.
 - Assets copied per build: `scratch-app/fonts/`, `scratch-app/assets/logos/` (paths like `assets/logos/plaid-horizontal-white.png`).
 - `post-slides-report.json` records `templatesUsed[]` per inserted slide.

@@ -89,7 +89,6 @@ Author with DECK templates; do **not** set fixed `width:1440px;height:900px` on 
       <div class="slide-stack">
         <h2 class="h-title">Sentence case headline with one <em>accent</em>.</h2>
       </div>
-      <div class="chrome-foot"><span>Footer left</span><span>Footer right</span></div>
     </div>
   </div>
 </div>
@@ -115,7 +114,7 @@ Recorded product demos are **not** sales decks. Slides must **never** invite the
 
 - Three **product outcome** bullets (risk lift, compliance, operational wins)
 - A **declarative** closing line tied to the demo story (no faux button chrome)
-- Partnership footer copy in `.chrome-foot` only (`Plaid × {customer}`)
+- Partnership / section labels in `.eyebrow-tag` only (`Plaid × {customer}`, product names). **Do not** add `.chrome-foot` — pipeline slides omit footers.
 
 Build-QA enforces this via `scanSlideForbiddenSalesCta` (critical blocker).
 
@@ -125,10 +124,10 @@ These patterns caused the most **deterministic** failures in showcase-router rer
 
 | Failure mode | Prevention |
 |--------------|------------|
-| **`slide-text-overlap`** (body vs `.chrome-foot`) | Wrap all body content in `.slide-stack` with `padding-bottom: 32–48px`. Never place long body paragraphs, API endpoint labels, or captions in the same row as `.chrome-foot`. |
+| **`slide-text-overlap`** | Wrap body in `.slide-stack`; do not add `.chrome-foot`. Keep API endpoint labels inside cards, not in a bottom footer row. |
 | **Peer benchmark misuse** | Two hero stats side-by-side → `stat-highlight` (T4), **not** `data-table` (T7). Tables need ≥3 rows and right-aligned numerics — not a pair of callouts. |
 | **Metric hero buried** | When narration cites a hero stat (+25%, ~90% fewer), put it in `.hero-stat-value` / mint moment — not a small card in a 4-up grid. |
-| **API endpoint in footer row** | Put `POST /…` in a card column or `.chrome-foot` right span — never inline between body copy and footer. |
+| **API endpoint placement** | Put `POST /…` in a card column — never in a footer row. |
 | **Duplicate JSON rail** | Do not embed JSON snippets inside `.slide-root` when `step.apiResponse` exists — use global `#api-response-panel` only. |
 | **Mint overuse** | One `--plaid-teal-500` eye-draw per slide; stats on cream/white unless that stat *is* the mint moment. |
 | **Overlap autofix regression** | Never inflate font-size above ceilings to “fix” overlap — increase `gap` / `padding-bottom` on `.slide-stack` instead. |
@@ -146,7 +145,7 @@ Warnings/blockers to respect:
 - `slide-plaid-logo-invented` — fabricated Plaid marks
 - `slide-chrome-logo-placement` — inline top-left or oversized logo (showcase leak)
 - `slide-canvas-size` — slide too small or wrong aspect
-- `slide-shell-chrome` — missing `.chrome-logo` / `.eyebrow-tag` / `.chrome-foot`
+- `slide-shell-chrome` — missing `.chrome-logo` / `.eyebrow-tag`
 - `slide-narration-drift` — rendered text must match narration claims
 - `slide-forbidden-sales-cta` — contact/trial/POC/retro action prompts on slides
 

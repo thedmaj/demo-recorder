@@ -77,7 +77,7 @@ describe('slide design opt-in patches', () => {
     const html = fs.readFileSync(path.join(appDir, 'index.html'), 'utf8');
     assert.ok(/\bchrome-logo\b/.test(html));
     assert.ok(/\beyebrow-tag\b/.test(html));
-    assert.ok(/\bchrome-foot\b/.test(html));
+    assert.ok(!/\bchrome-foot\b/.test(html));
   });
 
   test('slide-typography-floor raises sub-24px inline sizes', async () => {

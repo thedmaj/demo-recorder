@@ -5,6 +5,7 @@
  */
 
 const fs = require('fs');
+const { stripChromeFootFromHtml } = require('./slide-chrome-foot');
 const {
   getShowcaseIndexPath,
   getTemplateById,
@@ -63,11 +64,10 @@ function extractSlideRootFromSection(html, templateId) {
  * @param {string} html
  */
 function tokenizeSkeletonCopy(html) {
-  let out = html;
+  let out = stripChromeFootFromHtml(html);
   out = out.replace(/(<h2[^>]*class="[^"]*h-title[^"]*"[^>]*>)([\s\S]*?)(<\/h2>)/gi, '$1{HEADLINE}$3');
   out = out.replace(/(<p[^>]*class="[^"]*slide-body-text[^"]*"[^>]*>)([\s\S]*?)(<\/p>)/gi, '$1{BODY}$3');
   out = out.replace(/(<div[^>]*class="[^"]*eyebrow-tag[^"]*"[^>]*>)([\s\S]*?)(<\/div>)/gi, '$1{EYEBROW}$3');
-  out = out.replace(/(<div[^>]*class="[^"]*chrome-foot[^"]*"[^>]*>)([\s\S]*?)(<\/div>)/gi, '$1{FOOTER}$3');
   out = out.replace(/(<div[^>]*class="[^"]*hero-stat-value[^"]*"[^>]*>)([\s\S]*?)(<\/div>)/gi, '$1{STAT_VALUE}$3');
   return out;
 }
