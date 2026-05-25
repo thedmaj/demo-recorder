@@ -63,6 +63,7 @@ const {
   appendPipelineLogJson,
 } = require('./utils/pipeline-logger');
 const { shouldIncludeCraRunNameToken } = require('./utils/prompt-scope');
+const { resolveSlideQaMaxIterations } = require('./utils/slide-qa-config');
 
 // ── CLI timestamps (orchestrator + stage boundaries; child scripts keep plain console) ──
 function cliIsoTime() {
@@ -1542,6 +1543,55 @@ function analyzeFixModeForQaIteration({ versionedDir, qaResult, qaThreshold, ite
  * The lanes never call `build-app` / `generateApp` — that is the orchestrator's
  * legacy LLM regen path, which the tier matrix is explicitly trying to avoid.
  */
+const slideQaBudget = { used: 0, max: null };
+
+function resetSlideQaBudget() {
+  slideQaBudget.used = 0;
+  slideQaBudget.max = resolveSlideQaMaxIterations();
+}
+
+function slideQaBudgetRemaining() {
+  if (slideQaBudget.max == null) slideQaBudget.max = resolveSlideQaMaxIterations();
+  return Math.max(0, slideQaBudget.max - slideQaBudget.used);
+}
+
+/**
+ * Run slide-fix within the pipeline slide-QA budget (default max 3 iterations
+ * or passing slide tier — whichever comes first). Shared by tier recovery and
+ * the standalone slide-fix stage so multiple orchestrator paths cannot exceed
+ * the cap in a single run.
+ */
+async function dispatchSlideFix(runDir, opts = {}) {
+  const remaining = slideQaBudgetRemaining();
+  if (remaining <= 0) {
+    cliWarn(
+      `[Orchestrator] Slide QA budget exhausted (${slideQaBudget.used}/${slideQaBudget.max} iterations) — skipping slide-fix`
+    );
+    return {
+      skipped: true,
+      reason: 'slide_qa_budget_exhausted',
+      slidePassed: false,
+      iterations: 0,
+    };
+  }
+  delete require.cache[require.resolve('./scratch/slide-fix')];
+  const lane = require('./scratch/slide-fix');
+  const explicitCap = Number.isFinite(Number(opts.maxIterations)) ? Number(opts.maxIterations) : null;
+  const cap = explicitCap != null ? Math.min(explicitCap, remaining) : remaining;
+  cliLog(
+    `[Orchestrator] slide-fix (slide QA iterations ${slideQaBudget.used + 1}–${slideQaBudget.used + cap} of max ${slideQaBudget.max})`
+  );
+  const out = await lane.main({
+    runDir,
+    maxIterations: cap,
+    emitAgentTask: opts.emitAgentTask ?? isAgentContext(),
+    requireAppPassed: opts.requireAppPassed,
+    allowPostRecord: opts.allowPostRecord,
+  });
+  slideQaBudget.used += out.iterations || 0;
+  return out;
+}
+
 async function runTierRecoveryLanes({ runDir, tierRecovery, tierSummary }) {
   const wantsApp = tierRecovery === 'app-touchup' || tierRecovery === 'app-touchup+slide-fix';
   const wantsSlide = tierRecovery === 'slide-fix' || tierRecovery === 'app-touchup+slide-fix';
@@ -1571,11 +1621,8 @@ async function runTierRecoveryLanes({ runDir, tierRecovery, tierSummary }) {
   }
   if (wantsSlide) {
     try {
-      delete require.cache[require.resolve('./scratch/slide-fix')];
-      const lane = require('./scratch/slide-fix');
       cliLog('[Orchestrator] Dispatching tier-recovery lane: slide-fix');
-      const out = await lane.main({
-        runDir,
+      const out = await dispatchSlideFix(runDir, {
         emitAgentTask: isAgentContext(),
       });
       slidePassed = out.slidePassed === true || out.skipped === true;
@@ -2213,6 +2260,7 @@ async function runScratchPipeline({
   buildFixModeOverride,
   effectiveFromStage,
 }) {
+  resetSlideQaBudget();
   const shouldRun = (stageName) => {
     const idx = STAGES.indexOf(stageName);
     if (idx < 0) return false;
@@ -2974,11 +3022,7 @@ async function runScratchPipeline({
   if (shouldRun('slide-fix')) {
     await runStage('slide-fix', async () => {
       try {
-        delete require.cache[require.resolve('./scratch/slide-fix')];
-        const mod = require('./scratch/slide-fix');
-        if (typeof mod.main === 'function') {
-          await mod.main({ runDir: versionedDir, emitAgentTask: isAgentContext() });
-        }
+        await dispatchSlideFix(versionedDir, { emitAgentTask: isAgentContext() });
       } catch (e) {
         cliWarn(`[Orchestrator] slide-fix stage failed: ${e.message}`);
       }

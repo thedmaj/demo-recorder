@@ -7,7 +7,7 @@
  *   - the run's qa-report-build.json shows the **app tier passed** but the
  *     **slide tier failed** (`tierSummary.app.passed && !tierSummary.slide.passed`).
  *
- * Deterministic loop (≤ SLIDE_FIX_MAX_ITERATIONS, default 2):
+ * Deterministic loop (≤ SLIDE_QA_MAX_ITERATIONS, default 3):
  *
  *   1. findSlideApplicablePatches → applyPatches  (typography, layout, chrome)
  *   2. stripSlideRoots(failingSlideStepIds)        (reset blocks to placeholders)
@@ -23,7 +23,7 @@
  * contract — if it regresses, that is a bug in this lane.
  *
  * Programmatic:
- *   require('./slide-fix').main({ runDir, maxIterations: 2, emitAgentTask: true })
+ *   require('./slide-fix').main({ runDir, maxIterations: 3, emitAgentTask: true })
  *
  * CLI:
  *   PIPELINE_RUN_DIR=… node scripts/scratch/scratch/slide-fix.js
@@ -36,7 +36,7 @@ const path = require('path');
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const RUN_DIR = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
 
-const SLIDE_FIX_MAX_ITERATIONS_DEFAULT = Number(process.env.SLIDE_FIX_MAX_ITERATIONS || '2');
+const { resolveSlideQaMaxIterations } = require('../utils/slide-qa-config');
 
 function safeReadJson(file) {
   try {
@@ -157,16 +157,14 @@ function emitAgentSlideFixTask(runDir) {
  *
  * @param {object} opts
  * @param {string} opts.runDir
- * @param {number} [opts.maxIterations=2]
+ * @param {number} [opts.maxIterations=3]
  * @param {boolean} [opts.emitAgentTask=true]   write qa-slide-fix-task.md on residual failures
  * @param {boolean} [opts.requireAppPassed=true] hard fail when app tier hasn't passed
  * @returns {Promise<{ iterations, finalTierSummary, slidePassed, agentTaskPath, sentinelPath }>}
  */
 async function main(opts = {}) {
   const runDir = opts.runDir || RUN_DIR;
-  const maxIterations = Number.isFinite(Number(opts.maxIterations))
-    ? Math.max(1, Number(opts.maxIterations))
-    : SLIDE_FIX_MAX_ITERATIONS_DEFAULT;
+  const maxIterations = resolveSlideQaMaxIterations(opts.maxIterations);
   const emitAgentTask = opts.emitAgentTask !== false;
   const requireAppPassed = opts.requireAppPassed !== false;
 
