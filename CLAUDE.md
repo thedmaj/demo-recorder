@@ -278,8 +278,10 @@ When `plaidLinkMode` is `embedded`, follow Embedded Institution Search behavior:
 - Create Link token with `/link/token/create` as normal; no embedded-specific token params are required.
 - If showing "Connect Manually", configure `auth.auth_type_select_enabled` in token config.
 - Web SDK: use `Plaid.createEmbedded(...)` and mount into `data-testid="plaid-embedded-link-container"`.
+- **Pre-link page = live embed:** the launch step (`plaidPhase: "launch"`) must show the standard pre-link trust UX (recommended tile, encryption bullets, consent) **and** the live embedded institution search on the **same** step — parity with modal Link. Never defer the SDK to a later step or use placeholder copy like “Institution search preview – opens on the next step.”
 - Keep layout constraints to sizing only: minimum embedded container `350x300px` or `300x350px`.
 - Do not impose extra iframe/frame-containment constraints beyond normal embedded sizing behavior.
+- Full rules: [`skills/plaid-link-embedded-link-skill.md`](skills/plaid-link-embedded-link-skill.md).
 
 ### CRA / Consumer Report Link Requirements (Base Report + Income Insights)
 
@@ -386,6 +388,15 @@ The LLM build phase has produced CSS rules that gave `.disclosure` width/height/
 3. **Build prompt rule** in `prompt-templates.js` instructs the LLM not to style `.disclosure` beyond `color` and `cursor:pointer`. Explicit reference to the regression run is included so the LLM understands the consequence.
 
 Build rule for any human or LLM hand-editing the generated HTML: **do not add CSS for `.disclosure` beyond `color` and `cursor`.** Renderjson's defaults plus the post-panels override are sufficient.
+
+#### Overlay invariant (v9+ — REQUIRED)
+
+The JSON panel is a **pure fixed overlay** — it never resizes slides or host UI:
+
+- **z-index 2100** on `#api-response-panel` / `.side-panel` — floats above host modals and slide chrome.
+- **Always collapsed by default** on every step navigation (`__apiPanelUserOpen = false`). The 48px edge toggle is the only visible chrome until the user clicks to expand.
+- **No space reservation** — do NOT add `body.api-panel-open` slide-shrink rules, `padding-right: 520px`, or `max-width: calc(100% - 520px)` on host steps or `.slide-root`. Build-QA `scanPanelOverlayContract` flags these as critical blockers.
+- Build-QA / vision-QA may set `window.__API_PANEL_CONFIG.collapsedByDefault = false` before walking steps to validate JSON content.
 
 ### Plaid Link onSuccess Callback Panel Contract (v6+)
 
@@ -576,7 +587,7 @@ either     | systemic*  |                    | fullbuild                 | (lega
 
 **Lane contracts (load-bearing):**
 
-- **`pipe app-touchup`** ([`scripts/scratch/scratch/app-touchup.js`](scripts/scratch/scratch/app-touchup.js)) — app patches (`api-panel-toggle-latest`, `plaid-launch-cta-icon-ratio`, `plaid-link-token-products-prune`, `zip-cra-host-contract`) → `post-panels` → build-qa `stepScope=app` (or `all` on app-only). On residual failures under an AI agent, writes `qa-touchup-task.md` (app-only) or `qa-app-touchup-task.md` (app+slides). **Never** edits `.slide-root` blocks. Never calls `build-app`.
+- **`pipe app-touchup`** ([`scripts/scratch/scratch/app-touchup.js`](scripts/scratch/scratch/app-touchup.js)) — app patches (`api-panel-toggle-latest`, `host-nav-logo-contrast`, `plaid-launch-cta-icon-ratio`, `plaid-link-token-products-prune`, `zip-cra-host-contract`) → `post-panels` → build-qa `stepScope=app` (or `all` on app-only). On residual failures under an AI agent, writes `qa-touchup-task.md` (app-only) or `qa-app-touchup-task.md` (app+slides). **Never** edits `.slide-root` blocks. Never calls `build-app`.
 - **`pipe slide-fix`** ([`scripts/scratch/scratch/slide-fix.js`](scripts/scratch/scratch/slide-fix.js)) — slide patches (typography ceiling/floor, layout, chrome-logo) → `strip-slide-roots --steps=…` → `post-slides --steps=…` → `post-panels` → build-qa `stepScope=slides`. Refuses to run on app-only and when the app tier hasn't passed. On residual failures, writes `qa-slide-fix-task.md`. **Never** edits non-slide step blocks. Never calls `build-app`.
 - **`pipe status`** surfaces `tierSummary` + `recommendedRecovery` and the `nextRecoveryCommand` field is tier-aware.
 
@@ -592,7 +603,7 @@ See **[REQUIRED — Pipeline heartbeat](#required--pipeline-heartbeat-supervisin
 
 **App-only invariant (HARD):** Runs with `run-manifest.json.buildMode === 'app-only'` MUST produce zero slide artifacts. Slide steps are not generated, the canonical placeholder is not emitted, `post-slides` skips with `{ skipped: true, reason: 'app-only' }`, slide-tier QA scanners are gated off, and `scanAppOnlyNoSlides` fires `app-only-slide-leak` (critical deterministic blocker) on any leak. The only path from app-only to app+slides is the storyboard editor's `insert-library-slide` which flips the manifest via `stampInsertedStepKindAndMaybeUpgradeBuildMode`. See `tests/unit/app-only-zero-slides.test.js`.
 
-**Source of truth:** `templates/slide-template/brand-design-briefs/` (`DECK_DESIGN_SYSTEM.md`, `DECK_TEMPLATES.md`, `DECK_COMPOSITION.md`) + `colors_and_type.css` + `slide.css` + `pipeline-slide-contract.css` + `pipeline-slide-shell.html`.
+**Source of truth:** `templates/slide-template/brand-design-briefs/` (`DECK_DESIGN_SYSTEM.md`, `DECK_TEMPLATES.md`, `DECK_COMPOSITION.md`) + `colors_and_type.css` + `slide.css` + `pipeline-slide-contract.css` + `pipeline-slide-shell.html`. Agent skill: [`.claude/skills/plaid-slide-design/SKILL.md`](.claude/skills/plaid-slide-design/SKILL.md) (slide vs host isolation, palette enforcement).
 
 **Slide-fix as canonical residual recovery (REQUIRED):** When `build-qa.tierSummary.slide.passed === false`, the orchestrator dispatches the **slide-fix lane** ([`scripts/scratch/scratch/slide-fix.js`](scripts/scratch/scratch/slide-fix.js)): deterministic patches → `strip-slide-roots --steps=<failing>` → `post-slides --steps=<failing>` → scoped re-QA → optional `qa-slide-fix-task.md` for Agent Mode StrReplace edits. **Slides NEVER trigger `build-app` regeneration.** This locks in the app-first / slides-after architecture — host steps that already passed QA are not re-rolled when a slide fails. See `scripts/scratch/utils/strip-slide-roots-for-post-slides.js` (canonical placeholder shape lives here as `buildCanonicalSlidePlaceholder`).
 
@@ -617,7 +628,7 @@ Every active slide MUST render at a **Google-Slides-class size** that dominates 
 | **Width** | `max-width: min(1280px, calc(100vw - 80px))` → **≥ 75% viewport** | Slides are the deliverable on slide-tier steps; small slides are unreadable on screen capture. |
 | **Aspect ratio** | `16/10` (allowed: `[1.40, 1.85]` — covers 16:9 = 1.78 and 16:10 = 1.60) | Matches Google Slides default + Plaid Deck Design System. |
 | **Height** | Auto from aspect-ratio → **≥ 67% viewport** | On a 1440×900 viewport the slide is 1280×800. |
-| **API panel reservation** | Only when **`body.api-panel-open`** is set | Collapsed panel is 48px edge toggle — no need to reserve. Open panel needs space. |
+| **API panel reservation** | **None** — panel is a fixed overlay (z-index 2100) | Collapsed default is 48px edge toggle; expand-on-click overlays content without shrinking slides |
 
 **Source of truth (rebuilt 2026-05-22):** [`templates/slide-template/pipeline-slide-contract.css`](templates/slide-template/pipeline-slide-contract.css), injected ONCE by `post-slides.ensureSlideDesignStylesInHead` inside the `<style data-pipeline-slide-contract="v1">` block. **Zero `!important` declarations** in the contract — cascade order is authoritative (the contract block is emitted AFTER `slide.css` in `<head>`). This replaces four prior competing patches:
 
@@ -628,11 +639,10 @@ Every active slide MUST render at a **Google-Slides-class size** that dominates 
 | `qa-patch-library.js` `slide-canvas-fullbleed` | RETIRED (stub kept for historical references) |
 | Per-step inline-style escapes (added during surgical slide-fix iterations) | DELETED |
 
-**Body class plumbing:** [`scripts/scratch/scratch/post-panels.js`](scripts/scratch/scratch/post-panels.js) `v9+` patch toggles `document.body.classList.toggle('api-panel-open', open)` inside `setPanelVisibility()`. When the active step has no `apiResponse`, the body class is removed on step navigation — slides return to full-bleed.
-
 **Enforced by:**
 
 - **`scanSlideCanvasSize`** in `build-qa.js` (deterministic blocker, category `slide-canvas-size`, severity `critical`). Measures rendered `.slide-root.getBoundingClientRect()` per slide step during the Playwright walk and fires if width < 75%, height < 67%, or aspect outside `[1.40, 1.85]`. Gated on `buildMode === 'app+slides'`.
+- **`scanPanelOverlayContract`** in `build-qa.js` (deterministic blocker, category `panel-overlay-contract`, severity `critical`). Forbids `body.api-panel-open` slide-shrink rules and 520px reserve CSS on host/slide steps.
 - **`scanSlideNarrationConcreteValues`** in `build-qa.js` (deterministic blocker, category `slide-narration-drift`, severity `critical`). Catches LLM hallucinations where the slide's rendered text doesn't match concrete claims in the step's narration (numeric tokens, ACCEPT/REVIEW/REROUTE decisions, product names like "Trust Index"). Voiceover sync depends on the rendered content matching the narrator's claims.
 
 **Hand-edits MUST NOT** add `min-height`, `aspect-ratio`, or width overrides on `.slide-root` (inline or in stylesheet) that would shrink the slide below the contract. The `scanSlideCanvasSize` blocker will fail the build. If you need to override the contract, edit `pipeline-slide-contract.css` directly — do not shadow it with a higher-priority `!important` block.
@@ -674,7 +684,7 @@ Manrope (sans), Playfair Display (display), JetBrains Mono (mono) — export too
 
 **Logo (hard contract):** `scanSlidePlaidLogoAuthenticity` in `build-qa.js` is a **deterministic blocker** (`severity: 'critical'`). Slides must use bundled horizontal wordmarks only — `<img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png">` (navy), `plaid-horizontal-dark.png` (light/cream/holo), or `plaid-horizontal-holograph.png` — **or omit** `.chrome-logo` entirely. Never invent SVG/icon-grid logos or render "PLAID" as text/CSS.
 
-**CRA LendScore host (blockers when family is `cra_lend_score`):** `scanCraHostUnderwritingContracts` enforces Zip-style **NMLS ID 1963958** footer (via `inputs/brand-references/zip.md`), **520px** clearance for `#api-response-panel` on `lendscore-reveal`, visible `approve-plan-cta`, and `evaluateApiStoryAlignment` recognizes `POST /cra/check_report/lend_score/get` (not Base Report mis-label). Product KB: `inputs/products/plaid-cra-lend-score.md`.
+**CRA LendScore host (blockers when family is `cra_lend_score`):** `scanCraHostUnderwritingContracts` enforces Zip-style **NMLS ID 1963958** footer (via `inputs/brand-references/zip.md`), visible `approve-plan-cta`, and `evaluateApiStoryAlignment` recognizes `POST /cra/check_report/lend_score/get` (not Base Report mis-label). Product KB: `inputs/products/plaid-cra-lend-score.md`.
 
 **Eight warning scanners** (not blockers): tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors — all `severity: 'warning'`, `deterministicBlocker: false`.
 

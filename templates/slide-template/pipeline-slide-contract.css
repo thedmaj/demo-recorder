@@ -34,17 +34,13 @@
  * ----------------------------------------------------------------------------
  */
 
-/* Slide canvas sizing — 1280×800-class default, narrows only when the JSON
- * rail is expanded (body.api-panel-open). No !important; cascade order wins. */
+/* Slide canvas sizing — 1280×800-class default; JSON panel is a fixed overlay
+ * (z-index 2100) and never shrinks the slide canvas. No !important. */
 .step.active .slide-root {
   width: 100%;
   max-width: min(1280px, calc(100vw - 80px));
   margin-left: auto;
   margin-right: auto;
-}
-
-body.api-panel-open .step.active .slide-root {
-  max-width: min(820px, calc(100vw - 560px));
 }
 
 /* Canvas clip: outer .slide-root frame handles overflow; inner .slide-stack
@@ -84,6 +80,31 @@ body.api-panel-open .step.active .slide-root {
 .slide-root .body-large {
   font-size: clamp(24px, 1.8vw, 32px);
   line-height: 1.4;
+}
+
+/* Host-brand cascade isolation — build-app emits unscoped customer tokens on
+   html/body/h1–h4 before post-slides design CSS. Re-assert Plaid deck fonts
+   inside slides so Huntington Serif / Times never leak from global rules. */
+.slide-root h1,
+.slide-root h2,
+.slide-root h3,
+.slide-root h4,
+.slide-root p,
+.slide-root li,
+.slide-root span,
+.slide-root a {
+  font-family: var(--font-sans);
+}
+
+.slide-root .h-title em,
+.slide-root .h-title .bowery-accent,
+.slide-root .hero-stat-value,
+.slide-root .stat-value {
+  font-family: var(--font-display);
+}
+
+.slide-root a {
+  color: var(--plaid-teal-500);
 }
 
 /* Per-slide visual chrome is allowed via per-slide <style> blocks emitted by

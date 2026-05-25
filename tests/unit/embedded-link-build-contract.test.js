@@ -60,7 +60,7 @@ test('runtime sizing uses resolveEmbeddedRuntimeSizingProfile', () => {
   );
 });
 
-test('skill documents unified 430×390, overflow, and iframe 150px default', () => {
+test('skill documents unified 430×390, overflow, iframe 150px default, and integrated pre-link embed', () => {
   const skillPath = path.join(__dirname, '../../skills/plaid-link-embedded-link-skill.md');
   const md = fs.readFileSync(skillPath, 'utf8');
   assert.match(md, /overflow:\s*hidden/);
@@ -68,4 +68,9 @@ test('skill documents unified 430×390, overflow, and iframe 150px default', () 
   assert.match(md, /390/);
   assert.match(md, /150px/);
   assert.match(md, /__embeddedLinkSizeProfile = 'default'/);
+  assert.match(md, /Pre-link page = live embed/);
+  assert.match(md, /Institution search preview/);
+  assert.match(md, /opens on the next step/);
+  assert.doesNotMatch(md, /preload steps use static preview mocks only/);
+  assert.doesNotMatch(md, /The next step \(`plaid-link-launch`/);
 });

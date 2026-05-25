@@ -226,7 +226,8 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       // Base panel rules — re-asserted at high specificity so they win over
       // any LLM-generated CSS that may have set overflow:hidden or width
       // constraints on .side-panel.
-      '#api-response-panel{overflow:visible !important;}',
+      '#api-response-panel{overflow:visible !important;z-index:2100 !important;background:rgba(2,37,68,0.96) !important;border-left:1px solid rgba(66,240,205,0.18) !important;}',
+      '#api-response-panel .side-panel-header{color:var(--plaid-teal-500,#42F0CD) !important;border-bottom:1px solid rgba(66,240,205,0.18) !important;}',
       '#api-response-panel.api-panel-collapsed{width:48px !important;min-width:48px !important;max-width:48px !important;}',
       '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}',
       // Edge toggle — vertically centered on the panel, icon-only. The arrow
@@ -244,17 +245,17 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '  width:36px;height:60px;',
       '  padding:0;',
       '  border-radius:10px 0 0 10px;',
-      '  border:1px solid rgba(0,166,126,0.6);border-right:none;',
-      '  background:rgba(0,166,126,0.22);',
-      '  color:#9cf8df;',
+      '  border:1px solid rgba(66,240,205,0.6);border-right:none;',
+      '  background:rgba(66,240,205,0.18);',
+      '  color:var(--plaid-teal-400,#71FBE3);',
       '  cursor:pointer;',
       '  box-shadow:0 8px 24px rgba(0,0,0,0.28);',
       '  z-index:2001;',
       '  user-select:none;',
       '  transition:background 0.16s ease,color 0.16s ease;',
       '}',
-      '#api-response-panel .api-panel-edge-toggle:hover{background:rgba(0,166,126,0.34);color:#c6ffef;}',
-      '#api-response-panel .api-panel-edge-toggle:focus-visible{outline:2px solid #00a67e;outline-offset:2px;}',
+      '#api-response-panel .api-panel-edge-toggle:hover{background:rgba(66,240,205,0.32);color:var(--plaid-teal-500,#42F0CD);}',
+      '#api-response-panel .api-panel-edge-toggle:focus-visible{outline:2px solid var(--plaid-teal-500,#42F0CD);outline-offset:2px;}',
       // Directional chevron. CSS-only — drawn from two borders rotated to form
       // an arrowhead. is-open class signals the panel is currently expanded;
       // in that state, a click will collapse (panel moves right) so the chevron
@@ -293,7 +294,7 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '  padding:0 !important;margin:0 4px 0 0 !important;',
       '  background:transparent !important;background-color:transparent !important;',
       '  background-image:none !important;',
-      '  color:rgba(255,255,255,0.55) !important;',
+      '  color:rgba(66,240,205,0.6) !important;',
       "  font-family:'SF Mono', Menlo, Monaco, Consolas, monospace !important;",
       '  font-size:0.85em !important;font-weight:600 !important;',
       '  line-height:1 !important;text-align:center !important;',
@@ -304,7 +305,7 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '}',
       '#api-response-panel .disclosure:hover,',
       '#api-response-panel a.disclosure:hover{',
-      '  color:rgba(255,255,255,0.95) !important;',
+      '  color:var(--plaid-teal-500,#42F0CD) !important;',
       '  background:transparent !important;background-color:transparent !important;',
       '  text-decoration:none !important;',
       '}',
@@ -429,12 +430,6 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       panel.classList.add('api-panel-collapsed');
       panel.classList.remove('api-panel-open');
     }
-    // Mirror the OPEN (expanded JSON body) state onto <body> so the slide CSS
-    // hard contract (slide.css: "body.api-panel-open .step.active .slide-root")
-    // can shrink the slide canvas to reserve space for the expanded panel.
-    // When the panel is hidden (display:none, on steps with no apiResponse)
-    // or collapsed (chrome only, 48px edge), the slide returns to full-bleed.
-    try { document.body.classList.toggle('api-panel-open', !!open); } catch (_) {}
     ensurePanelToggle(panel);
   }
 
@@ -585,9 +580,6 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       panel.style.setProperty('display', 'none', 'important');
       panel.classList.remove('api-panel-collapsed');
       panel.classList.remove('api-panel-open');
-      // Remove body.api-panel-open whenever the current step has no apiResponse —
-      // pure-slide and pure-host steps stay at full-bleed slide canvas.
-      try { document.body.classList.remove('api-panel-open'); } catch (_) {}
     }
   };
 

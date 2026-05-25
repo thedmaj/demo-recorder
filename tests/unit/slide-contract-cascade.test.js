@@ -47,9 +47,9 @@ describe('pipeline-slide-contract.css — file shape', () => {
       'canonical max-width must be min(1280px, calc(100vw - 80px))');
   });
 
-  test('contract declares body.api-panel-open narrower max-width', () => {
+  test('contract does NOT declare body.api-panel-open slide-shrink (overlay invariant)', () => {
     const css = fs.readFileSync(contractPath, 'utf8');
-    assert.match(css, /body\.api-panel-open[\s\S]*?max-width\s*:\s*min\(820px,\s*calc\(100vw\s*-\s*560px\)\)/);
+    assert.doesNotMatch(css, /body\.api-panel-open[\s\S]*?\.slide-root/);
   });
 
   test('contract sets .slide-stack overflow:visible (not hidden)', () => {
@@ -105,7 +105,7 @@ describe('ensureSlideDesignStylesInHead — contract injection', () => {
     const out = ensureSlideDesignStylesInHead(html, loadTemplates());
     // Verify the actual rule body made it in.
     assert.match(out, /max-width\s*:\s*min\(1280px,\s*calc\(100vw\s*-\s*80px\)\)/);
-    assert.match(out, /body\.api-panel-open/);
+    assert.doesNotMatch(out, /body\.api-panel-open[\s\S]{0,200}\.slide-root/);
     assert.match(out, /\.slide-root \.slide-stack/);
   });
 

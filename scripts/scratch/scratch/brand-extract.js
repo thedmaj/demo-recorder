@@ -880,6 +880,10 @@ async function main() {
     const { recommendHostBanner } = require('../utils/brand-contrast');
     profile.hostBanner = recommendHostBanner(profile);
     const hb = profile.hostBanner;
+    if (hb && hb.fallback && profile.logo && typeof profile.logo === 'object') {
+      profile.logo.shellBg = '#ffffff';
+      profile.logo.shellBorder = 'rgba(0, 0, 0, 0.08)';
+    }
     console.log(
       `[BrandExtract] Host banner recommendation: bg=${hb.bg} logoTone=${hb.logoTone} ` +
         `(source=${hb.toneSource}${hb.contrastRatio ? `, contrast=${hb.contrastRatio}:1` : ''})` +

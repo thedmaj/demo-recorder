@@ -1,0 +1,58 @@
+---
+description: "Plaid Deck Design System for pipeline slide steps. Auto-attached when editing slide HTML, deck briefs, or post-slides / slide-fix code."
+alwaysApply: false
+globs:
+  - "templates/slide-template/**"
+  - "scripts/scratch/scratch/post-slides.js"
+  - "scripts/scratch/scratch/slide-fix.js"
+  - "scripts/scratch/utils/slide-design-skill.js"
+  - "scripts/scratch/utils/slide-css-scoper.js"
+  - "scripts/scratch/utils/normalize-slide-typography.js"
+  - "out/demos/**/scratch-app/index.html"
+  - ".claude/skills/plaid-slide-design/**"
+  - ".cursor/skills/plaid-slide-design/**"
+---
+
+# Plaid Slide Design — Cursor rule
+
+This rule auto-attaches the **plaid-slide-design** skill whenever you edit
+slide-related files. The skill enforces the Plaid Deck Design System and
+blocks customer/host brand colors from leaking into `.slide-root`.
+
+**Canonical skill:** [`.claude/skills/plaid-slide-design/SKILL.md`](../../.claude/skills/plaid-slide-design/SKILL.md)
+**Cursor mirror:** [`.cursor/skills/plaid-slide-design/SKILL.md`](../skills/plaid-slide-design/SKILL.md)
+**Pipeline loader:** [`scripts/scratch/utils/slide-design-skill.js`](../../scripts/scratch/utils/slide-design-skill.js)
+
+## Hard rules (summary — read SKILL.md for full text)
+
+1. **Slides are Plaid-branded only.** Inside `.slide-root`, never use customer
+   primary/CTA hex (e.g. `#034F54`, `#5BA63C`, `#388E3C`) or customer heading
+   fonts (`Huntington Serif`, host Google Fonts).
+2. **Source of truth** = `templates/slide-template/brand-design-briefs/`
+   (`DECK_DESIGN_SYSTEM.md`, `DECK_TEMPLATES.md`, `DECK_COMPOSITION.md`) plus
+   `colors_and_type.css`, `slide.css`, `pipeline-slide-contract.css`. Do not
+   invent palette or typography outside these files.
+3. **Customer name in `post-slides` prompt is for partnership copy only**, not
+   permission to use customer palette inside `.slide-root`.
+4. **Pick one** of T1–T11 per slide; set `data-slide-template="T#"` on
+   `.slide-root`.
+5. **Approved palette** = `--plaid-ink-900` (#022544), `--plaid-teal-500`
+   (#42F0CD), navy/cream/holo backgrounds, `#E8E4D8` cream text.
+6. **Bundled logos only**: `assets/logos/plaid-horizontal-{white,dark,holograph}.png`.
+   Never invent SVG, icon grids, or "PLAID" text.
+
+## Pipeline integration
+
+The pipeline injects this skill into every slide LLM call automatically
+([`scripts/scratch/scratch/post-slides.js`](../../scripts/scratch/scratch/post-slides.js)).
+When you hand-edit slide HTML, follow the same rules so build-qa scanners
+(`slide-invented-color`, `slide-shell-chrome`, `slide-canvas-size`,
+`slide-narration-drift`) stay green.
+
+## Recovery
+
+If slide-tier QA fails after edits:
+
+```bash
+npm run pipe -- slide-fix [RUN_ID]
+```

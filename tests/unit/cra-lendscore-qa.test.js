@@ -42,7 +42,7 @@ describe('CRA LendScore contracts', () => {
     assert.equal(issues.length, 0, issues.join('; '));
   });
 
-  test('scanCraHostUnderwritingContracts flags missing NMLS and panel reserve', () => {
+  test('scanCraHostUnderwritingContracts flags missing NMLS only (no reserve requirement)', () => {
     const script = {
       steps: [
         {
@@ -61,7 +61,7 @@ describe('CRA LendScore contracts', () => {
 </div>`;
     const d = bq.scanCraHostUnderwritingContracts(html, script);
     assert.ok(d.some((x) => x.category === 'brand-disclosure-missing'));
-    assert.ok(d.some((x) => x.category === 'cra-lendscore-host-layout'));
+    assert.equal(d.some((x) => /reserve ~520px/i.test(x.issue || '')), false);
   });
 
   test('extractStepHtmlBlocks ignores CSS selectors before real step divs', () => {
@@ -76,7 +76,7 @@ describe('CRA LendScore contracts', () => {
     assert.doesNotMatch(block, /^\.step\[/);
   });
 
-  test('scanCraHostUnderwritingContracts passes with NMLS and reserve CSS', () => {
+  test('scanCraHostUnderwritingContracts passes with NMLS; reserve CSS flagged by scanPanelOverlayContract', () => {
     const script = {
       steps: [
         {
@@ -97,5 +97,8 @@ describe('CRA LendScore contracts', () => {
 </div>`;
     const d = bq.scanCraHostUnderwritingContracts(html, script);
     assert.equal(d.filter((x) => x.deterministicBlocker).length, 0);
+
+    const overlay = bq.scanPanelOverlayContract(html, script);
+    assert.ok(overlay.some((x) => x.category === 'panel-overlay-contract'));
   });
 });

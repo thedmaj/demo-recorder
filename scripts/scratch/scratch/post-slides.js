@@ -42,6 +42,7 @@ const path = require('path');
 const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind');
 const { buildSlideInsertionPrompt } = require('../utils/prompt-templates');
+const { loadSlideDesignSkill } = require('../utils/slide-design-skill');
 const { scopeSlideCss } = require('../utils/slide-css-scoper');
 const {
   normalizeSlideTypography,
@@ -605,6 +606,7 @@ async function main() {
   }
 
   const templates = loadSlideTemplates(PROJECT_ROOT);
+  const slideDesignSkill = loadSlideDesignSkill({ projectRoot: PROJECT_ROOT });
   const brand = loadBrand(outDir);
   const vps = loadValueProps(outDir);
   const scratchAppDir = path.join(outDir, 'scratch-app');
@@ -645,12 +647,13 @@ async function main() {
           slideTemplateCss: hostHasExistingSlide ? '' : templates.slideTemplateCss,
           slideTemplateRules: hostHasExistingSlide ? '' : templates.slideTemplateRules,
           slideTemplateShellHtml: hostHasExistingSlide ? '' : templates.slideTemplateShellHtml,
-          deckDesignSystem: hostHasExistingSlide ? '' : templates.deckDesignSystem,
+          deckDesignSystem: templates.deckDesignSystem,
           deckTemplates: hostHasExistingSlide ? '' : templates.deckTemplates,
           deckComposition: hostHasExistingSlide ? '' : templates.deckComposition,
           hostHasExistingSlide,
           valuePropositionStatements: vps,
           narration: step.narration,
+          slideDesignSkillMarkdown: slideDesignSkill.text,
         });
         lastRaw = raw;
         const { html: updated, applied: ok, reason } = spliceSlideFragmentIntoHtml(

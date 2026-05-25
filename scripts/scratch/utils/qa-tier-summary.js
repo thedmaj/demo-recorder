@@ -237,12 +237,20 @@ function collectSystemicReasons(qaReport, stepsArr) {
   const reasons = [];
   if (!qaReport) return reasons;
   if (qaReport.deterministicGateEnabled && qaReport.deterministicPassed === false) {
-    // Deterministic blocker fires when contract violations cannot be patched —
-    // treat as systemic so the orchestrator escalates instead of looping.
     const blockers = Array.isArray(qaReport.deterministicReasons)
       ? qaReport.deterministicReasons
       : [];
-    if (blockers.length > 0) reasons.push('deterministic_blocker_gate');
+    let patchable;
+    try {
+      const { getPatchableDeterministicCategories } = require('./qa-patch-library');
+      patchable = getPatchableDeterministicCategories();
+    } catch (_) {
+      patchable = new Set();
+    }
+    const hasNonPatchableBlocker = blockers.some(
+      (c) => !patchable.has(String(c).toLowerCase())
+    );
+    if (hasNonPatchableBlocker) reasons.push('deterministic_blocker_gate');
   }
   if (typeof qaReport.overrideReason === 'string' && qaReport.overrideReason.trim()) {
     reasons.push('build_qa_guardrail_override');

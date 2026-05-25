@@ -90,10 +90,9 @@
  * Defaults (slide-only steps — no API panel visible):
  *   max-width: min(1280px, calc(100vw - 80px))   → 1280 × 800 on 1440×900
  *
- * Insight / host steps with an API panel OPEN (`body.api-panel-open`)
- * reserve room on the right edge so the slide doesn't sit under the
- * expanded JSON rail. The collapsed-panel (48px edge toggle) does NOT
- * shrink the slide.
+ * Insight / host steps: the JSON panel is a fixed overlay (z-index 2100).
+ * Slides and host UI never reserve space for it — collapsed default is a
+ * 48px edge toggle; expand-on-click is a transient overlay.
  *
  * This contract is enforced by:
  *   - The `scanSlideCanvasSize` deterministic blocker in build-qa.js
@@ -105,10 +104,6 @@
   max-width: min(1280px, calc(100vw - 80px));
   margin-left: auto;
   margin-right: auto;
-}
-
-body.api-panel-open .step.active .slide-root {
-  max-width: min(820px, calc(100vw - 560px));
 }
 
 .slide-root .chrome-logo {
@@ -333,10 +328,10 @@ body.api-panel-open .step.active .slide-root {
   color: rgba(255, 255, 255, 0.45);
   text-decoration: none;
 }
-#api-response-content .renderjson .string { color: #5eead4; }
-#api-response-content .renderjson .number { color: #38bdf8; }
-#api-response-content .renderjson .boolean { color: #f472b6; }
-#api-response-content .renderjson .key { color: #fca5a5; }
+#api-response-content .renderjson .string { color: var(--plaid-blue-400, #5fa8e2); }
+#api-response-content .renderjson .number { color: var(--plaid-teal-400, #71fbe3); }
+#api-response-content .renderjson .boolean { color: var(--holo-periwinkle, #98a5ff); }
+#api-response-content .renderjson .key { color: var(--plaid-teal-500, #42f0cd); }
 #api-response-content .renderjson .null,
 #api-response-content .renderjson .undefined { color: rgba(255, 255, 255, 0.35); }
 
@@ -348,22 +343,23 @@ body.api-panel-open .step.active .slide-root {
   min-width: 414px;
   max-width: calc(100vw - 32px);
   height: 100vh;
-  background: rgba(13, 17, 23, 0.95);
+  background: rgba(2, 37, 68, 0.96);
   backdrop-filter: blur(8px);
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-left: 1px solid rgba(66, 240, 205, 0.18);
   display: flex;
   flex-direction: column;
-  z-index: 2000;
+  z-index: 2100;
 }
 .side-panel-header {
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(66, 240, 205, 0.18);
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  color: var(--plaid-teal-500, #42f0cd);
 }
 .api-panel-edge-toggle {
   position: absolute;
@@ -373,18 +369,18 @@ body.api-panel-open .step.active .slide-root {
   width: 20px;
   height: 64px;
   border-radius: 10px 0 0 10px;
-  border: 1px solid rgba(66, 240, 205, 0.55);
+  border: 1px solid rgba(66, 240, 205, 0.6);
   border-right: none;
-  background: rgba(66, 240, 205, 0.22);
-  color: #9cf8df;
+  background: rgba(66, 240, 205, 0.18);
+  color: var(--plaid-teal-400, #71fbe3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
 .api-panel-edge-toggle:hover {
-  background: rgba(66, 240, 205, 0.3);
-  color: #c6ffef;
+  background: rgba(66, 240, 205, 0.32);
+  color: var(--plaid-teal-500, #42f0cd);
 }
 .api-panel-toggle-icon {
   width: 8px;

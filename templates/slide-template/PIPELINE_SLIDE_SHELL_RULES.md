@@ -59,10 +59,11 @@ From `DECK_COMPOSITION.md`:
 
 When exporting to PowerPoint: **Manrope** (sans), **Playfair Display** (display), **JetBrains Mono** (mono).
 
-## JSON panel (unchanged)
+## JSON panel (overlay invariant)
 
 - `renderjson` CDN in `<head>`; `window.updateApiResponse`; single edge toggle `data-testid="api-panel-toggle"`.
 - Raw JSON **only** in `#api-response-panel`, not inside `.slide-root`.
+- **Always collapsed by default** on step navigation (48px edge chrome). Expand-on-click is a **transient fixed overlay** (z-index 2100) — slides and host UI **never reserve space** for the panel.
 - `value-summary-slide`: no `apiResponse`, no JSON panel content.
 
 ## Build-QA

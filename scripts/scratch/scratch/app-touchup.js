@@ -13,8 +13,8 @@
  *
  * Deterministic loop (≤ APP_TOUCHUP_MAX_ITERATIONS, default 2):
  *
- *   1. findAppApplicablePatches → applyPatches  (api-panel toggle, CTA, NMLS,
- *                                                 link-token products)
+ *   1. findAppApplicablePatches → applyPatches  (api-panel toggle, host nav logo
+ *                                                 contrast, CTA, NMLS, link-token)
  *   2. post-panels                                (idempotent — refreshes
  *                                                  api-response-panel chrome)
  *   3. build-qa stepScope=app                     (re-score app-tier steps only)

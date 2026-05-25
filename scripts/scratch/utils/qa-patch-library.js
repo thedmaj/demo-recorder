@@ -468,10 +468,50 @@ const PATCHES = [
     },
   },
   {
+    name: 'host-nav-logo-contrast',
+    tierScope: 'app',
+    description:
+      'Fixes dark wordmark on dark host nav (or light-on-light): injects white banner CSS ' +
+      'with brand accent border, logo shell pill, and swaps to /theme/light/ wordmark URL. ' +
+      'Auto-fires on build-qa category host-logo-contrast. Does not call build-app.',
+    matchCategories: ['host-logo-contrast'],
+    matchIssuePatterns: [
+      /host logo contrast/i,
+      /dark wordmark on dark navigation/i,
+      /light wordmark on light navigation/i,
+      /logo and navigation background have similar luminance/i,
+      /\/theme\/light\/ asset on light navigation/i,
+    ],
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) {
+        return { applied: false, summary: 'scratch-app/index.html not found' };
+      }
+      const {
+        loadBrandProfileFromRunDir,
+        applyHostNavLogoContrastPatch,
+      } = require('../utils/host-nav-logo-contrast');
+      const brand = loadBrandProfileFromRunDir(runDir) || {};
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      const out = applyHostNavLogoContrastPatch(html, brand);
+      if (!out.applied) {
+        return { applied: false, summary: 'Host nav already patched or no logo img to swap' };
+      }
+      fs.writeFileSync(htmlPath, out.html, 'utf8');
+      const parts = [];
+      if (out.cssInjected) parts.push('white banner CSS');
+      if (out.logoSwapped) parts.push('wordmark URL');
+      return {
+        applied: true,
+        summary: `Host nav logo contrast patch: ${parts.join(' + ') || 'updated'}`,
+      };
+    },
+  },
+  {
     name: 'zip-cra-host-contract',
     tierScope: 'app',
     description:
-      'Opt-in: Zip CRA demos — inject NMLS footer, host API-panel reserve CSS, and customer-app nav hints. ' +
+      'Opt-in: Zip CRA demos — inject NMLS footer and customer-app nav hints. ' +
       'Does not auto-fire from QA.',
     matchCategories: [],
     matchIssuePatterns: [],
@@ -485,17 +525,6 @@ const PATCHES = [
       if (!html.includes(marker)) {
         const css =
           `${marker}\n` +
-          '.step[data-testid="step-lendscore-reveal"] .zip-main,\n' +
-          '.step[data-testid="step-lendscore-reveal"] .underwriting-grid {\n' +
-          '  max-width: calc(100% - 520px);\n' +
-          '  padding-right: 24px;\n' +
-          '  box-sizing: border-box;\n' +
-          '}\n' +
-          '.step[data-testid="step-network-insights-slide"] .slide-body,\n' +
-          '.step[data-testid="step-report-ready-slide"] .slide-body {\n' +
-          '  padding-right: 520px;\n' +
-          '  box-sizing: border-box;\n' +
-          '}\n' +
           '.zip-host-footer { font-size: 12px; color: var(--zip-muted, #6B5E80); padding: 16px 56px; }\n';
         if (/<\/style>/i.test(html)) {
           html = html.replace(/<\/style>/i, `${css}</style>`);
@@ -933,6 +962,21 @@ async function applyPatches({ runDir, matches, iteration }) {
   };
 }
 
+/**
+ * QA categories that the patch library can fix without a build-app regen.
+ * Used by qa-tier-summary so patchable blockers route to app-touchup / slide-fix.
+ */
+function getPatchableDeterministicCategories() {
+  const set = new Set();
+  for (const patch of PATCHES) {
+    if (patch.manualOnly || patch.retired) continue;
+    for (const c of patch.matchCategories || []) {
+      if (c) set.add(String(c).toLowerCase());
+    }
+  }
+  return set;
+}
+
 module.exports = {
   PATCHES,
   findApplicablePatches,
@@ -942,4 +986,5 @@ module.exports = {
   getPatchByName,
   buildManualPatchMatch,
   patchTierScope,
+  getPatchableDeterministicCategories,
 };

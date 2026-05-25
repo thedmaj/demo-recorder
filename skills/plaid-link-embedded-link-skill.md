@@ -117,6 +117,65 @@ conflicting size keys, adds the missing `height`, and removes
 - Web: use `Plaid.createEmbedded` (not `Plaid.create`) for embedded mode.
 - Other platforms: create/mount embedded view per platform SDK.
 
+## Pre-link page = live embed (HARD — parity with standard Plaid Link)
+
+In **modal** Link, the user lands on a host pre-link page, taps a CTA, and the **real**
+Plaid institution search appears. In **embedded** mode the same UX applies: the
+**pre-link page shows the live Embedded Institution Search widget** — not a static
+mock that defers Link to a later step.
+
+### Required layout (one integrated launch step)
+
+The launch step is the **full pre-link UX page**:
+
+| Region | Content |
+|--------|---------|
+| Host chrome | Customer nav / logo (minimal) |
+| Trust column | “Recommended · Instant verification via Plaid”, encryption bullets, consent copy |
+| Embed column | **Live** `#plaid-embedded-link-container` with `Plaid.createEmbedded(...)` mounted |
+| Footer | Plaid privacy policy link as needed |
+
+- **Exactly ONE** `data-testid="plaid-embedded-link-container"` in the entire app — on this step.
+- Mount the SDK when this step becomes active (or bootstrap once if the container exists only here).
+- User selects an institution **inside the widget** — no extra host launch button.
+
+### FORBIDDEN — deferred / preview-only pre-link (HARD)
+
+Do **not** split pre-link marketing and live Link across two steps. These patterns are
+**build blockers**:
+
+- Placeholder copy such as **“Institution search preview”**, **“live Plaid Link opens on the next step”**, or any variant that tells the user Link is coming later
+- A host pre-link step with a gray preview box **while** a separate bare `plaid-link-launch` step owns the real embed
+- Static institution-search mocks, fake search inputs, or empty containers where the SDK should render
+- Two containers with the same testid on different steps
+
+**Wrong (two-step split):**
+
+1. `add-external-account-embedded` — trust copy + preview placeholder *(no SDK)*
+2. `plaid-link-launch` — empty embed-only page *(SDK here)*
+
+**Correct (integrated — matches standard Link pre-link UX):**
+
+1. `huntington-dashboard` — host overview; CTA navigates to pre-link page
+2. `add-external-account-embedded` — **`sceneType: "link"`, `plaidPhase: "launch"`** — trust copy **and** live embed on the **same** step
+3. *(no separate embed-only launch step)*
+
+If the demo script already names the step `plaid-link-launch`, that step must still
+include the full pre-link trust surface **plus** the live container — not a stripped
+“connecting / waiting” wrapper.
+
+### FORBIDDEN — host “Connecting / waiting” wrapper (HARD)
+
+Recording drives the **real Plaid SDK iframe** via CDP on the launch step.
+
+**Do NOT build on the launch step:**
+
+- Headlines like **“Connecting your bank…”**, **“Waiting for Plaid Link to complete…”**, **“Secure session in progress”**
+- Host-side loading spinners or “Active Plaid session” badges where institution search should appear
+- An embed-only page with **no** pre-link trust copy (that regresses to a non-standard UX)
+
+**`onSuccess`** → advance directly to the first post-Link host step (e.g. `verifying-account`) — no intermediate “waiting for Link” beat.
+
 ## Demo-script contract (script + record stages — HARD)
 
 Embedded mode changes **which step is the Link launch step**. Do not reuse modal Link assumptions.
@@ -124,59 +183,34 @@ Embedded mode changes **which step is the Link launch step**. Do not reuse modal
 ### Exactly one launch step
 
 - **Exactly ONE** step in `demo-script.json` must have `"plaidPhase": "launch"` and `"sceneType": "link"`.
+- That step is the **integrated pre-link page** (trust copy + live embed), not a bare embed-only screen.
 - **Never** set `plaidPhase: "launch"` on `sceneType: "slide"` or `sceneType: "insight"` steps — those are post-Link API beats (Identity Match, Auth, Signal), not Plaid Link.
 - **Never** set `plaidPhase: "launch"` on a marketing/opening slide even if copy mentions “Plaid” or “Link your bank”.
 
-### Host preload vs Link launch (common LLM mistake)
-
-Embedded Link often **preloads on the page** (container visible, institution tiles ready) without a host-side “Connect bank” button. The pipeline still needs a **distinct launch step** for recording:
+### Typical storyboard flow
 
 | Step role | sceneType | plaidPhase | Playwright |
 |-----------|-----------|------------|------------|
-| Host navigation / “Add external account” setup | `host` | *(omit)* | `click` on host CTA |
-| Optional host screen showing mounted container + trust copy **before** iframe automation | `host` | *(omit)* | `goToStep` only |
-| **Plaid Link automation target** (CDP drives real SDK iframe) | `link` | `"launch"` | `goToStep` → launch step id, `waitMs: 120000` |
+| Host overview / dashboard | `host` | *(omit)* | `click` on “Add external account” (or similar) CTA |
+| **Pre-link + live embed (launch)** | `link` | `"launch"` | `goToStep` → this step id, `waitMs: 120000` |
+| Post-Link verification / success | `host` | *(omit)* | normal host interactions |
 
-Preferred pattern when the prompt allows: **merge** trust copy + `#plaid-embedded-link-container` mount into the **same** launch step (`sceneType: "link"`, `plaidPhase: "launch"`) so there is no orphan preload host step.
-
-If the storyboard needs a separate preload host step (`add-external-account-embedded`), it must **not** carry `plaidPhase: "launch"`. The next step (`plaid-link-launch` or equivalent) owns launch.
+There is **no** third “launch-only” step between pre-link and post-Link.
 
 ### Record / Playwright contract (embedded)
 
-- Launch step `interaction.action` = **`goToStep`**, `interaction.target` = **launch step id** (same step).
+- Launch step `interaction.action` = **`goToStep`**, `interaction.target` = **launch step id** (the integrated pre-link step).
 - **Do NOT** use `click` on `[data-testid="link-external-account-btn"]` — that selector is **modal mode only**.
 - **Do NOT** add a host button whose job is to open Link; the user opens Link by selecting an institution **inside** the embedded widget (automated via CDP on the real iframe).
 
 ### Build contract (embedded)
 
-- Mount `Plaid.createEmbedded(...)` into `data-testid="plaid-embedded-link-container"` on the launch step (or on the host preload step only if the launch step immediately follows and recording navigates to launch before iframe automation).
+- Mount `Plaid.createEmbedded(...)` into `data-testid="plaid-embedded-link-container"` on the **same step** that renders the pre-link trust UX.
 - Container sizing: **430×390px** default (see Sizing Requirement above).
-
-### FORBIDDEN — host “Connecting / waiting” wrapper (HARD)
-
-Recording drives the **real Plaid SDK iframe** via CDP on the launch step. The launch step must be the embed surface — not a host page that *talks about* Plaid while showing an empty box or spinner.
-
-**Do NOT build these on the `plaidPhase:"launch"` step:**
-
-- Headlines like **“Connecting your bank…”**, **“Waiting for Plaid Link to complete…”**, **“Secure session in progress”**
-- Host-side loading spinners, “Active Plaid session” badges, or placeholder cards where the SDK should render
-- A second duplicate `#plaid-embedded-link-container` on a prior host step **and** a broken/empty container on launch — use **one** mount point only (on the launch step)
-
-**Correct launch-step layout:**
-
-- Optional minimal Huntington/host chrome (nav only — no marketing column).
-- **Only** `#plaid-embedded-link-container` / `data-testid="plaid-embedded-link-container"` centered on a light canvas.
-- `Plaid.createEmbedded(...)` mounts into that container when the launch step becomes active (or once at bootstrap if the container lives only on that step).
-- **`onSuccess`** → advance directly to the first post-Link host step (e.g. `verifying-account` / success) — do not insert an intermediate “waiting for Link” beat.
-
-**Preload host step (optional, before launch):**
-
-- May show trust copy + a **static** preview mock (recommended tile, encryption bullets).
-- Must **not** mount the live SDK and must **not** use `data-testid="plaid-embedded-link-container"` — that testid is reserved for the launch step mount only.
 
 ## Build Requirements
 
-- Add in-page container `data-testid="plaid-embedded-link-container"` in launch step.
+- Add in-page container `data-testid="plaid-embedded-link-container"` on the integrated pre-link launch step.
 - Mount Embedded Link with `Plaid.createEmbedded(...)`.
 - Keep normal Link callbacks (`onSuccess`, `onExit`, `onEvent`, `onLoad`).
 - Avoid hosted redirect/new-tab flows in embedded mode.
