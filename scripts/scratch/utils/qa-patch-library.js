@@ -771,6 +771,109 @@ const PATCHES = [
     },
   },
   {
+    name: 'slide-text-wrap-fit',
+    tierScope: 'slide',
+    description:
+      'Dynamic font reduction for slide headlines / short labels that wrap to ' +
+      'a 2nd+ line when they would fit on a single line at a smaller (≥24px) ' +
+      'font-size. Reads scanSlideTextWrap diagnostics (slide-text-wrap meta) and ' +
+      'injects a scoped CSS rule that downshifts font-size to the measured ' +
+      'recommendation. Composes with slide-text-overlap-autofix — wrap-fit runs ' +
+      'on warnings (no overlap yet, just multi-line wrap), overlap-autofix runs ' +
+      'on critical overlap blockers.',
+    matchCategories: ['slide-text-wrap'],
+    manualOnly: false,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) {
+        return { applied: false, summary: 'scratch-app/index.html not found' };
+      }
+      const diagPath = path.join(runDir, 'build-qa-diagnostics.json');
+      if (!fs.existsSync(diagPath)) {
+        return { applied: false, summary: 'build-qa-diagnostics.json not found' };
+      }
+      let diagnostics = [];
+      try {
+        const parsed = JSON.parse(fs.readFileSync(diagPath, 'utf8'));
+        diagnostics = Array.isArray(parsed)
+          ? parsed
+          : (Array.isArray(parsed.diagnostics) ? parsed.diagnostics : []);
+      } catch (e) {
+        return { applied: false, summary: `failed to read diagnostics: ${e.message}` };
+      }
+      const wrapDiags = diagnostics.filter(
+        (d) => d && d.category === 'slide-text-wrap' && d.meta && d.stepId
+      );
+      if (wrapDiags.length === 0) {
+        return { applied: false, summary: 'no slide-text-wrap diagnostics with meta' };
+      }
+
+      // Group by step; within a step keep the smallest recommendedFontSizePx
+      // per tag-or-class selector so the rule is monotone (a later wrap on
+      // the same tag never raises the size back up).
+      const byStep = new Map();
+      for (const d of wrapDiags) {
+        const stepId = d.stepId;
+        const meta = d.meta;
+        const target = Math.max(24, Math.round(Number(meta.recommendedFontSizePx) || 0));
+        if (!target || target >= Math.round(meta.currentFontSizePx || 0)) continue;
+        const classList = String(meta.classes || '')
+          .split(/\s+/)
+          .filter(Boolean)
+          .filter((c) => /^(?:h-title|hero-stat-value|sc-stat|sc-eyebrow|eyebrow-tag|h-section|h-subtitle|stat-value)$/i.test(c));
+        // Prefer a class-scoped selector for canonical classes; otherwise fall
+        // back to the bare tag. Tags alone are coarser but acceptable for
+        // unique headlines inside .slide-root.
+        const selectorRoot = classList.length > 0
+          ? `.${classList[0]}`
+          : String(meta.tag || '').toLowerCase();
+        if (!selectorRoot) continue;
+        const entry = byStep.get(stepId) || new Map();
+        const prev = entry.get(selectorRoot);
+        if (prev === undefined || target < prev) entry.set(selectorRoot, target);
+        byStep.set(stepId, entry);
+      }
+
+      if (byStep.size === 0) {
+        return {
+          applied: false,
+          summary:
+            'all slide-text-wrap diagnostics already at the 24px floor — slide-fix LLM should widen container width / shorten copy instead',
+        };
+      }
+
+      const rules = [];
+      for (const [stepId, perSelector] of byStep.entries()) {
+        for (const [selector, fs] of perSelector.entries()) {
+          rules.push(
+            `[data-testid="step-${stepId}"] .slide-root ${selector} { font-size: ${fs}px; line-height: 1.15; }`
+          );
+        }
+      }
+
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      const blockMarker = 'data-pipeline-textwrap-autofix="v1"';
+      if (html.includes(blockMarker)) {
+        html = html.replace(
+          /<style data-pipeline-textwrap-autofix="v1">[\s\S]*?<\/style>/,
+          `<style data-pipeline-textwrap-autofix="v1">\n${rules.join('\n')}\n</style>`
+        );
+      } else {
+        const block = `<style data-pipeline-textwrap-autofix="v1">\n${rules.join('\n')}\n</style>\n`;
+        if (/<\/head>/i.test(html)) {
+          html = html.replace(/<\/head>/i, `${block}</head>`);
+        } else {
+          html = block + html;
+        }
+      }
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return {
+        applied: true,
+        summary: `Applied text-wrap autofix on ${byStep.size} slide step(s); ${rules.length} CSS rule(s) injected (24px floor).`,
+      };
+    },
+  },
+  {
     name: 'slide-layout-patch',
     tierScope: 'slide',
     description:

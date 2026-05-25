@@ -1317,6 +1317,54 @@ function scanSlideTextOverlap(state, step) {
   return out;
 }
 
+/**
+ * Slide text-wrap autofix candidate emitter. Reads
+ * `state.slideTextWraps` (precomputed in the Playwright walker) and emits one
+ * `slide-text-wrap` diagnostic per element that wraps to ≥2 lines AND could
+ * fit on a single line at a smaller (≥24px) font-size. Severity is `warning`
+ * (not a blocker) — the autofix patch downshifts the font deterministically
+ * on the next slide-fix iteration. This is the "dynamic font reduction"
+ * signal requested when text leans into a second line that would look better
+ * on the same line at a smaller size.
+ *
+ * @param {object} state
+ * @param {object} step
+ */
+function scanSlideTextWrap(state, step) {
+  if (!state || !step || !isSlideLikeStep(step)) return [];
+  const wraps = Array.isArray(state.slideTextWraps) ? state.slideTextWraps : [];
+  if (wraps.length === 0) return [];
+  const out = [];
+  for (const w of wraps) {
+    const label = `${w.tag} "${(w.text || '').slice(0, 50)}"`;
+    out.push({
+      stepId: step.id,
+      category: 'slide-text-wrap',
+      severity: 'warning',
+      deterministicBlocker: false,
+      issue:
+        `Slide text wraps to ${w.lines} line${w.lines === 1 ? '' : 's'}: ${label} at ${Math.round(w.fontSize)}px. ` +
+        `It would fit on one line at ~${w.recommendedFontSizePx}px (24px floor). ` +
+        `Autofix candidate.`,
+      suggestion:
+        `Reduce font-size on ${label} from ${Math.round(w.fontSize)}px to ${w.recommendedFontSizePx}px ` +
+        `(floor 24px) so the line collapses without losing readability.`,
+      // Machine-readable payload — slide-text-wrap-fit patch consumes these.
+      meta: {
+        tag: w.tag,
+        classes: w.classes,
+        text: w.text,
+        currentFontSizePx: Math.round(w.fontSize),
+        recommendedFontSizePx: w.recommendedFontSizePx,
+        lines: w.lines,
+        rect: w.rect,
+        isHeadlineLike: w.isHeadlineLike,
+      },
+    });
+  }
+  return out;
+}
+
 function scanSlideMotionAttributes(html, slideStepIds) {
   if (!html || !/\bslide-root\b/.test(html)) return [];
   const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
@@ -2038,6 +2086,93 @@ async function evaluateStepState(page, stepId) {
         }
         overlaps.sort((p, q) => q.overlapArea - p.overlapArea);
         return overlaps.slice(0, 12);
+      })(),
+      // ── Slide text-wrap measurement ──────────────────────────────────────
+      // For headline / label-class text elements inside .slide-root, measure
+      // how many lines they currently render across and whether shrinking
+      // the font-size (down to the 24px floor) would let them collapse to a
+      // single line. This is the "dynamic font reduction" signal — fed into
+      // slide-text-wrap-fit patch which scopes a CSS rule per stepId+tag.
+      //
+      // Skips long-form body copy (P / LI with > 80 chars) — those legitimately
+      // wrap. Only flags elements where wrapping looks like an alignment
+      // problem (headlines, eyebrows, stat values, short labels).
+      slideTextWraps: (() => {
+        const slideRoot = active ? active.querySelector('.slide-root') : null;
+        if (!slideRoot) return [];
+        const HEADLINE_LIKE = /\b(h-title|hero-stat-value|sc-stat|sc-eyebrow|eyebrow-tag|h-section|h-subtitle|stat-value)\b/i;
+        const SHORT_TAG = new Set(['H1', 'H2', 'H3', 'H4', 'STRONG', 'EM', 'SPAN']);
+        const candidates = [];
+        for (const el of Array.from(slideRoot.querySelectorAll('*'))) {
+          const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!text || text.length < 4) continue;
+          const hasDirectText = Array.from(el.childNodes).some(
+            (n) => n.nodeType === 3 && (n.textContent || '').trim().length > 0
+          );
+          if (!hasDirectText) continue;
+          const cs = window.getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          if (Number(cs.opacity || '1') === 0) continue;
+          const className = String(el.className || '');
+          const isHeadlineLike = HEADLINE_LIKE.test(className);
+          const isShortTag = SHORT_TAG.has(el.tagName);
+          // Skip multi-sentence body copy — natural wrapping is expected.
+          if (!isHeadlineLike && !isShortTag) continue;
+          if (text.length > 120 && !isHeadlineLike) continue;
+          const fontSize = parseFloat(cs.fontSize || '0') || 0;
+          const lineHeightRaw = cs.lineHeight;
+          let lineHeight = parseFloat(lineHeightRaw);
+          if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
+            // Browsers report 'normal' as e.g. 'normal' literal — treat as ~1.2x.
+            lineHeight = fontSize * 1.2;
+          }
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 1 || rect.height <= 1) continue;
+          if (fontSize < 18) continue; // Below the floor — can't shrink further.
+          const lines = Math.max(1, Math.round(rect.height / lineHeight));
+          if (lines <= 1) continue;
+          // Estimate text width via a single-line measurement so we can predict
+          // whether a smaller font would fit in the available width.
+          // Use a hidden span clone to measure rendered single-line width.
+          const probe = document.createElement('span');
+          probe.style.cssText = `
+            position: absolute;
+            visibility: hidden;
+            white-space: nowrap;
+            font: ${cs.font};
+            letter-spacing: ${cs.letterSpacing};
+            text-transform: ${cs.textTransform};
+          `;
+          probe.textContent = text;
+          document.body.appendChild(probe);
+          const measuredWidth = probe.getBoundingClientRect().width;
+          probe.remove();
+          const containerWidth = rect.width;
+          if (containerWidth <= 0 || measuredWidth <= 0) continue;
+          // Required shrink factor to fit on one line, with a 4% safety margin.
+          const requiredFactor = containerWidth / (measuredWidth * 1.04);
+          if (!Number.isFinite(requiredFactor) || requiredFactor >= 1) continue;
+          const recommendedFs = Math.max(24, Math.floor(fontSize * requiredFactor));
+          if (recommendedFs >= fontSize) continue;
+          candidates.push({
+            tag: el.tagName,
+            classes: className,
+            text: text.slice(0, 80),
+            fontSize,
+            lines,
+            recommendedFontSizePx: recommendedFs,
+            rect: {
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              w: Math.round(rect.width),
+              h: Math.round(rect.height),
+            },
+            isHeadlineLike,
+          });
+        }
+        // Worst wrappers first (most lines × largest font).
+        candidates.sort((a, b) => (b.lines * b.fontSize) - (a.lines * a.fontSize));
+        return candidates.slice(0, 8);
       })(),
     };
   }, stepId);
@@ -3259,6 +3394,7 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
     for (const d of scanSlideCanvasSize(state, step)) diagnostics.push(d);
     for (const d of scanSlideHostChromeLeak(state, step)) diagnostics.push(d);
     for (const d of scanSlideTextOverlap(state, step)) diagnostics.push(d);
+    for (const d of scanSlideTextWrap(state, step)) diagnostics.push(d);
   }
   if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {
     diagnostics.push({
@@ -4520,6 +4656,29 @@ async function main(opts = {}) {
     deterministicBlockedStepIds: [...deterministicBlockedStepIds],
     deterministicReasons,
   }, { runDir: OUT_DIR });
+
+  // ── Dynamic font reduction (slide-text-wrap autofix) ─────────────────────
+  // Vision QA on slides flagged elements that wrap to ≥2 lines and would fit
+  // on a single line at a smaller (≥24px) font-size. Apply the deterministic
+  // CSS-override patch in-place RIGHT after diagnostics are written, so
+  // subsequent recordings / build-qa walks see the smaller, tighter layout.
+  // The current build-qa pass's vision frames were captured before this
+  // mutation — that's fine; the next iteration consumes the fix. Failure
+  // here is non-fatal: log and continue.
+  try {
+    if ((categoryCounts['slide-text-wrap'] || 0) > 0) {
+      delete require.cache[require.resolve('../utils/qa-patch-library')];
+      const patchLib = require('../utils/qa-patch-library');
+      const wrapPatch = (patchLib.PATCHES || []).find((p) => p.name === 'slide-text-wrap-fit');
+      if (wrapPatch && typeof wrapPatch.apply === 'function') {
+        const result = await wrapPatch.apply({ runDir: OUT_DIR });
+        console.log(`[build-qa] slide-text-wrap-fit: ${result.applied ? 'applied' : 'skipped'} — ${result.summary}`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[build-qa] slide-text-wrap-fit failed (non-fatal): ${e.message}`);
+  }
+
   delete require.cache[require.resolve('./qa-review')];
   const qaReview = require('./qa-review');
 
@@ -4744,6 +4903,7 @@ module.exports = {
   scanSlideWorkhorseRuntimeLeak,
   scanSlideMotionAttributes,
   scanSlideTextOverlap,
+  scanSlideTextWrap,
   scanSlideShowcaseTemplate,
   scanSlideDesignSystem,
   scanAppOnlyNoSlides,

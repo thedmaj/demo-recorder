@@ -19,6 +19,7 @@ graphify-out/
 scripts/graphify-out/
 inputs/*.bak.*
 inputs/* copy.*
+inputs/products/_backups/
 
 # Safe-to-commit: inputs/_archive/ (intentional archive of retired monoliths)
 # — no .gitignore entry is needed since it's a tracked directory.

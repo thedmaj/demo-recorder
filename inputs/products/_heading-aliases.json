@@ -1,0 +1,34 @@
+{
+  "_comment": "Maps canonical section keys (used by product-knowledge-coverage.js) to the variant H2 headings actually present in each per-product PK file. Loader consults aliases ONLY when the canonical heading does not match. To add a new alias: pick the canonical key from the list below and append the alternate heading text (omit the leading '## '). Slug is the file name without 'plaid-' prefix or '.md' suffix.",
+  "_canonicalKeys": [
+    "overview",
+    "whereItFits",
+    "valuePropositions",
+    "proofPoints",
+    "customerUseCases",
+    "narrationTalkTracks",
+    "accurateTerminology",
+    "competitiveDifferentiators",
+    "implementationPitfalls",
+    "objectionsResponses"
+  ],
+  "_default": {},
+  "protect": {
+    "overview": ["What Plaid Protect is today"],
+    "narrationTalkTracks": ["Approved talk track (draft)", "Approved talk track"],
+    "customerUseCases": [
+      "Demo guidance — Trust Index happy path (default)",
+      "Demo guidance — canonical happy path",
+      "Demo guidance"
+    ],
+    "competitiveDifferentiators": [
+      "GTM positioning (internal — Glean, 2026)",
+      "GTM positioning"
+    ],
+    "accurateTerminology": [
+      "Trust Index — initialization & API (canonical for `plaid_protect` demos)",
+      "Trust Index — initialization & API",
+      "Approved product-name guidance"
+    ]
+  }
+}

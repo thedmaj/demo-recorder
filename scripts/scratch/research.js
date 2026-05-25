@@ -1388,10 +1388,88 @@ async function main() {
     console.warn('  Plaid integration skill not loaded — check skills/plaid-integration.skill or PLAID_SKILL_ZIP');
   }
 
+  // ── Pre-research PK coverage assessment ───────────────────────────────────
+  // Read the per-product knowledge file (inputs/products/plaid-{slug}.md) and
+  // any aliased headings before the tool loop runs. The result drives the
+  // research-mode recommendation and, when RESEARCH_PK_AUTOBUILD=true,
+  // triggers a Glean-driven gap fill that writes missing sections back to
+  // the PK file (with a timestamped backup at inputs/products/_backups/).
+  const { assessProductKnowledgeCoverage, formatCoverageReport } = require('./utils/product-knowledge-coverage');
+  let pkCoverage = assessProductKnowledgeCoverage({
+    productSlug,
+    runDir: OUT_DIR,
+    solutionsMasterContext,
+  });
+  try {
+    fs.writeFileSync(path.join(OUT_DIR, 'pk-coverage.json'), JSON.stringify(pkCoverage, null, 2));
+  } catch (_) { /* best-effort */ }
+  console.log('\n' + formatCoverageReport(pkCoverage) + '\n');
+  appendPipelineLogSection('[research] PK coverage', [
+    `slug=${pkCoverage.slug}`,
+    `presentSections=${pkCoverage.presentCount}/${Object.keys(pkCoverage.sections).length}`,
+    `missing=${pkCoverage.missingSections.join(',') || 'none'}`,
+    `blockingForScript=${pkCoverage.blockingGapsForScript.join(',') || 'none'}`,
+    `confidence=${pkCoverage.confidence}`,
+    `recommendedMode=${pkCoverage.recommendedMode}`,
+  ]);
+
+  const autoBuildEnabled =
+    process.env.RESEARCH_PK_AUTOBUILD === 'true' ||
+    process.env.RESEARCH_PK_AUTOBUILD === '1';
+  if (
+    autoBuildEnabled &&
+    pkCoverage.confidence === 'low' &&
+    pkCoverage.blockingGapsForScript.length > 0
+  ) {
+    const { buildProductKnowledge } = require('./utils/product-knowledge-builder');
+    console.log(`  PK auto-build triggered (confidence=low, blocking gaps=${pkCoverage.blockingGapsForScript.join(',')}).`);
+    try {
+      const buildResult = await buildProductKnowledge({
+        productSlug: pkCoverage.slug,
+        runDir: OUT_DIR,
+        coverage: pkCoverage,
+      });
+      console.log(`  PK auto-build: added=${buildResult.sectionsAdded.length} skipped=${buildResult.skippedSections.length} backup=${buildResult.backupPath || '(none)'}`);
+      const reassessed = assessProductKnowledgeCoverage({
+        productSlug,
+        runDir: OUT_DIR,
+        solutionsMasterContext,
+      });
+      try {
+        fs.writeFileSync(
+          path.join(OUT_DIR, 'pk-coverage.json'),
+          JSON.stringify({ before: pkCoverage, after: reassessed, build: buildResult }, null, 2)
+        );
+      } catch (_) { /* best-effort */ }
+      pkCoverage = reassessed;
+      appendPipelineLogSection('[research] PK auto-build', [
+        `sectionsAdded=${buildResult.sectionsAdded.map((s) => s.section).join(',') || 'none'}`,
+        `sectionsSkipped=${buildResult.skippedSections.map((s) => s.section).join(',') || 'none'}`,
+        `postBuildConfidence=${reassessed.confidence}`,
+        `postBuildMode=${reassessed.recommendedMode}`,
+        `backup=${buildResult.backupPath ? path.relative(PROJECT_ROOT, buildResult.backupPath) : 'none'}`,
+      ]);
+    } catch (err) {
+      console.warn(`  PK auto-build failed: ${err.message}`);
+    }
+  }
+
   const explicitMode = resolveResearchMode(context.type === 'prompt' ? context.content : '');
-  let mode = effectiveResearchMode(explicitMode, bundle.skillLoaded);
-  if (explicitMode) console.log(`  Research mode: ${mode} (from prompt or RESEARCH_MODE)`);
-  else console.log(`  Research mode: ${mode} (default gapfill — set RESEARCH_MODE=broad/deep or **Research depth:** in prompt for full; skillLoaded=${bundle.skillLoaded})`);
+  // Coverage-recommended mode wins when no explicit override is set. A `high`
+  // confidence PK can downshift the run from `gapfill` (default with skill
+  // loaded) all the way to `skip`; `medium` keeps `gapfill`; `low` upshifts
+  // to `full` only when the PK is missing script-tier blocking content.
+  let mode;
+  if (explicitMode) {
+    mode = effectiveResearchMode(explicitMode, bundle.skillLoaded);
+    console.log(`  Research mode: ${mode} (from prompt or RESEARCH_MODE; coverage=${pkCoverage.recommendedMode})`);
+  } else if (pkCoverage && pkCoverage.recommendedMode) {
+    mode = pkCoverage.recommendedMode;
+    console.log(`  Research mode: ${mode} (from PK coverage ${pkCoverage.confidence}; skillLoaded=${bundle.skillLoaded})`);
+  } else {
+    mode = effectiveResearchMode(explicitMode, bundle.skillLoaded);
+    console.log(`  Research mode: ${mode} (default gapfill — set RESEARCH_MODE=broad/deep or **Research depth:** in prompt for full; skillLoaded=${bundle.skillLoaded})`);
+  }
 
   let research;
   if (mode === 'skip') {
