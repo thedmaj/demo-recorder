@@ -38,6 +38,91 @@
 const fs = require('fs');
 const path = require('path');
 
+const PIPELINE_SLIDE_CONTRACT_PATH = path.join(
+  __dirname,
+  '../../../templates/slide-template/pipeline-slide-contract.css'
+);
+
+/** Mark known host-only chrome nodes so slide mode can hide them. */
+function markHostAppChrome(html) {
+  if (!html || typeof html !== 'string') return html;
+  for (const cls of ['fdic-bar', 'host-nav', 'sub-nav', 'host-footer']) {
+    const re = new RegExp(`class="([^"]*\\b${cls}\\b[^"]*)"`, 'g');
+    html = html.replace(re, (m, classes) => {
+      if (classes.includes('host-app-chrome')) return m;
+      return `class="${classes} host-app-chrome"`;
+    });
+  }
+  return html;
+}
+
+/** Refresh injected contract CSS when templates/slide-template/pipeline-slide-contract.css changes. */
+function refreshPipelineSlideContractInHtml(html) {
+  if (!html || !html.includes('data-pipeline-slide-contract=')) return html;
+  let contract = '';
+  try {
+    contract = fs.readFileSync(PIPELINE_SLIDE_CONTRACT_PATH, 'utf8').trim();
+  } catch (_) {
+    return html;
+  }
+  if (!contract) return html;
+  return html.replace(
+    /<style data-pipeline-slide-contract="v1">[\s\S]*?<\/style>/,
+    `<style data-pipeline-slide-contract="v1">\n${contract}\n</style>`
+  );
+}
+
+function buildSlideHostIsolationScript() {
+  return `<script id="pipeline-slide-host-isolation-v1">
+(function() {
+  if (window.__pipelineSlideHostIsolationApplied) return;
+  window.__pipelineSlideHostIsolationApplied = true;
+  function syncSlideHostMode(stepId) {
+    var el = document.querySelector('[data-testid="step-' + stepId + '"]');
+    var isSlide = !!(el && el.querySelector('.slide-root'));
+    document.body.classList.toggle('pipeline-slide-active', isSlide);
+  }
+  var orig = window.goToStep;
+  if (typeof orig === 'function') {
+    window.goToStep = function(id) {
+      var r = orig.apply(this, arguments);
+      syncSlideHostMode(id);
+      return r;
+    };
+  }
+  function bootstrap() {
+    var active = document.querySelector('.step.active');
+    if (!active) return;
+    var tid = active.getAttribute('data-testid') || '';
+    var id = tid.replace(/^step-/, '');
+    if (id) syncSlideHostMode(id);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bootstrap);
+  else bootstrap();
+})();
+</script>`;
+}
+
+function ensureSlideHostIsolation(html) {
+  if (!html || typeof html !== 'string') return { html, changes: {} };
+  const changes = { markedHostChrome: false, refreshedSlideContract: false, addedSlideIsolationScript: false };
+  if (!html.includes('slide-root') || !html.includes('</body>')) return { html, changes };
+
+  const beforeMark = html;
+  html = markHostAppChrome(html);
+  if (html !== beforeMark) changes.markedHostChrome = true;
+
+  const beforeContract = html;
+  html = refreshPipelineSlideContractInHtml(html);
+  if (html !== beforeContract) changes.refreshedSlideContract = true;
+
+  if (!html.includes('pipeline-slide-host-isolation-v1')) {
+    html = html.replace('</body>', `${buildSlideHostIsolationScript()}\n</body>`);
+    changes.addedSlideIsolationScript = true;
+  }
+  return { html, changes };
+}
+
 const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind');
 const { buildPanelPayloadPrompt } = require('../utils/prompt-templates');
@@ -788,6 +873,10 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
     changes.stepsHydrated = Object.keys(responses).length;
   }
 
+  const slideIso = ensureSlideHostIsolation(html);
+  html = slideIso.html;
+  Object.assign(changes, slideIso.changes);
+
   return { html, changes };
 }
 
@@ -1023,6 +1112,9 @@ module.exports = {
   collectStepApiResponses,
   stepHasApiResponse,
   buildPanelPatchScript,
+  markHostAppChrome,
+  ensureSlideHostIsolation,
+  refreshPipelineSlideContractInHtml,
   findSparsePayloadSteps,
   extractJsonFromLlmText,
 };

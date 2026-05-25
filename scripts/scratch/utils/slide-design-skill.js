@@ -10,6 +10,7 @@ const path = require('path');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const DEFAULT_SKILL_REL = path.join('.claude', 'skills', 'plaid-slide-design', 'SKILL.md');
+const DEFAULT_WORKHORSE_HYBRID_REL = path.join('.claude', 'skills', 'plaid-workhorse-slides', 'SKILL.md');
 const SLIDE_TEMPLATE_DIR = path.join('templates', 'slide-template');
 const BRIEF_DIR = path.join(SLIDE_TEMPLATE_DIR, 'brand-design-briefs');
 
@@ -38,6 +39,7 @@ function getSlideDesignBriefPaths(projectRoot = PROJECT_ROOT) {
     pipelineSlideContractCss: path.join(base, 'pipeline-slide-contract.css'),
     pipelineSlideShellHtml: path.join(base, 'pipeline-slide-shell.html'),
     skillMarkdown: path.join(projectRoot, DEFAULT_SKILL_REL),
+    workhorseHybridMarkdown: path.join(projectRoot, DEFAULT_WORKHORSE_HYBRID_REL),
   };
 }
 
@@ -50,16 +52,30 @@ function getSlideDesignBriefPaths(projectRoot = PROJECT_ROOT) {
 function loadSlideDesignSkill(opts = {}) {
   const projectRoot = opts.projectRoot || PROJECT_ROOT;
   const paths = getSlideDesignBriefPaths(projectRoot);
-  const maxChars = Number(opts.maxChars || process.env.SLIDE_DESIGN_SKILL_MAX_CHARS || 12000);
+  const hybridMax = Number(opts.workhorseHybridMaxChars || process.env.PLAID_WORKHORSE_SKILL_MAX_CHARS || 8000);
   let text = readUtf8(paths.skillMarkdown).trim();
+  const hybrid = readUtf8(paths.workhorseHybridMarkdown).trim();
+  const maxChars = Number(
+    opts.maxChars ||
+      process.env.SLIDE_DESIGN_SKILL_MAX_CHARS ||
+      (hybrid.length > 0 ? 20000 : 12000)
+  );
   const skillLoaded = text.length > 0;
+  if (hybrid) {
+    let hybridBlock = hybrid;
+    if (hybridBlock.length > hybridMax) {
+      hybridBlock = `${hybridBlock.slice(0, Math.max(0, hybridMax - 80))}\n\n… [plaid-workhorse-slides SKILL.md truncated]\n`;
+    }
+    text = text ? `${text}\n\n---\n\n${hybridBlock}` : hybridBlock;
+  }
   if (text.length > maxChars) {
-    text = `${text.slice(0, Math.max(0, maxChars - 80))}\n\n… [plaid-slide-design SKILL.md truncated]\n`;
+    text = `${text.slice(0, Math.max(0, maxChars - 80))}\n\n… [slide design skills truncated]\n`;
   }
   return {
     text,
-    skillLoaded,
-    markdownPath: skillLoaded ? paths.skillMarkdown : null,
+    skillLoaded: skillLoaded || hybrid.length > 0,
+    markdownPath: skillLoaded ? paths.skillMarkdown : (hybrid ? paths.workhorseHybridMarkdown : null),
+    workhorseHybridLoaded: hybrid.length > 0,
     chars: text.length,
   };
 }
@@ -73,6 +89,7 @@ const SLIDE_HOST_ISOLATION_BLOCK =
 module.exports = {
   PROJECT_ROOT,
   DEFAULT_SKILL_REL,
+  DEFAULT_WORKHORSE_HYBRID_REL,
   getSlideDesignBriefPaths,
   loadSlideDesignSkill,
   SLIDE_HOST_ISOLATION_BLOCK,

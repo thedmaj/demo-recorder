@@ -253,4 +253,23 @@ describe('onSuccess panel synthesis (v6)', () => {
     assert.equal(m.accounts[0].mask, '4321');
     assert.equal(m.accounts[0].subtype, 'savings');
   });
+
+  test('ensureSlideHostIsolation marks host chrome and injects slide mode script', () => {
+    const html = `<!doctype html><html><head></head><body>
+<div class="fdic-bar">FDIC</div>
+<nav class="host-nav">Nav</nav>
+<div class="sub-nav">Sub</div>
+<main class="page">
+<div data-testid="step-slide-a" class="step"><div class="slide-root"><div class="frame"></div></div></div>
+</main>
+<footer class="host-footer">Foot</footer>
+<script>window.goToStep=function(){};</script>
+</body></html>`;
+    const { html: out, changes } = normalizePanelsInHtml(html, { steps: [] });
+    assert.match(out, /host-app-chrome/);
+    assert.match(out, /pipeline-slide-host-isolation-v1/);
+    assert.match(out, /pipeline-slide-active/);
+    assert.equal(changes.addedSlideIsolationScript, true);
+    assert.equal(changes.markedHostChrome, true);
+  });
 });

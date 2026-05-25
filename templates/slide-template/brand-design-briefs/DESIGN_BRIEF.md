@@ -126,7 +126,7 @@ section.holo {
 
 | Pattern | Where it's used | Visual notes |
 |---|---|---|
-| **Chrome logo top-left** | Every slide | Plaid horizontal logo, 28px tall, opacity 0.85, top:60px left:120px |
+| **Chrome logo top-right** | Every slide | Plaid horizontal logo, 28px tall, opacity 0.85. Positioned in the top margin, 75 px above the topmost text row: `top: calc(var(--pad-top) - 75px); right: var(--pad-x)` |
 | **Eyebrow tag** | Most slides | `Section X — Section Name`, mono uppercase, 24px, teal on dark / blue on light, letter-spacing 0.18em |
 | **Page-number footer** | All non-title slides | bottom:48px, mono "XX / 23 · Section name" — page count + section only, no source citations |
 | **Slide title** | Top of every content slide | Plaid Sans 600, 64–84px, line-height 1.08, `<em>` accent in Bowery Street italic 400 (often mint) |
@@ -237,7 +237,7 @@ The deck has 7 sections totaling 23 slides:
 
 - **Label:** `01 Title`
 - **Background:** holo gradient
-- **Logo:** dark horizontal logo top-left
+- **Logo:** dark horizontal logo top-right
 - **Padding:** `padding-top: 140px`
 - **Above headline:** mono text, 30px, color rgba(2,37,68,0.55):
   - `PURCHASE WM SUPERCENTER #1700 POWAY CAUS`

@@ -622,6 +622,111 @@ const PATCHES = [
     },
   },
   {
+    name: 'slide-text-overlap-autofix',
+    tierScope: 'slide',
+    description:
+      'Deterministic fix for slide-text-overlap diagnostics: reads the scanner meta ' +
+      '(recommendedFontSizePx + offending element rects) and injects scoped font-size + gap ' +
+      'overrides for the affected slide step. Floor 24px (Plaid body minimum).',
+    matchCategories: ['slide-text-overlap'],
+    manualOnly: false,
+    apply: async ({ runDir }) => {
+      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+      if (!fs.existsSync(htmlPath)) {
+        return { applied: false, summary: 'scratch-app/index.html not found' };
+      }
+      // Diagnostics with the `meta` payload are written to build-qa-diagnostics.json
+      // by build-qa.js (see normalizedDiagnostics block).
+      const diagPath = path.join(runDir, 'build-qa-diagnostics.json');
+      if (!fs.existsSync(diagPath)) {
+        return { applied: false, summary: 'build-qa-diagnostics.json not found' };
+      }
+      let diagnostics = [];
+      try {
+        const parsed = JSON.parse(fs.readFileSync(diagPath, 'utf8'));
+        diagnostics = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.diagnostics) ? parsed.diagnostics : []);
+      } catch (e) {
+        return { applied: false, summary: `failed to read diagnostics: ${e.message}` };
+      }
+      const overlapDiags = diagnostics
+        .filter((d) => d && d.category === 'slide-text-overlap' && d.meta);
+      if (overlapDiags.length === 0) {
+        return { applied: false, summary: 'no slide-text-overlap diagnostics with meta' };
+      }
+
+      // Group by step. Track tag font-size reductions only when target > 24px
+      // (the Plaid body floor). Empty tagFsTargets after processing means all
+      // overlaps were already at floor — caller knows nothing further can be
+      // done deterministically.
+      const byStep = new Map();
+      for (const d of overlapDiags) {
+        if (!d.meta || !d.stepId) continue;
+        const aFs = Math.round(Number(d.meta.a?.fontSize || 0));
+        const bFs = Math.round(Number(d.meta.b?.fontSize || 0));
+        const target = Math.max(24, Number(d.meta.recommendedFontSizePx) || Math.round((Math.max(aFs, bFs) * 0.75) / 2) * 2);
+        const aTag = String(d.meta.a?.tag || '').toLowerCase();
+        const bTag = String(d.meta.b?.tag || '').toLowerCase();
+        const entry = byStep.get(d.stepId) || { tagFsTargets: new Map() };
+        // Only emit a font-size rule when the target meaningfully reduces from
+        // the offending element's current size and the target stays above 24.
+        const trackTag = (tag, currentFs, targetFs) => {
+          if (!tag) return;
+          if (targetFs <= 24) return;
+          if (targetFs >= currentFs) return;
+          const prev = entry.tagFsTargets.get(tag);
+          if (prev === undefined || targetFs < prev) entry.tagFsTargets.set(tag, targetFs);
+        };
+        if (aFs >= bFs) trackTag(aTag, aFs, target);
+        else trackTag(bTag, bFs, target);
+        byStep.set(d.stepId, entry);
+      }
+
+      // Filter out steps with nothing actionable (no font reductions possible).
+      for (const [stepId, entry] of [...byStep.entries()]) {
+        if (entry.tagFsTargets.size === 0) byStep.delete(stepId);
+      }
+      if (byStep.size === 0) {
+        return { applied: false, summary: 'no actionable overlap diagnostics (all overlaps already at 24px floor — slide-fix LLM should widen container gap/padding instead)' };
+      }
+
+      const rules = [];
+      for (const [stepId, entry] of byStep.entries()) {
+        for (const [tag, fs] of entry.tagFsTargets.entries()) {
+          rules.push(
+            `[data-testid="step-${stepId}"] .slide-root ${tag} { font-size: ${fs}px; line-height: 1.25; }`
+          );
+        }
+        // Also widen .slide-stack gap as a belt-and-suspenders measure.
+        rules.push(
+          `[data-testid="step-${stepId}"] .slide-root .slide-stack { gap: clamp(28px, 3vw, 40px); }`
+        );
+      }
+
+      let html = fs.readFileSync(htmlPath, 'utf8');
+      const blockMarker = 'data-pipeline-overlap-autofix="v1"';
+      if (html.includes(blockMarker)) {
+        // Replace existing block.
+        html = html.replace(
+          /<style data-pipeline-overlap-autofix="v1">[\s\S]*?<\/style>/,
+          `<style data-pipeline-overlap-autofix="v1">\n${rules.join('\n')}\n</style>`
+        );
+      } else {
+        // Insert before </head>.
+        const block = `<style data-pipeline-overlap-autofix="v1">\n${rules.join('\n')}\n</style>\n`;
+        if (/<\/head>/i.test(html)) {
+          html = html.replace(/<\/head>/i, `${block}</head>`);
+        } else {
+          html = block + html;
+        }
+      }
+      fs.writeFileSync(htmlPath, html, 'utf8');
+      return {
+        applied: true,
+        summary: `Applied overlap autofix on ${byStep.size} slide step(s); ${rules.length} CSS rule(s) injected (font-size floored at 24px).`,
+      };
+    },
+  },
+  {
     name: 'slide-layout-patch',
     tierScope: 'slide',
     description:

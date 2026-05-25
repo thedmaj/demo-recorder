@@ -1,0 +1,27 @@
+---
+description: "Plaid × Workhorse hybrid slide authoring. Auto-attached when editing slide skills, post-slides, or Workhorse layout assets."
+alwaysApply: false
+globs:
+  - ".claude/skills/tosea-slide-workhorse/**"
+  - ".claude/skills/plaid-workhorse-slides/**"
+  - ".cursor/skills/tosea-slide-workhorse/**"
+  - ".cursor/skills/plaid-workhorse-slides/**"
+  - "scripts/scratch/utils/slide-design-skill.js"
+  - "scripts/scratch/scratch/post-slides.js"
+  - "scripts/scratch/scratch/slide-fix.js"
+---
+
+# Plaid × Workhorse slides — Cursor rule
+
+**Hybrid skill (canonical):** [`.claude/skills/plaid-workhorse-slides/SKILL.md`](../../.claude/skills/plaid-workhorse-slides/SKILL.md)
+
+**Workhorse layouts:** [`.claude/skills/tosea-slide-workhorse/`](../../.claude/skills/tosea-slide-workhorse/)
+
+**Plaid brand (always wins):** [`.claude/skills/plaid-slide-design/SKILL.md`](../../.claude/skills/plaid-slide-design/SKILL.md)
+
+## Summary
+
+1. Pick **Workhorse layout** at runtime (`data-workhorse-layout`) from `templates/single-page/`.
+2. Wrap in **Plaid shell** (`.frame`, chrome, `data-slide-template="T#"` alias).
+3. **Never** use Workhorse themes, `runtime.js`, animations, or Chart.js in pipeline slides.
+4. Pipeline loader merges both skills in [`slide-design-skill.js`](../../scripts/scratch/utils/slide-design-skill.js).

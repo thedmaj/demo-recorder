@@ -101,104 +101,43 @@ Pure helpers exported for tests: `sanitizeProductsForLinkTokenMix` in `link-toke
 
 ### Plaid Liabilities — non-FCRA, daily-cached, federal student loans gone (REQUIRED)
 
-**Verified via AskBill + Glean (Financial Management Playbook Mar 2026; Liabilities FAQ Aug 2024; SoFi Account Plan Q1 2026) on 2026-05-21.** Liabilities is the read-only debt-data product for PFM, debt-paydown, and net-worth dashboards. It is **non-FCRA** and cannot be used for underwriting / lending decisioning — use CRA Base Report (`inputs/products/plaid-cra-base-report.md`) for those flows.
+Non-FCRA read-only debt data (credit cards, private student loans, mortgages). **Cannot be used for underwriting/decisioning** — use CRA Base Report for those flows. Full rules: [`inputs/products/plaid-liabilities.md`](inputs/products/plaid-liabilities.md).
 
-Family routing: prompts mentioning `liabilities`, `/liabilities/get`, `debt consolidation/paydown/payoff/management`, `credit card APR(s)`, `mortgage refi/escrow/amortization`, `student loan refi/consolidation/payoff`, `balance transfer eligibility`, `net worth view/dashboard/tracker`, `LIT bundle` route to family `liabilities` and product knowledge file `inputs/products/plaid-liabilities.md`. Enforced in `scripts/scratch/utils/prompt-scope.js`; tested in `tests/unit/prompt-scope.test.js`.
-
-Hard rules for Liabilities demos:
-
-- **Link products:** `["liabilities"]` standalone, or **`["liabilities", "transactions", "investments"]`** for the canonical **LIT bundle** (PFM / net-worth dashboards). One Item, one access_token. Add `'identity'` if name/email/phone on the linked account are needed. Add `'auth'` if account/routing numbers are needed for an ACH-funding outcome. **Do NOT mix with `cra_*` products** — CRA is FCRA-compliant and sold separately; combining loses Plaid's positioning rule and breaks downstream sanitization.
-- **Retrieval endpoints:**
-  - Liabilities → `POST /liabilities/get`
-  - Transactions (in LIT bundle) → **`/transactions/sync`** (cursor-based, webhook-driven via `SYNC_UPDATES_AVAILABLE`). Prefer over `/transactions/get` (legacy date-range) in all new integrations.
-  - Investments (in LIT bundle) → `/investments/holdings/get` + `/investments/transactions/get`. See `inputs/products/plaid-investments.md` for that product's rules.
-- **Response shape (literal field names):** `{ accounts, liabilities: { credit[], student[], mortgage[] }, item, request_id }`. Per-array field lists are documented in `inputs/products/plaid-liabilities.md`. Never invent fields or reason-code arrays.
-- **Webhook (literal name):** `LIABILITIES:DEFAULT_UPDATE`. Payload includes `account_ids_with_new_liabilities[]` and `account_ids_with_updated_liabilities` (object mapping account_id → array of changed field names). Never paraphrase as `LIABILITIES_UPDATE_AVAILABLE` or similar.
-- **Refresh model — NOT live.** `/liabilities/get` returns a cached snapshot refreshed about once per day. Demos must NOT promise real-time freshness for Liabilities — if the narrative needs "we just saw your payment land," source that signal from `/transactions/sync` in the LIT bundle.
-- **⚠ STOP ACT — federal student loans are NOT available.** Since Aug 23, 2024, Plaid has lost access to Mohela, Aidvantage, EdFinancial, Nelnet, and CRI. Plaid stopped billing customers for those items. Demos must **never reference federal-servicer data** — the demo will not work in production. Use private servicers only (Sallie Mae, Discover, Wells Fargo Education, PHEAA, CornerStone/UHEAA) or stay in credit cards + mortgages.
-- **Non-FCRA boundary:** Liabilities data must not drive automated underwriting / approval-decision narratives. Internal positioning rule (Oct 2025, David Majetic): *"Use Transactions, Investments, and Liabilities for personal finance and money management use cases (non-lending); CRA products are for FCRA-regulated credit decisioning."*
-- **Data quirks to acknowledge when present:** Sallie Mae (`ins_116944`) `balance.current` includes interest (not just principal), `outstanding_interest_amount` is null. Great Lakes / Firstmark / Commonbond / Granite State / Oklahoma share a single `minimum_payment_amount` across all loans on the same account. Chase / PNC / US Bank return `persistent_account_id` (May 2025) — useful for de-duping across Items.
-
-Regression tests: `tests/unit/prompt-scope.test.js` (Liabilities routing block + don't-route-CRA-to-Liabilities).
+- **Link products:** `["liabilities"]` standalone, or **LIT bundle** `["liabilities", "transactions", "investments"]`. Never mix with `cra_*` products.
+- **Endpoint:** `POST /liabilities/get` (daily-cached — do NOT promise real-time freshness). Webhook: `LIABILITIES:DEFAULT_UPDATE`.
+- **Response shape:** `{ accounts, liabilities: { credit[], student[], mortgage[] }, item, request_id }` — never invent fields.
+- **⚠ No federal student loans** since Aug 23, 2024 (Mohela/Aidvantage/EdFinancial/Nelnet/CRI gone). Use private servicers only (Sallie Mae, Discover, Wells Fargo Education, PHEAA, CornerStone/UHEAA) or credit cards + mortgages.
 
 ### Plaid Investments vs Plaid Investments Move — never confuse these (REQUIRED)
 
-**Verified via AskBill + Glean (Feb 2026 GTM Playbook) on 2026-05-21.** These are two distinct products in the `investments` family that share the word "investments" but use different Link products, different endpoints, different webhooks, and serve different use cases. Misrouting causes the generated app to call the wrong endpoint after Link completes and breaks the demo.
+Two distinct products — misrouting causes the generated app to call the wrong endpoint. Full disambiguation: [`inputs/products/plaid-investments.md`](inputs/products/plaid-investments.md).
 
-| | **Plaid Investments** (data access) | **Plaid Investments Move** (transfer initiation) |
+| | **Plaid Investments** | **Plaid Investments Move** |
 |---|---|---|
-| Family | `investments` | `investments_move` |
-| Link product string | `investments` | **`investments_auth`** |
-| Endpoint(s) | `POST /investments/holdings/get`, `POST /investments/transactions/get` | `POST /investments/auth/get` |
-| Use case | PFM, wealth tracking, portfolio analytics | ACATS (US) / ATON (Canada) brokerage transfer initiation |
-| Returns account # / DTC codes | No | **Yes** (`numbers.acats[]`) |
-| Webhooks | `HOLDINGS:DEFAULT_UPDATE`, `INVESTMENTS_TRANSACTIONS:DEFAULT_UPDATE`, `INVESTMENTS_TRANSACTIONS:HISTORICAL_UPDATE` | Generic Item webhooks only |
-| Status | GA | Early Availability (Sales-gated; ATON Canada not GA, target June 2027) |
-| Pricing | Per-Item subscription | Per-call ($20 rack / $8–13 typical); manual fallback not billed |
-| Flagship customer reference | Empower ($1.999M ACV Yodlee replacement, Dec 2025) | Robinhood (90% ACATS-failure reduction, 3× successful transfers) |
+| Link product | `investments` | **`investments_auth`** |
+| Endpoint | `/investments/holdings/get`, `/investments/transactions/get` | `/investments/auth/get` |
+| Use case | PFM, portfolio analytics | ACATS/ATON brokerage transfer |
+| Returns acct # / DTC | No | **Yes** (`numbers.acats[]`) |
 
-Family routing enforced in `scripts/scratch/utils/prompt-scope.js`:
-- `investments_move` matches first on keywords `ACATS`, `ATON`, `investments_auth`, `/investments/auth/get`, `Investments Move`, `broker-sourced`, `held-away`, `brokerage transfer`, `portfolio transfer`.
-- `investments` matches on `investment holdings`, `/investments/holdings/get`, `/investments/transactions/get`, `portfolio (view|allocation|performance)`, `PFM`, and bare `investments` (when "Move" is not present).
-- Move family wins when both signal sets are present in the prompt — explicit signals (`ACATS` / `/investments/auth/get`) are decisive.
-
-Wire-format enforcement in `scripts/scratch/utils/link-token-create-config.js`:
-- `'investments_auth'` is in `ALLOWED_LINK_PRODUCTS` (added 2026-05-21 — was missing, would have been silently filtered).
-- `inferPlaidLinkProductsFromPrompt()` emits `'investments_auth'` for Move prompts and `'investments'` for data-access prompts. Never both for the same demo.
-- `inferProductsFromApiSignals()` maps `investments/auth` → `investments_auth` and `investments/holdings` / `investments/transactions` → `investments`.
-
-Hard rules for builds:
-
-- **Move demos must emit `products: ["investments_auth"]`**, narrate the transfer-form autofill outcome, and show `/investments/auth/get` in the API panel with `numbers.acats[]` + `dtc_numbers` + `owners`. They must NOT call `/investments/holdings/get`.
-- **Investments (data-access) demos must emit `products: ["investments"]`**, narrate portfolio / wealth tracking, and show `/investments/holdings/get` or `/investments/transactions/get`. They must NOT call `/investments/auth/get` and must NOT show account numbers or DTC codes (not in that response).
-- **Webhook names are literal** — never `INVESTMENTS_AUTH_READY` or other paraphrases.
-- **Cost basis is aggregate only** in the documented Investments response — tax-prep demos must disclose the no-per-lot caveat.
-
-Regression tests: `tests/unit/prompt-scope.test.js` (Investments vs Investments Move routing block) and `tests/unit/link-token-create-config.test.js` (`'investments_auth'` allowed, resolver emits correct product per intent).
+- **Move demos:** `products: ["investments_auth"]`, show `/investments/auth/get` with `numbers.acats[]` + `dtc_numbers` + `owners`. Never call `/investments/holdings/get`.
+- **Data-access demos:** `products: ["investments"]`, show holdings/transactions endpoints. Never call `/investments/auth/get` or show account numbers/DTC.
+- **Cost basis is aggregate only** — no per-lot data; disclose in tax-prep demos.
 
 ### Plaid Protect — anti-fraud umbrella, never a single 'protect' product string (REQUIRED)
 
-**Verified via AskBill 2026-05-21 + Glean (GTM Playbook 2026, Ti2 Deep Dive).** Plaid Protect is the umbrella solution that packages Plaid Signal, Identity Verification (IDV), Monitor, Trust Index / Ti2, and Dashboard-configured rulesets into one decisioning surface. It is **NOT** a single API and must NEVER appear as a `products[]` string in `/link/token/create`.
+Umbrella solution (Signal + IDV + Monitor + Trust Index/Ti2 + Rulesets). **NOT a single API** — `'protect'` must never appear in `products[]`. Full rules: [`inputs/products/plaid-protect.md`](inputs/products/plaid-protect.md).
 
-Family routing: prompts mentioning **Plaid Protect**, **Trust Index**, **Ti2**, **protect ruleset**, `protect_transactions`, or `protect_linked_bank` route to family `plaid_protect` and product knowledge file `inputs/products/plaid-protect.md`. Enforced in `scripts/scratch/utils/prompt-scope.js`; tested in `tests/unit/prompt-scope.test.js`.
+- **Link products:** component strings only — `['signal']`, `['signal', 'identity_verification']`, `['monitor']`, etc. Never `['protect']`.
+- **Score retrieval:** `POST /signal/evaluate`. `ruleset.result` values: `ACCEPT`, `REROUTE`, `REVIEW` — `REJECT` is NOT documented.
+- **Explainability:** `core_attributes` + `ruleset.triggered_rule_details.internal_note`. Never fabricate a top-level `reason_codes: [...]` array.
+- **Trust Index / Ti2:** Limited Availability (March 2026). Range 1–100, higher = SAFER. Never fabricate `/protect/event/send`, `/protect/user/insights/get`, or `trust_index.*` field shapes (NDA).
 
-Hard rules for Plaid Protect demos:
+### Plaid Cash Advance Score / EWA Score — Plaid Protect family, not standard Signal (REQUIRED)
 
-- **Link products:** use component strings only — `['signal']`, `['signal', 'identity_verification']`, `['monitor']`, etc. Never `['protect']`. `protect_linked_bank` / `protect_transactions` appear in some private docs; do NOT put them on the wire without confirmed Sales enablement.
-- **Score retrieval:** `POST /signal/evaluate` (same endpoint as standalone Signal). Documented response fields: `scores.bank_initiated_return_risk.score`, `scores.customer_initiated_return_risk.score`, `scores.cash_advance.score` (when provisioned), `scores.pre_auth_confidence` (beta, INVERTED direction). All ranges 1–99.
-- **Decision feedback:** `POST /signal/decision/report` with `{ client_transaction_id, initiated, days_funds_on_hold? }`. The ONLY documented feedback endpoint.
-- **`ruleset.result` values:** `ACCEPT`, `REROUTE`, `REVIEW`. `REJECT` is NOT documented — use `REROUTE` or render the decline outside the API panel.
-- **Webhooks (literal names):** `SIGNAL_SCORE_READY`, `SIGNAL_RULE_TRIGGERED`, `PROTECT_TX_MONITOR_RULE_TRIGGERED` (when Protect Transaction Monitoring is enabled). Never paraphrase as `SCORE_READY` / `RULESET_TRIGGERED`.
-- **Explainability:** use `core_attributes` (80+ documented key/value signals) and `ruleset.triggered_rule_details.internal_note`. NEVER fabricate a top-level `reason_codes: [...]` array — that field is not documented.
-- **Trust Index / Ti2:** Limited Availability (March 2026 cohort). Range 1–100, higher = SAFER user (opposite direction from Signal scores). Demos may reference Trust Index by name + score but must NOT fabricate `/protect/event/send`, `/protect/user/insights/get`, or `trust_index.*` API field shapes — those are NDA / private docs. When showing an API panel for the underlying call, use the documented `/signal/evaluate` response.
+Plaid Protect product using the same `/signal/evaluate` endpoint as Signal, but a **distinct product** with different score semantics and Sales-side enablement. Routes to family `cash_advance_score` — NEVER to `funding` / `plaid-signal.md`. Full API pattern: [`inputs/products/plaid-ewa-score.md`](inputs/products/plaid-ewa-score.md).
 
-Regression tests: `tests/unit/prompt-scope.test.js` (Plaid Protect routing block) and `tests/unit/link-token-create-config.test.js` (`'protect'` NOT in `ALLOWED_LINK_PRODUCTS`).
-
-### Plaid Cash Advance Score / EWA Score is its own family — not standard Signal (REQUIRED)
-
-**Verified via AskBill 2026-05-21.** Plaid Cash Advance Score (aka EWA Score) is a **Plaid Protect** product delivered through the same `/signal/evaluate` endpoint as standard Signal, but it is a **distinct product** with different score semantics, different on-screen narrative, and Sales-side enablement. The pipeline must route EWA demos to family `cash_advance_score` and product knowledge `inputs/products/plaid-ewa-score.md` — NEVER to `funding` / `inputs/products/plaid-signal.md`.
-
-End-to-end API pattern:
-
-| Step | Endpoint | Notes |
-|---|---|---|
-| Link token | `POST /link/token/create` with `products: ["auth", "signal"]` | `'signal'` is a valid Link product as of Oct 2024 — present in `ALLOWED_LINK_PRODUCTS`. No `/user/create` bootstrap required. |
-| Token exchange | `POST /item/public_token/exchange` | Standard. |
-| Score retrieval | `POST /signal/evaluate` | Body: `{ access_token, account_id, client_transaction_id, amount, user?, device?, ruleset_key? }`. |
-| Decision feedback | `POST /signal/decision/report` | Same endpoint as standard Signal: `{ client_transaction_id, initiated }`. |
-
-Response shape (when provisioned by Plaid Sales):
-- **Primary score:** `response.scores.cash_advance.score` (1–99, **higher = higher risk** — same direction as standard Signal). Approve at low scores.
-- **Fallback** (when `cash_advance` is absent because the account isn't provisioned): `response.scores.bank_initiated_return_risk.score`. Narration must say so honestly.
-- **Explainability:** `core_attributes` (key/value) and `ruleset.triggered_rule_details.internal_note` / `ruleset.result`. There is **NO documented `reason_codes[]` array** — demos must NOT show one.
-
-Family routing is enforced in `scripts/scratch/utils/prompt-scope.js`:
-- `inferProductFamilyFromKeywordsOnly()` and `getEffectiveProductFamily()` detect EWA keywords (`ewa`, `earned wage access`, `cash advance score`, `plaid protect cash advance`, `scores.cash_advance`) BEFORE the legacy `signal` / `funding` rule.
-- `detectProductSlugFromPrompt()` returns `'ewa-score'` (loading `inputs/products/plaid-ewa-score.md`) BEFORE the generic `'signal'` slug check.
-
-Regression tests: `tests/unit/prompt-scope.test.js` (EWA routing block) and `tests/unit/link-token-create-config.test.js` (`'signal'` in `ALLOWED_LINK_PRODUCTS`, `[auth, signal]` survives sanitization).
-
-Build-time enforcement: the build prompt for EWA demos must reference `scores.cash_advance.score` (or the documented `bank_initiated_return_risk` fallback) and 2–3 `core_attributes` / ruleset rule names — never a fabricated `reason_codes[]`.
+- **Link products:** `["auth", "signal"]`
+- **Score field:** `response.scores.cash_advance.score` (1–99, higher = higher risk). Fallback when not provisioned: `bank_initiated_return_risk.score`. No `reason_codes[]` array — never fabricate one.
 
 ### Plaid Link Event Names (use these exactly — do NOT invent event names)
 ```
@@ -278,7 +217,7 @@ When `plaidLinkMode` is `embedded`, follow Embedded Institution Search behavior:
 - Create Link token with `/link/token/create` as normal; no embedded-specific token params are required.
 - If showing "Connect Manually", configure `auth.auth_type_select_enabled` in token config.
 - Web SDK: use `Plaid.createEmbedded(...)` and mount into `data-testid="plaid-embedded-link-container"`.
-- **Pre-link page = live embed:** the launch step (`plaidPhase: "launch"`) must show the standard pre-link trust UX (recommended tile, encryption bullets, consent) **and** the live embedded institution search on the **same** step — parity with modal Link. Never defer the SDK to a later step or use placeholder copy like “Institution search preview – opens on the next step.”
+- **Pre-link page = live embed:** the launch step (`plaidPhase: "launch"`) must show trust copy (headline, encryption bullets, consent) **and** the live embedded institution search on the **same** step — parity with modal Link. Do **not** duplicate the SDK’s “Recommended · Instant verification” tile in the host column; the embed owns that. Manual verification = subtle “Connect manually” link only (`auth.auth_type_select_enabled`). Never defer the SDK to a later step or use placeholder copy like “Institution search preview – opens on the next step.”
 - Keep layout constraints to sizing only: minimum embedded container `350x300px` or `300x350px`.
 - Do not impose extra iframe/frame-containment constraints beyond normal embedded sizing behavior.
 - Full rules: [`skills/plaid-link-embedded-link-skill.md`](skills/plaid-link-embedded-link-skill.md).
@@ -293,22 +232,13 @@ Product details: [`inputs/products/plaid-cra-base-report.md`](inputs/products/pl
 - Plaid Passport is optional per account configuration; never omit the core CRA Link/consent experience.
 - CRA "setup" / "data returned / report returned" explanatory scenes use Plaid-branded insight-style presentation, not customer-branded host chrome.
 
-### Layer Mobile Eligibility Helper Rule (Global)
+### Layer Mobile — Eligibility Helper + Mock Hard Contract
 
-- Applies to all Layer demos that use mobile-simulated host + Layer flows.
-- Always render subtle helper text directly below the mobile app frame showing routing numbers:
-  - `415-555-1111` = eligible path (continues through Layer to onboarding complete)
-  - `415-555-0011` = ineligible path (fallback PII collection, then standard Plaid Link)
-- Default the host phone input to the eligible value first: `415-555-1111`.
-- Do not send eligible users to fallback PII collection.
+Applies to all Layer demos using mobile-simulated host + Layer flows. Full product rules: [`inputs/products/plaid-layer.md`](inputs/products/plaid-layer.md). Full template contract: [`templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md`](templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md) (**HARD CONTRACT**).
 
-### Layer Mobile Mock Hard Contract (Global)
-
-When the build injects the Layer mobile mock template (`LAYER_MOCK_TEMPLATE.md` + mobile-visual mode), treat it as **mandatory**:
-
-- **Canonical skeleton:** [`templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`](templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html) — the build prompt embeds this file; match its DOM patterns, mobile-shell sizing/fill rules, global helper, host visual placeholder, and bottom-sheet Layer phases unless `demo-script.json` explicitly requires extra steps (without dropping routing or testid contracts).
-- **Plaid logo in Layer modals:** `./plaid-logo-horizontal-black-white-background.png` only; **no** duplicate “PLAID” label next to the image.
-- Full rule text: [`templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md`](templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md) (see **HARD CONTRACT**).
+- Helper text below mobile frame: `415-555-1111` = eligible path; `415-555-0011` = ineligible (fallback PII + standard Link). Default to `415-555-1111`.
+- **Canonical skeleton:** [`templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html`](templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html) — match DOM patterns exactly.
+- **Plaid logo in Layer modals:** `./plaid-logo-horizontal-black-white-background.png` only; no duplicate “PLAID” text label.
 
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
@@ -355,48 +285,14 @@ When the build injects the Layer mobile mock template (`LAYER_MOCK_TEMPLATE.md` 
 All interactive elements must have `data-testid` attributes in kebab-case matching the
 `interaction.target` field in `demo-script.json`.
 
-### JSON Panel Expand/Collapse Toggle Contract (REQUIRED)
+### JSON Panel Toggle & Overlay Contract (REQUIRED)
 
-The `#api-response-panel` exposes a single, deterministic expand/collapse control. The
-canonical implementation is the `post-panels` stage's `buildPanelPatchScript()` (see
-[`scripts/scratch/scratch/post-panels.js`](scripts/scratch/scratch/post-panels.js)) and
-the `api-panel-toggle-latest` patch in
-[`scripts/scratch/utils/qa-patch-library.js`](scripts/scratch/utils/qa-patch-library.js).
-**Do not hand-author a different toggle inside generated HTML** — it will be stripped
-and replaced by the post-panels stage.
+`post-panels` owns the API panel toggle — **do not hand-author a different toggle in generated HTML**; it will be stripped and replaced. `build-app.js` delegates to `post-panels.buildPanelPatchScript()` which injects the versioned IIFE on every build. Violations are auto-patched by the `api-panel-toggle-latest` patch on next run.
 
-Visual + behavior contract (enforced by post-panels patch `v6+`):
-
-- **Single toggle node**: `<button id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle">` rendered exactly once inside `#api-response-panel`. No "Show JSON" / "Hide JSON" text label — icon-only.
-- **Position**: vertically centered on the panel via `top:50%; transform:translateY(-50%)`, anchored to the panel's left outer edge at `left:-36px`. Width 36px, height 60px. `z-index:2001` on top of host content. `!important` selectors scoped to `#api-response-panel` so LLM-generated host CSS cannot override.
-- **Icon**: a single CSS-only chevron (`.api-panel-toggle-icon` — two-border arrowhead). **Direction signals the next action**:
-  - Panel open (`.is-open` class on the button) → arrow points **RIGHT** (clicking will collapse the panel rightward).
-  - Panel collapsed → arrow points **LEFT** (clicking will expand the panel leftward).
-- **Default state on step navigation (v6)**: the panel arrives **collapsed** on every step that has an `apiResponse` — chrome visible (48px strip + toggle arrow pointing LEFT), JSON body hidden. The JSON content is pre-rendered into the collapsed body so clicking the toggle expands instantly. Build-QA / vision-QA that must validate JSON content can opt in by setting `window.__API_PANEL_CONFIG.collapsedByDefault = false` before walking steps.
-- **Behavior**: clicking calls `window.toggleApiPanel()`. `aria-expanded` / `aria-label` / `title` flip accordingly for screen readers ("Expand API JSON panel" ↔ "Collapse API JSON panel").
-- **Single source of truth**: `build-app.js` delegates to `post-panels.buildPanelPatchScript()` at build time. Both stages emit the same versioned IIFE, identified by `data-post-panels-patch="vN"`. The patch IIFE writes `window.__buildApiPanelPatchVersion = 'vN'` and short-circuits only on the exact same version — never on the older boolean `__buildApiPanelPatchApplied`. Older patch IIFEs and the legacy build-app unmarked emission are stripped automatically when post-panels re-runs on an existing scratch-app, so re-running the `post-panels` stage on any old run upgrades the toggle in <1s without a full rebuild.
-- **Hard contract enforcement**: a host app's panel toggle that violates this contract (text label visible, off-center vertically, missing arrow direction, hand-bound click listener, force-open on every nav) is patched by post-panels on the next run. The QA patch library entry `api-panel-toggle-latest` re-runs post-panels automatically when build-qa flags panel-visibility or panel-toggle issues.
-
-#### Renderjson `.disclosure` per-object toggle contract (v8+ — REQUIRED)
-
-`renderjson` (the JSON viewer library loaded from cdn.jsdelivr) emits clickable `<a class="disclosure">+</a>` / `<a class="disclosure">-</a>` spans next to every JSON sub-tree to let viewers expand/collapse individual objects and arrays. These are SEPARATE from the panel-level edge toggle above.
-
-The LLM build phase has produced CSS rules that gave `.disclosure` width/height/background-color, rendering the toggles as **large solid white blocks** instead of small inline characters (regression: `2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1`). Three layers of defense now prevent this:
-
-1. **post-panels v8 injects canonical override CSS at request time.** `#api-response-panel .disclosure` is forced to `display:inline-block; width:auto; height:auto; background:transparent; color:rgba(255,255,255,0.55); cursor:pointer` with `!important`. Even if the LLM emits broken CSS, the override wins at request time. See `ensureEdgeToggleStyles()` in `scripts/scratch/scratch/post-panels.js`.
-2. **Build-QA deterministic check** (`scanRenderjsonDisclosureStyling()` in `scripts/scratch/scratch/build-qa.js`) scans every `<style>` block in the generated HTML. Any `.disclosure` rule whose declarations include `width`, `height`, `min-width`, `min-height`, `background`, `background-color`, or `background-image` with a non-harmless value (anything other than `0`, `auto`, `none`, `transparent`, `inherit`) is flagged as `category: json-panel-styling`, `severity: critical`, `deterministicBlocker: true`. This surfaces the LLM's bug even though the runtime override masks the symptom.
-3. **Build prompt rule** in `prompt-templates.js` instructs the LLM not to style `.disclosure` beyond `color` and `cursor:pointer`. Explicit reference to the regression run is included so the LLM understands the consequence.
-
-Build rule for any human or LLM hand-editing the generated HTML: **do not add CSS for `.disclosure` beyond `color` and `cursor`.** Renderjson's defaults plus the post-panels override are sufficient.
-
-#### Overlay invariant (v9+ — REQUIRED)
-
-The JSON panel is a **pure fixed overlay** — it never resizes slides or host UI:
-
-- **z-index 2100** on `#api-response-panel` / `.side-panel` — floats above host modals and slide chrome.
-- **Always collapsed by default** on every step navigation (`__apiPanelUserOpen = false`). The 48px edge toggle is the only visible chrome until the user clicks to expand.
-- **No space reservation** — do NOT add `body.api-panel-open` slide-shrink rules, `padding-right: 520px`, or `max-width: calc(100% - 520px)` on host steps or `.slide-root`. Build-QA `scanPanelOverlayContract` flags these as critical blockers.
-- Build-QA / vision-QA may set `window.__API_PANEL_CONFIG.collapsedByDefault = false` before walking steps to validate JSON content.
+Rules for generated HTML:
+- **Do not style `.disclosure`** (renderjson sub-tree toggles) beyond `color` and `cursor` — any `width`/`height`/`background` on `.disclosure` is a critical deterministic blocker (`scanRenderjsonDisclosureStyling`). post-panels v8 overrides it at runtime, but build-QA will still flag it.
+- **Panel is a fixed overlay** (z-index 2100) — never add `padding-right: 520px`, `max-width: calc(100% - 520px)`, or `body.api-panel-open` shrink rules on host steps or `.slide-root` (`scanPanelOverlayContract` blocker).
+- Panel arrives **collapsed by default** on every step nav; 48px edge toggle is the only visible chrome until user clicks.
 
 ### Plaid Link onSuccess Callback Panel Contract (v6+)
 
@@ -565,7 +461,10 @@ npm run demo:full -- --from=record    # full pipeline starting at record
 
 `build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same Claude vision QA as post-record QA against `demo-script.json` `visualState` — output `qa-report-build.json` in the run dir. Optional: `BUILD_QA_STRICT=1` to exit non-zero if the score is below `QA_PASS_THRESHOLD`.
 
-**Build-QA scope by build mode** — In `app-only` builds, the vision QA judges app-tier steps (`stepKind: "app"`) strictly against each step's `visualState` description: it does **not** enforce that concrete narration values (scores, decisions, dollar amounts, percentages) appear on screen unless `visualState` explicitly describes them as visible. Those values are voiceover-only by design in app-only demos. In `app+slides` builds, and on `stepKind: "slide"` steps in any build mode, the legacy narration-strict gate ("concrete narration claims must be visibly evidenced in frames") still applies. All other QA checks (brand wordmark/nav fidelity, Plaid Link CTA icon ratio, asset authenticity, animation/state-progression when described in visualState, deterministic blockers, panel-visibility when `apiResponse` is declared) apply in both modes. Source: `scripts/scratch/utils/prompt-templates.js` `buildQAReviewPrompt()` + `scripts/scratch/scratch/qa-review.js` (gates `narrationStrict` on `runBuildMode === 'app+slides' || isSlideTier`).
+**Build-QA scope by build mode:**
+- **app-only:** judges `stepKind: "app"` steps against `visualState` only — does **not** require concrete narration values (scores, amounts, decisions) on screen unless `visualState` explicitly describes them as visible (voiceover-only by design).
+- **app+slides / slide steps:** narration-strict gate applies — concrete narration claims must be visibly evidenced in frames.
+- **Both modes:** brand wordmark/nav fidelity, Plaid Link CTA icon ratio, asset authenticity, animation/state-progression (when in `visualState`), deterministic blockers, panel-visibility when `apiResponse` is declared.
 
 ### Tier-aware QA recovery (REQUIRED — do not rebuild the whole app for one bad step)
 
@@ -594,10 +493,6 @@ either     | systemic*  |                    | fullbuild                 | (lega
 **Do NOT** use `--build-fix-mode=touchup` (LLM full HTML regen) for tier-localized failures — that path rewrites the entire `index.html` and can regress passing tiers (see e.g. the Zip CRA LendScore slide regression `2026-05-21`). Use the tier lanes instead.
 
 Stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`, `embed-script-validate`, `build`, `build-qa`, `post-slides`, `post-panels`, `app-touchup`, `slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`, `touchup`
-
-### Claude Code / Cursor agents — long-running builds (heartbeat policy)
-
-See **[REQUIRED — Pipeline heartbeat](#required--pipeline-heartbeat-supervising-long-running-builds)** at the top of this file. Orchestrator emits `::PIPE:: event=heartbeat` every 5 min mid-stage; agents observe via Shell `notify_on_output` or `pipe monitor`. Cursor/Claude agents: [`AGENTS.md`](AGENTS.md) + [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc).
 
 ## Plaid Slide Design System (REQUIRED for new runs with slides)
 
@@ -685,6 +580,15 @@ Manrope (sans), Playfair Display (display), JetBrains Mono (mono) — export too
 **Logo (hard contract):** `scanSlidePlaidLogoAuthenticity` in `build-qa.js` is a **deterministic blocker** (`severity: 'critical'`). Slides must use bundled horizontal wordmarks only — `<img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png">` (navy), `plaid-horizontal-dark.png` (light/cream/holo), or `plaid-horizontal-holograph.png` — **or omit** `.chrome-logo` entirely. Never invent SVG/icon-grid logos or render "PLAID" as text/CSS.
 
 **CRA LendScore host (blockers when family is `cra_lend_score`):** `scanCraHostUnderwritingContracts` enforces Zip-style **NMLS ID 1963958** footer (via `inputs/brand-references/zip.md`), visible `approve-plan-cta`, and `evaluateApiStoryAlignment` recognizes `POST /cra/check_report/lend_score/get` (not Base Report mis-label). Product KB: `inputs/products/plaid-cra-lend-score.md`.
+
+**Plaid × Workhorse hybrid blockers (when slides borrow Workhorse layouts):** Three new scanners in `build-qa.js` (May 2026 — gated on `buildMode === 'app+slides'`):
+- **`scanSlideWorkhorseThemeLeak`** — category `slide-workhorse-theme-leak`, severity `critical`. Blocks `<link>` to `assets/themes/*.css` from html-ppt or CDN webfont imports (Inter / Playfair / Noto / JetBrains Mono / IBM Plex Mono) inside `.slide-root`.
+- **`scanSlideWorkhorseRuntimeLeak`** — category `slide-workhorse-runtime-leak`, severity `critical`. Blocks `<script>` references to `runtime.js`, `fx-runtime.js`, `chart.js`, or `highlight.js` inside `.slide-root`. Pipeline slides are static and SVG-only.
+- **`scanSlideMotionAttributes`** — category `slide-motion-attributes`, severity `warning`. Flags `data-anim`, `data-fx`, and `anim-*` classes inside `.slide-root`. Motion is allowed only on standalone exports.
+
+**Text overlap (May 2026):** `scanSlideTextOverlap` is a deterministic blocker (category `slide-text-overlap`, severity `critical`). During the Playwright walk, every visible text-bearing element inside `.slide-root` is measured; pairs whose rendered bounding boxes intersect by more than 8×8 px are reported with element tags, fonts, rects, and a recommended target font-size (75% of the larger, floored at the 24 px Plaid body minimum). Parent-child relationships are excluded. The `slide-text-overlap-autofix` patch in [`scripts/scratch/utils/qa-patch-library.js`](scripts/scratch/utils/qa-patch-library.js) reads `build-qa-diagnostics.json` and emits scoped per-step `font-size` and `.slide-stack { gap }` overrides; when both overlapping elements are already at the 24 px floor the patch defers to `slide-fix` LLM remediation (widen container padding/gap).
+
+Hybrid rules: [`.claude/skills/plaid-workhorse-slides/SKILL.md`](.claude/skills/plaid-workhorse-slides/SKILL.md). Standalone export: [`scripts/export-plaid-deck.sh`](scripts/export-plaid-deck.sh).
 
 **Eight warning scanners** (not blockers): tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors — all `severity: 'warning'`, `deterministicBlocker: false`.
 

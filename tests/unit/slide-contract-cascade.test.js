@@ -56,6 +56,12 @@ describe('pipeline-slide-contract.css — file shape', () => {
     const css = fs.readFileSync(contractPath, 'utf8');
     assert.match(css, /\.slide-root \.slide-stack\s*\{\s*overflow\s*:\s*visible/);
   });
+
+  test('contract hides host-app-chrome when pipeline-slide-active', () => {
+    const css = fs.readFileSync(contractPath, 'utf8');
+    assert.match(css, /body\.pipeline-slide-active \.host-app-chrome/);
+    assert.match(css, /body\.pipeline-slide-active/);
+  });
 });
 
 describe('ensureSlideDesignStylesInHead — contract injection', () => {

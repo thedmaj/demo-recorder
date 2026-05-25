@@ -43,6 +43,10 @@ const {
   appendPipelineLogSection,
   appendPipelineLogJson,
 } = require('../utils/pipeline-logger');
+const {
+  isLogoNavLuminanceCollision,
+  collisionIssueText,
+} = require('../utils/host-nav-logo-contrast');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const OUT_DIR      = requireRunDir(PROJECT_ROOT, 'build-qa');
@@ -125,7 +129,12 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'brand-fidelity-vision', // reserved for future LLM-graded sub-check
   'slide-plaid-logo-invented',
   'slide-plaid-logo-noncanonical',
+  'slide-host-chrome-leak',
+  'slide-workhorse-theme-leak',
+  'slide-workhorse-runtime-leak',
+  'slide-text-overlap',
   'cra-lendscore-host-layout',
+  'host-logo-contrast',
 ]);
 
 const PLAID_BTN_RE = /link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_](?:\w+[-_])?bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i;
@@ -326,13 +335,70 @@ function extractSlideStepHtmlBlocks(html, slideStepIds) {
 }
 
 /**
- * CRA LendScore / Network Insights host steps: NMLS footer, API rail clearance, CTA visibility.
+ * Forbid CSS that reserves horizontal space for the JSON panel — it is a fixed
+ * overlay (z-index 2100) and must never shrink slides or host columns.
+ */
+function scanPanelOverlayContract(html, demoScript) {
+  const out = [];
+  const source = String(html || '');
+
+  if (/body\.api-panel-open[\s\S]{0,400}\.slide-root/.test(source)) {
+    out.push({
+      stepId: 'global',
+      category: 'panel-overlay-contract',
+      severity: 'critical',
+      deterministicBlocker: true,
+      issue:
+        'CSS shrinks or reserves slide canvas when the API panel is open (body.api-panel-open + .slide-root).',
+      suggestion:
+        'Remove reserve rules — #api-response-panel is a fixed overlay; slides stay full-bleed at all times.',
+    });
+  }
+
+  const reservePatterns = [
+    {
+      re: /padding-right:\s*5\d{2}px/i,
+      label: 'padding-right: 5xx px',
+    },
+    {
+      re: /max-width:\s*calc\s*\(\s*100%\s*-\s*5\d{2}px/i,
+      label: 'max-width: calc(100% - 5xx px)',
+    },
+    {
+      re: /\.host-api-panel-reserve\b/i,
+      label: 'host-api-panel-reserve class',
+    },
+  ];
+
+  const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
+  for (const step of steps) {
+    const block = extractStepHtmlBlocks(source, [step.id]).get(step.id) || '';
+    if (!block) continue;
+    for (const { re, label } of reservePatterns) {
+      if (re.test(block)) {
+        out.push({
+          stepId: step.id,
+          category: 'panel-overlay-contract',
+          severity: 'critical',
+          deterministicBlocker: true,
+          issue: `Step reserves horizontal space for the JSON panel (${label}).`,
+          suggestion:
+            'Remove reserve CSS — JSON panel is a fixed overlay (z-index 2100). Slides and host steps must NOT reserve right padding for it.',
+        });
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * CRA LendScore / Network Insights host steps: NMLS footer, CTA visibility.
  */
 function scanCraHostUnderwritingContracts(html, demoScript) {
   const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
   const lendSteps = steps.filter((s) => /lend[_\s-]?score/i.test(String(s?.apiResponse?.endpoint || '')));
-  const networkSteps = steps.filter((s) => /network[_\s-]?insights/i.test(String(s?.apiResponse?.endpoint || '')));
-  if (!lendSteps.length && !networkSteps.length) return [];
+  if (!lendSteps.length) return [];
 
   const out = [];
   const hostSteps = steps.filter((s) => {
@@ -350,9 +416,6 @@ function scanCraHostUnderwritingContracts(html, demoScript) {
         'Add a host footer on checkout/underwriting screens with exactly: NMLS ID 1963958 (see inputs/brand-references/zip.md).',
     });
   }
-
-  const reserveRe =
-    /(?:padding-right|margin-right)\s*:\s*(?:5[2-9]\d|[6-9]\d{2}|\d{4})|max-width\s*:\s*calc\s*\(\s*100%\s*-\s*5\d{2}|\.host-api-panel-reserve|underwriting-grid[\s\S]{0,800}520px/i;
 
   for (const step of lendSteps) {
     const block = extractStepHtmlBlocks(html, [step.id]).get(step.id) || '';
@@ -387,17 +450,6 @@ function scanCraHostUnderwritingContracts(html, demoScript) {
         suggestion: 'Show LendScore 78 (or script value), APPROVE badge, and LendScore — beta microcopy.',
       });
     }
-    if (!reserveRe.test(block) && !reserveRe.test(html)) {
-      out.push({
-        stepId: step.id,
-        category: 'cra-lendscore-host-layout',
-        severity: 'critical',
-        deterministicBlocker: true,
-        issue: 'Host main column does not reserve ~520px for #api-response-panel (content will sit under JSON rail).',
-        suggestion:
-          'On LendScore host steps set .zip-main or .underwriting-grid { max-width: calc(100% - 520px); padding-right: 24px; } or class host-api-panel-reserve.',
-      });
-    }
     if (/base[_\s-]?report\/get/i.test(block) && !/lend[_\s-]?score\/get/i.test(block)) {
       out.push({
         stepId: step.id,
@@ -406,20 +458,6 @@ function scanCraHostUnderwritingContracts(html, demoScript) {
         deterministicBlocker: true,
         issue: 'On-screen API label references base_report/get but demo-script declares lend_score/get.',
         suggestion: 'Panel endpoint label and _stepApiResponses key must be POST /cra/check_report/lend_score/get.',
-      });
-    }
-  }
-
-  for (const step of networkSteps) {
-    const block = extractStepHtmlBlocks(html, [step.id]).get(step.id) || '';
-    if (block && /\bslide-root\b/.test(block) && !reserveRe.test(block)) {
-      out.push({
-        stepId: step.id,
-        category: 'cra-lendscore-host-layout',
-        severity: 'warning',
-        deterministicBlocker: false,
-        issue: 'Network Insights slide body may collide with the global API JSON rail.',
-        suggestion: 'Reserve right padding on .slide-body (~520px) or keep JSON only in #api-response-panel.',
       });
     }
   }
@@ -720,9 +758,8 @@ function scanSlideCanvasSize(state, step, opts = {}) {
         `Slide canvas width ${Math.round(renderedWidth)}px is below the ${minWidth}px contract ` +
         `(viewport ${viewportWidth}×${viewportHeight}). Slides must occupy at least ${Math.round(widthFraction * 100)}% of viewport width.`,
       suggestion:
-        'Apply the `slide-canvas-fullbleed` patch (or update slide.css) so `.step.active .slide-root` ' +
-        'uses `max-width: min(1280px, calc(100vw - 80px))` and only reserves panel space when ' +
-        '`body.api-panel-open` is set.',
+        'Apply the pipeline-slide-contract.css rules so `.step.active .slide-root` ' +
+        'uses `max-width: min(1280px, calc(100vw - 80px))`. The JSON panel is a fixed overlay and must not shrink slides.',
     });
   }
   if (renderedHeight > 0 && renderedHeight < minHeight) {
@@ -751,6 +788,26 @@ function scanSlideCanvasSize(state, step, opts = {}) {
         'overrides that change the slide shape.',
     });
   }
+  return out;
+}
+
+/**
+ * Slide steps must be full-screen Plaid deck surfaces — no host bank nav/banner/footer.
+ */
+function scanSlideHostChromeLeak(state, step) {
+  const out = [];
+  if (!state || !step || !isSlideLikeStep(step)) return out;
+  if (!state.hostNavVisible && state.bodyHasSlideActiveClass) return out;
+  out.push({
+    stepId: step.id,
+    category: 'slide-host-chrome-leak',
+    severity: 'critical',
+    issue:
+      'Host app chrome (nav/banner/footer) is visible on a slide step — slides must be isolated full-screen Plaid deck surfaces.',
+    suggestion:
+      'Add class `host-app-chrome` to host-only nodes, refresh pipeline-slide-contract.css, ' +
+      'and run post-panels so `body.pipeline-slide-active` toggles on slide navigation.',
+  });
   return out;
 }
 
@@ -938,6 +995,228 @@ function scanSlideInventedColors(html) {
   return out;
 }
 
+// ── Plaid × Workhorse leak scanners ─────────────────────────────────────────
+// Pipeline rule: Workhorse layout *patterns* may be borrowed inside .slide-root,
+// but Workhorse themes, runtime, animation engine, and Chart.js never ship in
+// pipeline slides. See .claude/skills/plaid-workhorse-slides/SKILL.md.
+
+/** html-ppt theme filename allowlist used to identify a Workhorse theme link. */
+const WORKHORSE_THEME_FILE_RE = /assets\/themes\/(minimal-white|editorial-serif|soft-pastel|sharp-mono|arctic-cool|sunset-warm|catppuccin-latte|catppuccin-mocha|dracula|tokyo-night|nord|solarized-light|gruvbox-dark|rose-pine|neo-brutalism|glassmorphism|bauhaus|swiss-grid|terminal-green|xiaohongshu-white|rainbow-gradient|aurora|blueprint|memphis-pop|cyberpunk-neon|y2k-chrome|retro-tv|japanese-minimal|vaporwave|midcentury|corporate-clean|academic-paper|news-broadcast|pitch-deck-vc|magazine-bold|engineering-whiteprint)\.css/i;
+
+/** Non-Plaid display/sans/serif fonts pulled in via Google Fonts or jsdelivr. */
+const WORKHORSE_FONT_HREF_RE = /fonts\.googleapis\.com\/css2?\?[^"'>]*family=(Inter|Playfair\+Display|Noto\+Sans\+SC|Noto\+Serif\+SC|JetBrains\+Mono|IBM\+Plex\+Mono)/i;
+
+/**
+ * @param {string} html
+ * @param {string[]} slideStepIds
+ */
+function scanSlideWorkhorseThemeLeak(html, slideStepIds) {
+  if (!html || !/\bslide-root\b/.test(html)) return [];
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const iterable = blocks.size ? [...blocks.entries()] : [['slide-design', html]];
+  const out = [];
+
+  // Theme CSS link anywhere inside a slide step block.
+  for (const [stepId, block] of iterable) {
+    if (WORKHORSE_THEME_FILE_RE.test(block)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-workhorse-theme-leak',
+        'Workhorse html-ppt theme CSS link found inside a slide step (forbidden in pipeline).',
+        'Remove the <link href="assets/themes/...css">. Pipeline slides use templates/slide-template/colors_and_type.css + slide.css only — Plaid palette is the only allowed theme.'
+      ));
+    }
+    if (WORKHORSE_FONT_HREF_RE.test(block)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-workhorse-theme-leak',
+        'Non-Plaid webfont import (Inter / Playfair / Noto / JetBrains Mono / IBM Plex Mono) inside a slide step.',
+        'Use Plaid Sans + Bowery Street from templates/slide-template/colors_and_type.css. No CDN font imports in pipeline slides.'
+      ));
+    }
+  }
+
+  // Document-level <link> to a Workhorse theme also fails (slides inherit it).
+  // Only fire once even if many.
+  if (slideStepIds.length > 0 && WORKHORSE_THEME_FILE_RE.test(html)) {
+    const alreadyFired = out.some((d) => d.category === 'slide-workhorse-theme-leak');
+    if (!alreadyFired) {
+      out.push(slideDesignCritical(
+        slideStepIds[0],
+        'slide-workhorse-theme-leak',
+        'Document <head> imports a Workhorse html-ppt theme CSS — it will style .slide-root.',
+        'Remove the Workhorse theme link from the document; pipeline slides use Plaid tokens only.'
+      ));
+    }
+  }
+
+  return out;
+}
+
+const WORKHORSE_RUNTIME_SRC_RE = /\b(?:runtime\.js|fx-runtime\.js|animations\/fx\/[a-z0-9-]+\.js)\b/i;
+const CHARTJS_SRC_RE = /\b(?:chart(?:\.min)?\.js|chartjs|chart\.js@\d)\b|cdn\.jsdelivr\.net\/npm\/chart\.js|cdnjs[^"'>]*chart\.js/i;
+const HIGHLIGHTJS_SRC_RE = /\bhighlight\.js@\d|cdnjs[^"'>]*highlight\.js/i;
+
+/**
+ * @param {string} html
+ * @param {string[]} slideStepIds
+ */
+function scanSlideWorkhorseRuntimeLeak(html, slideStepIds) {
+  if (!html || !/\bslide-root\b/.test(html)) return [];
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const iterable = blocks.size ? [...blocks.entries()] : [['slide-design', html]];
+  const out = [];
+
+  for (const [stepId, block] of iterable) {
+    if (WORKHORSE_RUNTIME_SRC_RE.test(block)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-workhorse-runtime-leak',
+        'Workhorse runtime.js / fx-runtime.js / canvas FX script referenced inside a slide step (pipeline slides are static).',
+        'Remove <script src="...runtime.js">. Pipeline slides do not use html-ppt keyboard runtime or canvas FX.'
+      ));
+    }
+    if (CHARTJS_SRC_RE.test(block)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-workhorse-runtime-leak',
+        'Chart.js script referenced inside a slide step (SVG-only contract).',
+        'Rebuild data visuals as inline SVG/CSS. Chart.js is not permitted in pipeline slides.'
+      ));
+    }
+    if (HIGHLIGHTJS_SRC_RE.test(block)) {
+      out.push(slideDesignCritical(
+        stepId,
+        'slide-workhorse-runtime-leak',
+        'highlight.js script referenced inside a slide step.',
+        'Use static <pre><code> with Plaid mono font. No syntax-highlighting runtime in pipeline slides.'
+      ));
+    }
+  }
+
+  // Document-level catch (same idea as theme leak).
+  if (slideStepIds.length > 0) {
+    if (WORKHORSE_RUNTIME_SRC_RE.test(html) && !out.some((d) => /runtime/.test(d.issue))) {
+      out.push(slideDesignCritical(
+        slideStepIds[0],
+        'slide-workhorse-runtime-leak',
+        'Document loads Workhorse runtime.js or fx-runtime.js — affects every .slide-root.',
+        'Remove the Workhorse runtime <script>. Pipeline slides are static.'
+      ));
+    }
+    if (CHARTJS_SRC_RE.test(html) && !out.some((d) => /Chart\.js/.test(d.issue))) {
+      out.push(slideDesignCritical(
+        slideStepIds[0],
+        'slide-workhorse-runtime-leak',
+        'Document loads Chart.js — pipeline slides are SVG-only.',
+        'Remove Chart.js <script>. Rebuild charts as inline SVG.'
+      ));
+    }
+  }
+
+  return out;
+}
+
+/**
+ * @param {string} html
+ * @param {string[]} slideStepIds
+ */
+/**
+ * Detect rendered text overlap inside .slide-root.
+ *
+ * State input shape: `state.slideTextOverlaps` (collected from the Playwright
+ * walk in evaluateStepState) — list of pairs of text-bearing elements whose
+ * rendered bounding boxes intersect by more than 8x8 px.
+ *
+ * Severity: critical (deterministic blocker) when any overlap is found on a
+ * slide-like step. The suggestion guides slide-fix to either reduce font-size
+ * on the larger element or widen `gap`/`padding` on the parent flex/grid
+ * container that holds both.
+ *
+ * @param {object} state
+ * @param {object} step
+ */
+function scanSlideTextOverlap(state, step) {
+  if (!state || !step || !isSlideLikeStep(step)) return [];
+  const overlaps = Array.isArray(state.slideTextOverlaps) ? state.slideTextOverlaps : [];
+  if (overlaps.length === 0) return [];
+
+  const out = [];
+  for (const pair of overlaps.slice(0, 6)) {
+    const aLabel = `${pair.a.tag} \"${pair.a.text.slice(0, 40)}\"`;
+    const bLabel = `${pair.b.tag} \"${pair.b.text.slice(0, 40)}\"`;
+    const aFs = Math.round(pair.a.fontSize || 0);
+    const bFs = Math.round(pair.b.fontSize || 0);
+    // Recommendation: trim the larger font-size by 25% (rounded to multiples of 2),
+    // floored at 24px (Plaid body minimum). This is a hint for slide-fix; the
+    // patch library can also apply it deterministically (see qa-patch-library).
+    const bigger = aFs >= bFs ? { label: aLabel, fs: aFs } : { label: bLabel, fs: bFs };
+    const target = Math.max(24, Math.round((bigger.fs * 0.75) / 2) * 2);
+    const suggestion = bigger.fs > 24
+      ? `Reduce font-size on ${bigger.label} from ${bigger.fs}px to ~${target}px, or increase gap/padding on the shared flex/grid container. Overlap area ${pair.overlapArea}px² (${pair.overlapW}x${pair.overlapH}px).`
+      : `Increase gap/padding on the shared flex/grid container that holds ${aLabel} and ${bLabel}. Both elements are already at the 24px body floor, so font reduction is not allowed. Overlap area ${pair.overlapArea}px² (${pair.overlapW}x${pair.overlapH}px).`;
+    out.push({
+      stepId: step.id,
+      category: 'slide-text-overlap',
+      severity: 'critical',
+      deterministicBlocker: true,
+      issue: `Text elements overlap on slide: ${aLabel} intersects with ${bLabel}.`,
+      suggestion,
+      // Machine-readable payload — slide-fix can use these coordinates to
+      // generate targeted patches without re-measuring.
+      meta: {
+        a: pair.a,
+        b: pair.b,
+        overlapArea: pair.overlapArea,
+        overlapW: pair.overlapW,
+        overlapH: pair.overlapH,
+        recommendedFontSizePx: target,
+      },
+    });
+  }
+
+  if (overlaps.length > 6) {
+    out.push({
+      stepId: step.id,
+      category: 'slide-text-overlap',
+      severity: 'warning',
+      deterministicBlocker: false,
+      issue: `${overlaps.length - 6} additional text-overlap pair(s) suppressed (showing 6 of ${overlaps.length}).`,
+      suggestion: 'Resolve the critical overlaps first; the rest typically cascade once spacing is fixed.',
+    });
+  }
+
+  return out;
+}
+
+function scanSlideMotionAttributes(html, slideStepIds) {
+  if (!html || !/\bslide-root\b/.test(html)) return [];
+  const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
+  const iterable = blocks.size ? [...blocks.entries()] : [['slide-design', html]];
+  const out = [];
+
+  for (const [stepId, block] of iterable) {
+    const dataAnim = /\bdata-anim\s*=/i.test(block);
+    const dataFx = /\bdata-fx\s*=/i.test(block);
+    const animClass = /\bclass\s*=\s*["'][^"']*\banim-[a-z0-9-]+/i.test(block);
+    if (dataAnim || dataFx || animClass) {
+      const triggers = [
+        dataAnim ? 'data-anim' : null,
+        dataFx ? 'data-fx' : null,
+        animClass ? 'anim-* class' : null,
+      ].filter(Boolean).join(', ');
+      out.push(slideDesignWarning(
+        stepId,
+        'slide-motion-attributes',
+        `Workhorse animation hook (${triggers}) inside .slide-root — pipeline slides are static.`,
+        'Remove data-anim / data-fx / anim-* class. Motion is allowed only on standalone exports, not pipeline recordings.'
+      ));
+    }
+  }
+
+  return out;
+}
+
 /** Run all slide-design scanners when the build includes slides. */
 function scanSlideDesignSystem(html, demoScript) {
   const steps = Array.isArray(demoScript?.steps) ? demoScript.steps : [];
@@ -954,6 +1233,9 @@ function scanSlideDesignSystem(html, demoScript) {
     ...scanSlideInlineBlockLayout(html),
     ...scanSlideBackgroundRhythm(demoScript, html),
     ...scanSlideInventedColors(html),
+    ...scanSlideWorkhorseThemeLeak(html, slideStepIds),
+    ...scanSlideWorkhorseRuntimeLeak(html, slideStepIds),
+    ...scanSlideMotionAttributes(html, slideStepIds),
   ];
 }
 
@@ -1425,6 +1707,34 @@ async function evaluateStepState(page, stepId) {
       ? active.querySelector('[data-testid="plaid-embedded-link-container"], #plaid-embedded-link-container')
       : null;
     const embeddedRect = embeddedContainer ? embeddedContainer.getBoundingClientRect() : null;
+    const embeddedHostRecommendedDuplicate = (() => {
+      if (!active || !embeddedContainer) return false;
+      const isInsideEmbed = (el) => el === embeddedContainer || embeddedContainer.contains(el);
+      const nodes = active.querySelectorAll('*');
+      let hostRecommendedCount = 0;
+      nodes.forEach((el) => {
+        if (isInsideEmbed(el)) return;
+        const t = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (t.length > 220) return;
+        if (/\b(recommended|instant verification)\b/.test(t) && /\bplaid\b/.test(t)) {
+          hostRecommendedCount += 1;
+        }
+      });
+      return hostRecommendedCount > 0;
+    })();
+    const embeddedFakeInstitutionSearch = (() => {
+      if (!active || !embeddedContainer) return false;
+      const inputs = active.querySelectorAll('input, [role="searchbox"], [contenteditable="true"]');
+      for (const input of inputs) {
+        if (embeddedContainer.contains(input)) continue;
+        const ph = String(input.getAttribute('placeholder') || '').toLowerCase();
+        const aria = String(input.getAttribute('aria-label') || '').toLowerCase();
+        if (/\b(search|find).*\b(institution|bank)/.test(ph) || /\b(search|find).*\b(institution|bank)/.test(aria)) {
+          return true;
+        }
+      }
+      return false;
+    })();
     if (launchBtn) {
       const br = launchBtn.getBoundingClientRect();
       const svgs = launchBtn.querySelectorAll('svg');
@@ -1474,6 +1784,13 @@ async function evaluateStepState(page, stepId) {
       slideRootOffsetLeft: slideRootRect ? slideRootRect.left : 0,
       viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
       viewportHeight: window.innerHeight || document.documentElement.clientHeight || 0,
+      bodyHasSlideActiveClass: document.body.classList.contains('pipeline-slide-active'),
+      hostNavVisible: (() => {
+        const nav = document.querySelector('.host-nav, .fdic-bar, .sub-nav');
+        if (!nav) return false;
+        const st = window.getComputedStyle(nav);
+        return st.display !== 'none' && st.visibility !== 'hidden' && nav.getBoundingClientRect().height > 0;
+      })(),
       activeSlideHasTable: Boolean(slideTable),
       slideTableWidth: slideTableRect ? slideTableRect.width : 0,
       slideBodyBorderWidth: slideBodyStyle ? parseFloat(slideBodyStyle.borderTopWidth || '0') : 0,
@@ -1487,10 +1804,68 @@ async function evaluateStepState(page, stepId) {
       embeddedContainerExists: Boolean(embeddedContainer),
       embeddedContainerWidth: embeddedRect ? embeddedRect.width : 0,
       embeddedContainerHeight: embeddedRect ? embeddedRect.height : 0,
+      embeddedHostRecommendedDuplicate,
+      embeddedFakeInstitutionSearch,
       plaidLaunchCtaMetrics,
       layerHelperText: (layerHelper?.textContent || '').replace(/\s+/g, ' ').trim(),
       layerHelperVisible: isVisible(layerHelper, layerHelperStyle),
       activePhoneInputValue: activePhoneInput ? String(activePhoneInput.value || '').trim() : '',
+      // ── Slide text-overlap detection ──────────────────────────────────────
+      // For slide-like active steps, walk visible text-bearing elements inside
+      // .slide-root and report pairs whose rendered bounding boxes overlap by
+      // more than 8 px of intersection area. Excludes parent-child pairs.
+      // Returns up to 12 worst pairs (sorted by overlap area descending).
+      slideTextOverlaps: (() => {
+        const slideRoot = active ? active.querySelector('.slide-root') : null;
+        if (!slideRoot) return [];
+        const TEXT_TAGS = new Set(['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','STRONG','EM','SPAN','DIV','BUTTON','A','LABEL','CODE','PRE','TD','TH']);
+        const all = Array.from(slideRoot.querySelectorAll('*'));
+        const candidates = [];
+        for (const el of all) {
+          if (!TEXT_TAGS.has(el.tagName)) continue;
+          const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!text || text.length < 2) continue;
+          // Only consider elements that have direct text node children, not
+          // pure containers. Otherwise a wrapping <div> will dominate every pair.
+          const hasDirectText = Array.from(el.childNodes).some(
+            (n) => n.nodeType === 3 && (n.textContent || '').trim().length > 0
+          );
+          if (!hasDirectText) continue;
+          const cs = window.getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          if (Number(cs.opacity || '1') === 0) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 1 || r.height <= 1) continue;
+          candidates.push({ el, rect: r, text: text.slice(0, 80), fontSize: parseFloat(cs.fontSize || '0') || 0, tag: el.tagName });
+        }
+        const overlaps = [];
+        const OVERLAP_AREA_THRESHOLD = 8 * 8; // 8px x 8px = 64px²
+        for (let i = 0; i < candidates.length; i++) {
+          for (let j = i + 1; j < candidates.length; j++) {
+            const a = candidates[i];
+            const b = candidates[j];
+            if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+            const x1 = Math.max(a.rect.left, b.rect.left);
+            const y1 = Math.max(a.rect.top, b.rect.top);
+            const x2 = Math.min(a.rect.right, b.rect.right);
+            const y2 = Math.min(a.rect.bottom, b.rect.bottom);
+            const w = x2 - x1;
+            const h = y2 - y1;
+            if (w <= 0 || h <= 0) continue;
+            const area = w * h;
+            if (area < OVERLAP_AREA_THRESHOLD) continue;
+            overlaps.push({
+              a: { tag: a.tag, text: a.text, fontSize: a.fontSize, rect: { x: Math.round(a.rect.left), y: Math.round(a.rect.top), w: Math.round(a.rect.width), h: Math.round(a.rect.height) } },
+              b: { tag: b.tag, text: b.text, fontSize: b.fontSize, rect: { x: Math.round(b.rect.left), y: Math.round(b.rect.top), w: Math.round(b.rect.width), h: Math.round(b.rect.height) } },
+              overlapArea: Math.round(area),
+              overlapW: Math.round(w),
+              overlapH: Math.round(h),
+            });
+          }
+        }
+        overlaps.sort((p, q) => q.overlapArea - p.overlapArea);
+        return overlaps.slice(0, 12);
+      })(),
     };
   }, stepId);
 }
@@ -1855,15 +2230,26 @@ async function runResponsiveChecks(page, demoScript) {
       });
     } else {
       const logoSrc = String(state.logoSrc || '');
-      const isThemeLightAsset = /\/theme\/light\//i.test(logoSrc);
-      const navIsLight = typeof state.navBgLuminance === 'number' && state.navBgLuminance > 0.82;
-      if (isThemeLightAsset && navIsLight) {
+      if (
+        state.logoPresent &&
+        state.logoVisible &&
+        isLogoNavLuminanceCollision({
+          logoSrc,
+          navBgLuminance: state.navBgLuminance,
+        })
+      ) {
         diagnostics.push({
           stepId: firstStepId || 'build',
-          category: 'missing-logo',
+          category: 'host-logo-contrast',
           severity: 'critical',
-          issue: `Logo contrast risk at ${vp.label}: using Brandfetch /theme/light/ asset on light navigation background.`,
-          suggestion: 'Use a contrast-safe wordmark variant (prefer /theme/dark/) or enforce a dark logo shell background.',
+          deterministicBlocker: true,
+          issue: collisionIssueText({
+            logoSrc,
+            navBgLuminance: state.navBgLuminance,
+            viewportLabel: vp.label,
+          }),
+          suggestion:
+            'Apply host-nav-logo-contrast patch via `npm run pipe -- app-touchup` — white banner, accent border, dark wordmark URL.',
         });
       }
       if (state.logoWidth > 0 && state.logoHeight > 0 && state.logoWidth < 48) {
@@ -2450,6 +2836,33 @@ function buildEmbeddedLinkUxDiagnostics(step, state, demoScript) {
     });
   }
 
+  if (state?.embeddedHostRecommendedDuplicate) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-prelink-integrated',
+      severity: 'critical',
+      issue:
+        'Host trust column duplicates the Plaid SDK "Recommended · Instant verification" tile. ' +
+        'The live embed owns that recommendation — remove the host-side Recommended card.',
+      suggestion:
+        'Keep headline, encryption bullets, and consent in the trust column only. ' +
+        'Let Plaid Embedded Institution Search render the Recommended path.',
+    });
+  }
+
+  if (state?.embeddedFakeInstitutionSearch) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'plaid-embedded-prelink-integrated',
+      severity: 'critical',
+      issue:
+        'Launch step renders a fake institution-search input outside the live embedded container.',
+      suggestion:
+        'Remove mock search bars/preview tiles. Mount Plaid.createEmbedded into ' +
+        'data-testid="plaid-embedded-link-container" on this same step.',
+    });
+  }
+
   return diagnostics;
 }
 
@@ -2671,6 +3084,8 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
   // (which flags any slide DOM as a critical leak).
   if (!isAppOnlyRun) {
     for (const d of scanSlideCanvasSize(state, step)) diagnostics.push(d);
+    for (const d of scanSlideHostChromeLeak(state, step)) diagnostics.push(d);
+    for (const d of scanSlideTextOverlap(state, step)) diagnostics.push(d);
   }
   if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {
     diagnostics.push({
@@ -3198,6 +3613,7 @@ async function main(opts = {}) {
       diagnostics.push(...scanAppOnlyNoSlides(html, demoScript, resolvedBuildMode));
     }
     diagnostics.push(...scanCraHostUnderwritingContracts(html, demoScript));
+    diagnostics.push(...scanPanelOverlayContract(html, demoScript));
   } catch (_) {}
 
   // Sanity guard: ensure the loaded page actually contains the expected step containers.
@@ -4144,15 +4560,21 @@ module.exports = {
   scanSlideTypographyFloor,
   scanSlideTypographyCeiling,
   scanSlideCanvasSize,
+  scanSlideHostChromeLeak,
   scanSlideHeadlineItalicAccent,
   scanSlideMintOveruse,
   scanSlideInlineBlockLayout,
   scanSlideBackgroundRhythm,
   scanSlideInventedColors,
+  scanSlideWorkhorseThemeLeak,
+  scanSlideWorkhorseRuntimeLeak,
+  scanSlideMotionAttributes,
+  scanSlideTextOverlap,
   scanSlideDesignSystem,
   scanAppOnlyNoSlides,
   scanSlideNarrationConcreteValues,
   scanCraHostUnderwritingContracts,
+  scanPanelOverlayContract,
   scanSlidePlaidLogoAuthenticity,
   extractStepHtmlBlocks,
   extractSlideStepHtmlBlocks,

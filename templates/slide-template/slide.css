@@ -108,8 +108,10 @@
 
 .slide-root .chrome-logo {
   position: absolute;
-  top: 60px;
-  left: 120px;
+  /* Logo positioned 75px above the topmost text row (frame padding-top).
+     Logo sits in the top margin, comfortably above the eyebrow / h-title. */
+  top: calc(var(--pad-top) - 75px);
+  right: var(--pad-x);
   height: 28px;
   width: auto;
   opacity: 0.85;

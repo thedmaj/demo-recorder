@@ -22,6 +22,21 @@ test('loadSlideDesignSkill loads plaid-slide-design SKILL.md', () => {
   assert.ok(fs.existsSync(out.markdownPath));
 });
 
+test('loadSlideDesignSkill merges plaid-workhorse-slides hybrid skill', () => {
+  const out = loadSlideDesignSkill({ projectRoot: ROOT });
+  assert.equal(out.workhorseHybridLoaded, true);
+  assert.ok(out.text.includes('Plaid × Workhorse'));
+  assert.ok(out.text.includes('data-workhorse-layout'));
+  assert.ok(fs.existsSync(path.join(ROOT, '.claude/skills/plaid-workhorse-slides/SKILL.md')));
+});
+
+test('tosea-slide-workhorse installed for Claude Agent mode', () => {
+  const claudeSkill = path.join(ROOT, '.claude/skills/tosea-slide-workhorse/SKILL.md');
+  const layouts = path.join(ROOT, '.claude/skills/tosea-slide-workhorse/templates/single-page/kpi-grid.html');
+  assert.ok(fs.existsSync(claudeSkill), 'Claude workhorse SKILL.md must exist');
+  assert.ok(fs.existsSync(layouts), 'Claude workhorse layout assets must exist');
+});
+
 test('getSlideDesignBriefPaths points at brand-design-briefs', () => {
   const paths = getSlideDesignBriefPaths(ROOT);
   assert.ok(fs.existsSync(paths.deckDesignSystem));
@@ -53,9 +68,17 @@ test('skill is discoverable in both Claude and Cursor agent modes', () => {
   const claudePath = path.join(ROOT, '.claude/skills/plaid-slide-design/SKILL.md');
   const cursorPath = path.join(ROOT, '.cursor/skills/plaid-slide-design/SKILL.md');
   const cursorRule = path.join(ROOT, '.cursor/rules/plaid-slide-design.mdc');
+  const hybridClaude = path.join(ROOT, '.claude/skills/plaid-workhorse-slides/SKILL.md');
+  const hybridCursor = path.join(ROOT, '.cursor/skills/plaid-workhorse-slides/SKILL.md');
+  const workhorseClaude = path.join(ROOT, '.claude/skills/tosea-slide-workhorse/SKILL.md');
+  const workhorseCursor = path.join(ROOT, '.cursor/skills/tosea-slide-workhorse/SKILL.md');
   assert.ok(fs.existsSync(claudePath), 'Claude SKILL.md must exist');
   assert.ok(fs.existsSync(cursorPath), 'Cursor mirror SKILL.md must exist');
   assert.ok(fs.existsSync(cursorRule), 'Cursor .mdc rule must exist');
+  assert.ok(fs.existsSync(hybridClaude), 'Hybrid Claude skill must exist');
+  assert.ok(fs.existsSync(hybridCursor), 'Hybrid Cursor mirror must exist');
+  assert.ok(fs.existsSync(workhorseClaude), 'Workhorse Claude skill must exist');
+  assert.ok(fs.existsSync(workhorseCursor), 'Workhorse Cursor mirror must exist');
 
   const cursorMd = fs.readFileSync(cursorPath, 'utf8');
   assert.match(cursorMd, /^---/, 'Cursor mirror must have YAML frontmatter');

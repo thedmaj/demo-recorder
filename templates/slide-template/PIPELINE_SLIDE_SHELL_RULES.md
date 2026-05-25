@@ -39,6 +39,9 @@ Pipeline-generated **slide** steps (`sceneType: "slide"`, `.slide-root`) follow 
 ```
 
 - Set `data-slide-template="T1"` … `T11` on `.slide-root` for audit (`post-slides-report.json` → `templatesUsed`).
+- Optionally set `data-workhorse-layout="<name>"` when using a Workhorse html-ppt pattern (see [`.claude/skills/plaid-workhorse-slides/SKILL.md`](../../.claude/skills/plaid-workhorse-slides/SKILL.md)); Plaid brand tokens still apply.
+- Build-QA enforces hybrid hygiene via `scanSlideWorkhorseThemeLeak` (critical), `scanSlideWorkhorseRuntimeLeak` (critical), and `scanSlideMotionAttributes` (warning) in [`scripts/scratch/scratch/build-qa.js`](../../scripts/scratch/scratch/build-qa.js). No Workhorse `assets/themes/*.css`, `runtime.js`, `fx-runtime.js`, Chart.js, `data-anim`, or `data-fx` inside `.slide-root`.
+- Logo position: **top-right, 75 px above the topmost text row** (`top: calc(var(--pad-top) - 75px); right: var(--pad-x);`). Logo sits in the top margin, above the eyebrow / h-title. Set in [`slide.css`](slide.css); do not override per-template.
 - Logo variant: `plaid-horizontal-white.png` on navy default; `plaid-horizontal-dark.png` on `.light` / `.cream` / `.holo`; `plaid-horizontal-holograph.png` optional on holo.
 - **Plaid logo — hard contract (build-QA blocker):** Never invent a logo. Do **not** draw SVG marks, four-dot icon grids, rounded-square icons, or render the word "PLAID" as HTML/CSS text. Use **only** the bundled horizontal wordmarks under `assets/logos/` via `<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png" alt="">`, **or omit** `.chrome-logo` entirely (T1 title slides may omit chrome). Do **not** use `plaid-icon-white.png` or legacy `plaid-logo-*` paths in slide chrome.
 - **Never** use `display: inline-block` inside `.slide-root` — flex/grid + `gap` only.

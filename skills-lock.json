@@ -1,6 +1,13 @@
 {
   "version": 1,
   "skills": {
+    "tosea-slide-workhorse": {
+      "source": "lewislulu/html-ppt-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "977bae0cdd515696cf400bb050b1c8741e8d911466fb1ec011138f4411396a03",
+      "_note": "Tier A Workhorse skill from Tosea (ToseaAI/awesome-html-slide-skills). Upstream skill is lewislulu/html-ppt-skill renamed to tosea-slide-workhorse to match Tosea Tier A terminology. SKILL.md is project-modified."
+    },
     "remotion-best-practices": {
       "source": "remotion-dev/skills",
       "sourceType": "github",

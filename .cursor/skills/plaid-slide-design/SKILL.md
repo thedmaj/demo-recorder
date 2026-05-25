@@ -11,6 +11,8 @@ description: >-
 
 **Canonical skill:** [`.claude/skills/plaid-slide-design/SKILL.md`](../../../.claude/skills/plaid-slide-design/SKILL.md)
 
+**Layout patterns:** [`.claude/skills/plaid-workhorse-slides/SKILL.md`](../../../.claude/skills/plaid-workhorse-slides/SKILL.md) + [`.claude/skills/tosea-slide-workhorse/`](../../../.claude/skills/tosea-slide-workhorse/)
+
 This file is a pointer so Cursor agent mode discovers the same skill that
 Claude Code agent mode uses. The canonical SKILL.md is loaded by the
 pipeline at runtime via

@@ -18,6 +18,10 @@ Every slide step uses the **Plaid Deck Design System** only.
 - Manual or agent edits to `.slide-root` blocks in `scratch-app/index.html`
 - Critiquing slide-tier build-QA failures (`slide-invented-color`, typography, chrome)
 
+**Companion (layout patterns):** [`.claude/skills/plaid-workhorse-slides/SKILL.md`](../plaid-workhorse-slides/SKILL.md) — Workhorse html-ppt layouts with Plaid brand enforced. Injected together via `slide-design-skill.js`.
+
+**Workhorse asset library:** [`.claude/skills/tosea-slide-workhorse/`](../tosea-slide-workhorse/) — single-page layout HTML to copy structure from (never copy themes/runtime).
+
 ## Source of truth (read in this order)
 
 All paths relative to repo root:

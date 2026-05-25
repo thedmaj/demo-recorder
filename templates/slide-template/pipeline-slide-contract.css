@@ -107,6 +107,80 @@
   color: var(--plaid-teal-500);
 }
 
+/* ── Slide vs host app — full-screen takeover (no Huntington chrome) ─────────
+ * Host nav/banner/footer live OUTSIDE `.step` divs. When a slide step is
+ * active, `body.pipeline-slide-active` (toggled by post-panels script) hides
+ * all `.host-app-chrome` nodes and resets the page canvas to Plaid deck tokens.
+ * Mark host-only nodes with class `host-app-chrome` (build prompt + post-panels). */
+body.pipeline-slide-active {
+  background: var(--plaid-ink-900);
+  color: var(--plaid-white);
+  font-family: var(--font-sans);
+}
+
+body.pipeline-slide-active .host-app-chrome {
+  display: none;
+}
+
+body.pipeline-slide-active main.page,
+body.pipeline-slide-active .page {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  width: 100%;
+}
+
+body.pipeline-slide-active .step.active {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100%;
+  animation: none;
+}
+
+/* Host global h1–h4 / link colors must not bleed into slides */
+.slide-root,
+.slide-root .h-title,
+.slide-root h1,
+.slide-root h2,
+.slide-root h3,
+.slide-root h4,
+.slide-root p,
+.slide-root li,
+.slide-root span:not(.endpoint):not(.badge) {
+  color: var(--plaid-white);
+}
+
+.slide-root.light,
+.slide-root.light .h-title,
+.slide-root.light h1,
+.slide-root.light h2,
+.slide-root.light h3,
+.slide-root.light h4,
+.slide-root.cream,
+.slide-root.cream .h-title,
+.slide-root.cream h1,
+.slide-root.cream h2,
+.slide-root.holo,
+.slide-root.holo .h-title,
+.slide-root.holo h1,
+.slide-root.holo h2 {
+  color: var(--plaid-ink-900);
+}
+
+.slide-root .h-title em,
+.slide-root .h-title .bowery-accent {
+  color: var(--plaid-teal-500);
+}
+
+.slide-root.light .h-title em,
+.slide-root.cream .h-title em,
+.slide-root.holo .h-title em {
+  color: var(--plaid-teal-500);
+}
+
 /* Per-slide visual chrome is allowed via per-slide <style> blocks emitted by
  * the LLM (T1-T11). Those blocks govern colors, accents, and per-template
  * layout — they MUST NOT redefine `.slide-root` max-width or the inner
