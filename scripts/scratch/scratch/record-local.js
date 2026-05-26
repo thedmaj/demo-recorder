@@ -30,6 +30,7 @@ const { execSync }   = require('child_process');
 const { startServer } = require('../utils/app-server');
 const agent          = require('../utils/plaid-browser-agent');
 const { executeSmartPlaidPhase } = require('../utils/smart-plaid-agent');
+const { loadRecipe: loadPlaidRecipe, executeRecipe: executePlaidRecipe } = require('../utils/plaid-recipe-executor');
 const { inferProductFamily } = require('../utils/product-profiles');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
@@ -1208,10 +1209,37 @@ async function executePlaidLinkPhase(page, phase) {
         const isRememberMe  = plaidLinkFlow === 'remember-me';
         console.log(`  [Plaid Link] Flow type: ${plaidLinkFlow}`);
 
-        // ── Smart Plaid Agent path ─────────────────────────────────────────────
-        // When SMART_PLAID_AGENT=true, delegate the entire CDP automation block
-        // to the Claude Sonnet-powered agent instead of the explicit selector waterfall.
-        if (SMART_PLAID_AGENT) {
+        // ── Recipe-first executor (Layer 2) ────────────────────────────────────
+        // If inputs/plaid-recipes/{flow}.json exists, drive Plaid Link via the
+        // deterministic per-screen recipe. Vision-fallback is delegated via a
+        // hook back to BrowserAgent so missed selectors still complete the
+        // run and get appended to recipe.candidateSelectors[].
+        const plaidRecipe = process.env.PLAID_RECIPES_DISABLED === 'true'
+          ? null
+          : loadPlaidRecipe(plaidLinkFlow);
+        if (plaidRecipe) {
+          try {
+            console.log(`  [Plaid Link] Using recipe: ${plaidLinkFlow} (${plaidRecipe.screens.length} screens, ~${(plaidRecipe.totalEstimatedDwellMs || 0) / 1000}s budgeted)`);
+            await executePlaidRecipe({
+              page,
+              recipe: plaidRecipe,
+              plaidIframeSelector: PLAID_IFRAME_SELECTOR,
+              markPlaidStep,
+              runDir: process.env.PIPELINE_RUN_DIR || null,
+              hooks: {
+                visionFallback: async ({ page: p, screenId, actionType, hint }) => {
+                  if (actionType !== 'click') return null;
+                  const winner = await agent.visionClick(p, hint, { retries: 2, waitAfterMs: 800 });
+                  return winner ? { winnerSelector: '(vision)' } : null;
+                },
+              },
+            });
+            await plaidLinkDismissSaveScreen(page);
+            console.log('  [Plaid Link] Recipe automation complete');
+          } catch (err) {
+            console.warn(`  [Plaid Link] Recipe execution error (non-fatal): ${err.message} — falling back to legacy path on subsequent recordings`);
+          }
+        } else if (SMART_PLAID_AGENT) {
           try {
             console.log('  [Plaid Link] Using SmartPlaidAgent for CDP automation...');
             await executeSmartPlaidPhase(page, 'launch', _sandboxConfig || {}, {
