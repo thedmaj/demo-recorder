@@ -2772,23 +2772,6 @@ async function main(opts = {}) {
           });
         }
       } else if (stepEntry.action === 'click') {
-        // CRITICAL ordering: dwell on the activated step BEFORE clicking.
-        // The click typically advances the scratch-app to the next step, so
-        // anything after the click is no longer this step's visible content.
-        // Putting the waitMs ahead of the click means the camera captures
-        // this step's screen for the full intended duration, not the next
-        // step's content with the previous step's narration playing over it.
-        // (Tilt v2 loop 8: tilt-onboarding lasted 3.9s with click-first; the
-        // start frame caught Tilt UI but mid/end frames showed plaid-link
-        // because the click had already advanced the page. scene-match
-        // scored 35 with "Frames show Step 2 of Verify Income".)
-        if (stepEntry.waitMs && stepEntry.waitMs > 0) {
-          // Leave ~300ms for the click itself plus a tail settle.
-          const dwellBeforeClick = Math.max(0, stepEntry.waitMs - 300);
-          if (dwellBeforeClick > 0) {
-            actions.push({ type: 'wait', ms: dwellBeforeClick });
-          }
-        }
         actions.push({
           type: 'click',
           selector: stepEntry.target,
@@ -2802,12 +2785,8 @@ async function main(opts = {}) {
       } else if (stepEntry.action === 'wait') {
         // Just wait — no interaction
       }
-      // Add a trailing wait for the step's declared duration — but ONLY for
-      // non-click actions. For 'click', the dwell was already inserted BEFORE
-      // the click (so the camera sees this step's content while the audio plays);
-      // appending another waitMs here would double the time and leak into the
-      // next step's window.
-      if (stepEntry.waitMs && stepEntry.action !== 'click') {
+      // Add a wait for the step's declared duration
+      if (stepEntry.waitMs) {
         actions.push({
           type: 'wait',
           ms: stepEntry.waitMs,
