@@ -1,0 +1,228 @@
+{
+  "flowType": "remember-me",
+  "description": "Returning-user Remember-Me flow: phone +14155550011 → OTP 123456 → saved institution list → account select → confirm → success. Skips bank search and credentials entry because the institution is pre-saved against this sandbox phone number.",
+  "institution": {
+    "id": "ins_109511",
+    "name": "Tartan Bank",
+    "isOAuth": false,
+    "rationale": "Non-OAuth sandbox bank that consistently appears in the saved-institution list for phone +14155550011. Avoids Chase (ins_56, OAuth) which triggers OPEN_OAUTH and breaks automation."
+  },
+  "credentials": {
+    "phone": "+14155550011",
+    "otp": "123456",
+    "username": "user_good",
+    "password": "pass_good"
+  },
+  "recordedAt": "2026-05-26T00:00:00Z",
+  "recordedBy": "hand-authored from inputs/plaid-link-nav-learnings.md (CSS-confirmed end-to-end, scripts/test-plaid-link-record.js 2026-03-10)",
+  "playwrightVersion": "1.47.0",
+  "verifiedRuns": 0,
+  "lastVerifiedAt": null,
+  "lastBrokenAt": null,
+  "candidateSelectors": [],
+  "screens": [
+    {
+      "id": "phone-entry",
+      "narrationHint": "Maya enters her phone number, taps Continue.",
+      "primarySelectors": {
+        "skipPhoneLink": "Continue without phone number",
+        "phoneInput": "input[type='tel']",
+        "continueButton": "button:has-text('Continue')"
+      },
+      "actions": [
+        {
+          "type": "fill",
+          "target": "phoneInput",
+          "value": "${credentials.phone}",
+          "dwellBeforeMs": 0,
+          "dwellAfterMs": 800,
+          "_note": "Plaid does NOT auto-submit on fill — confirmed in plaid-link-nav-learnings.md (2026-03-10). Click Continue explicitly."
+        },
+        {
+          "type": "click",
+          "target": "continueButton",
+          "dwellBeforeMs": 200,
+          "dwellAfterMs": 1500
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "frameLocator", "selector": "input[type='tel']" }
+      ],
+      "transitionSignals": [
+        { "type": "plaidEvent", "name": "TRANSITION_VIEW", "minCount": 1 }
+      ]
+    },
+
+    {
+      "id": "otp-screen",
+      "narrationHint": "She enters the one-time code Plaid texted her.",
+      "primarySelectors": {
+        "otpInput": "input[inputmode='numeric']"
+      },
+      "actions": [
+        {
+          "type": "fill",
+          "target": "otpInput",
+          "value": "${credentials.otp}",
+          "dwellBeforeMs": 0,
+          "dwellAfterMs": 1000,
+          "_note": "1s post-fill pause keeps the filled digits visible in the recording. OTP auto-advances after fill — no Continue click needed (confirmed in CLAUDE.md)."
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "frameLocator", "selector": "input[inputmode='numeric']" }
+      ],
+      "transitionSignals": [
+        { "type": "plaidEvent", "name": "TRANSITION_VIEW", "minCount": 1 }
+      ],
+      "expectAutoAdvance": true
+    },
+
+    {
+      "id": "saved-institution-list",
+      "narrationHint": "Plaid recognizes her — she picks her bank.",
+      "primarySelectors": {
+        "firstSavedInstitution": "ul li:first-of-type button",
+        "savedInstitutionByName": "${institution.name}",
+        "fallbackListItem": "ul li"
+      },
+      "actions": [
+        {
+          "type": "click",
+          "target": "firstSavedInstitution",
+          "fallbackTargets": ["savedInstitutionByName", "fallbackListItem"],
+          "dwellBeforeMs": 500,
+          "dwellAfterMs": 1500,
+          "_note": "500ms pre-click pause is load-bearing — confirmed in CLAUDE.md. 2s produces a 1.5s-too-long section in the processed video.",
+          "oauthGuard": {
+            "_note": "If clicking this institution emits OPEN_OAUTH, automation must abort and re-pick a non-OAuth institution. plaidSelectSavedInstitution() handles this via Promise.race.",
+            "abortOnEvent": "OPEN_OAUTH"
+          }
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "frameLocator", "selector": "ul li" }
+      ],
+      "transitionSignals": [
+        { "type": "plaidEvent", "name": "TRANSITION_VIEW", "minCount": 1 }
+      ]
+    },
+
+    {
+      "id": "account-select",
+      "narrationHint": "She selects her checking account.",
+      "primarySelectors": {
+        "firstAccountRow": "li[role='listitem']",
+        "checkboxFallback": "input[type='checkbox']"
+      },
+      "actions": [
+        {
+          "type": "click",
+          "target": "firstAccountRow",
+          "fallbackTargets": ["checkboxFallback"],
+          "dwellBeforeMs": 800,
+          "dwellAfterMs": 1200,
+          "_note": "li[role='listitem'] is the clickable element — Plaid hides the actual checkbox input. Confirmed end-to-end 2026-03-10."
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "frameLocator", "selector": "li[role='listitem']" }
+      ],
+      "transitionSignals": [
+        { "type": "plaidEvent", "name": "TRANSITION_VIEW", "minCount": 1 }
+      ]
+    },
+
+    {
+      "id": "confirm",
+      "narrationHint": "She confirms and connects in seconds.",
+      "primarySelectors": {
+        "confirmButton": "button:has-text('Confirm')",
+        "linkAccountFallback": "button:has-text('Link account')",
+        "continueFallback": "button:has-text('Continue')",
+        "shareFallback": "button:has-text('Share')",
+        "doneFallback": "button:has-text('Done')",
+        "submitFallback": "button[type='submit']"
+      },
+      "actions": [
+        {
+          "type": "click",
+          "target": "confirmButton",
+          "fallbackTargets": ["linkAccountFallback", "continueFallback", "shareFallback", "doneFallback", "submitFallback"],
+          "dwellBeforeMs": 600,
+          "dwellAfterMs": 1500,
+          "_note": "'Confirm' is the Remember Me flow's terminal CTA. The fallbacks cover variants observed across institution/SDK versions."
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "frameLocator", "selector": "button:has-text('Confirm'), button:has-text('Link account'), button:has-text('Continue')" }
+      ],
+      "transitionSignals": [
+        { "type": "successFlag" },
+        { "type": "plaidEvent", "name": "HANDOFF", "minCount": 1 }
+      ]
+    },
+
+    {
+      "id": "save-with-plaid",
+      "narrationHint": "(no narration — auto-dismissed)",
+      "optional": true,
+      "primarySelectors": {
+        "finishWithoutSavingButton": "button:has-text('Finish without saving')",
+        "noThanksButton": "button:has-text('No thanks')",
+        "skipButton": "button:has-text('Skip')"
+      },
+      "actions": [
+        {
+          "type": "click",
+          "target": "finishWithoutSavingButton",
+          "fallbackTargets": ["noThanksButton", "skipButton"],
+          "dwellBeforeMs": 0,
+          "dwellAfterMs": 500,
+          "_note": "Save with Plaid screen appears after account confirmation in some sandbox flows. Dismissing it lets the success panel render."
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "frameLocator", "selector": "button:has-text('Finish without saving'), button:has-text('No thanks'), button:has-text('Skip')" }
+      ],
+      "skipIf": [
+        { "type": "successFlag" }
+      ]
+    },
+
+    {
+      "id": "success",
+      "narrationHint": "Connection complete.",
+      "primarySelectors": {},
+      "actions": [
+        {
+          "type": "wait",
+          "dwellAfterMs": 1500,
+          "_note": "Recorder's plaidLinkWaitSuccess() owns the actual success detection (waits up to 45s for _plaidLinkComplete AND host advanced past launch step). This entry exists so the recipe accounts for the visible dwell after onSuccess fires."
+        }
+      ],
+      "arrivalSignals": [
+        { "type": "successFlag" }
+      ],
+      "transitionSignals": [
+        { "type": "successFlag" }
+      ]
+    }
+  ],
+  "totalEstimatedDwellMs": 11500,
+  "_estimateBreakdown": {
+    "phone-entry": "0 + 800 + 200 + 1500 = 2500ms",
+    "otp-screen": "0 + 1000 = 1000ms",
+    "saved-institution-list": "500 + 1500 = 2000ms",
+    "account-select": "800 + 1200 = 2000ms",
+    "confirm": "600 + 1500 = 2100ms",
+    "save-with-plaid (optional)": "0 + 500 = 500ms",
+    "success": "1500ms",
+    "total": "~11.5s, matches the narration time-budget the launch step expects"
+  },
+  "_notes": [
+    "Built from confirmed-working selectors documented in CLAUDE.md and inputs/plaid-link-nav-learnings.md. Every selector here has shipped in a passing scripts/test-plaid-link-record.js run.",
+    "When Layer 2 executor lands and a run uses this recipe end-to-end without falling back to vision, the operator bumps `verifiedRuns` and stamps `lastVerifiedAt`. After 3 verifiedRuns this recipe is considered stable; selector drift on Plaid's side will surface as a vision fallback win and append to `candidateSelectors[]`.",
+    "Saved-institution-list 'firstSavedInstitution' uses 'ul li:first-of-type button' rather than name-matching so the recipe works across personas. Name match is in fallbackTargets in case Plaid swaps the order."
+  ]
+}
