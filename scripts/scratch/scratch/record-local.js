@@ -2717,6 +2717,37 @@ async function main(opts = {}) {
     } else if (stepEntry.action) {
       // Format B: single action with target + waitMs
       const actions = [];
+
+      // CRITICAL: ensure the step's div is the active one BEFORE any click /
+      // fill / wait. Scratch-app step divs are display:none until
+      // window.goToStep(stepId) flips the active class — the buttons /
+      // inputs inside an inactive step are never visible to Playwright, so
+      // a click here times out, the recorder logs "click failed", and the
+      // recording continues to capture the PREVIOUS step's content while
+      // step-timing.json claims the current step is active. (Tilt v2: 3/9
+      // clicks failed for exactly this reason — apply-now-btn,
+      // approve-advance-btn, and link-external-account-btn never landed.)
+      //
+      // For action: 'goToStep' entries, the explicit target already drives
+      // the transition; we skip the implicit activation to avoid clobbering
+      // the author's intent (the goToStep target may legitimately differ
+      // from the step id, e.g. Plaid Link launch routing).
+      if (stepEntry.action !== 'goToStep' && stepId) {
+        await executeAction(page, {
+          type: 'evalStep',
+          expression: `window.goToStep && window.goToStep('${stepId}')`,
+        });
+        // Give the DOM a tick to render the newly-active step before the
+        // following action queries it. Without this, click's
+        // `waitFor visible` race condition can still miss the just-revealed
+        // element on slower machines.
+        if (STEP_TRANSITION_SETTLE_MS > 0) {
+          await page.waitForTimeout(STEP_TRANSITION_SETTLE_MS);
+        } else {
+          await page.waitForTimeout(150);
+        }
+      }
+
       if (stepEntry.action === 'goToStep') {
         // target may already be "window.goToStep('...')" or just the step ID
         const target = stepEntry.target || '';
