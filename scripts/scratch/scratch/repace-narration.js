@@ -116,7 +116,7 @@ async function callClaude(systemPrompt, userPrompt) {
 
 async function repaceStep(step) {
   const systemPrompt = buildRepaceSystemPrompt();
-  const userPrompt = buildRepaceUserPrompt(step);
+  let userPrompt = buildRepaceUserPrompt(step);
   let attempt = 0;
   let lastText = '';
   while (attempt < 3) {
@@ -128,12 +128,12 @@ async function repaceStep(step) {
     if (Math.abs(words - step.wordTarget) <= 2) {
       return { ok: true, text, attempts: attempt, words };
     }
-    // Otherwise retry with a corrective hint.
+    // Otherwise retry with a corrective hint appended to the prompt.
     const drift = words - step.wordTarget;
     const correction = drift > 0
       ? `Your last attempt was ${drift} words too long. Shorten without dropping concrete claims.`
       : `Your last attempt was ${Math.abs(drift)} words too short. Add an explanatory clause without inventing new facts.`;
-    userPrompt += `\n\n${correction}\nPrevious attempt: ${text}`;
+    userPrompt = `${userPrompt}\n\n${correction}\nPrevious attempt: ${text}`;
   }
   return { ok: false, text: lastText, attempts: attempt, words: wordsOf(lastText) };
 }
