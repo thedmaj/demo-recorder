@@ -56,8 +56,13 @@ const OVERRIDES_FILE   = path.join(OUT_DIR, 'auto-gap-overrides.json');
 // Prevents noise from sub-300ms variations that are imperceptible.
 const MIN_THRESHOLD_MS = 300;
 
-// Hard ceiling on speedup ratio to avoid frantic video.
-const MAX_SPEED = 2.5;
+// Hard ceiling on speedup ratio. Above ~1.4× the video reads as a
+// noticeable "speedrun" — cursors blur, transitions skip, viewers lose track
+// of what was clicked. The repace-narration stage (run before voiceover)
+// should rewrite the narration text to a shorter form when the recording is
+// substantially longer than the audio target, so this ceiling is rarely
+// reached. Env override `AUTO_GAP_MAX_SPEED` exists for one-off A/Bs.
+const MAX_SPEED = parseFloat(process.env.AUTO_GAP_MAX_SPEED || '1.4');
 const PLAID_LINK_BASE_MAX_MS = parseInt(process.env.PLAID_LINK_BASE_MAX_MS || String(TIMING_DEFAULTS.PLAID_LINK_BASE_MAX_MS), 10);
 const PLAID_LINK_OVER_15_BUFFER_MS = parseInt(process.env.PLAID_LINK_OVER_15_BUFFER_MS || String(TIMING_DEFAULTS.PLAID_LINK_OVER_15_BUFFER_MS), 10);
 const NARRATION_SYNC_TOLERANCE_MS = parseInt(process.env.NARRATION_SYNC_TOLERANCE_MS || String(TIMING_DEFAULTS.NARRATION_SYNC_TOLERANCE_MS), 10);

@@ -212,6 +212,12 @@ const STAGES = [
   'qa',
   'figma-review',
   'post-process',
+  'measure-sync-debt',       // Classify per-step drift (audio-too-long, audio-too-short,
+                             //   video-too-short, etc.) — runs BEFORE voiceover so the
+                             //   repace stage can rewrite narration to match real video.
+  'repace-narration',        // Rewrite narration text to fit measured video duration when
+                             //   the rewrite stays within budget. Triggers voiceover regen
+                             //   via narration fingerprint invalidation.
   'voiceover',
   'story-echo-check',        // Whole-video story-fidelity gate: Sonnet grades whether the
                              //   voiceover end-to-end answers the user's prompt.txt pitch.
@@ -223,6 +229,9 @@ const STAGES = [
   'audio-qa',
   'ai-suggest-overlays',    // Gemini 2.0 Flash: per-step overlay suggestion patches (skips when no credentials)
   'render',
+  'scene-match-check',       // Multimodal (Haiku Vision) gate: validate each rendered narration
+                             //   segment's frame actually depicts what is being narrated. Advisory
+                             //   by default; SCENE_MATCH_GATE=strict makes it block touchup.
   'ppt',
   'touchup',                 // POST-RENDER Remotion polish stage. Cosmetic only — edits Remotion
                              //   compositions + overlay-plan.json. Does NOT modify scratch-app HTML.
@@ -3490,6 +3499,30 @@ async function runScratchPipeline({
     }, timer);
   }
 
+  // Stage: measure-sync-debt — classify per-step drift between recorded video and
+  // narration text. Writes sync-debt-report.json. Runs BEFORE voiceover so the
+  // downstream repace stage can rewrite narration to fit measured video durations.
+  if (shouldRun('measure-sync-debt')) {
+    await runStage('measure-sync-debt', async () => {
+      delete require.cache[require.resolve('./scratch/measure-sync-debt.js')];
+      const { main: runMeasure } = require('./scratch/measure-sync-debt.js');
+      await runMeasure(versionedDir);
+    }, timer);
+  }
+
+  // Stage: repace-narration — rewrite narration text to fit the measured video
+  // duration when the drift is within the rewrite budget. Mutates demo-script.json
+  // in place; the voiceover stage's fingerprint cache picks up the change and
+  // regenerates only affected ElevenLabs clips. Steps that need a video trim or
+  // re-record are skipped here and surface in narration-repace-report.json.
+  if (shouldRun('repace-narration')) {
+    await runStage('repace-narration', async () => {
+      delete require.cache[require.resolve('./scratch/repace-narration.js')];
+      const { main: runRepace } = require('./scratch/repace-narration.js');
+      await runRepace(versionedDir);
+    }, timer);
+  }
+
   // Stage: voiceover — runs after post-process so timing reflects the edited video.
   if (shouldRun('voiceover')) {
     await runStage('voiceover', async () => {
@@ -3903,6 +3936,27 @@ async function runScratchPipeline({
         `npx remotion render remotion/index.js DemoScratch "${outFile}" --props="${propsFile}" --timeout=120000 --log=warn`,
         { stdio: 'inherit', cwd: PROJECT_ROOT }
       );
+    }, timer);
+  }
+
+  // Stage: scene-match-check — multimodal validator. Extracts frames from the
+  // freshly-rendered demo-scratch.mp4 at each narration segment's window and
+  // asks Claude Haiku 4.5 Vision whether the frame depicts what the narration
+  // says at that moment. Writes scene-match-report.json. Default mode is
+  // advisory (proceed past failures). SCENE_MATCH_GATE=strict makes it block
+  // the downstream stages so a repair loop can re-record / repace.
+  if (shouldRun('scene-match-check')) {
+    await runStage('scene-match-check', async () => {
+      delete require.cache[require.resolve('./scratch/scene-match-check.js')];
+      const { main: runSceneMatch } = require('./scratch/scene-match-check.js');
+      try {
+        await runSceneMatch(versionedDir);
+      } catch (err) {
+        if (err && err.code === 'SCENE_MATCH_FAILED' && (process.env.SCENE_MATCH_GATE || '').toLowerCase() === 'strict') {
+          throw err;
+        }
+        console.warn(`[scene-match-check] non-fatal: ${err.message}`);
+      }
     }, timer);
   }
 
