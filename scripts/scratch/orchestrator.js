@@ -208,6 +208,9 @@ const STAGES = [
   'slide-fix',               // Tier-scoped slide recovery lane — patches + strip + post-slides
                              //   --steps=… + post-panels + slides-scoped build-qa + agent
                              //   qa-slide-fix-task.md. No build-app. App+slides only.
+  'set-recording-dwells',    // Compute per-step dwell from narration word count and override
+                             //   playwright-script.json waitMs BEFORE recording. Narration is
+                             //   ground truth; recording dwells to match.
   'record',
   'qa',
   'figma-review',
@@ -3058,6 +3061,18 @@ async function runScratchPipeline({
         previewServer.close();
       }
     }
+  }
+
+  // Stage: set-recording-dwells — sizes each step's waitMs from its narration
+  // word count BEFORE the recorder runs, so the camera dwells on the screen
+  // long enough to cover the spoken audio without auto-gap having to clip or
+  // freeze. Narration is ground truth; the recording must adapt.
+  if (shouldRun('set-recording-dwells')) {
+    await runStage('set-recording-dwells', async () => {
+      delete require.cache[require.resolve('./scratch/set-recording-dwells.js')];
+      const { main: runDwell } = require('./scratch/set-recording-dwells.js');
+      await runDwell(versionedDir);
+    }, timer);
   }
 
   // Stage: record + QA refinement loop
