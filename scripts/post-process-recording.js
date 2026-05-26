@@ -378,19 +378,38 @@ if (T['otp-screen'] != null) {
 //
 // Hard cut from Range 3 removes the Confirm → success wait (~10-15s).
 {
-  const successStart = T['link-complete'] != null
-    ? T['link-complete']                           // exact moment success panel appears
-    : T['confirm-clicked'] != null
-      ? T['confirm-clicked'] + 10                  // fallback: guess ~10s after confirm
-      : T['otp-filled'] != null
-        ? T['otp-filled'] + 20                     // fallback: ~20s after OTP filled covers typical Remember Me completion
-        : totalDuration - SUCCESS_KEEP;            // last-resort: keep only the tail of the recording
-  if (successStart != null) {
-    addKeep(
-      Math.min(successStart, totalDuration - SUCCESS_KEEP),
-      totalDuration,   // keep to end: success screen + all app insight + funding screens
-      'success + app screens'
-    );
+  // Only emit a success+app range when at least ONE concrete Plaid phase
+  // marker is available. If `T` is completely empty (because
+  // plaid-link-timing.json was missing OR every key was nulled by the stale-
+  // timestamp guard above), DO NOT fall back to `totalDuration - SUCCESS_KEEP`
+  // — that adds a 4-second sliver at the tail, which short-circuits the
+  // "no keep ranges → keep full recording" safety net below and produces a
+  // hard-cut 4s output (see auto-gap report: every step shows
+  // videoDurationMs=0 and the comp ends up as 102s of freeze frames).
+  const hasAnyPlaidMarker =
+    T['link-complete'] != null ||
+    T['confirm-clicked'] != null ||
+    T['otp-filled'] != null ||
+    T['institution-list-shown'] != null ||
+    T['phone-submitted'] != null;
+
+  if (hasAnyPlaidMarker) {
+    const successStart = T['link-complete'] != null
+      ? T['link-complete']                           // exact moment success panel appears
+      : T['confirm-clicked'] != null
+        ? T['confirm-clicked'] + 10                  // fallback: guess ~10s after confirm
+        : T['otp-filled'] != null
+          ? T['otp-filled'] + 20                     // fallback: ~20s after OTP filled covers typical Remember Me completion
+          : null;                                    // no usable marker — drop down to the empty-keep-ranges fallback
+    if (successStart != null) {
+      addKeep(
+        Math.min(successStart, totalDuration - SUCCESS_KEEP),
+        totalDuration,   // keep to end: success screen + all app insight + funding screens
+        'success + app screens'
+      );
+    }
+  } else {
+    console.warn('[PostProcess] No Plaid phase markers available (T is empty). Skipping success+app range so the full recording is kept by the safety fallback.');
   }
 }
 

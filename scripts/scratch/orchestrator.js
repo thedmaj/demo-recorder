@@ -3627,10 +3627,21 @@ async function runScratchPipeline({
       // MAX_AUDIO_REGEN_ATTEMPTS caps the retry loop so a persistently bad TTS response
       // can't cause an infinite pipeline loop.
 
+      // Calibration notes (May 2026, revisited after Tilt v2 stutter-storm):
+      //   • ElevenLabs multilingual_v2 at stability=0.75 routinely emits
+      //     0.30–0.55 s silences at sentence/em-dash boundaries. The previous
+      //     MIN_SILENCE_S=0.25 + FREEZE_S=0.50 + STUTTER_MIN_COUNT=2 fired on
+      //     every clip with two commas + a period — 7/9 Tilt v2 clips flagged
+      //     in attempt 1, with 5/9 still flagged after exhausting all 3
+      //     regeneration retries.
+      //   • Real freeze artifacts (TTS endpoint dropouts) leave 1.0–2.0 s of
+      //     near-complete silence — well clear of the relaxed thresholds.
+      //   • Genuine stutter (clipped re-render) repeats 3+ short silences in
+      //     the same clip; 2 hits is rarely diagnostic on its own.
       const NOISE_DB          = process.env.AUDIO_QA_NOISE_DB          || '-45dB';
-      const MIN_SILENCE_S     = parseFloat(process.env.AUDIO_QA_MIN_SILENCE_S    || '0.25');
-      const FREEZE_S          = parseFloat(process.env.AUDIO_QA_FREEZE_S         || '0.50');
-      const STUTTER_MIN_COUNT = parseInt(process.env.AUDIO_QA_STUTTER_MIN_COUNT  || '2', 10);
+      const MIN_SILENCE_S     = parseFloat(process.env.AUDIO_QA_MIN_SILENCE_S    || '0.32');
+      const FREEZE_S          = parseFloat(process.env.AUDIO_QA_FREEZE_S         || '0.70');
+      const STUTTER_MIN_COUNT = parseInt(process.env.AUDIO_QA_STUTTER_MIN_COUNT  || '3', 10);
       const MAX_AUDIO_REGEN_ATTEMPTS = 3;
       const regenAttemptCounts = {}; // { [clipId]: number }
 
