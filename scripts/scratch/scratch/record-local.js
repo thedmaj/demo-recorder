@@ -151,8 +151,16 @@ let _currentStepId = null; // set in main loop before each step's actions run
 
 function markStep(stepId, label) {
   const elapsedMs = Date.now() - recordingStartMs;
-  stepTimings.push({ id: stepId, label, startMs: elapsedMs });
-  console.log(`  [${String(Math.round(elapsedMs / 1000)).padStart(3)}s] Step: ${label}`);
+  // Dedupe: if the most recent mark is the same stepId, skip. This lets
+  // armStepOverrun pre-mark a forced step transition without colliding with
+  // the iterator's own later markStep call for that step. Different stepIds
+  // are always allowed (handles the legitimate "wf-link-launch ×2" case the
+  // post-Plaid de-dup elsewhere relies on).
+  if (stepTimings.length > 0 && stepTimings[stepTimings.length - 1].id === stepId) {
+    return;
+  }
+  stepTimings.push({ id: stepId, label: label || stepId, startMs: elapsedMs });
+  console.log(`  [${String(Math.round(elapsedMs / 1000)).padStart(3)}s] Step: ${label || stepId}`);
 }
 
 // ── Granular Plaid Link phase timing (for post-process-recording.js) ──────────
@@ -2361,6 +2369,18 @@ async function main(opts = {}) {
       // Destroy any open Plaid modal before advancing so it doesn't overlay subsequent steps.
       await page.evaluate(`if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }`).catch(() => {});
       await page.evaluate(`window.goToStep && window.goToStep('${nextStepId}')`).catch(() => {});
+      // Mark the next step's recording boundary at the overrun moment so step-
+      // timing.json reflects what's actually visible on screen. Without this,
+      // the current step's recording window stretches until the iterator's
+      // own action returns — which can be 30+ seconds while the Plaid Link
+      // modal renders over the host page or the click selector misses. The
+      // result is exactly the "frozen at step 2" pattern: scene-match-check
+      // sees one step's narration playing while the previous step's content
+      // is still being captured. Force the mark NOW so downstream stages
+      // (measure-sync-debt, scene-match-check) see correct boundaries.
+      try {
+        markStep(nextStepId);
+      } catch (_) { /* best-effort — recorder's own loop will mark again if it gets there */ }
     }, budget);
   }
 
