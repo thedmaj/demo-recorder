@@ -810,17 +810,42 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
   // Two-tab Request/Response panel — switchApiTab toggles which pane is visible.
   // Default tab is Request when request data is present; otherwise Response.
   // The panes never display simultaneously; exactly one is .is-active.
+  //
+  // Accepts BOTH short tab keys ("req"/"res", which is what the Claude
+  // Design v12 markup emits via data-tab="req|res") AND long keys
+  // ("request"/"response" — the legacy api-panel-tab markup). Queries both
+  // selector families so a click on either v12 .tab buttons or legacy
+  // .api-panel-tab buttons flips the right pane.
   window.switchApiTab = function(which) {
-    var tabs = document.querySelectorAll('.api-panel-tab[data-tab]');
-    var panes = document.querySelectorAll('.api-panel-pane[data-pane]');
+    var w = String(which || '').toLowerCase();
+    var v12Key = (w === 'request' || w === 'req') ? 'req' :
+                 (w === 'response' || w === 'res') ? 'res' : w;
+    var legacyKey = (w === 'request' || w === 'req') ? 'request' :
+                    (w === 'response' || w === 'res') ? 'response' : w;
+    var tabSel = '.tab[data-tab], .api-panel-tab[data-tab], button[role="tab"][data-tab]';
+    var paneSel = '[data-pane]';
+    var tabs = document.querySelectorAll(tabSel);
+    var panes = document.querySelectorAll(paneSel);
     for (var i = 0; i < tabs.length; i++) {
-      var t = tabs[i], on = t.getAttribute('data-tab') === which;
+      var t = tabs[i];
+      var v = t.getAttribute('data-tab');
+      var on = v === v12Key || v === legacyKey;
       if (on) t.classList.add('is-active'); else t.classList.remove('is-active');
       t.setAttribute('aria-selected', on ? 'true' : 'false');
     }
     for (var j = 0; j < panes.length; j++) {
-      var p = panes[j], onP = p.getAttribute('data-pane') === which;
-      if (onP) p.classList.add('is-active'); else p.classList.remove('is-active');
+      var p = panes[j];
+      var pv = p.getAttribute('data-pane');
+      var onP = pv === v12Key || pv === legacyKey;
+      if (onP) {
+        p.classList.add('is-active');
+        if (p.hasAttribute('hidden')) p.removeAttribute('hidden');
+      } else {
+        p.classList.remove('is-active');
+        // v12 CSS hides via [data-pane]:not(.is-active); also set hidden
+        // attribute for belt-and-suspenders accessibility.
+        if (!p.hasAttribute('hidden')) p.setAttribute('hidden', '');
+      }
     }
   };
 
