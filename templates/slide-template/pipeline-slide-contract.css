@@ -91,22 +91,23 @@
   line-height: 1.1;
 }
 
-/* Code Window — 50/50 split: copy left (wraps), monospace panel right (full height) */
+/* Code Window — 50/50 split: copy left (wraps), monospace panel right (full height).
+   font-size is a default; LLM may override via inline style for content fit. */
 .slide-root[data-workhorse-layout="code"] .h-title {
-  font-size: clamp(26px, 2.8vw, 44px) !important;
-  line-height: 1.12 !important;
-  margin-bottom: 0 !important;
-  max-width: 100% !important;
-  white-space: normal !important;
+  font-size: clamp(26px, 2.8vw, 44px);
+  line-height: 1.12;
+  margin-bottom: 0;
+  max-width: 100%;
+  white-space: normal;
   overflow-wrap: anywhere;
   word-break: normal;
 }
 
 .slide-root[data-workhorse-layout="code"] .slide-body-text {
-  font-size: clamp(24px, 1.5vw, 28px) !important;
-  line-height: 1.45 !important;
-  max-width: 100% !important;
-  margin: 0 !important;
+  font-size: clamp(24px, 1.5vw, 28px);
+  line-height: 1.45;
+  max-width: 100%;
+  margin: 0;
   overflow-wrap: anywhere;
 }
 

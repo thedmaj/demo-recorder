@@ -89,7 +89,7 @@ Nine slide-design scanners in `build-qa.js` (`scanSlideDesignSystem`):
 - **`scanSlidePlaidLogoAuthenticity`** — **critical / deterministic blocker**. Flags invented logos and non-library `chrome-logo` src paths. Omitting `.chrome-logo` is allowed.
 - **`scanSlideChromeLogoPlacement`** — **critical / deterministic blocker**. Flags inline `left:` or oversized `height:` on `.chrome-logo` (legacy top-left or tmp-showcase preview scale). Production placement is top-right 28px via CSS.
 - **`scanSlideForbiddenSalesCta`** — **critical / deterministic blocker**. Flags contact/trial/POC/retro sales CTAs on slides.
-- **Eight warning scanners** — tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors (`severity: 'warning'`, not blockers).
+- **Warning scanners** — tokens, shell chrome, italic accent, mint overuse, inline-block, background rhythm, invented colors (`severity: 'warning'`, not blockers). The legacy `slide-typography-floor` 24px-minimum scanner was removed 2026-05-27; slide templates own font sizing and the LLM may reduce inline `font-size` to fit content.
 
 See `CLAUDE.md` § Plaid Slide Design System.
 

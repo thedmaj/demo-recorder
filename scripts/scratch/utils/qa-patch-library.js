@@ -594,77 +594,11 @@ const PATCHES = [
       return { applied: true, summary: `Applied Zip CRA host contract (${patched} change group(s))` };
     },
   },
-  {
-    name: 'slide-typography-floor',
-    tierScope: 'slide',
-    description:
-      'Rewrite inline font-size declarations below 24px inside .slide-root to 24px ' +
-      '(skips mockup chrome). Auto-fires on slide-typography-floor QA category.',
-    matchCategories: ['slide-typography-floor'],
-    matchIssuePatterns: [/below the 24px floor inside \.slide-root/i],
-    manualOnly: false,
-    apply: async ({ runDir }) => {
-      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
-      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
-      const before = fs.readFileSync(htmlPath, 'utf8');
-      const allow = /\.(?:mockup-chrome|phone-mockup|avatar|confidence-pill)\b/i;
-      let changed = 0;
-      const parts = before.split(/(<div[^>]*\bslide-root\b[^>]*>)/gi);
-      let updated = parts[0] || '';
-      for (let i = 1; i < parts.length; i += 2) {
-        const open = parts[i] || '';
-        const body = parts[i + 1] || '';
-        if (allow.test(body)) {
-          updated += open + body;
-          continue;
-        }
-        const nextBody = body.replace(
-          /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi,
-          (decl, n) => {
-            const px = parseFloat(n);
-            if (px > 0 && px < 24) {
-              changed += 1;
-              return 'font-size:24px';
-            }
-            return decl;
-          }
-        );
-        updated += open + nextBody;
-      }
-      if (!changed) return { applied: false, summary: 'No sub-24px inline font-size rules found in slides' };
-      fs.writeFileSync(htmlPath, updated, 'utf8');
-      return { applied: true, summary: `Raised ${changed} inline font-size declaration(s) to 24px` };
-    },
-  },
-  {
-    name: 'slide-typography-ceiling',
-    tierScope: 'slide',
-    description:
-      'Cap oversized inline font-size inside .slide-root per DECK_DESIGN_SYSTEM ceilings ' +
-      'and inject slide-typography-ceilings CSS.',
-    matchCategories: ['slide-typography-ceiling', 'slide-template-misuse'],
-    matchIssuePatterns: [/exceeds the \d+px ceiling/i, /font-size above 180px/i],
-    manualOnly: false,
-    apply: async ({ runDir }) => {
-      const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
-      if (!fs.existsSync(htmlPath)) return { applied: false, summary: 'scratch-app/index.html not found' };
-      const before = fs.readFileSync(htmlPath, 'utf8');
-      const {
-        normalizeSlideTypography,
-        injectSlideTypographyOverrides,
-      } = require('./normalize-slide-typography');
-      const norm = normalizeSlideTypography(before);
-      let html = injectSlideTypographyOverrides(norm.html);
-      if (!norm.capped && !norm.stripped && html === before) {
-        return { applied: false, summary: 'No oversized slide typography found' };
-      }
-      fs.writeFileSync(htmlPath, html, 'utf8');
-      return {
-        applied: true,
-        summary: `Capped ${norm.capped} and stripped ${norm.stripped} slide font-size declaration(s); injected ceiling CSS`,
-      };
-    },
-  },
+  // slide-typography-floor + slide-typography-ceiling patches REMOVED 2026-05-27.
+  // Slide templates own font sizing; LLM may reduce inline font-size to fit
+  // content. The scanners these patches matched (scanSlideTypographyFloor /
+  // scanSlideTypographyCeiling in build-qa.js) are also neutered, so these
+  // patches no longer have any QA category to trigger on.
   {
     name: 'slide-text-overlap-autofix',
     tierScope: 'slide',
@@ -698,24 +632,20 @@ const PATCHES = [
         return { applied: false, summary: 'no slide-text-overlap diagnostics with meta' };
       }
 
-      // Group by step. Track tag font-size reductions only when target > 24px
-      // (the Plaid body floor). Empty tagFsTargets after processing means all
-      // overlaps were already at floor — caller knows nothing further can be
-      // done deterministically.
+      // Group by step. Track tag font-size reductions whenever the target
+      // reduces from the offending element's current size. The 24px floor
+      // was removed 2026-05-27 — templates own sizing.
       const byStep = new Map();
       for (const d of overlapDiags) {
         if (!d.meta || !d.stepId) continue;
         const aFs = Math.round(Number(d.meta.a?.fontSize || 0));
         const bFs = Math.round(Number(d.meta.b?.fontSize || 0));
-        const target = Math.max(24, Number(d.meta.recommendedFontSizePx) || Math.round((Math.max(aFs, bFs) * 0.75) / 2) * 2);
+        const target = Math.max(1, Number(d.meta.recommendedFontSizePx) || Math.round((Math.max(aFs, bFs) * 0.75) / 2) * 2);
         const aTag = String(d.meta.a?.tag || '').toLowerCase();
         const bTag = String(d.meta.b?.tag || '').toLowerCase();
         const entry = byStep.get(d.stepId) || { tagFsTargets: new Map() };
-        // Only emit a font-size rule when the target meaningfully reduces from
-        // the offending element's current size and the target stays above 24.
         const trackTag = (tag, currentFs, targetFs) => {
           if (!tag) return;
-          if (targetFs <= 24) return;
           if (targetFs >= currentFs) return;
           const prev = entry.tagFsTargets.get(tag);
           if (prev === undefined || targetFs < prev) entry.tagFsTargets.set(tag, targetFs);
@@ -815,7 +745,8 @@ const PATCHES = [
       for (const d of wrapDiags) {
         const stepId = d.stepId;
         const meta = d.meta;
-        const target = Math.max(24, Math.round(Number(meta.recommendedFontSizePx) || 0));
+        // 24px floor removed 2026-05-27 — templates own sizing.
+        const target = Math.max(1, Math.round(Number(meta.recommendedFontSizePx) || 0));
         if (!target || target >= Math.round(meta.currentFontSizePx || 0)) continue;
         const classList = String(meta.classes || '')
           .split(/\s+/)
@@ -882,7 +813,6 @@ const PATCHES = [
     matchCategories: [
       'slide-template-misuse',
       'panel-visibility',
-      'slide-typography-floor',
       'slide-mint-overuse',
     ],
     matchIssuePatterns: [
@@ -901,14 +831,10 @@ const PATCHES = [
       if (!/\bslide-root\b/.test(html)) {
         return { applied: false, summary: 'No .slide-root blocks in HTML' };
       }
+      // Typography normalize + ceiling-overrides removed 2026-05-27 — templates
+      // own sizing. The slide-layout-patch still does layout CSS injection
+      // (T4 single-column, attr-chip, etc.) below; just no font-size rewrite.
       let changed = 0;
-      const {
-        normalizeSlideTypography,
-        injectSlideTypographyOverrides,
-      } = require('./normalize-slide-typography');
-      const norm = normalizeSlideTypography(html);
-      html = injectSlideTypographyOverrides(norm.html);
-      if (norm.capped || norm.stripped) changed += 1;
 
       const layoutMarker = '/* SLIDE-LAYOUT-PATCH */';
       if (!html.includes(layoutMarker)) {

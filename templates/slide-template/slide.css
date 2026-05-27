@@ -170,25 +170,12 @@
   flex-shrink: 0;
 }
 
-/* Typography ceilings — DECK_DESIGN_SYSTEM.md §1.4 (override LLM inline font-size) */
-.slide-root .h-title {
-  font-size: min(var(--type-title), 84px) !important;
-}
-.slide-root[data-slide-template="T1"] .h-title {
-  font-size: min(var(--type-display), 112px) !important;
-}
-.slide-root[data-slide-template="T2"] .h-title,
-.slide-root[data-slide-template="T3"] .h-title {
-  font-size: min(96px, var(--type-title)) !important;
-}
-/* T5 three pillars — slide heading 20% below card-grid cap (64px → 51px) */
-.slide-root[data-slide-template="T5"] .h-title,
-.slide-root[data-workhorse-layout="three-column"] .h-title {
-  font-size: min(51px, var(--type-title, 72px)) !important;
-}
-.slide-root .slide-body-text {
-  font-size: min(var(--type-body), 36px) !important;
-}
+/* Typography ceilings REMOVED 2026-05-27 — templates own sizing. Defaults
+   live on .slide-root .h-title / .slide-body-text / .hero-stat-value above.
+   Per-template overrides (T1 display, T2/T3 statement, T5 three-pillar)
+   are now expressed as fluid clamps in pipeline-slide-contract.css
+   WITHOUT !important — LLM may reduce via inline style when content
+   density demands it. */
 
 .slide-root .h-title em,
 .slide-root .h-title .bowery-accent {
@@ -283,11 +270,12 @@
   color: var(--plaid-teal-500);
 }
 
-/* Hero numbers (T4+ / triple stat) — max 108px (25% below prior 144px cap) */
+/* Hero numbers (T4+ / triple stat). Default = --type-mega (108px). LLM may
+   reduce via inline style if a slide has multiple hero stats or tight space. */
 .slide-root .hero-stat-value {
   font-family: var(--font-display);
   font-weight: 500;
-  font-size: min(var(--type-mega), 108px) !important;
+  font-size: var(--type-mega);
   line-height: 0.9;
   letter-spacing: -0.02em;
   flex-shrink: 0;
@@ -295,7 +283,7 @@
 
 .slide-root .hero-stat-value .hero-stat-suffix,
 .slide-root .hero-stat-value span[style*="font-size"] {
-  font-size: min(54px, 0.5em) !important;
+  font-size: 0.5em;
 }
 
 /* Stackable main column — keeps footer from overlapping body */

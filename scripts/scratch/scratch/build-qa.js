@@ -736,39 +736,15 @@ function scanSlideShellChrome(html, slideStepIds) {
   return out;
 }
 
-/** @param {string} html */
-function scanSlideTypographyFloor(html) {
-  const out = [];
-  if (!html || !/\bslide-root\b/.test(html)) return out;
-  const blocks = extractSlideStepHtmlBlocks(
-    html,
-    [...html.matchAll(/data-testid="step-([^"]+)"/gi)].map((m) => m[1]).filter((id) => {
-      const safe = escapeRegexId(id);
-      const re = new RegExp(`data-testid="step-${safe}"[\\s\\S]*?\\bslide-root\\b`, 'i');
-      return re.test(html);
-    })
-  );
-  const iterable = blocks.size ? [...blocks.entries()] : [['slide-root', html]];
-  let idx = 0;
-  const re = /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
-  for (const [stepId, block] of iterable) {
-    if (SLIDE_TYPOGRAPHY_ALLOWLIST.test(block)) continue;
-    let m;
-    while ((m = re.exec(block)) !== null) {
-      const px = parseFloat(m[1]);
-      if (px > 0 && px < 24) {
-        out.push(slideDesignWarning(
-          stepId,
-          'slide-typography-floor',
-          `Inline font-size ${px}px is below the 24px floor inside .slide-root.`,
-          'Raise body copy to ≥24px or use design-system type tokens (--type-small / --type-body).'
-        ));
-        break;
-      }
-    }
-    idx += 1;
-  }
-  return out;
+/**
+ * scanSlideTypographyFloor — NEUTERED 2026-05-27.
+ * The 24px body floor enforcement was scrapped; slide templates own sizing,
+ * LLM may reduce inline font-size to fit content. Function preserved as a
+ * no-op so the call site (scanSlideQuality) doesn't need to change.
+ * @param {string} _html
+ */
+function scanSlideTypographyFloor(_html) {
+  return [];
 }
 
 /**
@@ -881,48 +857,15 @@ function scanSlideHostChromeLeak(state, step) {
  * Warn when inline font-size exceeds DECK_DESIGN_SYSTEM ceilings for the slide template.
  * @param {string} html
  */
-function scanSlideTypographyCeiling(html) {
-  const out = [];
-  if (!html || !/\bslide-root\b/.test(html)) return out;
-  const blocks = extractSlideStepHtmlBlocks(
-    html,
-    [...html.matchAll(/data-testid="step-([^"]+)"/gi)].map((m) => m[1]).filter((id) => {
-      const safe = escapeRegexId(id);
-      const re = new RegExp(`data-testid="step-${safe}"[\\s\\S]*?\\bslide-root\\b`, 'i');
-      return re.test(html);
-    })
-  );
-  const iterable = blocks.size ? [...blocks.entries()] : [['slide-root', html]];
-  const re = /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi;
-  for (const [stepId, block] of iterable) {
-    if (SLIDE_TYPOGRAPHY_ALLOWLIST.test(block)) continue;
-    const templateMatch = block.match(/\bdata-slide-template\s*=\s*["'](T(?:1[01]|[1-9]))["']/i);
-    const templateId = templateMatch ? templateMatch[1].toUpperCase() : null;
-    const ceilings = getSlideTypographyCeilings(templateId);
-    const absoluteMax = Math.max(ceilings.hTitle, ceilings.hero, ceilings.display, 180);
-    let m;
-    while ((m = re.exec(block)) !== null) {
-      const px = parseFloat(m[1]);
-      if (!Number.isFinite(px) || px <= absoluteMax) continue;
-      const ctxStart = Math.max(0, m.index - 180);
-      const ctx = block.slice(ctxStart, m.index + 40);
-      let maxPx = ceilings.body;
-      if (/\bhero-stat-value\b/i.test(ctx)) maxPx = ceilings.hero;
-      else if (/\bh-title\b/i.test(ctx)) maxPx = ceilings.hTitle;
-      else if (/<h1\b/i.test(ctx)) maxPx = ceilings.display;
-      else if (/<h2\b/i.test(ctx)) maxPx = ceilings.hTitle;
-      if (px > maxPx) {
-        out.push(slideDesignWarning(
-          stepId,
-          'slide-typography-ceiling',
-          `Inline font-size ${px}px exceeds the ${maxPx}px ceiling for this slide element (template ${templateId || 'default'}).`,
-          'Use slide.css classes (.h-title, .hero-stat-value, .slide-body-text) without oversized inline font-size.'
-        ));
-        break;
-      }
-    }
-  }
-  return out;
+/**
+ * scanSlideTypographyCeiling — NEUTERED 2026-05-27.
+ * Per-template H-title / hero-stat / body / mono ceilings scrapped;
+ * slide templates own sizing, LLM may use any inline font-size. Preserved
+ * as a no-op so the call site doesn't need to change.
+ * @param {string} _html
+ */
+function scanSlideTypographyCeiling(_html) {
+  return [];
 }
 
 /** @param {string} html @param {string[]} slideStepIds */
@@ -1275,14 +1218,13 @@ function scanSlideTextOverlap(state, step) {
     const bLabel = `${pair.b.tag} \"${pair.b.text.slice(0, 40)}\"`;
     const aFs = Math.round(pair.a.fontSize || 0);
     const bFs = Math.round(pair.b.fontSize || 0);
-    // Recommendation: trim the larger font-size by 25% (rounded to multiples of 2),
-    // floored at 24px (Plaid body minimum). This is a hint for slide-fix; the
-    // patch library can also apply it deterministically (see qa-patch-library).
+    // Recommendation: trim the larger font-size by 25% (rounded to multiples of 2).
+    // The 24px floor was removed 2026-05-27 — templates own sizing and the LLM
+    // may reduce inline font-size to fit content.
     const bigger = aFs >= bFs ? { label: aLabel, fs: aFs } : { label: bLabel, fs: bFs };
-    const target = Math.max(24, Math.round((bigger.fs * 0.75) / 2) * 2);
-    const suggestion = bigger.fs > 24
-      ? `Reduce font-size on ${bigger.label} from ${bigger.fs}px to ~${target}px, or increase gap/padding on the shared flex/grid container. Overlap area ${pair.overlapArea}px² (${pair.overlapW}x${pair.overlapH}px).`
-      : `Increase gap/padding on the shared flex/grid container that holds ${aLabel} and ${bLabel}. Both elements are already at the 24px body floor, so font reduction is not allowed. Overlap area ${pair.overlapArea}px² (${pair.overlapW}x${pair.overlapH}px).`;
+    const target = Math.max(1, Math.round((bigger.fs * 0.75) / 2) * 2);
+    const suggestion =
+      `Reduce font-size on ${bigger.label} from ${bigger.fs}px to ~${target}px, or increase gap/padding on the shared flex/grid container. Overlap area ${pair.overlapArea}px² (${pair.overlapW}x${pair.overlapH}px).`;
     out.push({
       stepId: step.id,
       category: 'slide-text-overlap',
@@ -2171,9 +2113,12 @@ async function evaluateStepState(page, stepId) {
           const containerWidth = rect.width;
           if (containerWidth <= 0 || measuredWidth <= 0) continue;
           // Required shrink factor to fit on one line, with a 4% safety margin.
+          // The 24px floor was removed 2026-05-27 — recommend whatever size fits
+          // the container; the LLM/patch can decide if the smaller size is
+          // readable enough for the content.
           const requiredFactor = containerWidth / (measuredWidth * 1.04);
           if (!Number.isFinite(requiredFactor) || requiredFactor >= 1) continue;
-          const recommendedFs = Math.max(24, Math.floor(fontSize * requiredFactor));
+          const recommendedFs = Math.max(1, Math.floor(fontSize * requiredFactor));
           if (recommendedFs >= fontSize) continue;
           candidates.push({
             tag: el.tagName,

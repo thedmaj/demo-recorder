@@ -95,7 +95,7 @@ Author with DECK templates; do **not** set fixed `width:1440px;height:900px` on 
 ```
 
 - **Mint cap (≤ 3 references per slide).** Combined count of `--plaid-teal-500` + `#42F0CD` across class names, inline styles, and inline CSS must stay ≤ 3 per `.slide-root`. Reserve mint for ONE primary eye-draw — usually a hero stat, a single CTA accent, or a value-summary mint card. Supporting text uses `var(--plaid-white)` / `rgba(255,255,255,0.78)` on navy, or `var(--plaid-ink-900)` on light/cream/holo. post-slides demotes excess mint to `var(--plaid-white)` automatically; relying on that as a crutch still loses visual hierarchy — write within the cap from the start.
-- Body text ≥ 24px (hard floor — sub-24px inline `font-size` gets rewritten to 24px on insert).
+- **Typography: templates own sizing (2026-05-27 update).** The slide-template CSS (`slide.css` + `pipeline-slide-contract.css`) sets the default size for every canonical class (`.h-title`, `.slide-body-text`, `.hero-stat-value`, `.eyebrow-tag`, `.mono-block`). Use these classes and let the stylesheet pick the size; do not add inline `font-size` unless content density or rendered overlap genuinely demands it. There is **no 24px floor and no per-template ceiling enforcement** — the LLM may reduce a specific element's font-size via inline style to fit content, and should reduce intelligently (small enough to clear the overlap or fit on one line, but stay readable). The pipeline no longer rewrites inline `font-size` to clamp it.
 - Flex/grid + `gap` only — **no `display:inline-block`**.
 - Headline: sentence case, ends with period, one Bowery `<em>` accent.
 

@@ -1,322 +1,61 @@
 'use strict';
 
 /**
- * Cap oversized inline font-size inside .slide-root per DECK_DESIGN_SYSTEM.md (1920×1080 scale).
- * Post-slides LLM output often inflates headlines/hero stats beyond token ceilings.
+ * normalize-slide-typography — NEUTERED 2026-05-27
+ *
+ * Previously: this module enforced a 24px body floor + per-template H-title
+ * / hero-stat / body / mono CEILINGS by rewriting inline `font-size: Npx`
+ * declarations inside `.slide-root` and injecting a
+ * `<style id="slide-typography-ceilings-v1">` block with `!important` rules.
+ *
+ * Now: typography is owned by the slide-template CSS
+ * (templates/slide-template/slide.css + pipeline-slide-contract.css +
+ * colors_and_type.css). The LLM follows the template defaults and may
+ * reduce a specific font-size with an inline style only when content
+ * density or rendered overlap genuinely demands it. There is no
+ * pipeline-side floor or ceiling enforcement; rendering bugs (overlap,
+ * wrap) are still detected at QA time but no longer floor-clamped.
+ *
+ * This file is kept as a no-op shim so existing callers don't crash.
+ * Once the call sites are deleted across build-app.js / post-slides.js
+ * the file itself can be deleted.
  */
-
-/** @type {Record<string, { hTitle: number, hero: number, display: number, body: number, mono: number }>} */
-const TEMPLATE_CEILINGS = {
-  T1: { hTitle: 112, hero: 144, display: 112, body: 42, mono: 28 },
-  T2: { hTitle: 96, hero: 180, display: 110, body: 36, mono: 28 },
-  T3: { hTitle: 96, hero: 180, display: 120, body: 30, mono: 28 },
-  T4: { hTitle: 72, hero: 108, display: 110, body: 30, mono: 28 },
-  T5: { hTitle: 58, hero: 180, display: 110, body: 30, mono: 28 },
-  T6: { hTitle: 72, hero: 140, display: 110, body: 30, mono: 28 },
-  T7: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
-  T8: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
-  T9: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
-  T10: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
-  T11: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
-};
-
-const DEFAULT_CEILING = TEMPLATE_CEILINGS.T3;
-
-const MOCKUP_ALLOW_RE = /\.(?:mockup-chrome|phone-mockup|avatar|confidence-pill|status-bar)\b/i;
-
-function extractTemplateId(openTag) {
-  const m = String(openTag || '').match(/\bdata-slide-template\s*=\s*["'](T(?:1[01]|[1-9]))["']/i);
-  return m ? m[1].toUpperCase() : null;
-}
-
-function ceilingsForTemplate(templateId) {
-  return TEMPLATE_CEILINGS[templateId] || DEFAULT_CEILING;
-}
-
-/**
- * Resolve max px for an inline font-size by nearest semantic context in the tag snippet.
- * @param {string} tagSnippet - opening tag + optional class list context
- * @param {{ hTitle: number, hero: number, display: number, body: number, mono: number }} ceilings
- */
-function maxForTag(tagSnippet, ceilings) {
-  const s = String(tagSnippet || '');
-  if (/\bhero-stat-value\b/i.test(s)) return ceilings.hero;
-  if (/\bh-title\b/i.test(s)) return ceilings.hTitle;
-  if (/\beyebrow-tag\b/i.test(s) || /\bchrome-foot\b/i.test(s)) return 24;
-  if (/\bslide-body-text\b/i.test(s)) return ceilings.body;
-  if (/\bmono-block\b/i.test(s) || /\bfont-mono\b/i.test(s)) return ceilings.mono;
-  if (/<h1\b/i.test(s)) return ceilings.display;
-  if (/<h2\b/i.test(s)) return ceilings.hTitle;
-  if (/<h3\b/i.test(s)) return 64;
-  return ceilings.body;
-}
-
-/**
- * Strip inline font-size from canonical shell classes (CSS owns sizing).
- * @param {string} styleAttr
- */
-function stripFontSizeFromStyle(styleAttr) {
-  if (!styleAttr) return styleAttr;
-  const cleaned = styleAttr
-    .replace(/(?:^|;)\s*font-size\s*:\s*[^;]+/gi, '')
-    .replace(/;\s*;/g, ';')
-    .replace(/^\s*;\s*|\s*;\s*$/g, '')
-    .trim();
-  return cleaned;
-}
 
 /**
  * @param {string} html
- * @param {{ stripCanonicalInline?: boolean, floorPx?: number }} [opts]
+ * @param {object} [_opts]
  * @returns {{ html: string, capped: number, stripped: number, floored: number }}
  */
-function normalizeSlideTypography(html, opts = {}) {
-  const stripCanonical = opts.stripCanonicalInline !== false;
-  // Plaid body typography floor (DECK_DESIGN_SYSTEM.md §1.4). LLM-generated
-  // slides routinely emit 16-19px on cards / footnotes; the floor brings them
-  // up to the readable minimum. Default to 24; allow opt-out via floorPx=0.
-  const floorPx = opts.floorPx === undefined ? 24 : Number(opts.floorPx) || 0;
-  let capped = 0;
-  let stripped = 0;
-  let floored = 0;
-
-  const parts = String(html || '').split(/(<div[^>]*\bslide-root\b[^>]*>)/gi);
-  if (parts.length < 2) return { html, capped: 0, stripped: 0, floored: 0 };
-
-  let out = parts[0] || '';
-  for (let i = 1; i < parts.length; i += 2) {
-    const open = parts[i] || '';
-    let body = parts[i + 1] || '';
-    const templateId = extractTemplateId(open);
-    const ceilings = ceilingsForTemplate(templateId);
-
-    if (MOCKUP_ALLOW_RE.test(body)) {
-      out += open + body;
-      continue;
-    }
-
-    // Cap/floor inline font-size on any tag inside this slide-root block.
-    body = body.replace(
-      /style\s*=\s*["']([^"']*)["']/gi,
-      (match, styleVal, offset) => {
-        const ctx = body.slice(Math.max(0, offset - 220), offset + match.length);
-        const maxPx = maxForTag(ctx, ceilings);
-
-        if (
-          stripCanonical &&
-          /\b(?:h-title|hero-stat-value|eyebrow-tag|chrome-foot|slide-body-text)\b/i.test(ctx)
-        ) {
-          const next = stripFontSizeFromStyle(styleVal);
-          if (next !== styleVal) stripped += 1;
-          if (!next) return '';
-          return `style="${next}"`;
-        }
-
-        const nextStyle = styleVal.replace(
-          /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi,
-          (decl, n) => {
-            const px = parseFloat(n);
-            if (!Number.isFinite(px)) return decl;
-            if (px > maxPx) {
-              capped += 1;
-              return `font-size:${maxPx}px`;
-            }
-            if (floorPx > 0 && px > 0 && px < floorPx) {
-              floored += 1;
-              return `font-size:${floorPx}px`;
-            }
-            return decl;
-          }
-        );
-        if (nextStyle === styleVal) return match;
-        return `style="${nextStyle}"`;
-      }
-    );
-
-    // Cap/floor bare style blocks inside slide (rare LLM <style> in fragment)
-    body = body.replace(
-      /(\.[^{]+)\{([^}]*)\}/g,
-      (rule, sel, decls) => {
-        if (!/\bslide-root\b/.test(sel) && !/\.h-title|\.hero-stat|\.eyebrow|\.chrome-foot/.test(sel)) {
-          return rule;
-        }
-        const maxPx = /\.hero-stat/i.test(sel)
-          ? ceilings.hero
-          : /\.h-title/i.test(sel)
-            ? ceilings.hTitle
-            : ceilings.body;
-        const nextDecls = decls.replace(
-          /font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi,
-          (d, n) => {
-            const px = parseFloat(n);
-            if (!Number.isFinite(px)) return d;
-            if (px > maxPx) {
-              capped += 1;
-              return `font-size:${maxPx}px`;
-            }
-            if (floorPx > 0 && px > 0 && px < floorPx) {
-              floored += 1;
-              return `font-size:${floorPx}px`;
-            }
-            return d;
-          }
-        );
-        return `${sel}{${nextDecls}}`;
-      }
-    );
-
-    out += open + body;
-  }
-
-  return { html: out, capped, stripped, floored };
+function normalizeSlideTypography(html, _opts = {}) {
+  return {
+    html: typeof html === 'string' ? html : '',
+    capped: 0,
+    stripped: 0,
+    floored: 0,
+  };
 }
-
-/** Export ceilings for build-QA scanner parity */
-function getSlideTypographyCeilings(templateId) {
-  return ceilingsForTemplate(templateId);
-}
-
-const TYPOGRAPHY_OVERRIDE_MARKER = '<!-- slide-typography-ceilings-v1 -->';
-const TYPOGRAPHY_OVERRIDE_ID = 'slide-typography-ceilings-v1';
-
-const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
-<style id="${TYPOGRAPHY_OVERRIDE_ID}">
-/* Pipeline slide typography ceilings — DECK_DESIGN_SYSTEM.md §1.4
- *
- * SCOPE (post architecture rebuild):
- *   - Font ceilings + per-template title sizing
- *   - Chrome foot positioning
- *   - Wrap behavior on long content
- *
- * REMOVED (now owned by templates/slide-template/pipeline-slide-contract.css):
- *   - .step.active .slide-root max-width (the 820px override that caused
- *     the "fonts too big, content bleeds" regression)
- *   - .slide-root .frame overflow:hidden
- *   - .slide-root .slide-stack overflow:hidden (contract now uses overflow:visible)
- *
- * The contract CSS is injected by post-slides AFTER this block, but its
- * selectors (.step.active .slide-root) match this block's specificity.
- * Cascade order in <head> resolves ties in the contract's favor.
- */
-.step.active .slide-root .slide-stack,
-.step.active .slide-root .h-title,
-.step.active .slide-root .attr-chip-slide {
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.slide-root .chrome-foot {
-  position: relative !important;
-  margin-top: auto !important;
-  bottom: auto !important;
-  left: auto !important;
-  right: auto !important;
-  padding-top: 32px !important;
-  flex-shrink: 0 !important;
-  font-size: 24px !important;
-  z-index: 2 !important;
-}
-.slide-root .h-title {
-  font-size: min(var(--type-title, 72px), 84px) !important;
-  margin-bottom: 32px !important;
-  flex-shrink: 0;
-}
-.slide-root[data-slide-template="T1"] .h-title {
-  font-size: min(112px, var(--type-display, 88px)) !important;
-}
-.slide-root[data-slide-template="T2"] .h-title,
-.slide-root[data-slide-template="T3"] .h-title {
-  font-size: min(96px, var(--type-title, 72px)) !important;
-}
-/* Text-heavy templates (cards / CTA) — keep headlines compact so the body
- * grid fits inside .frame { overflow: hidden }. Matches the clamp in
- * templates/slide-template/pipeline-slide-contract.css. */
-.slide-root[data-slide-template="T5"] .h-title,
-.slide-root[data-workhorse-layout="three-column"] .h-title {
-  font-size: min(51px, var(--type-title, 58px)) !important;
-  margin-bottom: 24px !important;
-}
-.slide-root[data-slide-template="T4"] .h-title,
-.slide-root[data-slide-template="T6"] .h-title,
-.slide-root[data-slide-template="T7"] .h-title,
-.slide-root[data-slide-template="T8"] .h-title,
-.slide-root[data-slide-template="T9"] .h-title,
-.slide-root[data-slide-template="T10"] .h-title,
-.slide-root[data-slide-template="T11"] .h-title {
-  font-size: min(64px, var(--type-title, 56px)) !important;
-  margin-bottom: 24px !important;
-}
-.slide-root .hero-stat-value {
-  font-size: min(var(--type-mega, 108px), 108px) !important;
-  line-height: 0.9 !important;
-  flex-shrink: 0;
-}
-.slide-root .slide-body-text {
-  font-size: min(var(--type-body, 30px), 36px) !important;
-}
-.slide-root .eyebrow-tag {
-  font-size: max(24px, var(--type-meta, 24px)) !important;
-}
-.slide-root .slide-stack {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 24px !important;
-  flex: 1 !important;
-  min-height: 0 !important;
-}
-.slide-root[data-workhorse-layout="code"] .slide-stack {
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
-  align-items: stretch !important;
-  gap: 28px !important;
-}
-.slide-root[data-workhorse-layout="code"] .h-title {
-  max-width: 100% !important;
-  white-space: normal !important;
-  font-size: clamp(26px, 2.8vw, 44px) !important;
-}
-.slide-root[data-workhorse-layout="code"] .slide-body-text {
-  max-width: 100% !important;
-}
-.slide-root .json-snippet,
-.slide-root:not([data-workhorse-layout="code"]) .slide-code-block {
-  flex-shrink: 1;
-  min-height: 0;
-  overflow: auto;
-  max-height: 220px;
-}
-.slide-root[data-workhorse-layout="code"] .slide-code-block,
-.slide-root[data-workhorse-layout="code"] .sc-code-pane {
-  flex: 1 1 auto !important;
-  min-height: 0 !important;
-  max-height: none !important;
-  overflow: visible !important;
-}
-.slide-root[data-workhorse-layout="code"] .sc-code-pre,
-.slide-root[data-workhorse-layout="code"] .slide-code-block pre {
-  max-height: none !important;
-  overflow: auto !important;
-}
-</style>`;
 
 /**
- * Inject (or refresh) global slide typography override CSS into host HTML <head>.
  * @param {string} html
  * @returns {string}
  */
 function injectSlideTypographyOverrides(html) {
-  if (!html || !/\bslide-root\b/.test(html)) return html;
-  const without = String(html).replace(
-    new RegExp(`${TYPOGRAPHY_OVERRIDE_MARKER}[\\s\\S]*?<\\/style>\\s*`, 'i'),
-    ''
-  );
-  if (/<\/head>/i.test(without)) {
-    return without.replace(/<\/head>/i, `${TYPOGRAPHY_OVERRIDE_CSS}\n</head>`);
-  }
-  if (/<body\b/i.test(without)) {
-    return without.replace(/<body\b/i, `${TYPOGRAPHY_OVERRIDE_CSS}\n<body`);
-  }
-  return `${TYPOGRAPHY_OVERRIDE_CSS}\n${without}`;
+  return typeof html === 'string' ? html : '';
 }
+
+/**
+ * @param {string} [_templateId]
+ * @returns {object}
+ */
+function getSlideTypographyCeilings(_templateId) {
+  // Returns the same neutral shape the old fn returned, so callers that
+  // destructure don't blow up. All values are effectively "no ceiling".
+  return { hTitle: Infinity, hero: Infinity, display: Infinity, body: Infinity, mono: Infinity };
+}
+
+// Empty maps preserved so destructuring imports don't crash.
+const TEMPLATE_CEILINGS = Object.freeze({});
+const DEFAULT_CEILING = Object.freeze({});
 
 module.exports = {
   normalizeSlideTypography,

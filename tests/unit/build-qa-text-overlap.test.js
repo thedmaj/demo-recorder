@@ -59,14 +59,15 @@ test('scanSlideTextOverlap: single overlap -> critical diagnostic with meta + re
   assert.equal(d.meta.a.fontSize, 96);
 });
 
-test('scanSlideTextOverlap: floor at 24px when both elements already small', () => {
+test('scanSlideTextOverlap: 24px floor REMOVED 2026-05-27 — small fonts reduce further if needed', () => {
   const out = scanSlideTextOverlap({
     slideTextOverlaps: [makeOverlap({ aFs: 24, bFs: 24 })],
   }, slideStep());
   assert.equal(out.length, 1);
-  // 24 * 0.75 = 18; floored to 24 per Plaid body minimum
-  assert.equal(out[0].meta.recommendedFontSizePx, 24);
-  assert.match(out[0].suggestion, /Increase gap\/padding/);
+  // 24 * 0.75 = 18; no floor at 24 anymore — recommendation is 18px (rounded to even)
+  assert.equal(out[0].meta.recommendedFontSizePx, 18);
+  // Suggestion still describes reducing the larger element (no "already at floor" branch).
+  assert.match(out[0].suggestion, /Reduce font-size/);
 });
 
 test('scanSlideTextOverlap: more than 6 overlaps -> warning collapse', () => {
@@ -139,11 +140,11 @@ test('slide-text-overlap-autofix.apply: injects scoped CSS reduction and gap rul
   }
 });
 
-test('slide-text-overlap-autofix.apply: skips when both elements at 24px floor', async () => {
+test('slide-text-overlap-autofix.apply: 24px floor removed — patch still applies when target reduces', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'overlap-autofix-'));
   try {
     fs.mkdirSync(path.join(dir, 'scratch-app'), { recursive: true });
-    fs.writeFileSync(path.join(dir, 'scratch-app', 'index.html'), '<html><head></head><body></body></html>');
+    fs.writeFileSync(path.join(dir, 'scratch-app', 'index.html'), '<html><head></head><body><div class="step" data-testid="step-plaid-summary-slide"><div class="slide-root"><p>tight.</p><span>caption</span></div></div></body></html>');
     const diagnostics = [
       {
         stepId: 'plaid-summary-slide',
@@ -151,7 +152,7 @@ test('slide-text-overlap-autofix.apply: skips when both elements at 24px floor',
         meta: {
           a: { tag: 'P', fontSize: 24 },
           b: { tag: 'SPAN', fontSize: 24 },
-          recommendedFontSizePx: 24,
+          recommendedFontSizePx: 18,
         },
       },
     ];
@@ -160,9 +161,11 @@ test('slide-text-overlap-autofix.apply: skips when both elements at 24px floor',
     const patch = PATCHES.find((x) => x.name === 'slide-text-overlap-autofix');
     const result = await patch.apply({ runDir: dir });
 
-    // 24px target == 24px floor → tagFsTargets stays empty → skip
-    assert.equal(result.applied, false);
-    assert.match(result.summary, /no actionable overlap diagnostics/);
+    // 24px floor removed 2026-05-27 — the 18px target now reduces the
+    // larger element, so the patch applies instead of skipping.
+    assert.equal(result.applied, true);
+    const html = fs.readFileSync(path.join(dir, 'scratch-app', 'index.html'), 'utf8');
+    assert.match(html, /font-size: 18px/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

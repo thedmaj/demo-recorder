@@ -612,7 +612,7 @@ Manrope (sans), Playfair Display (display), JetBrains Mono (mono) — export too
 
 Hybrid rules: [`.claude/skills/plaid-workhorse-slides/SKILL.md`](.claude/skills/plaid-workhorse-slides/SKILL.md). Standalone export: [`scripts/export-plaid-deck.sh`](scripts/export-plaid-deck.sh).
 
-**Eight warning scanners** (not blockers): tokens, shell chrome, 24px floor, italic accent, mint overuse, inline-block, background rhythm, invented colors — all `severity: 'warning'`, `deterministicBlocker: false`.
+**Warning scanners** (not blockers): tokens, shell chrome, italic accent, mint overuse, inline-block, background rhythm, invented colors — all `severity: 'warning'`, `deterministicBlocker: false`. (The legacy `slide-typography-floor` 24px-minimum scanner was removed 2026-05-27; templates now own font sizing and the LLM may reduce inline `font-size` to fit content. See § Typography Source of Truth below.)
 
 ### Opt-in patches (manual invoke)
 

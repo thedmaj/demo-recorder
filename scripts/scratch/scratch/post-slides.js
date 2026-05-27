@@ -742,13 +742,8 @@ async function main() {
         );
         lastReason = reason;
         if (ok) {
-          const norm = normalizeSlideTypography(updated);
-          html = norm.html;
-          if (norm.capped || norm.stripped || norm.floored) {
-            console.log(
-              `[post-slides] Typography normalize "${step.id}": capped=${norm.capped}, stripped=${norm.stripped}, floored=${norm.floored || 0}`
-            );
-          }
+          html = updated;
+          // Slide typography normalize removed 2026-05-27 — templates own sizing.
           applied = true;
         } else {
           console.warn(`[post-slides] Splice attempt ${attempts} for "${step.id}" failed: ${reason}`);
@@ -801,18 +796,8 @@ async function main() {
       console.log(`[post-slides] Stripped ${removed} legacy .chrome-foot block(s) from non-failing slides.`);
     }
 
-    const finalNorm = normalizeSlideTypography(html);
-    html = finalNorm.html;
-    if (finalNorm.capped || finalNorm.stripped || finalNorm.floored) {
-      report.typographyNormalized = {
-        capped: finalNorm.capped,
-        stripped: finalNorm.stripped,
-        floored: finalNorm.floored || 0,
-      };
-      console.log(
-        `[post-slides] Final typography pass: capped=${finalNorm.capped}, stripped=${finalNorm.stripped}, floored=${finalNorm.floored || 0}`
-      );
-    }
+    // Final typography normalize + injectSlideTypographyOverrides removed
+    // 2026-05-27 — templates own sizing, no pipeline-side floor/ceiling.
     const mintCap = capSlideMint(html);
     if (mintCap.demoted > 0) {
       html = mintCap.html;
@@ -824,7 +809,6 @@ async function main() {
         `[post-slides] Mint cap: demoted ${mintCap.demoted} reference(s) across ${report.mintCap.perSlide.length} slide(s) (keeping <=3 per slide).`
       );
     }
-    html = injectSlideTypographyOverrides(html);
     fs.writeFileSync(htmlPath, html, 'utf8');
     console.log(`[post-slides] Wrote updated HTML with ${report.slidesProcessed.length} slide(s).`);
   }

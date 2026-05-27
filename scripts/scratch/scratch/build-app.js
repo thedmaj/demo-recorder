@@ -3784,16 +3784,9 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     }
   }
 
-  if (html.includes('slide-root')) {
-    const slideNorm = normalizeSlideTypography(html);
-    html = slideNorm.html;
-    html = injectSlideTypographyOverrides(html);
-    if (slideNorm.capped || slideNorm.stripped) {
-      console.log(
-        `[Build] Slide typography normalize: capped=${slideNorm.capped}, stripped=${slideNorm.stripped}`
-      );
-    }
-  }
+  // Slide typography enforcement removed 2026-05-27. Templates own sizing;
+  // LLM may reduce inline font-size to fit content. No pipeline-side floor
+  // or ceiling rewriting. See plan: trust template + LLM judgment.
 
   // ── Write outputs ──────────────────────────────────────────────────────────
   fs.writeFileSync(HTML_OUT, html, 'utf8');
