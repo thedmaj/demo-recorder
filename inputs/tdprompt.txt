@@ -13,9 +13,9 @@ WHY THIS FILE EXISTS (REVERSE-ENGINEERED FROM PIPELINE + LATEST BUILD)
 
 Observed gaps in prior runs:
 
-1. **JSON sidebar drift** — The product spec asked for a “right-side JSON panel” on insight screens. The build system’s DOM contract uses **one global** `#api-response-panel` populated from JavaScript (`showApiPanel` → post-processed to `_showApiPanelStub`). Models sometimes inlined JSON inside `.insight-layout` (duplicate panels, QA noise) or hand-rolled `goToStep` branches that **do not** match the `API_DATA[id]` pattern `build-app.js` re-injects after stripping `showApiPanel(` calls — leaving the overlay empty or hidden.
+1. **JSON sidebar drift** — The product spec asked for a "right-side JSON panel" on insight screens. The build system's DOM contract uses **one global** `#api-response-panel`. The panel chrome — section.panel + Request/Response tabs + renderjson pretty-printer — is OWNED BY `post-panels` (it injects the Claude Design v12 markup post-build). Models sometimes inlined JSON inside `.insight-layout` (duplicate panels, QA noise) or hand-rolled goToStep branches. The build no longer needs hand-authored `showApiPanel` functions; your only job is to populate `window._stepApiResponses[stepId] = { endpoint, request, response }` and let post-panels do the rest.
 
-2. **Recording fallback** — `record-local.js` injects `window._recordApiResponses` from `demo-script.json` and, after `goToStep`, calls `_showApiPanelStub(data)` when step IDs look like insight steps **and** data exists. That only helps if `_showApiPanelStub` exists and clears `display:none` on the panel. Manual preview without injection still needs a correct app-side implementation.
+2. **Recording fallback** — `record-local.js` calls `_showApiPanelStub(data)` after `goToStep` on insight steps. post-panels installs a safe no-op `_showApiPanelStub` so this call doesn't throw even though the function is dead — the wrapped goToStep + populateApiPanel pair (also installed by post-panels) is what actually hydrates the v12 panel.
 
 3. **Slides** — Earlier prompt text said “do not include raw JSON on slides,” which fights the goal of PowerPoint-ready technical slides. This file splits **exec** vs **technical** slide rules and ties technical slides to `templates/slide-template/` plus an explicit JSON preview column.
 
@@ -31,44 +31,40 @@ These rules mirror `scripts/scratch/utils/prompt-templates.js` and `scripts/scra
 
 - Raw Plaid API JSON appears **only** inside the global overlay:
   - `#api-response-panel` with `data-testid="api-response-panel"`.
-- **Do not** place `<pre>` JSON columns, “insight-right”, `*-json-panel`, or duplicate “Response JSON” divs **inside** Plaid insight step markup. The insight step shows narrative, scores, value lines — not the full payload.
+- **Do not** place `<pre>` JSON columns, "insight-right", `*-json-panel`, or duplicate "Response JSON" divs **inside** Plaid insight step markup. The insight step shows narrative, scores, value lines — not the full payload.
 - TD consumer steps: panel stays `display:none` (and collapsed/closed).
 
-### B) Wiring pattern the build can repair
+### B) Wiring pattern — populate the data, post-panels does the rest
 
-Implement API population so `build-app.js` can strip duplicate `showApiPanel(` calls and restore the insight branch:
+The `post-panels` stage owns the entire panel chrome: section.panel + Request/Response tabs + renderjson shim + chevron toggle + wrapped goToStep. Your ONLY job is to provide per-step API data:
 
-1. Define a map keyed by **exact** `demo-script.json` step ids (copy-paste ids, no drift):
-
-```javascript
-var API_DATA = {
-  'identity-match-insight': { response: { /* full POST /identity/match body */ } },
-  'auth-insight':           { response: { /* full POST /auth/get body */ } },
-  'signal-insight':         { response: { /* full POST /signal/evaluate body */ } }
-};
-```
-
-2. Implement **`function showApiPanel(data)`** (build renames this to `_showApiPanelStub` and strips/repairs calls) that:
-   - Targets `#api-response-panel` only.
-   - Removes inline `display:none` / shows the panel, applies your `visible` / slide-in classes.
-   - Renders `JSON.stringify(data, null, 2)` in `#api-response-content` (or equivalent), monospace **14–15px**.
-   - Supports collapse/expand (chevron or “Hide JSON” / “Show JSON”) **without** moving JSON back into the step div.
-
-3. Inside **`window.goToStep`**, after activating the step:
-   - For every step id **not** in `API_DATA`, hide the api-response panel completely.
-   - For ids in `API_DATA`, call **`showApiPanel(API_DATA[id].response)`** (single call — no parallel inline JSON UI).
-
-4. **Mirror for the recorder** (redundant but safe):
+1. Populate `window._stepApiResponses` keyed by **exact** demo-script.json step ids:
 
 ```javascript
 window._stepApiResponses = {
-  'identity-match-insight': API_DATA['identity-match-insight'].response,
-  'auth-insight':           API_DATA['auth-insight'].response,
-  'signal-insight':         API_DATA['signal-insight'].response
+  'identity-match-insight': {
+    endpoint: 'POST /identity/match',
+    request:  { /* full request body the host would send (or null for browser-only callbacks) */ },
+    response: { /* full /identity/match response body */ }
+  },
+  'auth-insight': {
+    endpoint: 'POST /auth/get',
+    request:  { /* … */ },
+    response: { /* … */ }
+  },
+  'signal-insight': {
+    endpoint: 'POST /signal/evaluate',
+    request:  { /* … */ },
+    response: { /* … */ }
+  }
 };
 ```
 
-5. **Insight step IDs** — Include the substring `insight` in Plaid API milestone step ids (e.g. `identity-match-insight`, `auth-insight`, `signal-insight`) so automated recording heuristics and humans can grep them consistently.
+The wrapped goToStep (installed by post-panels) reads this map, calls `populateApiPanel(endpoint, { request, response })` automatically, sets `#api-panel-method` + `#api-panel-path` from the endpoint string ("METHOD /path"), routes `request` into `#api-pane-request` and `response` into `#api-pane-response`, and shows the Request tab by default. When `request` is null (e.g. Plaid Link onSuccess), the Request tab is hidden and only the Response tab is shown.
+
+2. **Insight step IDs** — Include the substring `insight` in Plaid API milestone step ids (e.g. `identity-match-insight`, `auth-insight`, `signal-insight`) so automated recording heuristics and humans can grep them consistently.
+
+3. **Do NOT** hand-author a `showApiPanel`, `_showApiPanelStub`, `<button class="api-panel-edge-toggle">`, `#api-response-content` div, or any `.side-panel*` / `#api-panel-endpoint` / `#api-panel-body` markup. Those are legacy shapes and will be stripped by post-panels. The v12 IDs you may reference from your own code are: `#api-response-panel`, `#api-panel-method`, `#api-panel-path`, `#api-pane-request`, `#api-pane-response`, `#api-panel-toggle`.
 
 ### C) Expand / collapse default for recording
 

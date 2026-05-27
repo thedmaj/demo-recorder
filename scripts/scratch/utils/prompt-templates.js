@@ -1603,11 +1603,18 @@ contract that the next stage knows how to fill.\n` +
     `      function _sids(){return Array.from(document.querySelectorAll('.step[data-testid]')).map(function(s){return s.dataset.testid.replace(/^step-/,'');});}\n` +
     `      function _nav(d){var ids=_sids(),cur=(window.getCurrentStep()||'').replace(/^step-/,''),idx=ids.indexOf(cur),n=ids[Math.max(0,Math.min(ids.length-1,idx+d))];if(n&&n!==cur)window.goToStep(n);}\n` +
     `      document.addEventListener('keydown',function(e){if(e.key==='ArrowRight'||e.key==='ArrowDown')_nav(1);else if(e.key==='ArrowLeft'||e.key==='ArrowUp')_nav(-1);});\n` +
-    `      document.addEventListener('click',function(e){if(e.target.closest('button,input,select,textarea,a,[role="button"],[role="link"]'))return;if(e.target.closest('.side-panel,.api-panel-edge-toggle,.card[onclick*="goToStep"]'))return;_nav(1);});\n` +
+    `      document.addEventListener('click',function(e){if(e.target.closest('button,input,select,textarea,a,[role="button"],[role="link"]'))return;if(e.target.closest('.panel,.toggle,.card[onclick*="goToStep"]'))return;_nav(1);});\n` +
     `    })();\n` +
-    `- Side panels (always present, always hidden by default — display:none):\n` +
-    `    <div id="link-events-panel"  data-testid="link-events-panel"  class="side-panel" style="display:none">\n` +
-    `    <div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none">\n` +
+    `- Side panels — do NOT hand-author these. The post-panels stage owns the\n` +
+    `  canonical Claude Design v12 API panel (section.panel + Request/Response tabs +\n` +
+    `  renderjson pretty-printer) and injects it into the HTML after build. Just leave\n` +
+    `  this placeholder before </body> and post-panels will fill it in:\n` +
+    `    <!-- API_PANEL_AND_LINK_EVENTS — injected by post-panels post-build -->\n` +
+    `  If you absolutely must reference panel IDs from your JS, the v12 stable IDs are:\n` +
+    `    #api-response-panel (the wrapping section), #api-panel-method, #api-panel-path,\n` +
+    `    #api-pane-request, #api-pane-response, #api-panel-toggle. Do NOT use the legacy\n` +
+    `    .side-panel / .side-panel-header / .side-panel-body / .api-panel-edge-toggle /\n` +
+    `    #api-response-content / #api-panel-endpoint — those were removed.\n` +
     `  link-events-panel: developer artifact — NEVER shown in any step. Always display:none.\n` +
     `ICONS — ABSOLUTE RULE:\n` +
     `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
@@ -1631,26 +1638,24 @@ contract that the next stage knows how to fill.\n` +
     `  - Choose the file by filename description (horizontal/vertical, white-background, black-background, no-text).\n` +
     `  - Use an <img> tag for Plaid logo usage. Do not hotlink Plaid logo from remote URLs.\n` +
     `  api-response-panel: the ONE AND ONLY mechanism for showing Plaid API JSON responses on endpoint steps.\n` +
-    `    - Populate it via a showApiPanel(data) call inside goToStep() for insight steps.\n` +
-    `    - Default UX: keep #api-response-panel hidden/collapsed on initial page load (display:none).\n` +
-    `    - Add one JSON panel edge-toggle button: data-testid="api-panel-toggle" plus window.toggleApiPanel(). Do not add Show JSON / Hide JSON buttons.\n` +
-    `    - On API insight/slide steps, hydrate JSON payloads but keep panel collapsed until toggled open.\n` +
-    `    - When opened, render JSON fully expanded via renderjson (set_show_to_level('all') or equivalent).\n` +
-    `    - Ensure .side-panel-body is vertically scrollable for long JSON payloads.\n` +
-    `      Also allow horizontal scrolling and dynamic panel width resizing so JSON does not bleed off-page.\n` +
-    `    - Define a global constant/config object controlling panel behavior for all builds (collapsed default + expanded JSON + auto resize).\n` +
-    `    - Use renderjson for JSON rendering:\n` +
-    `      <script src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>\n` +
-    `      and style keys/strings/numbers to match Plaid slide theme colors.\n` +
-    `    - **renderjson .disclosure CSS rule (REQUIRED — do NOT customize):**\n` +
-    `      Renderjson generates clickable \`<a class="disclosure">+</a>\` toggles next to every JSON sub-tree.\n` +
-    `      These must remain small inline text characters. DO NOT give .disclosure custom width/height/background-color/border —\n` +
-    `      doing so makes the toggles render as large solid blocks that obscure the JSON\n` +
-    `      (regression seen in 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1).\n` +
-    `      If you must style .disclosure, only set 'color' to a low-contrast text color (e.g. rgba(255,255,255,0.55)) and 'cursor:pointer'.\n` +
-    `      Any rule containing 'width:', 'height:', 'background:', 'background-color:', or 'background-image:'\n` +
-    `      on a .disclosure selector will be flagged by build-qa as a deterministic blocker.\n` +
-    `    - It slides in from the right as a glassmorphism overlay with a light-green edge chevron control that flips direction on collapse/expand.\n` +
+    `    - DO NOT hand-author the panel chrome, toggle, or renderjson glue. The post-panels stage owns ALL of it:\n` +
+    `      it emits the Claude Design v12 markup (section.panel + .panel-head + .tabs + .panel-toolbar +\n` +
+    `      .code-wrap with pre.code[data-pane="req|res"]), injects the renderjson pretty-printer shim\n` +
+    `      (fully expanded by default), wires the Request/Response tab toggle, and binds the chevron.\n` +
+    `    - YOUR ONLY JOB on the host page is to provide the per-step DATA so post-panels can hydrate the panel:\n` +
+    `      populate \`window._stepApiResponses[stepId] = { endpoint, request, response }\` (wrapped shape).\n` +
+    `      \`endpoint\` is a string like "POST /auth/get". \`request\` is the JSON request body the host would send\n` +
+    `      (set to \`null\` for browser-only callbacks like Plaid Link onSuccess). \`response\` is the JSON response body.\n` +
+    `    - Default UX: panel arrives collapsed; only the chevron is visible at the viewport right edge.\n` +
+    `    - The pre-existing \`window.populateApiPanel(endpoint, payload)\` (set up by post-panels) is\n` +
+    `      called automatically by the wrapped goToStep — do not call it yourself.\n` +
+    `    - Renderjson and its CDN <script> tag are loaded by post-panels — do NOT add either yourself.\n` +
+    `      The shim replaces window.renderjson with a fully-expanded pretty-printer; no set_show_to_level call needed.\n` +
+    `    - DO NOT style \`.disclosure\` with width/height/background. The renderjson library's "+/-" toggles\n` +
+    `      must remain inline text characters — post-panels CSS already pins this. Any rule containing\n` +
+    `      'width:', 'height:', 'background:', 'background-color:', or 'background-image:' on a .disclosure\n` +
+    `      selector will be flagged by build-qa as a deterministic blocker.\n` +
+    `    - Default visual: panel slides off-screen to the right when collapsed; chevron flips 180° on collapse.\n` +
     `    - CRITICAL: Do NOT create any inline JSON display panels inside step divs.\n` +
     `      No "insight-right", no "auth-json-panel", no "-json-panel" divs of any kind.\n` +
     `      Every step div shows ONLY the customer-facing demo screen — zero raw JSON in the layout.\n` +

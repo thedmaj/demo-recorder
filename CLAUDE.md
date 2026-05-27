@@ -274,12 +274,35 @@ Applies to all Layer demos using mobile-simulated host + Layer flows. Full produ
   };
 </script>
 
-<!-- Side panels (always include — HIDDEN by default, shown only when explicitly triggered) -->
-<!-- IMPORTANT: link-events-panel MUST be hidden by default (display:none) — never visible in recordings -->
-<!-- IMPORTANT: api-response-panel MUST be hidden by default (display:none) — on insight steps, show panel chrome with JSON body collapsed (class api-json-collapsed on #api-response-panel hides .side-panel-body until toggle) -->
-<div id="link-events-panel" data-testid="link-events-panel" class="side-panel" style="display:none">...</div>
-<div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none">...</div>
+<!-- Side panels — DO NOT hand-author. The post-panels stage emits the
+     canonical Claude Design v12 API panel (section.panel + .panel-head +
+     two-tab Request/Response + .code-wrap + renderjson pretty-printer shim)
+     and the developer-only link-events-panel. Build-app should leave this
+     placeholder before </body>; post-panels fills it in post-build: -->
+<!-- API_PANEL_AND_LINK_EVENTS — injected by post-panels post-build -->
 ```
+
+The post-panels-emitted shell uses the v12 stable IDs / classes — those are what your code should reference if you need to query the panel from JS:
+
+```html
+<section class="panel" id="api-response-panel" data-testid="api-response-panel" aria-label="Plaid API reference" style="display:none">
+  <button class="toggle" id="api-panel-toggle" data-testid="api-panel-toggle">…SVG chevron…</button>
+  <header class="panel-head">
+    <span class="eyebrow">Plaid API</span>
+    <span class="method" id="api-panel-method">POST</span>
+    <span class="path" id="api-panel-path">/auth/get</span>
+    <div class="tabs"><button id="tab-req" data-tab="req">Request</button><button id="tab-res" data-tab="res">Response</button></div>
+  </header>
+  <div class="panel-toolbar">…</div>
+  <div class="code-wrap">
+    <pre class="code is-active" id="api-pane-request"  data-pane="req"></pre>
+    <pre class="code"            id="api-pane-response" data-pane="res" hidden></pre>
+  </div>
+</section>
+<div id="link-events-panel" data-testid="link-events-panel" style="display:none"></div>
+```
+
+Default state is `.panel.is-collapsed` (panel slides off-screen right; chevron remains as a peek handle at the viewport edge). Build-qa's `prepareGlobalJsonRailForBuildQa` strips the collapsed class for screenshots. The legacy `.side-panel` / `.side-panel-header` / `.side-panel-body` / `.api-panel-edge-toggle` / `#api-response-content` / `#api-panel-endpoint` markup is removed — do not emit it.
 
 All interactive elements must have `data-testid` attributes in kebab-case matching the
 `interaction.target` field in `demo-script.json`.

@@ -98,28 +98,34 @@ describe('prompt-templates', () => {
       'Simple single-page demo app'
     );
     const fullText = result.system + JSON.stringify(result.userMessages);
-    assert.ok(fullText.includes('top response attributes that drive the outcome'),
+    // v12 API panel contract (2026-05-27): post-panels owns the chrome end-to-end.
+    // The build-app LLM should populate _stepApiResponses with the wrapped shape
+    // and let post-panels emit the section.panel + tabs + renderjson shim post-build.
+    // The legacy refs (showApiPanel, .side-panel-body, .api-panel-edge-toggle, the
+    // hand-authored toggle button, the CDN renderjson <script> tag) are intentionally
+    // gone from the prompt — those are emitted by post-panels now.
+    assert.ok(fullText.includes('top response attributes that drive the outcome') ||
+              fullText.includes('aligns with the slide claim'),
       'Prompt should require highlighting key API attributes tied to story outcomes');
-    assert.ok(fullText.includes('Signal risk drivers + recommendation'),
-      'Prompt should include concrete product-contextual attribute examples');
-    assert.ok(fullText.includes('data-testid="api-panel-toggle"'),
-      'Prompt should require JSON panel toggle control');
-    assert.ok(fullText.includes('window.toggleApiPanel()'),
-      'Prompt should require runtime toggle handler');
-    assert.ok(fullText.includes('keep panel collapsed until toggled open'),
+    assert.ok(fullText.includes('post-panels'),
+      'Prompt should tell the LLM that post-panels owns the API panel chrome');
+    assert.ok(fullText.includes('window._stepApiResponses'),
+      'Prompt should require populating window._stepApiResponses with per-step data');
+    assert.ok(fullText.includes('endpoint, request, response') ||
+              fullText.includes('{ endpoint, request, response }'),
+      'Prompt should require the wrapped {endpoint, request, response} shape');
+    assert.ok(fullText.includes('panel arrives collapsed') ||
+              fullText.includes('collapsed') ,
       'Prompt should enforce collapsed-by-default API panel behavior');
-    assert.ok(
-      fullText.includes('set_show_to_level') || fullText.includes('fully expanded via renderjson'),
-      'Prompt should require fully expanded JSON when panel opens'
-    );
-    assert.ok(fullText.includes('renderjson@1.4.0/renderjson.min.js'),
-      'Prompt should require renderjson viewer script for API payload display');
-    assert.ok(fullText.includes('side-panel-body is vertically scrollable'),
-      'Prompt should require scrollable API panel body for long JSON payloads');
-    assert.ok(fullText.includes('request/response content aligns with the slide claim'),
-      'Prompt should require request/response alignment with slide narrative');
     assert.ok(fullText.includes('HOST UI METRICS GUARDRAIL'),
       'Prompt should include host UI metrics leakage guardrail');
+    // Inverse assertions: the legacy markup should NOT be prescribed anymore.
+    // Allow it only inside "do not use" guidance (where the strings appear in
+    // a forbid-list to teach the LLM what to avoid).
+    assert.ok(!/`?\.side-panel-body`?\s+is vertically scrollable/.test(fullText),
+      'Prompt should no longer prescribe .side-panel-body styling (legacy)');
+    assert.ok(!fullText.includes('function showApiPanel(data)'),
+      'Prompt should no longer tell the LLM to implement showApiPanel()');
   });
 
   test('buildAppGenerationPrompt() includes AskBill verification for link/token/create payload syntax', () => {
