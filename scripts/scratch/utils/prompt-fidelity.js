@@ -173,17 +173,37 @@ function extractPromptEntities(promptText) {
   const declRe = /(products?\s*(?:used)?|key\s+products?|apis?|products\s+featured)\s*:\s*([^\n]+)/gi;
   let m;
   while ((m = declRe.exec(text))) {
-    const tail = String(m[2] || '').split(/[|,;/]/g).map((s) => s.trim()).filter(Boolean);
-    declared.push(...tail);
+    let tail = String(m[2] || '');
+    // Skip lines that look like code/quoted strings (e.g. `Link products array:
+    // ["transfer", "signal"]` and prose that follows). Backticks are the
+    // signal that the line is documentation about API shape, not a
+    // user-facing product list.
+    if (tail.includes('`') || tail.includes('"') || tail.includes('[') || tail.includes(']')) continue;
+    // Stop at the first sentence-ending punctuation — anything after a period
+    // is prose, not part of the comma-separated product list.
+    tail = tail.split(/[.](?=\s|$)/)[0];
+    declared.push(
+      ...tail
+        .split(/[|,;/]/g)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
   }
   const declaredText = declared.join(' ').toLowerCase();
 
   const productAdds = [];
   const addProduct = (label) => {
     const slug = normalizeProductName(label);
-    if (slug && !productAdds.find(p => p.slug === slug)) {
-      productAdds.push({ slug, label });
-    }
+    // Reject obviously-invalid product slugs — anything containing instruction
+    // verbs ("do not add"), comparative phrases ("coverage is"), or anything
+    // longer than 40 chars (real Plaid product names cap around 24 chars,
+    // e.g. "Identity Verification (IDV)"). This catches PK / documentation
+    // snippets that escaped the declared-list regex.
+    if (!slug) return;
+    if (slug.length > 40) return;
+    if (/^(?:do-not|adding-it|coverage-is|implicit-in|narrows|please|note|see-also|requires)/.test(slug)) return;
+    if (productAdds.find(p => p.slug === slug)) return;
+    productAdds.push({ slug, label });
   };
 
   // Declared list takes priority — preserve as-typed where possible.

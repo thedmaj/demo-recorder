@@ -2347,8 +2347,16 @@ function evaluateApiStoryAlignment(step) {
     {
       key: 'signal',
       storyPattern: /\bsignal|ach|return risk|fraud|risk score\b/i,
-      endpointPattern: /signal/,
-      responseHints: ['score', 'risk', 'decision', 'recommendation', 'reason'],
+      // `/transfer/authorization/create` runs Signal INTERNALLY — the verdict
+      // surfaces as `authorization.decision` + `decision_rationale.code`, not
+      // as raw Signal scores. So the endpoint counts as a valid Signal carrier
+      // when the narration anchors to Signal. (Verified via Plaid AskBill,
+      // 2026-05-26 — see inputs/products/plaid-transfer.md "Pattern A vs B".)
+      endpointPattern: /signal|\/transfer\/authorization\/create/,
+      // Either Signal scores OR an authorization decision satisfies the
+      // "Signal risk context" story. `decision` + `decision_rationale`
+      // collectively communicate the Signal verdict on the Transfer path.
+      responseHints: ['score', 'risk', 'decision', 'decision_rationale', 'recommendation', 'reason', 'authorization'],
       label: 'signal risk context',
     },
     {

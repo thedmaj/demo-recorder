@@ -358,6 +358,17 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
   window.__buildApiPanelPatchVersion = '${vTag}';
   // Preserve compatibility with code paths that check the old boolean flag.
   window.__buildApiPanelPatchApplied = true;
+  // LLM-stub defense: the build-app prompt encourages a minimal _showApiPanelStub
+  // helper but historically LLMs have emitted ones that hard-reference legacy
+  // IDs (#api-panel-edge-toggle, #api-panel-body, #api-panel-endpoint) and
+  // throw "Cannot read properties of null" the moment goToStep runs. Replace
+  // it with a safe no-op — the wrapped goToStep further down drives the panel
+  // via populateApiPanel against the canonical v12 markup.
+  if (typeof window._showApiPanelStub !== 'function' ||
+      !window._showApiPanelStub.__pipelineSafe) {
+    window._showApiPanelStub = function() { /* neutered — populateApiPanel owns the panel */ };
+    window._showApiPanelStub.__pipelineSafe = true;
+  }
   var _resp = ${respJson};
   var _eps  = ${epsJson};
   // The host JS reads \`apiData.endpoint\` for the panel label and reads
