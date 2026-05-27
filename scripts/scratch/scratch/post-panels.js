@@ -214,6 +214,85 @@ const RENDERJSON_EXPAND_LEVEL_DEFAULT = 999;
 const RENDERJSON_SCRIPT_TAG =
   '<script data-renderjson-lib src="https://cdn.jsdelivr.net/npm/renderjson@1.4.0/renderjson.min.js"></script>';
 
+// ─── renderjson shim — emitted alongside the CDN library tag ──────────────
+// renderjson@1.4.0 (minified) silently ignored `set_show_to_level('all')`
+// in late-May 2026 builds — every nested object/array stayed `display:none`
+// and "+" disclosure clicks did nothing. This shim replaces window.renderjson
+// AFTER the CDN library loads with a custom pretty-printer that emits fully
+// expanded, token-colored JSON via .tok-key / .tok-string / .tok-number /
+// .tok-bool / .tok-null / .tok-punct hooks. Existing v12 panel CSS
+// (#api-response-panel pre.code .tok-*) supplies the colors.
+// The shim returns a `<pre class="renderjson tok-rendered">` so existing
+// CSS hooks scoped to .renderjson keep working too.
+// Idempotent — re-running the script just rebinds the same shim.
+const RENDERJSON_SHIM_BLOCK = [
+  '<script id="renderjson-pretty-shim" data-version="v1">',
+  '(function() {',
+  '  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }',
+  '  function pretty(value, indent) {',
+  '    indent = indent || 0;',
+  '    var PAD = new Array(indent + 1).join("  ");',
+  '    var PAD_INNER = new Array(indent + 2).join("  ");',
+  '    if (value === null) return \'<span class="tok-null">null</span>\';',
+  '    if (value === undefined) return \'<span class="tok-null">undefined</span>\';',
+  '    if (typeof value === "boolean") return \'<span class="tok-bool">\' + value + \'</span>\';',
+  '    if (typeof value === "number") return \'<span class="tok-number">\' + value + \'</span>\';',
+  '    if (typeof value === "string") return \'<span class="tok-string">"\' + esc(value) + \'"</span>\';',
+  '    if (Array.isArray(value)) {',
+  '      if (value.length === 0) return \'<span class="tok-punct">[]</span>\';',
+  '      var arr = [];',
+  '      for (var i = 0; i < value.length; i++) arr.push(PAD_INNER + pretty(value[i], indent + 1));',
+  '      return \'<span class="tok-punct">[</span>\\n\' + arr.join(\'<span class="tok-punct">,</span>\\n\') + \'\\n\' + PAD + \'<span class="tok-punct">]</span>\';',
+  '    }',
+  '    if (typeof value === "object") {',
+  '      var keys = Object.keys(value);',
+  '      if (keys.length === 0) return \'<span class="tok-punct">{}</span>\';',
+  '      var obj = keys.map(function(k) {',
+  '        return PAD_INNER + \'<span class="tok-key">"\' + esc(k) + \'"</span><span class="tok-punct">:</span> \' + pretty(value[k], indent + 1);',
+  '      });',
+  '      return \'<span class="tok-punct">{</span>\\n\' + obj.join(\'<span class="tok-punct">,</span>\\n\') + \'\\n\' + PAD + \'<span class="tok-punct">}</span>\';',
+  '    }',
+  '    return esc(String(value));',
+  '  }',
+  '  function shim(data) {',
+  '    var pre = document.createElement("pre");',
+  '    pre.className = "renderjson tok-rendered";',
+  '    pre.style.whiteSpace = "pre";',
+  '    if (data === null || data === undefined) {',
+  '      pre.innerHTML = \'<span style="color:rgba(255,255,255,0.42);font-style:italic;">(no body)</span>\';',
+  '      return pre;',
+  '    }',
+  '    try { pre.innerHTML = pretty(data, 0); }',
+  '    catch (e) { pre.textContent = JSON.stringify(data, null, 2); }',
+  '    return pre;',
+  '  }',
+  '  shim.set_show_to_level = function() { return shim; };',
+  '  shim.set_icons = function() { return shim; };',
+  '  shim.set_max_string_length = function() { return shim; };',
+  '  shim.set_sort_objects = function() { return shim; };',
+  '  shim.set_replacer = function() { return shim; };',
+  '  shim.set_collapse_msg = function() { return shim; };',
+  '  shim.set_property_list = function() { return shim; };',
+  '  shim.set_show_by_default = function() { return shim; };',
+  '  shim.options = { show_to_level: Number.MAX_VALUE };',
+  '  window.renderjson = shim;',
+  '  // Re-trigger goToStep so the active step refreshes through the shim.',
+  '  var active = document.querySelector(".step.active");',
+  '  var id = active && active.dataset && active.dataset.testid ? active.dataset.testid.replace(/^step-/, "") : null;',
+  '  if (id && typeof window.goToStep === "function") { try { window.goToStep(id); } catch (_) {} }',
+  '})();',
+  '</script>',
+  '<style id="renderjson-pretty-shim-css">',
+  '#api-response-panel pre.code, #api-response-panel pre.renderjson { white-space: pre; }',
+  '#api-response-panel pre.code .tok-key, #api-response-panel pre.renderjson .tok-key { color: var(--tok-key, #9CDCFE); }',
+  '#api-response-panel pre.code .tok-string, #api-response-panel pre.renderjson .tok-string { color: var(--tok-string, #42F0CD); }',
+  '#api-response-panel pre.code .tok-number, #api-response-panel pre.renderjson .tok-number { color: var(--tok-number, #F5C76A); }',
+  '#api-response-panel pre.code .tok-bool, #api-response-panel pre.renderjson .tok-bool { color: var(--tok-bool, #C586C0); font-style: italic; }',
+  '#api-response-panel pre.code .tok-null, #api-response-panel pre.renderjson .tok-null { color: var(--tok-null, #C586C0); font-style: italic; }',
+  '#api-response-panel pre.code .tok-punct, #api-response-panel pre.renderjson .tok-punct { color: var(--tok-punct, rgba(255,255,255,0.46)); }',
+  '</style>'
+].join('\n');
+
 // ---------------------------------------------------------------------------
 // Pure helpers (exported for tests)
 // ---------------------------------------------------------------------------
@@ -998,6 +1077,16 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
     } else if (html.includes('</body>')) {
       html = html.replace('</body>', `${RENDERJSON_SCRIPT_TAG}\n</body>`);
       changes.addedRenderjson = true;
+    }
+  }
+
+  // Inject the renderjson pretty-printer shim immediately before </body>.
+  // Must run AFTER the CDN library tag so its `window.renderjson` override
+  // wins. Idempotent — re-running just re-binds the same shim.
+  if (hasAnyApiData && !html.includes('renderjson-pretty-shim')) {
+    if (html.includes('</body>')) {
+      html = html.replace('</body>', `${RENDERJSON_SHIM_BLOCK}\n</body>`);
+      changes.addedRenderjsonShim = true;
     }
   }
 
