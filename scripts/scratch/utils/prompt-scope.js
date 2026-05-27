@@ -135,17 +135,23 @@ function normalizeFamilyCandidate(raw) {
  */
 function parseExplicitPrimaryProductFamily(promptText) {
   const t = String(promptText || '');
-  const hm = t.match(/\*\*Primary product family\*\*:?[^\n]*/i);
+  // Supports both `**Primary product family:** slug` (colon before closing **) and
+  // `**Primary product family**: slug` / template lines with value on the next line.
+  const hm = t.match(/\*\*Primary product family(?::\*\*|\*\*:?)[^\n]*/i);
   if (!hm) return null;
   const headingLine = hm[0];
   const afterHeading = t.slice(hm.index + headingLine.length);
-  const colonParts = headingLine.split(':');
-  const sameLineRest = colonParts.length > 1 ? colonParts.slice(1).join(':').trim() : '';
-  let candidate = sameLineRest;
-  const nextLine = afterHeading.match(/^\s*\n\s*([^\n]+)/);
-  if (nextLine && nextLine[1]) {
-    const nl = nextLine[1].trim();
-    if (nl) candidate = nl;
+  let candidate = '';
+  const inlineAfterStars = headingLine.match(/\*\*Primary product family(?::\*\*|\*\*:?)\s*(.*)$/i);
+  if (inlineAfterStars && inlineAfterStars[1]) {
+    candidate = inlineAfterStars[1].trim();
+  }
+  if (!candidate || /^\(pick\b/i.test(candidate)) {
+    const nextLine = afterHeading.match(/^\s*\n\s*([^\n]+)/);
+    if (nextLine && nextLine[1]) {
+      const nl = nextLine[1].trim();
+      if (nl && !/^\(pick\b/i.test(nl)) candidate = nl;
+    }
   }
   if (!candidate) return null;
   return normalizeFamilyCandidate(candidate);

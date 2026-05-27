@@ -8,6 +8,7 @@ const {
   resolveBuildMode,
   resolveRecommendedRecovery,
   buildStepKindMap,
+  extractDashboardQaScores,
 } = require(path.join(__dirname, '../../scripts/scratch/utils/qa-tier-summary'));
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -357,5 +358,35 @@ describe('resolveRecommendedRecovery', () => {
       systemicReasons: [],
     });
     assert.equal(out, null);
+  });
+});
+
+describe('extractDashboardQaScores', () => {
+  test('splits app and slide tier averages from tierSummary', () => {
+    const scores = extractDashboardQaScores({
+      overallScore: 87,
+      tierSummary: {
+        app: { passed: false, avgScore: 87.3, stepIds: ['a', 'b'] },
+        slide: { passed: true, skipped: false, avgScore: 76, stepIds: ['s1'] },
+      },
+    });
+    assert.equal(scores.qaScore, 87);
+    assert.equal(scores.qaAppScore, 87.3);
+    assert.equal(scores.qaSlideScore, 76);
+    assert.equal(scores.qaAppPassed, false);
+    assert.equal(scores.qaSlidePassed, true);
+    assert.equal(scores.qaSlideSkipped, false);
+  });
+
+  test('app-only slide tier skipped', () => {
+    const scores = extractDashboardQaScores({
+      overallScore: 90,
+      tierSummary: {
+        app: { passed: true, avgScore: 90 },
+        slide: { passed: true, skipped: true, avgScore: null },
+      },
+    });
+    assert.equal(scores.qaSlideScore, null);
+    assert.equal(scores.qaSlideSkipped, true);
   });
 });

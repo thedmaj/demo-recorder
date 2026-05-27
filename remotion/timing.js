@@ -3,67 +3,67 @@
 
 const STEP_TIMING = [
   {
-    "id": "portfolio-dashboard",
-    "label": "My Portfolio dashboard",
-    "startFrame": 0,
-    "endFrame": 357,
-    "audioEndFrame": 327
+    "id": "opening-slide",
+    "label": "Problem: Fraud vs. Credit Loss Blindspot",
+    "startFrame": 9,
+    "endFrame": 299,
+    "audioEndFrame": 254
   },
   {
-    "id": "transfer-method-choice",
-    "label": "Manual vs Plaid choice",
-    "startFrame": 357,
-    "endFrame": 736,
-    "audioEndFrame": 706
+    "id": "tilt-onboarding",
+    "label": "Tilt Landing — Apply for Cash Advance",
+    "startFrame": 299,
+    "endFrame": 440,
+    "audioEndFrame": 425
   },
   {
-    "id": "plaid-link-launch",
-    "label": "Plaid Link",
-    "startFrame": 736,
-    "endFrame": 1265,
-    "audioEndFrame": 1042
+    "id": "plaid-link-session",
+    "label": "Plaid Link — Bank Connection",
+    "startFrame": 440,
+    "endFrame": 814,
+    "audioEndFrame": 737
   },
   {
-    "id": "connecting-status",
-    "label": "Retrieving account details",
-    "startFrame": 1265,
-    "endFrame": 1380,
-    "audioEndFrame": 1582
+    "id": "verifying-account",
+    "label": "Fraud & Repayment Scoring In Progress",
+    "startFrame": 814,
+    "endFrame": 975,
+    "audioEndFrame": 1093
   },
   {
-    "id": "holdings-full-transfer",
-    "label": "Holdings staging — full transfer",
-    "startFrame": 1380,
-    "endFrame": 2118,
-    "audioEndFrame": 1841
+    "id": "trust-index-statement-slide",
+    "label": "Plaid Trust Index — One Score, Three Fraud Vectors",
+    "startFrame": 975,
+    "endFrame": 1374,
+    "audioEndFrame": 1283
   },
   {
-    "id": "holdings-partial-transfer",
-    "label": "Partial transfer selection",
-    "startFrame": 2118,
-    "endFrame": 2516,
-    "audioEndFrame": 2479
+    "id": "underwriting-console-reveal",
+    "label": "Underwriting Console — Trust Index ACCEPT",
+    "startFrame": 1374,
+    "endFrame": 2204,
+    "audioEndFrame": 1570
   },
   {
-    "id": "acats-form-prefilled",
-    "label": "ACATS form pre-filled",
-    "startFrame": 2516,
-    "endFrame": 2570,
-    "audioEndFrame": 2863
+    "id": "advance-approved",
+    "label": "Maya Funded — $400 Instantly",
+    "startFrame": 2204,
+    "endFrame": 2470,
+    "audioEndFrame": 2456
   },
   {
-    "id": "submitting-request",
-    "label": "Submitting to DTCC",
-    "startFrame": 2570,
-    "endFrame": 3239,
-    "audioEndFrame": 2880
+    "id": "peer-benchmark-slide",
+    "label": "Peer Benchmark — Protect Portfolio Results",
+    "startFrame": 2470,
+    "endFrame": 2992,
+    "audioEndFrame": 2736
   },
   {
-    "id": "transfer-confirmed",
-    "label": "Transfer confirmed",
-    "startFrame": 3239,
-    "endFrame": 3550,
-    "audioEndFrame": 3520
+    "id": "value-summary-slide",
+    "label": "value-summary-slide",
+    "startFrame": 2992,
+    "endFrame": 32662,
+    "audioEndFrame": 3304
   }
 ];
 

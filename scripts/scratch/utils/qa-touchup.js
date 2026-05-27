@@ -463,6 +463,65 @@ function buildQaTouchupPrompt(runDir, opts = {}) {
     }
   }
 
+  // ── Required skills (tier-aware) ────────────────────────────────────────
+  // Without these skills loaded, the agent re-derives the design system from
+  // first principles and ships drift — see the iter-1→iter-3 score progression
+  // on Pi Bank v5 (placeholder→raw slide-root→full-viewport-with-inline-styles,
+  // 15→25→45 on both slide steps; would have passed first try with the skill).
+  const slideStepIds = new Set();
+  for (const s of (demoScript.steps || [])) {
+    if (s && s.id && isSlideStep(s)) slideStepIds.add(String(s.id));
+  }
+  const failingSlideCount = failing.filter((f) => slideStepIds.has(f.stepId)).length;
+  const failingAppCount   = failing.length - failingSlideCount;
+
+  // Detect "post-slides didn't run" (placeholder leakage into build-qa).
+  let postSlidesDidNotRun = false;
+  try {
+    if (artifacts && artifacts.htmlPath && fs.existsSync(artifacts.htmlPath)) {
+      const html = fs.readFileSync(artifacts.htmlPath, 'utf8');
+      postSlidesDidNotRun = /data-slide-pending\s*=\s*["']true["']/.test(html);
+    }
+  } catch (_) { /* non-fatal */ }
+
+  if (failingSlideCount > 0 || failingAppCount > 0) {
+    promptMarkdown += `---\n\n## REQUIRED SKILLS (load before any edit)\n\n`;
+    if (failingSlideCount > 0) {
+      promptMarkdown +=
+        `- **\`plaid-slide-design\`** — ${failingSlideCount} slide-tier failing step(s) detected. ` +
+        `Load this skill BEFORE editing any \`.slide-root\` block. It owns the Plaid Deck Design ` +
+        `System tokens (\`--plaid-ink-900\`, \`--plaid-teal-500\`, Manrope/Bowery/JetBrains Mono), ` +
+        `the T1–T11 template structure, the canonical slide canvas contract (1280×800, 16:10 aspect), ` +
+        `typography ceilings, chrome rules (\`chrome-logo\` placement, \`eyebrow-tag\`, one-em-per-headline ` +
+        `accent), and the showcase classes (\`.slide-stack\`, \`.sc-grid-N\`, \`.sc-stat\`). Without it, ` +
+        `hand-authored slide HTML lacks the contract CSS and scores well below threshold even when ` +
+        `content is right.\n` +
+        `- **\`plaid-workhorse-slides\`** — companion. Load alongside when the slide needs ` +
+        `Workhorse layout patterns (cards, stat grids, comparison rows) inside Plaid brand.\n`;
+    }
+    if (failingAppCount > 0) {
+      promptMarkdown +=
+        `- **DOM Contract (\`CLAUDE.md\` § Demo App DOM Contract)** — required reading for any host-step ` +
+        `edit. Covers \`data-testid\` uniqueness, step visibility rules (\`.step\` / \`.step.active\`), ` +
+        `\`window.goToStep\` / \`getCurrentStep\` shape, the JSON Panel Toggle contract, and the ` +
+        `Manual Navigation block. Editing host steps without honoring the contract creates ` +
+        `regressions the deterministic blockers catch on the next iter.\n`;
+    }
+    if (postSlidesDidNotRun) {
+      promptMarkdown += `\n> ⚠️ **\`data-slide-pending\` placeholders detected in the captured HTML.** ` +
+        `\`post-slides\` did NOT run before this build-qa pass — slide steps are still empty placeholders. ` +
+        `Two paths:\n` +
+        `> 1. **Preferred:** escalate to \`pipe slide-fix ${runId}\` — this lane runs ` +
+        `\`strip-slide-roots --steps=… → post-slides --steps=… → post-panels\` and is the canonical ` +
+        `recovery for unhydrated slides. It also re-runs build-qa scoped to slides.\n` +
+        `> 2. **Fallback:** if you must hand-edit, ALSO inline \`templates/slide-template/colors_and_type.css\` ` +
+        `and \`templates/slide-template/pipeline-slide-contract.css\` into \`<head>\` so your slide-root ` +
+        `blocks inherit the design tokens. The \`plaid-slide-design\` skill explains exactly what to inject.\n\n`;
+    } else {
+      promptMarkdown += `\n`;
+    }
+  }
+
   // ── Required reading + contracts ────────────────────────────────────────
   const tierContract =
     tierFilter === 'slide'

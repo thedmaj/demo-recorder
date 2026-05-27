@@ -42,6 +42,7 @@ test("Plaid Protect prompt defaults to ['protect_linked_bank'] (no IDV mention)"
   );
   assert.ok(p.includes('protect_linked_bank'), `expected protect_linked_bank, got: ${p.join(',')}`);
   assert.ok(!p.includes('identity_verification'), `must NOT add identity_verification unless prompt mentions IDV: ${p.join(',')}`);
+  assert.ok(!p.includes('signal'), `Trust Index-only prompt must NOT add signal: ${p.join(',')}`);
 });
 
 test('Plaid Protect prompt adds identity_verification ONLY when IDV explicitly mentioned', () => {

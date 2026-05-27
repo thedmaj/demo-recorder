@@ -11,8 +11,8 @@
 
 /* Pipeline slide canvas — 1920×1080 design, responsive cap for recording */
 .slide-root {
-  --type-mega: 180px;
-  --type-display: 110px;
+  --type-mega: 108px;
+  --type-display: 88px;
   --type-title: 72px;
   --type-subtitle: 48px;
   --type-body: 30px;
@@ -175,11 +175,16 @@
   font-size: min(var(--type-title), 84px) !important;
 }
 .slide-root[data-slide-template="T1"] .h-title {
-  font-size: min(var(--type-display), 140px) !important;
+  font-size: min(var(--type-display), 112px) !important;
 }
 .slide-root[data-slide-template="T2"] .h-title,
 .slide-root[data-slide-template="T3"] .h-title {
   font-size: min(96px, var(--type-title)) !important;
+}
+/* T5 three pillars — slide heading 20% below card-grid cap (64px → 51px) */
+.slide-root[data-slide-template="T5"] .h-title,
+.slide-root[data-workhorse-layout="three-column"] .h-title {
+  font-size: min(51px, var(--type-title, 72px)) !important;
 }
 .slide-root .slide-body-text {
   font-size: min(var(--type-body), 36px) !important;
@@ -278,11 +283,11 @@
   color: var(--plaid-teal-500);
 }
 
-/* Hero numbers (T4+) — max 180px per DECK_DESIGN_SYSTEM §1.4 */
+/* Hero numbers (T4+ / triple stat) — max 108px (25% below prior 144px cap) */
 .slide-root .hero-stat-value {
   font-family: var(--font-display);
   font-weight: 500;
-  font-size: min(var(--type-mega), 180px) !important;
+  font-size: min(var(--type-mega), 108px) !important;
   line-height: 0.9;
   letter-spacing: -0.02em;
   flex-shrink: 0;
@@ -290,7 +295,7 @@
 
 .slide-root .hero-stat-value .hero-stat-suffix,
 .slide-root .hero-stat-value span[style*="font-size"] {
-  font-size: min(90px, 0.5em) !important;
+  font-size: min(54px, 0.5em) !important;
 }
 
 /* Stackable main column — keeps footer from overlapping body */

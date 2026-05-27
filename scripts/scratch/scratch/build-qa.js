@@ -1887,9 +1887,30 @@ async function evaluateStepState(page, stepId) {
     const stepStyle = stepEl ? window.getComputedStyle(stepEl) : null;
     const apiStyle = apiPanel ? window.getComputedStyle(apiPanel) : null;
     const linkStyle = linkPanel ? window.getComputedStyle(linkPanel) : null;
-    const apiBody = document.getElementById('api-response-content');
-    const apiBodyContainer = apiPanel ? apiPanel.querySelector('.side-panel-body') : null;
-    const endpoint = document.getElementById('api-panel-endpoint');
+    // v12 panel (Claude Design "API Panel (standalone)") uses .code-wrap with
+    // two <pre.code data-pane="req"|data-pane="res"> panes. Legacy v9–v11 uses
+    // .side-panel-body + #api-response-content. Support BOTH so this scanner
+    // works against any pipeline build.
+    const v12PaneReq = document.getElementById('api-pane-request');
+    const v12PaneRes = document.getElementById('api-pane-response');
+    const v12CodeWrap = apiPanel ? apiPanel.querySelector('.code-wrap') : null;
+    const legacyApiBody = document.getElementById('api-response-content');
+    const legacyBodyContainer = apiPanel ? apiPanel.querySelector('.side-panel-body') : null;
+    let apiBody, apiBodyContainer;
+    if (v12PaneReq || v12PaneRes) {
+      // Pick whichever pane is currently active; fall back to whichever has content.
+      const activePane =
+        (v12PaneReq && v12PaneReq.classList.contains('is-active')) ? v12PaneReq :
+        (v12PaneRes && v12PaneRes.classList.contains('is-active')) ? v12PaneRes :
+        (v12PaneReq && (v12PaneReq.textContent || '').trim() ? v12PaneReq : v12PaneRes);
+      apiBody = activePane || v12PaneReq || v12PaneRes;
+      apiBodyContainer = v12CodeWrap;
+    } else {
+      apiBody = legacyApiBody;
+      apiBodyContainer = legacyBodyContainer;
+    }
+    const endpoint = document.getElementById('api-panel-path') ||
+                     document.getElementById('api-panel-endpoint');
     const apiToggle = document.querySelector('[data-testid="api-panel-toggle"], #api-panel-toggle, .api-panel-edge-toggle');
     const slideRoot = active ? active.querySelector('.slide-root') : null;
     const slideRootStyle = slideRoot ? window.getComputedStyle(slideRoot) : null;
@@ -1978,7 +1999,7 @@ async function evaluateStepState(page, stepId) {
       stepExists: Boolean(stepEl),
       stepVisible: isVisible(stepEl, stepStyle),
       apiPanelExists: Boolean(apiPanel),
-      apiPanelVisible: isVisible(apiPanel, apiStyle) && !(apiPanel && apiPanel.classList.contains('api-panel-collapsed')),
+      apiPanelVisible: isVisible(apiPanel, apiStyle) && !(apiPanel && (apiPanel.classList.contains('api-panel-collapsed') || apiPanel.classList.contains('is-collapsed'))),
       apiBodyVisible: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).display !== 'none' : false,
       apiBodyOverflowY: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).overflowY : '',
       apiJsonToggleExists: Boolean(apiToggle),
@@ -3177,17 +3198,44 @@ function buildEmbeddedLinkUxDiagnostics(step, state, demoScript) {
 async function ensureApiPanelContractForStep(page, stepId) {
   return page.evaluate((id) => {
     const panel = document.getElementById('api-response-panel');
-    const body = panel ? panel.querySelector('.side-panel-body') : null;
-    const content = document.getElementById('api-response-content');
-    if (!panel || !body) return;
+    if (!panel) return;
+    // v12: .code-wrap + .code panes. Legacy: .side-panel-body + #api-response-content.
+    const body = panel.querySelector('.code-wrap') || panel.querySelector('.side-panel-body');
+    if (!body) return;
     const responses = window._stepApiResponses || {};
     const data = responses[id];
-    if (data && content && !(content.textContent || '').trim()) {
+    if (!data) return;
+    // Prefer the wrapped { endpoint, request, response } shape; fall back to
+    // legacy { endpoint, data } and to flat response data.
+    const isWrapped = data && typeof data === 'object' && ('request' in data || 'response' in data);
+    const reqData = isWrapped ? data.request : null;
+    const resData = isWrapped
+      ? data.response
+      : (data && data.data != null ? data.data : data);
+    const paneReq = document.getElementById('api-pane-request');
+    const paneRes = document.getElementById('api-pane-response');
+    function hydrate(target, payload) {
+      if (!target || payload == null) return;
+      if ((target.textContent || '').trim().length >= 12) return;
       try {
-        const pretty = JSON.stringify(data, null, 2);
-        if (typeof window.syntaxHighlight === 'function') content.innerHTML = window.syntaxHighlight(pretty);
-        else content.textContent = pretty;
-      } catch (_) {}
+        if (window.renderjson) target.appendChild(window.renderjson(payload));
+        else target.textContent = JSON.stringify(payload, null, 2);
+      } catch (_) {
+        target.textContent = JSON.stringify(payload, null, 2);
+      }
+    }
+    if (paneReq || paneRes) {
+      hydrate(paneReq, reqData);
+      hydrate(paneRes, resData);
+    } else {
+      const content = document.getElementById('api-response-content');
+      if (content && !(content.textContent || '').trim()) {
+        try {
+          const pretty = JSON.stringify(resData, null, 2);
+          if (typeof window.syntaxHighlight === 'function') content.innerHTML = window.syntaxHighlight(pretty);
+          else content.textContent = pretty;
+        } catch (_) {}
+      }
     }
     // Intentionally do NOT mutate panel visibility/collapse state here.
     // Use prepareGlobalJsonRailForBuildQa() before screenshots when apiResponse is present.
@@ -3220,27 +3268,34 @@ async function prepareGlobalJsonRailForBuildQa(page, stepId) {
     const data = (window._stepApiResponses && window._stepApiResponses[id]) || null;
     const panel = document.getElementById('api-response-panel');
     if (!panel) return;
-    if (data && typeof window.updateApiResponse === 'function') {
+    // Drive the v12 renderer first (populateApiPanel handles both wrapped
+    // and legacy data shapes), then fall back to the legacy updateApiResponse.
+    if (data) {
       try {
-        window.updateApiResponse(data);
-      } catch (_) { /* ignore */ }
-    }
-    const content = document.getElementById('api-response-content');
-    if (data && content && !(content.textContent || '').trim()) {
-      try {
-        const pretty = JSON.stringify(data, null, 2);
-        if (typeof window.syntaxHighlight === 'function') content.innerHTML = window.syntaxHighlight(pretty);
-        else content.textContent = pretty;
+        const endpoint = data.endpoint || '';
+        const payload = (data && typeof data === 'object' && ('request' in data || 'response' in data))
+          ? { request: data.request, response: data.response }
+          : (data.data != null ? data.data : data);
+        if (typeof window.populateApiPanel === 'function') window.populateApiPanel(endpoint, payload);
+        else if (typeof window.updateApiResponse === 'function') window.updateApiResponse(data);
       } catch (_) { /* ignore */ }
     }
     panel.style.removeProperty('display');
+    panel.style.display = 'flex';
     panel.classList.add('visible');
     panel.classList.remove('api-json-collapsed');
     panel.classList.remove('api-panel-collapsed');
-    const body = panel.querySelector('.side-panel-body');
-    if (body) {
-      body.style.removeProperty('display');
-      body.style.display = 'block';
+    panel.classList.remove('is-collapsed');  // v12 collapsed state
+    // v12 .code-wrap / legacy .side-panel-body — make sure body is visible.
+    const codeWrap = panel.querySelector('.code-wrap');
+    const legacyBody = panel.querySelector('.side-panel-body');
+    if (codeWrap) {
+      codeWrap.style.removeProperty('display');
+      codeWrap.style.display = 'block';
+    }
+    if (legacyBody) {
+      legacyBody.style.removeProperty('display');
+      legacyBody.style.display = 'block';
     }
   }, stepId);
 }
@@ -3332,8 +3387,8 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
           stepId: step.id,
           category: 'missing-panel',
           severity: 'critical',
-          issue: `API panel #api-response-content is empty or too short (${state.apiContentLength} chars; need sample JSON).`,
-          suggestion: 'Hydrate from demo-script apiResponse via window._stepApiResponses and updateApiResponse() / renderjson.',
+          issue: `API panel content pane is empty or too short (${state.apiContentLength} chars; need sample JSON in #api-pane-request/#api-pane-response or #api-response-content).`,
+          suggestion: 'Hydrate the active pane from demo-script apiResponse via window._stepApiResponses and populateApiPanel().',
         });
       }
       // If panel body is visible, it must contain JSON and support scrolling.

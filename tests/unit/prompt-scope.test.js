@@ -122,6 +122,14 @@ describe('prompt-scope', () => {
     assert.equal(detectProductSlugFromPrompt(p), 'plaid-protect');
   });
 
+  test('**Primary product family:** inline slug wins over cash-advance keywords', () => {
+    const p =
+      '**Primary product family:** `plaid_protect`\n\n' +
+      'Cash Advance / EWA underwriting funnel with Trust Index at bank link.';
+    assert.equal(getEffectiveProductFamily(p), 'plaid_protect');
+    assert.equal(detectProductSlugFromPrompt(p), 'plaid-protect');
+  });
+
   test('"Plaid Protect" keyword without explicit family routes to plaid-protect', () => {
     const p = 'Onboarding demo featuring Plaid Protect: identity, signal, monitor in one decision.';
     assert.equal(getEffectiveProductFamily(p), 'plaid_protect');

@@ -16,8 +16,9 @@ use_cases:
   - "recurring-ach-debit"
   - "fund-and-protect-bundle"
 last_human_review: ""
-last_ai_update: "2026-05-26T00:00:00Z"
+last_ai_update: "2026-05-26T20:30:00Z"
 last_vp_research: "2026-05-26"
+last_askbill_verification: "2026-05-26T20:30:00Z"
 needs_review: true
 approved: false
 version: 1
@@ -109,8 +110,10 @@ Feature Transfer in demos where the persona is funding a fintech account, disbur
 **Beat 3 — Authorization** *(pattern A, production-realistic default):*
 > "Plaid authorizes the debit — Signal clears the transfer, low return risk, approved." (13 words)
 
-**Beat 3 alternative — Explicit Signal score** *(pattern B, when a /signal/evaluate panel is shown):*
+**Beat 3 alternative — Explicit Signal score** *(pattern B, only when a separate /signal/evaluate panel is shown on its own step):*
 > "Signal evaluates the transfer in real time — score of 12, low return risk — ACCEPT." (15 words)
+
+> ⚠️ **API shape boundary (verified via AskBill, 2026-05-26):** `/transfer/authorization/create` does NOT expose raw Signal scores in its response. Pattern A panels show `authorization.decision` + `decision_rationale` only; the Signal verdict is reflected in those fields (rationale code becomes `PAYMENT_RISK` / `RISK_SCORE_EXCEEDED_THRESHOLD` on a Signal-driven decline). Pattern B is a *separate* `/signal/evaluate` panel on a *separate* demo step — never a nested `signal: {…}` block inside an authorization response. Demos that show numeric Signal scores require Pattern B.
 
 **Beat 4 — Transfer initiation:**
 > "Transfer initiates: same-day ACH, $100, pending. Jenna's funds are on their way." (13 words)
@@ -162,18 +165,30 @@ Feature Transfer in demos where the persona is funding a fintech account, disbur
 
 ### `/transfer/authorization/create` decision values
 - `approved` — proceed to `/transfer/create`
-- `declined` — do NOT call `/transfer/create`; rationale codes include `NSF`, `RISK`, `TRANSFER_LIMIT_REACHED`
+- `declined` — do NOT call `/transfer/create`; see rationale codes below
 - `user_action_required` — relaunch Plaid Link with `transfer.authorization_id` for re-auth
 
-### `decision_rationale.code` (when present on approved)
-- `MANUALLY_VERIFIED_ITEM`, `ITEM_LOGIN_REQUIRED`, `MIGRATED_ACCOUNT_ITEM`, `ERROR` — Plaid couldn't run full risk check; add extra diligence client-side
+### `decision_rationale.code` (verified via AskBill, 2026-05-26)
+| Code | Decision | Meaning |
+|---|---|---|
+| `MANUALLY_VERIFIED_ITEM` | approved | Account was manually verified; Signal could not run. Rationale is populated even though approved. |
+| `ITEM_LOGIN_REQUIRED` | declined | Credentials expired — re-auth via Link before retry. |
+| `MIGRATED_ACCOUNT_ITEM` | approved | Item was migrated; partial Signal coverage. |
+| `PAYMENT_RISK` | declined | Risk evaluation declined the transfer. **This is the rationale code surfaced when Signal's internal evaluation flags the transfer.** |
+| `NSF` | declined | Insufficient-funds signal. |
+| `RISK_SCORE_EXCEEDED_THRESHOLD` | declined | Signal score exceeded the customer-configured risk threshold. |
+| `TRANSFER_LIMIT_REACHED` | declined | Customer-configured transfer ceiling hit. |
+| `ERROR` | mixed | Plaid couldn't run full risk check; add extra diligence client-side. |
+| `null` | approved | Clean approval — no special rationale needed (default for the happy-path demo). |
 
 ### `/transfer/authorization/create` response — fields to surface
 - `authorization.id` — always show
+- `authorization.created` — ISO 8601 timestamp
 - `authorization.decision` — `approved` (happy path) | `declined` | `user_action_required`
-- `authorization.decision_rationale` — `null` on clean approve; on decline always populated with `{ code, description }`
-- `authorization.proposed_transfer` — echoes the request parameters
-- Note: authorization response does **NOT** carry standalone Signal payload (`scores.*`, `ruleset.result`, `core_attributes`, `reason_codes[]`, `warnings[]`). Those exist only on a standalone `/signal/evaluate` response (pattern B only).
+- `authorization.decision_rationale` — `null` on clean approve; on decline (or special approve cases) populated with `{ code, description }`
+- `authorization.proposed_transfer` — echoes the request parameters (type, network, ach_class, amount, iso_currency_code, account_id, funding_account_id, user, user_present, origination_account_id)
+- `request_id` — always present
+- **NOT in the response:** the authorization endpoint does NOT carry a standalone Signal payload (`scores.*`, `ruleset.result`, `core_attributes`, `reason_codes[]`, `warnings[]`). Signal runs internally inside the authorization engine — its verdict is communicated via `decision` + `decision_rationale.code`. Numeric scores live only on a standalone `/signal/evaluate` response (pattern B), which is a separate API call and must be a separate demo step / separate API panel.
 
 ### `/transfer/create` response — fields to surface in API panel
 - `transfer.id` — always show

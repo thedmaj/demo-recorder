@@ -45,7 +45,7 @@ Pipeline-generated **slide** steps (`sceneType: "slide"`, `.slide-root`) follow 
 - **Plaid logo — hard contract (build-QA blocker):** Never invent a logo. Do **not** draw SVG marks, four-dot icon grids, rounded-square icons, or render the word "PLAID" as HTML/CSS text. Use **only** the bundled horizontal wordmarks under `assets/logos/` via `<img class="chrome-logo" src="assets/logos/plaid-horizontal-*.png" alt="">`, **or omit** `.chrome-logo` entirely (T1 title slides may omit chrome). Do **not** use `plaid-icon-white.png` or legacy `plaid-logo-*` paths in slide chrome.
 - **Never** use `display: inline-block` inside `.slide-root` — flex/grid + `gap` only.
 - Body text **≥ 24px** (mockup chrome excepted — see build-QA allowlist).
-- **Typography ceilings:** `.h-title` max **72px** (T3 **96px**, T1 **140px**); `.hero-stat-value` max **180px**; body max **36px**. Prefer `slide.css` classes — post-slides runs `normalize-slide-typography.js` to cap LLM oversizing.
+- **Typography ceilings:** `.h-title` max **72px** (T3 **96px**, T1 **112px**); `.hero-stat-value` / triple stat max **108px** (clamp max **77px**); body max **36px**. Prefer `slide.css` classes — post-slides runs `normalize-slide-typography.js` to cap LLM oversizing.
 - Wrap slide body in `.slide-stack`. **Do not** add `.chrome-foot` — pipeline slides omit footers to prevent overlap with body copy.
 - Partnership labels (`Plaid × {customer}`, product names) belong in `.eyebrow-tag` only.
 

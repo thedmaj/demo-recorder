@@ -48,7 +48,8 @@ const OUT_FILE        = path.join(OUT_DIR, 'demo-script.json');
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const MODEL          = 'claude-opus-4-6';
+const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+const MODEL          = process.env.SCRIPT_MODEL || OPUS_PRIMARY;
 const BUDGET_TOKENS  = 8000;
 const MAX_TOKENS     = 16000;
 
@@ -902,10 +903,12 @@ function validateDemoScript(demoScript, opts = {}) {
   });
 
   if (productFamily === 'funding') {
-    if (indexByEndpoint.identity != null && indexByEndpoint.auth != null &&
-        indexByEndpoint.identity > indexByEndpoint.auth) {
-      errors.push('Identity Match must appear before Auth in the demo step order.');
-    }
+    // Note: the prior "Identity Match must appear before Auth" rule was lifted
+    // (2026-05-26). The canonical production order is Auth → Identity Match →
+    // Signal/Transfer because Signal and Transfer authorization both need the
+    // `account_id` returned by Auth. Demos may surface Identity Match either
+    // before or after Auth depending on the host-app narrative; the script's
+    // natural order wins.
     if (indexByEndpoint.auth != null && indexByEndpoint.signal != null &&
         indexByEndpoint.auth > indexByEndpoint.signal) {
       errors.push('Auth must appear before Signal in the demo step order.');
@@ -1119,7 +1122,7 @@ async function main() {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 300000 });
 
-  console.log('[Script] Calling Claude (claude-opus-4-7 with extended thinking + structured output)...');
+  console.log(`[Script] Calling Claude (${MODEL} with extended thinking + structured output)...`);
 
   // App-only runs: the prompt explicitly forbids insight/slide steps so the
   // generator stays in host-app territory. The manifest is the single source
@@ -1173,13 +1176,15 @@ async function main() {
     messagesWithToolDirective[messagesWithToolDirective.length - 1] = { ...last, content: lastContent };
   }
 
+  // Opus 4.7 removed extended thinking (`type: "enabled"` + `budget_tokens`)
+  // — must use adaptive thinking + output_config.effort. Script generation is
+  // intelligence-sensitive (structured output with multi-constraint per beat),
+  // so default to `high` effort; `xhigh` for stricter quality at higher cost.
   const response = await client.messages.create({
     model:      MODEL,
     max_tokens: MAX_TOKENS,
-    thinking: {
-      type: 'enabled',
-      budget_tokens: BUDGET_TOKENS,
-    },
+    thinking:   { type: 'adaptive' },
+    output_config: { effort: process.env.SCRIPT_EFFORT || 'high' },
     system:      systemPrompt,
     messages:    messagesWithToolDirective,
     tools:       [GENERATE_DEMO_SCRIPT_TOOL],
@@ -1529,8 +1534,74 @@ async function main() {
   console.log(`[Script] Generated: ${stepCount} steps, ~${estimatedSeconds.toFixed(0)}s estimated`);
   console.log(`[Script] Written: out/demo-script.json`);
 
-  // Pause for human review unless auto-approved
-  if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
+  // ── Post-script agent handoff ──────────────────────────────────────────────
+  // When PIPE_AGENT_HANDOFF=true, write a high-level summary + structured
+  // options into the run dir's handoffs/ subdirectory, then block until the
+  // operator resolves it via the /pipe-handoff slash command in Claude Code
+  // (or by writing recovery-plan.json directly). Falls through to the
+  // legacy terminal-pause path otherwise.
+  const { pauseForHandoff, isHandoffEnabled } = require('../utils/pipeline-handoff');
+  const { buildScriptSummary } = require('../utils/script-summary');
+  if (isHandoffEnabled()) {
+    const summaryMd = buildScriptSummary(demoScript, {
+      runId: path.basename(OUT_DIR),
+      productFamily,
+      buildMode: stepKindCounts.slide > 0 ? 'app+slides' : 'app-only',
+    });
+    const plan = await pauseForHandoff({
+      runDir: OUT_DIR,
+      checkpoint: 'post-script',
+      summaryMarkdown: summaryMd,
+      options: [
+        {
+          id: 'confirm',
+          label: 'Confirm — proceed to build',
+          description: 'Continue the pipeline through brand-extract, build, and build-qa.',
+          action: 'continue',
+          recommended: true,
+        },
+        {
+          id: 'modify',
+          label: 'Modify — describe changes',
+          description: 'Provide free-text instructions; appended to inputs/prompt.txt and the script stage is re-run.',
+          action: 'modify',
+        },
+        {
+          id: 'abort',
+          label: 'Abort — stop the pipeline',
+          description: 'Exit; demo-script.json stays on disk for inspection.',
+          action: 'abort',
+        },
+      ],
+    });
+    if (plan.action === 'abort') {
+      console.error(`[Script] Handoff: operator chose abort — halting pipeline. (source=${plan.source})`);
+      process.exit(1);
+    }
+    if (plan.action === 'modify') {
+      const instructions = (plan.instructions || '').trim();
+      if (!instructions) {
+        console.error('[Script] Handoff: modify chosen but no instructions provided — aborting.');
+        process.exit(1);
+      }
+      // Append the operator's instructions to inputs/prompt.txt under a marked
+      // block so a subsequent script-stage re-run incorporates them. We exit
+      // with a non-zero code so the orchestrator surfaces the halt; the
+      // operator (or the agent) then re-invokes `npm run pipe -- stage script`.
+      const promptPath = path.join(__dirname, '..', '..', '..', 'inputs', 'prompt.txt');
+      try {
+        const stamp = new Date().toISOString();
+        const block = `\n\n### Operator modifications (${stamp})\n${instructions}\n`;
+        fs.appendFileSync(promptPath, block, 'utf8');
+        console.log(`[Script] Handoff: appended modify instructions to inputs/prompt.txt.`);
+        console.log(`[Script] Handoff: re-run with \`npm run pipe -- stage script ${path.basename(OUT_DIR)}\` (or restart from --from=script) to regenerate.`);
+      } catch (err) {
+        console.error(`[Script] Could not append to prompt.txt: ${err.message}`);
+      }
+      process.exit(75); // EX_TEMPFAIL: "user action required, retry"
+    }
+    console.log(`[Script] Handoff: confirmed (source=${plan.source}) — proceeding to build-app`);
+  } else if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {
     await waitForApproval(
       '\nReview out/demo-script.json and press ENTER to continue (CTRL+C to abort and edit)...'
     );

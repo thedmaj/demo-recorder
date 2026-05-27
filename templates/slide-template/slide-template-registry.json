@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-05-25T19:10:00.643Z",
+    "generatedAt": "2026-05-26T02:54:23.463Z",
     "source": "templates/slide-template/showcase/index.html",
     "templateCount": 20
   },
@@ -553,8 +553,8 @@
       "slideTemplate": "T3",
       "workhorseLayout": "code",
       "backgroundClass": null,
-      "whenToUse": "Show one API call or one component snippet — the developer experience proof point. Keep to 10–15 lines max.",
-      "avoidWhen": "Whole files (post a gist instead). Or runtime libraries (highlight.js is blocked by build-QA — use pre/code with monospace).",
+      "whenToUse": "Show one API call or one component snippet — the developer experience proof point. Split layout: headline + body on the left, monospace pre on the right (10–15 lines max).",
+      "avoidWhen": "Stacked code under the title (use left/right split). Whole files (post a gist instead). Runtime libraries (highlight.js is blocked by build-QA — use pre with monospace).",
       "signals": {
         "keywords": [
           "timeline",

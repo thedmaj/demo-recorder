@@ -143,15 +143,18 @@ async function segmentWithClaude(videoAnalysis, productResearch) {
     `  ]\n` +
     `}`;
 
-  console.log('[segment] Calling claude-opus-4-7 with extended thinking...');
+  const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+  const segmentModel = process.env.SEGMENT_MODEL || OPUS_PRIMARY;
+  console.log(`[segment] Calling ${segmentModel} with extended thinking...`);
 
+  // Opus 4.7 removed extended thinking — use adaptive thinking + effort.
+  // Video segmentation is mid-difficulty; `medium` keeps cost reasonable
+  // while leaving room for the model to reason about scene boundaries.
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
+    model: segmentModel,
     max_tokens: 16000,
-    thinking: {
-      type: 'enabled',
-      budget_tokens: 8000,
-    },
+    thinking: { type: 'adaptive' },
+    output_config: { effort: process.env.SEGMENT_EFFORT || 'medium' },
     messages: [{ role: 'user', content: userText }],
   });
 

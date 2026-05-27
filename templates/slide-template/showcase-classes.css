@@ -57,7 +57,7 @@
 
 .sc-stat {
   font-family: var(--font-display);
-  font-size: clamp(56px, 7vw, 128px);
+  font-size: clamp(34px, 4.2vw, 77px);
   line-height: 1;
   font-weight: 500;
   color: var(--plaid-white);
@@ -100,6 +100,82 @@
   display: flex;
   gap: 24px;
   align-items: stretch;
+}
+
+/* Code Window (workhorse layout: code) — keep in sync with pipeline-slide-contract.css */
+.slide-root[data-workhorse-layout="code"] .h-title {
+  font-size: clamp(26px, 2.8vw, 44px) !important;
+  line-height: 1.12 !important;
+  margin-bottom: 0 !important;
+  max-width: 100% !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.slide-root[data-workhorse-layout="code"] .slide-body-text {
+  font-size: clamp(24px, 1.5vw, 28px) !important;
+  line-height: 1.45 !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  overflow-wrap: anywhere;
+}
+
+.slide-root[data-workhorse-layout="code"] .slide-stack.sc-code-split,
+.slide-root[data-workhorse-layout="code"] .slide-stack:has(.sc-code-pane) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 28px;
+  flex: 1;
+  min-height: 0;
+}
+
+.slide-root[data-workhorse-layout="code"] .sc-code-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.slide-root[data-workhorse-layout="code"] .sc-code-pane,
+.slide-root[data-workhorse-layout="code"] .slide-code-block {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-root[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root[data-workhorse-layout="code"] .slide-code-block pre {
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 0;
+  margin: 0;
+  padding: 24px 28px;
+  border-radius: 12px;
+  background: #021627;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--font-mono);
+  font-size: clamp(15px, 0.95vw, 18px);
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.88);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: none;
+}
+
+.slide-root.light[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root.cream[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root.holo[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root.light[data-workhorse-layout="code"] .slide-code-block pre,
+.slide-root.cream[data-workhorse-layout="code"] .slide-code-block pre,
+.slide-root.holo[data-workhorse-layout="code"] .slide-code-block pre {
+  border-color: rgba(2, 37, 68, 0.12);
 }
 
 /* Pipeline floor: ≥ 24px on .slide-root body text. */

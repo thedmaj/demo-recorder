@@ -54,7 +54,8 @@ const COMPOSITION_FILES = {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const TOUCHUP_MODEL      = 'claude-opus-4-7';
+const { OPUS_PRIMARY } = require('./utils/anthropic-models');
+const TOUCHUP_MODEL      = process.env.TOUCHUP_MODEL || OPUS_PRIMARY;
 const TOUCHUP_MAX_TOKENS = 8192;
 
 // ── CLI arg parsing ───────────────────────────────────────────────────────────

@@ -152,8 +152,9 @@ async function analyzeFrameBatch(framePaths, startIndex) {
       `[{ "frameIndex": <number>, "description": "<string>" }, ...]`,
   });
 
+  const { OPUS_PRIMARY } = require('../utils/anthropic-models');
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
+    model: process.env.ANALYZE_VIDEO_MODEL || OPUS_PRIMARY,
     max_tokens: 1024,
     messages: [{ role: 'user', content: contentBlocks }],
   });

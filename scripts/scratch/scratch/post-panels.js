@@ -42,10 +42,44 @@ const PIPELINE_SLIDE_CONTRACT_PATH = path.join(
   __dirname,
   '../../../templates/slide-template/pipeline-slide-contract.css'
 );
+const PIPELINE_SLIDE_COLORS_PATH = path.join(
+  __dirname,
+  '../../../templates/slide-template/colors_and_type.css'
+);
+const PIPELINE_SLIDE_BASE_PATH = path.join(
+  __dirname,
+  '../../../templates/slide-template/slide.css'
+);
 
-/** Mark known host-only chrome nodes so slide mode can hide them. */
+/**
+ * Mark host-only chrome nodes so slide mode can hide them via
+ * `body.pipeline-slide-active .host-app-chrome { display: none }`.
+ *
+ * Two matchers run in sequence:
+ *
+ *   1. **Class-based** — historical Plaid-curated demo class names
+ *      (`fdic-bar`, `host-nav`, `sub-nav`, `host-footer`). Kept for
+ *      backward compat with builds that use them.
+ *
+ *   2. **Element-tag** — every top-level `<nav>` / `<header>` / `<footer>`
+ *      element in the document, since by the canonical slide DOM shape
+ *      slides use `<div class="slide-root">` and never these semantic
+ *      tags. Adds `host-app-chrome` to the class attribute (creating
+ *      one if absent). This is what catches Pi-Bank-class builds where
+ *      the LLM emitted `<nav class="nav">` / `<footer class="footer">`
+ *      without honoring the documented `host-nav` / `host-footer`
+ *      naming.
+ *
+ *   3. **Generic class aliases** — `.nav`, `.navbar`, `.topbar`,
+ *      `.top-bar`, `.header-bar`, `.app-nav`, `.top-nav`, `.bottom-nav`,
+ *      `.footer`, `.bottom-bar`. Belt-and-suspenders for elements that
+ *      use a `<div>` wrapper with one of these classes instead of the
+ *      semantic tag.
+ */
 function markHostAppChrome(html) {
   if (!html || typeof html !== 'string') return html;
+
+  // 1) Curated class names
   for (const cls of ['fdic-bar', 'host-nav', 'sub-nav', 'host-footer']) {
     const re = new RegExp(`class="([^"]*\\b${cls}\\b[^"]*)"`, 'g');
     html = html.replace(re, (m, classes) => {
@@ -53,22 +87,65 @@ function markHostAppChrome(html) {
       return `class="${classes} host-app-chrome"`;
     });
   }
+
+  // 2) Semantic element tags (top-level chrome by definition)
+  //    Tag the opening tag. If it has no class attribute, add one.
+  //    If it has one without host-app-chrome, append.
+  for (const tag of ['nav', 'header', 'footer']) {
+    // First pass: add to existing class attribute
+    const reWithClass = new RegExp(`<${tag}(\\s[^>]*?)?\\sclass="([^"]*)"`, 'gi');
+    html = html.replace(reWithClass, (m, beforeAttrs, classes) => {
+      if (classes.includes('host-app-chrome')) return m;
+      return `<${tag}${beforeAttrs || ''} class="${classes} host-app-chrome"`;
+    });
+    // Second pass: add class attribute to bare element (no class= present)
+    const reNoClass = new RegExp(`<${tag}((?:\\s[^>]*?)?)>`, 'gi');
+    html = html.replace(reNoClass, (m, attrs) => {
+      // Skip if we already added a class attribute above
+      if (/\sclass="/.test(attrs)) return m;
+      return `<${tag}${attrs} class="host-app-chrome">`;
+    });
+  }
+
+  // 3) Generic chrome class aliases the LLM frequently emits
+  for (const cls of ['nav', 'navbar', 'topbar', 'top-bar', 'header-bar',
+                     'app-nav', 'top-nav', 'bottom-nav', 'footer', 'bottom-bar']) {
+    const re = new RegExp(`class="([^"]*\\b${cls}\\b[^"]*)"`, 'g');
+    html = html.replace(re, (m, classes) => {
+      if (classes.includes('host-app-chrome')) return m;
+      return `class="${classes} host-app-chrome"`;
+    });
+  }
+
   return html;
 }
 
-/** Refresh injected contract CSS when templates/slide-template/pipeline-slide-contract.css changes. */
+/**
+ * Refresh the injected `<style data-pipeline-slide-contract>` block with the
+ * **full** Plaid Deck Design System CSS — colors/type tokens, base slide.css
+ * (scoped under `.slide-root`), and the canvas-size + chrome-hide contract.
+ *
+ * Why all three: the host scratch-app does NOT link slide.css /
+ * colors_and_type.css as `<link>` tags (they live in templates/slide-template/
+ * only). Without inlining them, slides would render on a white page with no
+ * design tokens — pipeline-slide-contract.css is structural-only and assumes
+ * the other two are loaded. Catching the build-app variant where the LLM
+ * forgot to copy these CSS files into scratch-app/assets/.
+ */
 function refreshPipelineSlideContractInHtml(html) {
   if (!html || !html.includes('data-pipeline-slide-contract=')) return html;
-  let contract = '';
-  try {
-    contract = fs.readFileSync(PIPELINE_SLIDE_CONTRACT_PATH, 'utf8').trim();
-  } catch (_) {
-    return html;
+  const parts = [];
+  for (const p of [PIPELINE_SLIDE_COLORS_PATH, PIPELINE_SLIDE_BASE_PATH, PIPELINE_SLIDE_CONTRACT_PATH]) {
+    try {
+      const css = fs.readFileSync(p, 'utf8').trim();
+      if (css) parts.push(`/* === ${path.basename(p)} === */\n${css}`);
+    } catch (_) { /* skip missing files */ }
   }
-  if (!contract) return html;
+  if (parts.length === 0) return html;
+  const combined = parts.join('\n\n');
   return html.replace(
     /<style data-pipeline-slide-contract="v1">[\s\S]*?<\/style>/,
-    `<style data-pipeline-slide-contract="v1">\n${contract}\n</style>`
+    `<style data-pipeline-slide-contract="v1">\n${combined}\n</style>`
   );
 }
 
@@ -127,7 +204,8 @@ const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-i
 const { annotateScriptWithStepKinds, isSlideStep } = require('../utils/step-kind');
 const { buildPanelPayloadPrompt } = require('../utils/prompt-templates');
 
-const PANEL_LLM_MODEL = process.env.POST_PANELS_MODEL || 'claude-opus-4-7';
+const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+const PANEL_LLM_MODEL = process.env.POST_PANELS_MODEL || OPUS_PRIMARY;
 const PANEL_LLM_MAX_TOKENS = Number(process.env.POST_PANELS_MAX_TOKENS || 2000);
 const SPARSE_PAYLOAD_MIN_KEYS = Number(process.env.POST_PANELS_MIN_KEYS || 3);
 
@@ -282,7 +360,25 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
   window.__buildApiPanelPatchApplied = true;
   var _resp = ${respJson};
   var _eps  = ${epsJson};
-  window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _resp);
+  // The host JS reads \`apiData.endpoint\` for the panel label and reads
+  // request/response panes from EITHER \`apiData.request\` + \`apiData.response\`
+  // (v10 — two-tab panel) OR \`apiData.data\` (legacy — single-pane fallback).
+  // We emit the v10 wrapped shape; the renderer detects which keys are
+  // present and falls back automatically. _resp is shaped as either:
+  //   • { request, response } — preferred (LLM emits both)
+  //   • <flat response body>  — legacy (response-only)
+  // We normalize to the v10 wrapped form below.
+  var _wrappedResp = {};
+  Object.keys(_resp).forEach(function(k) {
+    var v = _resp[k];
+    if (v && typeof v === 'object' && ('request' in v || 'response' in v)) {
+      _wrappedResp[k] = { endpoint: _eps[k] || '', request: v.request || null, response: v.response || null };
+    } else {
+      // Legacy flat shape — treat as response-only.
+      _wrappedResp[k] = { endpoint: _eps[k] || '', request: null, response: v };
+    }
+  });
+  window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _wrappedResp);
   window.__API_PANEL_CONFIG = Object.assign({
     collapsedByDefault: true,
     jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
@@ -294,126 +390,128 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     window.__apiPanelUserOpen = !window.__API_PANEL_CONFIG.collapsedByDefault;
   }
   function ensureEdgeToggleStyles() {
-    // Re-inject styles when the version changes so the v3 styles override the
-    // older small-chevron design from v1/v2. Remove the old style block first.
+    // Claude Design v12 "API Panel (standalone)" CSS — re-injected on every
+    // goToStep so even if a build-qa run rewrites the head <style> block,
+    // the v12 chrome remains active. ID-scoped + !important to beat any
+    // LLM-emitted .panel rule that might exist in the host stylesheet.
     var existing = document.getElementById('api-panel-edge-toggle-style');
     if (existing && existing.getAttribute('data-version') === '${vTag}') return;
     if (existing) { try { existing.remove(); } catch (_) {} }
     var st = document.createElement('style');
     st.id = 'api-panel-edge-toggle-style';
     st.setAttribute('data-version', '${vTag}');
-    // v3 styling: pill-shaped, labeled toggle attached to the panel's outer
-    // edge. Visible at a glance, clearly clickable, with a readable label so
-    // build-qa / vision QA recognizes it as an affordance. Uses very high
-    // specificity (#api-response-panel scope) and !important on layout
-    // properties so LLM-generated host CSS cannot accidentally hide it.
     st.textContent = [
-      // Base panel rules — re-asserted at high specificity so they win over
-      // any LLM-generated CSS that may have set overflow:hidden or width
-      // constraints on .side-panel.
-      '#api-response-panel{overflow:visible !important;z-index:2100 !important;background:rgba(2,37,68,0.96) !important;border-left:1px solid rgba(66,240,205,0.18) !important;}',
-      '#api-response-panel .side-panel-header{color:var(--plaid-teal-500,#42F0CD) !important;border-bottom:1px solid rgba(66,240,205,0.18) !important;}',
-      '#api-response-panel.api-panel-collapsed{width:48px !important;min-width:48px !important;max-width:48px !important;}',
-      '#api-response-panel.api-panel-collapsed .side-panel-header,#api-response-panel.api-panel-collapsed .side-panel-body{display:none !important;}',
-      // Edge toggle — vertically centered on the panel, icon-only. The arrow
-      // points in the direction the panel will MOVE on click (right when open
-      // because the panel will collapse rightward; left when closed because
-      // the panel will expand leftward). Anchored to the panel\\'s left edge so
-      // it sits visually attached to the panel regardless of viewport width.
-      '#api-response-panel .api-panel-edge-toggle{',
-      '  position:absolute !important;',
-      '  left:-36px !important;',
-      '  top:50% !important;',
-      '  transform:translateY(-50%) !important;',
-      '  display:inline-flex !important;',
-      '  align-items:center;justify-content:center;',
-      '  width:36px;height:60px;',
-      '  padding:0;',
-      '  border-radius:10px 0 0 10px;',
-      '  border:1px solid rgba(66,240,205,0.6);border-right:none;',
-      '  background:rgba(66,240,205,0.18);',
-      '  color:var(--plaid-teal-400,#71FBE3);',
-      '  cursor:pointer;',
-      '  box-shadow:0 8px 24px rgba(0,0,0,0.28);',
-      '  z-index:2001;',
-      '  user-select:none;',
-      '  transition:background 0.16s ease,color 0.16s ease;',
+      // Tokens — Claude Design palette (#9CDCFE keys, Plaid mint strings, etc.)
+      '#api-response-panel.panel,#api-response-panel{',
+      '  --panel-bg:#022544;--panel-bg-2:#021B33;',
+      '  --panel-border:rgba(255,255,255,0.08);',
+      '  --tok-key:#9CDCFE;--tok-string:#42F0CD;',
+      '  --tok-number:#F5C76A;--tok-bool:#C586C0;--tok-null:#C586C0;',
+      '  --tok-punct:rgba(255,255,255,0.46);',
       '}',
-      '#api-response-panel .api-panel-edge-toggle:hover{background:rgba(66,240,205,0.32);color:var(--plaid-teal-500,#42F0CD);}',
-      '#api-response-panel .api-panel-edge-toggle:focus-visible{outline:2px solid var(--plaid-teal-500,#42F0CD);outline-offset:2px;}',
-      // Directional chevron. CSS-only — drawn from two borders rotated to form
-      // an arrowhead. is-open class signals the panel is currently expanded;
-      // in that state, a click will collapse (panel moves right) so the chevron
-      // points right. Otherwise it points left (panel will expand leftward).
-      '#api-response-panel .api-panel-toggle-icon{',
-      '  width:10px;height:10px;',
-      '  border-top:2px solid currentColor;border-right:2px solid currentColor;',
-      '  transform:rotate(-135deg);', // default: points LEFT (collapsed state)
-      '  display:inline-block;',
-      '  transition:transform 0.18s ease;',
+      // Panel chrome
+      '#api-response-panel.panel,section#api-response-panel{',
+      '  position:fixed !important;top:0 !important;right:0 !important;bottom:0 !important;left:auto !important;',
+      '  width:min(720px,92vw) !important;min-width:0 !important;max-width:none !important;height:auto !important;',
+      '  background:var(--panel-bg) !important;',
+      '  border-left:1px solid var(--panel-border) !important;',
+      '  box-shadow:0 32px 80px rgba(2,37,68,0.14),0 8px 24px rgba(2,37,68,0.08);',
+      '  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
+      '  display:flex !important;flex-direction:column !important;',
+      '  transform:translateX(0);',
+      '  transition:transform 400ms cubic-bezier(0.22,1,0.36,1);',
+      '  z-index:2100;overflow:visible !important;',
       '}',
-      '#api-response-panel .api-panel-edge-toggle.is-open .api-panel-toggle-icon{transform:rotate(45deg);}', // points RIGHT
-      // Collapsed panel: keep the toggle pinned outside the thin strip and
-      // centered vertically so it remains discoverable while the panel is hidden.
-      '#api-response-panel.api-panel-collapsed .api-panel-edge-toggle{left:-36px !important;top:50% !important;transform:translateY(-50%) !important;}',
-      // ─────────────────────────────────────────────────────────────────────
-      // renderjson per-object disclosure toggles (added v8, 2026-05-21).
-      //
-      // renderjson v1.4 generates clickable <a class="disclosure">+</a> /
-      // <a class="disclosure">-</a> spans next to every JSON sub-tree. When
-      // LLM-generated host CSS gives .disclosure width, height, or
-      // background-color (often inherited from a generic button reset), the
-      // toggles render as huge solid white blocks — see the
-      // 2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1
-      // regression. The high-specificity rules below override that with the
-      // documented inline-character form, regardless of what the LLM emitted.
-      //
-      // !important is required: the LLM rules typically also use !important
-      // on a-tag resets, so we have to win at specificity AND priority.
-      '#api-response-panel .disclosure,',
-      '#api-response-panel a.disclosure{',
-      '  display:inline-block !important;',
-      '  width:auto !important;height:auto !important;',
-      '  min-width:0 !important;min-height:0 !important;',
-      '  max-width:1.6em !important;max-height:1.4em !important;',
-      '  padding:0 !important;margin:0 4px 0 0 !important;',
-      '  background:transparent !important;background-color:transparent !important;',
-      '  background-image:none !important;',
-      '  color:rgba(66,240,205,0.6) !important;',
-      "  font-family:'SF Mono', Menlo, Monaco, Consolas, monospace !important;",
-      '  font-size:0.85em !important;font-weight:600 !important;',
-      '  line-height:1 !important;text-align:center !important;',
-      '  text-decoration:none !important;',
-      '  border:none !important;outline:none !important;box-shadow:none !important;',
-      '  cursor:pointer !important;user-select:none !important;',
-      '  vertical-align:baseline !important;',
+      // Collapsed: slide out + carry chevron with us to the viewport right edge
+      '#api-response-panel.panel.is-collapsed,#api-response-panel.is-collapsed{',
+      '  transform:translateX(100%) !important;',
+      '  width:min(720px,92vw) !important;pointer-events:none;',
       '}',
-      '#api-response-panel .disclosure:hover,',
-      '#api-response-panel a.disclosure:hover{',
-      '  color:var(--plaid-teal-500,#42F0CD) !important;',
-      '  background:transparent !important;background-color:transparent !important;',
-      '  text-decoration:none !important;',
+      '#api-response-panel.is-collapsed .toggle{pointer-events:auto;}',
+      // Chevron toggle
+      '#api-response-panel .toggle{',
+      '  position:absolute;top:50%;left:-36px;transform:translateY(-50%);',
+      '  width:36px;height:56px;appearance:none;border:0;padding:0;cursor:pointer;',
+      '  background:rgba(2,37,68,0.55) !important;',
+      '  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);',
+      '  border:1px solid var(--panel-border) !important;border-right:0 !important;',
+      '  border-radius:8px 0 0 8px !important;',
+      '  color:rgba(255,255,255,0.7);display:grid;place-items:center;',
+      '  z-index:2200;',
+      '  transition:background 150ms cubic-bezier(0.4,0,0.2,1),color 150ms cubic-bezier(0.4,0,0.2,1);',
       '}',
-      // Belt-and-suspenders: some LLM builds wrap renderjson output in a
-      // container with explicit a/button resets. Force the disclosure to be
-      // text-like even if it is a <button> element in some renderjson fork.
-      '#api-response-panel button.disclosure{appearance:none !important;}',
-      '',
+      '#api-response-panel .toggle:hover{background:rgba(2,37,68,0.8) !important;color:#fff;}',
+      '#api-response-panel .toggle svg{width:16px;height:16px;transition:transform 400ms cubic-bezier(0.22,1,0.36,1);}',
+      '#api-response-panel.is-collapsed .toggle svg{transform:rotate(180deg);}',
+      // Header + route + tabs
+      '#api-response-panel .panel-head{padding:20px 24px 16px;border-bottom:1px solid var(--panel-border);display:flex !important;align-items:flex-end;justify-content:space-between;gap:24px;}',
+      '#api-response-panel .panel-head .eyebrow{color:var(--plaid-teal-500,#42F0CD);font-size:12px;line-height:1;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;display:block;}',
+      '#api-response-panel .panel-head .route{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:18px;line-height:1.2;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}',
+      '#api-response-panel .panel-head .method{display:inline-block;font-size:11px;font-weight:700;letter-spacing:0.08em;padding:3px 8px;border-radius:4px;background:rgba(66,240,205,0.14);color:var(--plaid-teal-500,#42F0CD);border:1px solid rgba(66,240,205,0.28);font-family:-apple-system,BlinkMacSystemFont,sans-serif;}',
+      '#api-response-panel .panel-head .path{color:rgba(255,255,255,0.92);}',
+      '#api-response-panel .tabs{display:inline-flex !important;gap:2px;padding:3px;background:rgba(0,0,0,0.28);border:1px solid var(--panel-border);border-radius:8px;}',
+      '#api-response-panel .tab{appearance:none;border:0;background:transparent;font:inherit;color:rgba(255,255,255,0.62);padding:7px 14px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:color 150ms cubic-bezier(0.4,0,0.2,1),background 150ms cubic-bezier(0.4,0,0.2,1);}',
+      '#api-response-panel .tab:hover{color:#fff;}',
+      '#api-response-panel .tab[aria-selected="true"]{background:var(--plaid-blue-600,#0B7BBC);color:#fff;box-shadow:0 1px 0 rgba(255,255,255,0.08) inset;}',
+      // Toolbar
+      '#api-response-panel .panel-toolbar{display:flex !important;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--panel-bg-2);border-bottom:1px solid var(--panel-border);font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:12px;color:rgba(255,255,255,0.54);}',
+      '#api-response-panel .copy-btn{appearance:none;background:transparent;border:1px solid var(--panel-border);color:rgba(255,255,255,0.7);font:inherit;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12px;padding:4px 10px;border-radius:4px;cursor:pointer;transition:all 150ms cubic-bezier(0.4,0,0.2,1);}',
+      '#api-response-panel .copy-btn:hover{color:#fff;border-color:rgba(255,255,255,0.24);background:rgba(255,255,255,0.04);}',
+      // Code panes
+      '#api-response-panel .code-wrap{position:relative;flex:1;min-height:0;overflow:hidden;}',
+      '#api-response-panel pre.code{margin:0;padding:20px 24px 24px;font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:13px;line-height:1.65;color:#DCE7F2;overflow:auto;height:100%;tab-size:2;background:transparent;}',
+      '#api-response-panel [data-pane]{display:none !important;}',
+      '#api-response-panel [data-pane].is-active{display:block !important;}',
+      // renderjson tokens — Claude Design palette
+      '#api-response-panel .renderjson{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;}',
+      '#api-response-panel .renderjson a{text-decoration:none;}',
+      '#api-response-panel .renderjson .disclosure{',
+      '  display:inline-block !important;width:14px !important;text-align:center !important;margin-right:4px !important;',
+      '  color:rgba(255,255,255,0.42) !important;font-weight:600 !important;cursor:pointer !important;user-select:none !important;',
+      '  background:none !important;background-color:transparent !important;border:none !important;',
+      '  height:auto !important;min-width:0 !important;min-height:0 !important;max-width:none !important;max-height:none !important;',
+      '  font-size:1em !important;line-height:1 !important;padding:0 !important;outline:none !important;box-shadow:none !important;',
+      '  vertical-align:baseline !important;text-decoration:none !important;appearance:none !important;',
+      '}',
+      '#api-response-panel .renderjson .disclosure:hover{color:var(--plaid-teal-500,#42F0CD) !important;}',
+      '#api-response-panel .renderjson .syntax{color:var(--tok-punct);}',
+      '#api-response-panel .renderjson .string{color:var(--tok-string);}',
+      '#api-response-panel .renderjson .number{color:var(--tok-number);}',
+      '#api-response-panel .renderjson .boolean{color:var(--tok-bool);font-style:italic;}',
+      '#api-response-panel .renderjson .key{color:var(--tok-key);}',
+      '#api-response-panel .renderjson .keyword{color:var(--tok-null);font-style:italic;}',
+      '#api-response-panel .renderjson .object.syntax,#api-response-panel .renderjson .array.syntax{color:rgba(255,255,255,0.6);}',
+      // Legacy class neutralization — older builds may still ship .side-panel,
+      // .side-panel-header, .api-panel-edge-toggle markup. We don't want two
+      // chevrons or two panel chromes layering on top of each other. Hide
+      // the legacy bits when they appear as siblings/descendants of the v12
+      // panel.
+      '#api-response-panel.panel .side-panel-header,#api-response-panel.panel .side-panel-body{display:none !important;}',
+      '#api-response-panel.panel > .api-panel-edge-toggle{display:none !important;}',
+      ''
     ].join('\\n');
     document.head.appendChild(st);
   }
   ensureEdgeToggleStyles();
 
   function renderToggleContent(/* open */) {
-    // v5: icon-only. The chevron's rotation (driven by the .is-open class on the
-    // parent button) communicates direction: arrow points RIGHT when open
-    // (panel will collapse right) and LEFT when collapsed (panel will expand
-    // left). Screen readers still get a directional aria-label via the
-    // ensurePanelToggle attributes below.
-    return '<span class="api-panel-toggle-icon" aria-hidden="true"></span>';
+    // Claude Design v12 chevron SVG. Rotation is handled in CSS
+    // (#api-response-panel.is-collapsed .toggle svg → rotate(180deg))
+    // so authors don't need to swap content between open / collapsed states.
+    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 3 11 8 6 13"></polyline></svg>';
   }
   function ensurePanelToggle(panel) {
     if (!panel) return null;
+    // Dedupe: build-app sometimes emits a standalone <button class="api-panel-edge-toggle">
+    // as a SIBLING of the panel. Combined with the toggle we own inside the
+    // panel, two chevrons render at the right edge of the viewport (both pinned
+    // by position:fixed;right:0). Remove every duplicate that lives outside
+    // the panel before we touch the inside-the-panel toggle.
+    var allToggles = document.querySelectorAll('.api-panel-edge-toggle, [data-testid="api-panel-toggle"]');
+    for (var i = 0; i < allToggles.length; i++) {
+      var t = allToggles[i];
+      if (!panel.contains(t)) { try { t.remove(); } catch (_) {} }
+    }
     var existing = panel.querySelector('#api-panel-toggle, [data-testid="api-panel-toggle"]');
     var btn;
     if (existing) {
@@ -438,11 +536,15 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       btn.type = 'button';
       panel.appendChild(btn);
     }
-    // Always rewrite className + innerHTML so older v1/v2 buttons get the v3
-    // pill chrome (label + icon). Idempotent — re-renders to the same DOM.
-    if (!String(btn.className || '').split(/\\s+/).includes('api-panel-edge-toggle')) {
-      btn.classList.add('api-panel-edge-toggle');
+    // Always rewrite className + innerHTML so older v1/v2 buttons get the
+    // Claude Design v12 chrome (SVG chevron). Idempotent — re-renders to the
+    // same DOM. The v12 button class is .toggle (matches Claude Design
+    // selector); we strip the legacy .api-panel-edge-toggle class if any
+    // earlier post-panels patch put it there.
+    if (!String(btn.className || '').split(/\\s+/).includes('toggle')) {
+      btn.classList.add('toggle');
     }
+    btn.classList.remove('api-panel-edge-toggle');
     var desiredHtml = renderToggleContent(!!window.__apiPanelUserOpen);
     if (btn.innerHTML !== desiredHtml) btn.innerHTML = desiredHtml;
     // Bind the v3 click listener exactly once. The version marker on the
@@ -510,9 +612,11 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     panel.style.display = 'flex';
     if (open) {
       panel.classList.remove('api-panel-collapsed');
+      panel.classList.remove('is-collapsed');
       panel.classList.add('api-panel-open');
     } else {
-      panel.classList.add('api-panel-collapsed');
+      panel.classList.add('api-panel-collapsed'); // legacy (build-qa scanners)
+      panel.classList.add('is-collapsed');        // Claude Design v12
       panel.classList.remove('api-panel-open');
     }
     ensurePanelToggle(panel);
@@ -613,54 +717,112 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     }, 100);
   }
 
+  // Two-tab Request/Response panel — switchApiTab toggles which pane is visible.
+  // Default tab is Request when request data is present; otherwise Response.
+  // The panes never display simultaneously; exactly one is .is-active.
+  window.switchApiTab = function(which) {
+    var tabs = document.querySelectorAll('.api-panel-tab[data-tab]');
+    var panes = document.querySelectorAll('.api-panel-pane[data-pane]');
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i], on = t.getAttribute('data-tab') === which;
+      if (on) t.classList.add('is-active'); else t.classList.remove('is-active');
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+    for (var j = 0; j < panes.length; j++) {
+      var p = panes[j], onP = p.getAttribute('data-pane') === which;
+      if (onP) p.classList.add('is-active'); else p.classList.remove('is-active');
+    }
+  };
+
+  function ensureTabStructure(panel) {
+    if (!panel) return null;
+    var header = panel.querySelector('.side-panel-header');
+    var body = panel.querySelector('.side-panel-body');
+    // Inject tabs row inside header if missing
+    if (header && !header.querySelector('.api-panel-tabs')) {
+      var tabs = document.createElement('div');
+      tabs.className = 'api-panel-tabs';
+      tabs.setAttribute('role', 'tablist');
+      tabs.setAttribute('data-testid', 'api-panel-tabs');
+      tabs.innerHTML =
+        '<button class="api-panel-tab is-active" data-tab="request" data-testid="api-panel-tab-request" role="tab" aria-selected="true">Request</button>' +
+        '<button class="api-panel-tab" data-tab="response" data-testid="api-panel-tab-response" role="tab" aria-selected="false">Response</button>';
+      header.appendChild(tabs);
+      // Bind click handlers (delegation would also work — explicit is clearer)
+      var btns = tabs.querySelectorAll('.api-panel-tab');
+      for (var k = 0; k < btns.length; k++) {
+        btns[k].addEventListener('click', function(e) {
+          e.preventDefault(); e.stopPropagation();
+          window.switchApiTab(this.getAttribute('data-tab'));
+        });
+      }
+    }
+    // Inject request + response panes inside body if missing
+    if (body && !body.querySelector('.api-panel-pane[data-pane="request"]')) {
+      // Wipe any legacy single-content children to avoid double-rendering
+      body.innerHTML = '';
+      var paneReq = document.createElement('div');
+      paneReq.className = 'api-panel-pane is-active';
+      paneReq.id = 'api-pane-request';
+      paneReq.setAttribute('data-pane', 'request');
+      paneReq.setAttribute('data-testid', 'api-pane-request');
+      var paneRes = document.createElement('div');
+      paneRes.className = 'api-panel-pane';
+      paneRes.id = 'api-pane-response';
+      paneRes.setAttribute('data-pane', 'response');
+      paneRes.setAttribute('data-testid', 'api-pane-response');
+      body.appendChild(paneReq);
+      body.appendChild(paneRes);
+    }
+    return { paneReq: panel.querySelector('#api-pane-request'),
+             paneRes: panel.querySelector('#api-pane-response'),
+             tabReq: panel.querySelector('[data-testid="api-panel-tab-request"]'),
+             tabRes: panel.querySelector('[data-testid="api-panel-tab-response"]') };
+  }
+
   var _origGoToStep = window.goToStep;
   if (typeof _origGoToStep !== 'function') return;
   window.goToStep = function(id) {
     _origGoToStep(id);
     var panel = document.getElementById('api-response-panel');
     if (!panel) return;
-    var content = document.getElementById('api-response-content');
-    var endpoint = document.getElementById('api-panel-endpoint');
+    var endpoint = document.getElementById('api-panel-endpoint') || document.getElementById('api-endpoint-label');
     var stepData = window._stepApiResponses && window._stepApiResponses[id];
     if (stepData) {
-      var endpointLabel = _eps[id] || '';
-      // v7: if this step is the synthesized onSuccess panel AND the real SDK
-      // callback has already fired, prefer the captured live payload over the
-      // build-time sandbox fallback. Operators see the real public_token,
-      // institution, account_id, mask, link_session_id that came back from
-      // the actual Plaid session.
-      var renderData;
+      var endpointLabel = _eps[id] || stepData.endpoint || '';
+      // v7 live onSuccess override: if this step is the synthesized onSuccess
+      // panel AND the real SDK callback has fired, prefer the captured live
+      // payload as the RESPONSE.
+      var requestData = stepData.request || null;
+      var responseData;
       var liveEndpointSuffix = '';
       if (isOnSuccessEndpoint(endpointLabel) && window._plaidLinkOnSuccess) {
-        renderData = window._plaidLinkOnSuccess;
+        responseData = window._plaidLinkOnSuccess;
         liveEndpointSuffix = ' — live';
+      } else if (stepData && typeof stepData === 'object' && 'response' in stepData) {
+        responseData = stepData.response;
       } else {
-        // Unwrap so we render the response payload, not the wrapper
-        // { endpoint, response } object. Previously the wrapped goToStep
-        // rendered the full wrapper, double-printing the endpoint field.
-        renderData = (stepData && typeof stepData === 'object' && stepData.response)
-          ? stepData.response
-          : stepData;
+        // Legacy flat / wrapped-as-data shape: treat the whole thing as response
+        responseData = (stepData && stepData.data != null) ? stepData.data : stepData;
       }
       if (endpoint && endpointLabel) {
         endpoint.textContent = endpointLabel.replace(/\\s—\\s+live$/, '') + liveEndpointSuffix;
       }
-      window.__lastApiJsonData = renderData;
-      // v6: respect __API_PANEL_CONFIG.collapsedByDefault (default true) so new
-      // step navigation lands with the panel CHROME visible but the JSON body
-      // hidden. The user can click the toggle arrow to expand and inspect the
-      // payload. This matches operator expectations: "JSON should be available
-      // on insight steps, but not autoplay-in-your-face on every navigation."
-      // Build-QA / vision-QA that needs to validate JSON content can override
-      // by setting window.__API_PANEL_CONFIG.collapsedByDefault = false before
-      // walking the steps.
+      // Build the tabbed structure (idempotent), then render each pane independently.
+      var refs = ensureTabStructure(panel);
+      if (refs) {
+        if (refs.tabReq) refs.tabReq.style.display = requestData ? '' : 'none';
+        if (refs.tabRes) refs.tabRes.style.display = responseData ? '' : 'none';
+        renderApiJson(refs.paneReq, requestData);
+        renderApiJson(refs.paneRes, responseData);
+        // Default tab: Request when present, else Response.
+        window.switchApiTab(requestData ? 'request' : 'response');
+      }
+      window.__lastApiJsonData = responseData;  // back-compat for rerenderCurrentApiJson
       var openByDefault =
         window.__API_PANEL_CONFIG && window.__API_PANEL_CONFIG.collapsedByDefault === false;
       window.__apiPanelUserOpen = !!openByDefault;
       setPanelVisibility(panel, !!openByDefault);
-      // Always render the JSON into the (possibly collapsed) body so that
-      // expanding the panel later is instant — the data is already in the DOM.
-      if (content) renderApiJson(content, renderData);
     } else {
       panel.style.setProperty('display', 'none', 'important');
       panel.classList.remove('api-panel-collapsed');
@@ -720,8 +882,49 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   const hasLinkPanel = /id\s*=\s*["']link-events-panel["']/.test(html);
 
   if (!hasApiPanel && hasAnyApiData && html.includes('</body>')) {
-    const shell =
-      '<div id="api-response-panel" data-testid="api-response-panel" class="side-panel" style="display:none"><div class="side-panel-header"><span id="api-panel-endpoint"></span></div><div class="side-panel-body"><div id="api-response-content" data-testid="api-response-content"></div></div></div>';
+    // Canonical API panel — Claude Design "API Panel (standalone)" template
+    // (2026-05-26 handoff bundle). Two-tab Request / Response panel with:
+    //   .toggle (chevron, left edge)
+    //   .panel-head (eyebrow + .method/.path + .tabs)
+    //   .panel-toolbar (content-type label + Copy button)
+    //   .code-wrap > pre.code[data-pane="req|res"] (renderjson panes)
+    // Legacy id/data-testid attributes preserved so existing populateApiPanel
+    // + build-qa selectors keep working.
+    const shell = [
+      '<section class="panel" id="api-response-panel" data-testid="api-response-panel" aria-label="Plaid API reference" style="display:none">',
+        '<button class="toggle" id="api-panel-toggle" data-testid="api-panel-toggle" type="button" aria-controls="api-response-panel" aria-expanded="false" aria-label="Expand panel">',
+          '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+            '<polyline points="6 3 11 8 6 13"></polyline>',
+          '</svg>',
+        '</button>',
+        '<header class="panel-head">',
+          '<div>',
+            '<span class="eyebrow">Plaid API</span>',
+            '<div class="route">',
+              '<span class="method" id="api-panel-method" data-testid="api-panel-method">POST</span>',
+              '<span class="path" id="api-panel-path" data-testid="api-panel-path"></span>',
+            '</div>',
+          '</div>',
+          '<div class="tabs" role="tablist" aria-label="Request or response">',
+            '<button class="tab" id="tab-req" data-testid="api-panel-tab-request" role="tab" data-tab="req" aria-controls="api-pane-request" aria-selected="true">Request</button>',
+            '<button class="tab" id="tab-res" data-testid="api-panel-tab-response" role="tab" data-tab="res" aria-controls="api-pane-response" aria-selected="false">Response</button>',
+          '</div>',
+        '</header>',
+        '<div class="panel-toolbar">',
+          '<span id="api-panel-content-type">application/json · request body</span>',
+          '<button class="copy-btn" id="api-panel-copy" data-testid="api-panel-copy" type="button">Copy</button>',
+        '</div>',
+        '<div class="code-wrap">',
+          '<pre class="code is-active" id="api-pane-request" data-testid="api-pane-request" data-pane="req" role="tabpanel" aria-labelledby="tab-req"></pre>',
+          '<pre class="code" id="api-pane-response" data-testid="api-pane-response" data-pane="res" role="tabpanel" aria-labelledby="tab-res" hidden></pre>',
+          // Legacy id container for any populateApiPanel callers that still
+          // write to #api-response-content. Hidden by default; modern
+          // populateApiPanel writes into #api-pane-request / #api-pane-response
+          // directly.
+          '<div id="api-response-content" data-testid="api-response-content" hidden></div>',
+        '</div>',
+      '</section>'
+    ].join('');
     html = html.replace('</body>', `${shell}\n</body>`);
     changes.addedApiPanelShell = true;
     changes.addedApiContent = true;
@@ -837,7 +1040,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     token-only mode, pre-link manual nav). When live data is present,
   //     the panel header label gets a " — live" suffix so operators can
   //     visually distinguish real vs synthesized in screen recordings.
-  const POST_PANELS_PATCH_VERSION = 'v9';
+  const POST_PANELS_PATCH_VERSION = 'v11';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);

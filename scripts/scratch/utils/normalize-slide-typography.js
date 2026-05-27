@@ -7,11 +7,11 @@
 
 /** @type {Record<string, { hTitle: number, hero: number, display: number, body: number, mono: number }>} */
 const TEMPLATE_CEILINGS = {
-  T1: { hTitle: 140, hero: 180, display: 140, body: 42, mono: 28 },
+  T1: { hTitle: 112, hero: 144, display: 112, body: 42, mono: 28 },
   T2: { hTitle: 96, hero: 180, display: 110, body: 36, mono: 28 },
   T3: { hTitle: 96, hero: 180, display: 120, body: 30, mono: 28 },
-  T4: { hTitle: 72, hero: 180, display: 110, body: 30, mono: 28 },
-  T5: { hTitle: 72, hero: 180, display: 110, body: 30, mono: 28 },
+  T4: { hTitle: 72, hero: 108, display: 110, body: 30, mono: 28 },
+  T5: { hTitle: 58, hero: 180, display: 110, body: 30, mono: 28 },
   T6: { hTitle: 72, hero: 140, display: 110, body: 30, mono: 28 },
   T7: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
   T8: { hTitle: 72, hero: 120, display: 110, body: 30, mono: 28 },
@@ -221,7 +221,7 @@ const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
   flex-shrink: 0;
 }
 .slide-root[data-slide-template="T1"] .h-title {
-  font-size: min(140px, var(--type-display, 110px)) !important;
+  font-size: min(112px, var(--type-display, 88px)) !important;
 }
 .slide-root[data-slide-template="T2"] .h-title,
 .slide-root[data-slide-template="T3"] .h-title {
@@ -230,8 +230,12 @@ const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
 /* Text-heavy templates (cards / CTA) — keep headlines compact so the body
  * grid fits inside .frame { overflow: hidden }. Matches the clamp in
  * templates/slide-template/pipeline-slide-contract.css. */
-.slide-root[data-slide-template="T4"] .h-title,
 .slide-root[data-slide-template="T5"] .h-title,
+.slide-root[data-workhorse-layout="three-column"] .h-title {
+  font-size: min(51px, var(--type-title, 58px)) !important;
+  margin-bottom: 24px !important;
+}
+.slide-root[data-slide-template="T4"] .h-title,
 .slide-root[data-slide-template="T6"] .h-title,
 .slide-root[data-slide-template="T7"] .h-title,
 .slide-root[data-slide-template="T8"] .h-title,
@@ -242,7 +246,7 @@ const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
   margin-bottom: 24px !important;
 }
 .slide-root .hero-stat-value {
-  font-size: min(var(--type-mega, 180px), 180px) !important;
+  font-size: min(var(--type-mega, 108px), 108px) !important;
   line-height: 0.9 !important;
   flex-shrink: 0;
 }
@@ -259,12 +263,38 @@ const TYPOGRAPHY_OVERRIDE_CSS = `${TYPOGRAPHY_OVERRIDE_MARKER}
   flex: 1 !important;
   min-height: 0 !important;
 }
+.slide-root[data-workhorse-layout="code"] .slide-stack {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
+  align-items: stretch !important;
+  gap: 28px !important;
+}
+.slide-root[data-workhorse-layout="code"] .h-title {
+  max-width: 100% !important;
+  white-space: normal !important;
+  font-size: clamp(26px, 2.8vw, 44px) !important;
+}
+.slide-root[data-workhorse-layout="code"] .slide-body-text {
+  max-width: 100% !important;
+}
 .slide-root .json-snippet,
-.slide-root .slide-code-block {
+.slide-root:not([data-workhorse-layout="code"]) .slide-code-block {
   flex-shrink: 1;
   min-height: 0;
   overflow: auto;
   max-height: 220px;
+}
+.slide-root[data-workhorse-layout="code"] .slide-code-block,
+.slide-root[data-workhorse-layout="code"] .sc-code-pane {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+.slide-root[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root[data-workhorse-layout="code"] .slide-code-block pre {
+  max-height: none !important;
+  overflow: auto !important;
 }
 </style>`;
 

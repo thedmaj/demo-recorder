@@ -71,6 +71,12 @@
   line-height: 1.05;
 }
 
+/* T1 title hero — 20% below legacy 140px ceiling */
+.slide-root[data-slide-template="T1"] .h-title {
+  font-size: clamp(36px, 5.76vw, 112px);
+  line-height: 1.05;
+}
+
 /* Text-heavy templates — T4 (stat + cards grid) and T11 (CTA / action cards)
  * carry 2-4 body cards beneath the headline. At the default h-title clamp
  * the title eats vertical real estate that the cards need, pushing body copy
@@ -78,8 +84,90 @@
  * text. Cap the title clamp to 32–64px on these templates so cards have room.
  * T1 (cover), T2 (statement), and T3 (quote) keep the larger clamp because
  * those layouts ARE the title. */
-.slide-root[data-slide-template="T4"] .h-title,
+/* T5 three pillars — slide heading 20% below other card-grid templates */
 .slide-root[data-slide-template="T5"] .h-title,
+.slide-root[data-workhorse-layout="three-column"] .h-title {
+  font-size: clamp(26px, 3.2vw, 51px);
+  line-height: 1.1;
+}
+
+/* Code Window — 50/50 split: copy left (wraps), monospace panel right (full height) */
+.slide-root[data-workhorse-layout="code"] .h-title {
+  font-size: clamp(26px, 2.8vw, 44px) !important;
+  line-height: 1.12 !important;
+  margin-bottom: 0 !important;
+  max-width: 100% !important;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.slide-root[data-workhorse-layout="code"] .slide-body-text {
+  font-size: clamp(24px, 1.5vw, 28px) !important;
+  line-height: 1.45 !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  overflow-wrap: anywhere;
+}
+
+.slide-root[data-workhorse-layout="code"] .slide-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 28px;
+  flex: 1;
+  min-height: 0;
+}
+
+.slide-root[data-workhorse-layout="code"] .sc-code-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.slide-root[data-workhorse-layout="code"] .sc-code-pane,
+.slide-root[data-workhorse-layout="code"] .slide-code-block {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  max-height: none;
+}
+
+.slide-root[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root[data-workhorse-layout="code"] .slide-code-block pre {
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 0;
+  margin: 0;
+  padding: 24px 28px;
+  border-radius: 12px;
+  background: #021627;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--font-mono);
+  font-size: clamp(15px, 0.95vw, 18px);
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.88);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: none;
+}
+
+.slide-root.light[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root.cream[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root.holo[data-workhorse-layout="code"] .sc-code-pre,
+.slide-root.light[data-workhorse-layout="code"] .slide-code-block pre,
+.slide-root.cream[data-workhorse-layout="code"] .slide-code-block pre,
+.slide-root.holo[data-workhorse-layout="code"] .slide-code-block pre {
+  border-color: rgba(2, 37, 68, 0.12);
+}
+
+.slide-root[data-slide-template="T4"] .h-title,
 .slide-root[data-slide-template="T6"] .h-title,
 .slide-root[data-slide-template="T7"] .h-title,
 .slide-root[data-slide-template="T8"] .h-title,
@@ -97,8 +185,10 @@
 }
 
 .slide-root .hero-stat-value,
-.slide-root .stat-value {
-  font-size: clamp(56px, 7.2vw, 128px);
+.slide-root .stat-value,
+.slide-root[data-slide-template="T4"] .sc-stat,
+.slide-root[data-workhorse-layout="stat-highlight"] .sc-stat {
+  font-size: clamp(34px, 4.32vw, 77px);
   line-height: 1.0;
 }
 

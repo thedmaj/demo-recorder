@@ -32,6 +32,7 @@ const { processedToCompMs } = require('../sync-map-utils');
 const { deriveStepKind } = require('../scratch/utils/step-kind');
 const { readRunManifest: readRunManifestSafe, writeRunManifest: writeRunManifestSafe } = require('../scratch/utils/run-io');
 const { resolveIdentity: resolveDashIdentity } = require('../scratch/utils/identity');
+const { extractDashboardQaScores } = require('../scratch/utils/qa-tier-summary');
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -908,6 +909,10 @@ function getLatestQaReport(runId) {
   return safeReadJson(latestPath);
 }
 
+function qaScoresForRun(runId) {
+  return extractDashboardQaScores(getLatestQaReport(runId));
+}
+
 function closePipelineDiskLog() {
   if (pipelineDiskLogStream) {
     try {
@@ -1102,7 +1107,7 @@ function buildRunsList() {
 
   return dirs.map(runId => {
     const artifacts = getRunArtifacts(runId);
-    const qa = getLatestQaReport(runId);
+    const qaScores = qaScoresForRun(runId);
     const completedStages = getCompletedStages(runId);
     const script = getRunScriptSummary(runId);
     const buildModeInfo = readRunBuildModeInfo(runId);
@@ -1110,7 +1115,7 @@ function buildRunsList() {
       runId,
       displayName: resolveDemoDisplayName(runId, namesMap),
       artifacts,
-      qaScore: qa ? qa.overallScore : null,
+      ...qaScores,
       completedStages,
       script,
       buildMode: buildModeInfo ? buildModeInfo.buildMode : null,
@@ -1787,7 +1792,7 @@ app.get('/api/runs/:runId', (req, res) => {
     if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Run not found' });
 
     const artifacts = getRunArtifacts(runId);
-    const qa = getLatestQaReport(runId);
+    const qaScores = qaScoresForRun(runId);
     const script = getRunScriptSummary(runId);
     const completedStages = getCompletedStages(runId);
     let { lastCompletedStage, resumeFromStage } = computePipelineResume(completedStages);
@@ -1828,7 +1833,7 @@ app.get('/api/runs/:runId', (req, res) => {
     const buildModeInfo = readRunBuildModeInfo(runId);
     res.json({
       runId, displayName, artifacts,
-      qaScore: qa ? qa.overallScore : null, manifest,
+      ...qaScores, manifest,
       lastCompletedStage, resumeFromStage, completedStages, script,
       buildMode: buildModeInfo ? buildModeInfo.buildMode : null,
       buildModeLabel: buildModeInfo ? buildModeInfo.label : null,
@@ -2806,12 +2811,19 @@ app.get('/api/pipeline/stages', (req, res) => {
 /**
  * Dashboard write gating.
  *
- * As of the pipeline CLI migration, all run/kill/stdin actions default to the
- * CLI (`npm run pipe ...`). Setting DASHBOARD_WRITE=true re-enables the
- * legacy in-dashboard runner for environments that still need it. When
- * disabled we respond 410 Gone with a `cliCommand` hint the client can copy.
+ * **Default (2026-05-26): writes are ENABLED** — the in-dashboard runner,
+ * value-prop edits, AI-chat edits, and script-editor mutations all work
+ * out of the box. To force the read-only/CLI-only mode (legacy behavior
+ * where the dashboard returns 410 Gone with a `cliCommand` hint), set
+ * `DASHBOARD_WRITE=false` explicitly. Any value other than the literal
+ * string "false" keeps writes enabled.
+ *
+ * History: this previously defaulted to disabled (had to set
+ * DASHBOARD_WRITE=true) when the CLI migration landed. The dashboard +
+ * AI chat editing UX is now the primary surface, so the default flipped
+ * to enabled.
  */
-const DASHBOARD_WRITE_ENABLED = String(process.env.DASHBOARD_WRITE || '').toLowerCase() === 'true';
+const DASHBOARD_WRITE_ENABLED = String(process.env.DASHBOARD_WRITE || 'true').toLowerCase() !== 'false';
 
 function buildPipeCliCommand(body = {}) {
   const b = body || {};
@@ -2860,7 +2872,7 @@ function respondWithCliHint(req, res, verb, opts = {}) {
     error: 'Dashboard writes are disabled — run from the CLI.',
     cliCommand,
     docs: '.claude/skills/pipeline-cli/SKILL.md',
-    hint: 'Set DASHBOARD_WRITE=true to re-enable legacy dashboard runs.',
+    hint: 'Writes are disabled. Unset DASHBOARD_WRITE (or set DASHBOARD_WRITE=true) to re-enable in-dashboard mutations.',
   });
 }
 
@@ -4787,7 +4799,7 @@ app.get('/api/demo-apps', (req, res) => {
     }
     // Always reflect live running state (no FS needed)
     const apps = _demoAppsRunIds.map(runId => {
-      const qa = getLatestQaReport(runId);
+      const qaScores = qaScoresForRun(runId);
       const buildModeInfo = readRunBuildModeInfo(runId);
       const plaidLinkMode = getRunPlaidLinkMode(runId);
       const owner = getRunOwnerFromManifest(runId);
@@ -4805,8 +4817,11 @@ app.get('/api/demo-apps', (req, res) => {
         buildMode: buildModeInfo ? buildModeInfo.buildMode : null,
         buildModeLabel: buildModeInfo ? buildModeInfo.label : null,
         plaidLinkMode,
-        qaScore: qa ? qa.overallScore : null,
-        qaPassed: qa ? !!qa.passed : null,
+        ...qaScores,
+        qaPassed: (() => {
+          const qa = getLatestQaReport(runId);
+          return qa ? !!qa.passed : null;
+        })(),
         owner,
         source: 'local',
         promptPath: promptExists ? `/api/runs/${encodeURIComponent(runId)}/prompt` : null,

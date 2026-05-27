@@ -6,6 +6,7 @@
   <title>Plaid × Workhorse — Slide Template Showcase</title>
   <link rel="stylesheet" href="./colors_and_type.css">
   <link rel="stylesheet" href="./slide.css">
+  <link rel="stylesheet" href="../showcase-classes.css">
   <link rel="stylesheet" href="./pipeline-slide-contract.css">
   <style>
     /* Showcase chrome — NOT part of the slide system. Plaid tokens only.
@@ -278,7 +279,7 @@
     }
     .sc-stat {
       font-family: var(--font-display);
-      font-size: clamp(56px, 7vw, 128px);
+      font-size: clamp(34px, 4.2vw, 77px);
       line-height: 1;
       font-weight: 500;
       color: var(--plaid-white);
@@ -314,6 +315,8 @@
       gap: 24px;
       align-items: stretch;
     }
+    /* Code Window split layout: canonical rules in ../showcase-classes.css +
+       pipeline-slide-contract.css (linked above). */
     /* Pipeline floor: ≥ 24px on .slide-root body text. */
     .sc-delta-up { color: var(--plaid-teal-500); font-family: var(--font-mono); font-size: 24px; }
     .sc-delta-down { color: var(--holo-pink); font-family: var(--font-mono); font-size: 24px; }
@@ -1113,17 +1116,23 @@
       <section class="showcase-slide"
         data-name="Code Window"
         data-tags='<span class="showcase-tag">Workhorse: code</span><span class="showcase-tag">Aliases T3</span><span class="showcase-tag">Proof</span>'
-        data-when="Show one API call or one component snippet — the developer experience proof point. Keep to 10–15 lines max."
-        data-avoid="Whole files (post a gist instead). Or runtime libraries (highlight.js is blocked by build-QA — use pre/code with monospace)."
+        data-when="Show one API call or one component snippet — the developer experience proof point. Split layout: headline + body on the left, monospace pre on the right (10–15 lines max)."
+        data-avoid="Stacked code under the title (use left/right split). Whole files (post a gist instead). Runtime libraries (highlight.js is blocked by build-QA — use pre with monospace)."
         id="code-window">
         <div data-testid="step-code-window" class="step active">
           <div class="slide-root" data-slide-template="T3" data-workhorse-layout="code">
             <div class="frame">
               <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt="">
               <div class="eyebrow-tag">Three lines to verified funding</div>
-              <div class="slide-stack">
-                <h2 class="h-title">One token, <em>five products.</em></h2>
-                <pre style="background: #021627; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 28px 32px; font-family: var(--font-mono); font-size: 18px; line-height: 1.65; color: rgba(255,255,255,0.88); margin: 0; overflow-x: auto;"><span style="color: #71FBE3;">const</span> token = <span style="color: #71FBE3;">await</span> plaid.linkTokenCreate({
+              <div class="slide-stack sc-code-split">
+                <div class="sc-code-copy">
+                  <h2 class="h-title">One token, <em>five products.</em></h2>
+                  <p class="slide-body-text">
+                    Pass products once at Link — Auth, Identity, and Signal share one token for underwriting and fraud decisions on the next request.
+                  </p>
+                </div>
+                <div class="slide-code-block sc-code-pane">
+                  <pre class="sc-code-pre"><span style="color: #71FBE3;">const</span> token = <span style="color: #71FBE3;">await</span> plaid.linkTokenCreate({
   user: { client_user_id: <span style="color: #FFC0FF;">'usr_8f2x'</span> },
   products: [<span style="color: #FFC0FF;">'auth'</span>, <span style="color: #FFC0FF;">'identity'</span>, <span style="color: #FFC0FF;">'signal'</span>],
   ruleset_id: <span style="color: #FFC0FF;">'instant_funding_v3'</span>,
@@ -1131,6 +1140,7 @@
 
 <span style="color: rgba(255,255,255,0.5);">// onSuccess → exchange public_token → /signal/evaluate → ACH</span>
 <span style="color: #42F0CD;">// → median round-trip 1.8s in production</span></pre>
+                </div>
               </div>
             </div>
           </div>

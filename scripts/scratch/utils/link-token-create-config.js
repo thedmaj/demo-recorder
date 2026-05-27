@@ -311,8 +311,14 @@ function inferPlaidLinkProductsFromPrompt(promptText = '') {
     if (/\bidentity\s+verification\b/.test(text) || /\bplaid\s+idv\b/.test(text) || /\/identity_verification\//.test(text)) {
       add('identity_verification');
     }
-    // Add Signal when the prompt mentions transaction-time scoring / Signal / decisions.
-    if (/\bsignal\b/.test(text) || /\/signal\/evaluate\b/.test(text) || /\bunderwriting\b/.test(text) || /\bdecisioning\b/.test(text)) {
+    // Add Signal only when transaction-time Signal is explicit — Trust Index uses
+    // /protect/event/send, not /signal/evaluate. Do not infer signal from
+    // generic "underwriting" / "decisioning" keywords on Protect prompts.
+    if (
+      /\/signal\/evaluate\b/.test(text) ||
+      /\bplaid\s+signal\b/.test(text) ||
+      (/\bsignal\b/.test(text) && (/\bach\b/.test(text) || /\breturn risk\b/.test(text) || /\btransaction[- ]?time\b/.test(text)))
+    ) {
       add('signal');
     }
     // Add Monitor when the prompt mentions sanctions / PEP / watchlist.

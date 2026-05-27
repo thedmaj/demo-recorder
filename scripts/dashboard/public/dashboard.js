@@ -816,7 +816,7 @@
     const persona = r.script ? r.script.persona : '';
     const metaText = [company, product, persona].filter(Boolean).join(' · ');
 
-    const qaText = r.qaScore != null ? `QA: ${r.qaScore}` : '';
+    const qaText = _qaScoreLabel(r);
     const stageText = isLive && r.currentStage ? `Stage: ${r.currentStage}` : '';
     const loadBtn = !isActive
       ? `<button class="build-card-load-btn" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">Load</button>`
@@ -946,16 +946,25 @@
       const X_SVG       = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2.5" y1="2.5" x2="7.5" y2="7.5"/><line x1="7.5" y1="2.5" x2="2.5" y2="7.5"/></svg>`;
       const DASH_SVG    = `<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="2" y1="5" x2="8" y2="5"/></svg>`;
 
-      function artifactBadge(key, label, sizeBytes, qaScoreVal) {
+      function artifactBadge(key, label, sizeBytes, qaRun) {
         const iconSvg = BADGE_ICONS[key] || BADGE_ICONS.script;
         let state, statusSvg, valueText;
 
         if (key === 'qa') {
-          const score = qaScoreVal;
+          const tierScores = [qaRun && qaRun.qaAppScore, qaRun && qaRun.qaSlideScore].filter(
+            (s) => s != null && Number.isFinite(Number(s))
+          );
+          const score =
+            tierScores.length > 0
+              ? Math.min(...tierScores.map(Number))
+              : qaRun && qaRun.qaScore != null
+                ? Number(qaRun.qaScore)
+                : null;
+          const valueLabel = _qaScoreLabel(qaRun || {});
           if (score == null) { state = 'missing'; statusSvg = DASH_SVG; valueText = '–'; }
-          else if (score >= 80)  { state = 'qa-pass'; statusSvg = CHECK_SVG; valueText = String(score) + ' / 100'; }
-          else if (score >= 60)  { state = 'qa-warn'; statusSvg = WARN_SVG;  valueText = String(score) + ' / 100'; }
-          else                   { state = 'qa-fail'; statusSvg = X_SVG;     valueText = String(score) + ' / 100'; }
+          else if (score >= 80)  { state = 'qa-pass'; statusSvg = CHECK_SVG; valueText = valueLabel || String(score) + ' / 100'; }
+          else if (score >= 60)  { state = 'qa-warn'; statusSvg = WARN_SVG;  valueText = valueLabel || String(score) + ' / 100'; }
+          else                   { state = 'qa-fail'; statusSvg = X_SVG;     valueText = valueLabel || String(score) + ' / 100'; }
         } else if (sizeBytes) {
           state = 'present'; statusSvg = CHECK_SVG;
           valueText = formatBytes(sizeBytes);
@@ -976,7 +985,7 @@
         artifactBadge('script',    'Script',     artifacts.script,    null),
         artifactBadge('recording', 'Recording',  artifacts.recording, null),
         artifactBadge('processed', 'Processed',  artifacts.processed, null),
-        artifactBadge('qa',        'QA Score',   null,                run.qaScore),
+        artifactBadge('qa',        'QA Score',   null,                run),
         artifactBadge('voiceover', 'Voiceover',  artifacts.voiceover, null),
         artifactBadge('mp4',       'MP4',         artifacts.mp4,       null),
         artifactBadge('pptx',      'Slideshow',   artifacts.pptx,      null),
@@ -1020,6 +1029,22 @@
         const passed = qa.passed ?? (score >= (qa.passThreshold || 80));
         const iter = qa.iteration ?? '–';
         const threshold = qa.passThreshold ?? 80;
+        const tier = qa.tierSummary;
+        const tierLines = [];
+        if (run.qaAppScore != null) {
+          const appPass = run.qaAppPassed === false ? ' · failed' : run.qaAppPassed ? ' · passed' : '';
+          tierLines.push(`<div class="qa-meta">App host steps: <strong>${esc(String(Math.round(run.qaAppScore)))}</strong>/100${esc(appPass)}</div>`);
+        }
+        if (run.qaSlideScore != null && !run.qaSlideSkipped) {
+          const slidePass = run.qaSlidePassed === false ? ' · failed' : run.qaSlidePassed ? ' · passed' : '';
+          tierLines.push(`<div class="qa-meta">Slides: <strong>${esc(String(Math.round(run.qaSlideScore)))}</strong>/100${esc(slidePass)}</div>`);
+        } else if (run.qaSlideSkipped || run.buildMode === 'app-only') {
+          tierLines.push('<div class="qa-meta">Slides: <span style="opacity:0.55">skipped (app-only run)</span></div>');
+        }
+        const overallNote =
+          tier && (run.qaAppScore != null || run.qaSlideScore != null)
+            ? `<div class="qa-meta" style="opacity:0.65">Overall in this report (all steps walked): ${esc(String(score))}/100</div>`
+            : '';
         const issues = qa.stepsWithIssues || [];
         const issueItems = issues.map(s => `
           <li class="qa-issue-item">
@@ -1030,8 +1055,9 @@
 
         qaHtml = `
           <div class="card" id="qa-summary">
-            <div class="card-title">QA Report</div>
-            <div class="qa-score ${passed ? 'pass' : 'fail'}">${score}</div>
+            <div class="card-title">QA Report (build-qa)</div>
+            ${tierLines.join('') || `<div class="qa-score ${passed ? 'pass' : 'fail'}">${score}</div>`}
+            ${overallNote}
             <div class="qa-meta">Iteration ${esc(String(iter))} · ${passed ? 'PASSED' : 'FAILED'} (threshold ${threshold})</div>
             ${issues.length > 0 ? `<ul class="qa-issue-list open">${issueItems}</ul>` : '<p class="qa-clean">No step issues.</p>'}
           </div>`;
@@ -1184,7 +1210,7 @@
             const rScript = r.script || {};
             const rCompany = rScript.company || '';
             const rProduct = rScript.product || extractProduct(r.runId);
-            const rQa = r.qaScore != null ? `<span class="chip ${scoreChipClass(r.qaScore)}">${r.qaScore}</span>` : '<span style="color:rgba(255,255,255,0.3)">–</span>';
+            const rQa = _qaTierChipsHtml(r);
             const rStages = (r.completedStages || []).length + '/' + STAGES.length;
             const rArtifacts = r.artifacts || {};
             const videoBtn = rArtifacts.mp4
@@ -1211,7 +1237,7 @@
                     <th style="text-align:left;padding:4px 8px 8px 0">Date</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">Company</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">Product</th>
-                    <th style="text-align:left;padding:4px 8px 8px 0">QA</th>
+                    <th style="text-align:left;padding:4px 8px 8px 0">QA (app / slides)</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">Stages</th>
                     <th style="text-align:left;padding:4px 8px 8px 0">Actions</th>
                   </tr></thead>
@@ -5685,11 +5711,59 @@
   const _demoAppsFilter = { search: '', scope: 'all' };
   let _demoAppsLastPayload = [];
 
-  function _qaBadgeForScore(score) {
+  function _qaScoreLabel(run) {
+    const o = run || {};
+    const app = o.qaAppScore;
+    const slide = o.qaSlideScore;
+    const overall = o.qaScore;
+    const showSlide = slide != null && !o.qaSlideSkipped && o.buildMode !== 'app-only';
+    if (app != null && showSlide) {
+      return `App ${Math.round(app)} · Slides ${Math.round(slide)}`;
+    }
+    if (app != null) return `App ${Math.round(app)}`;
+    if (overall != null) return `QA ${Math.round(overall)}`;
+    return '';
+  }
+
+  function _qaBadgeForScore(score, label, tierPassed) {
     if (score == null || !Number.isFinite(Number(score))) return '';
     const n = Math.round(Number(score));
     const band = n >= 90 ? '#00A67E' : n >= 70 ? '#f59e0b' : '#f87171';
-    return `<span title="Latest QA score" style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;background:${band}22;color:${band};border:1px solid ${band}44;flex-shrink:0">QA ${n}</span>`;
+    const prefix = label ? `${label} ` : 'QA ';
+    const title =
+      label === 'App'
+        ? 'Build-QA average for host/app steps (tierSummary.app)'
+        : label === 'Slides'
+          ? 'Build-QA average for slide steps (tierSummary.slide)'
+          : 'Latest build-QA overall score (all steps in report)';
+    const failMark = tierPassed === false ? ' ✗' : '';
+    return `<span title="${esc(title)}" style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;background:${band}22;color:${band};border:1px solid ${band}44;flex-shrink:0">${prefix}${n}${failMark}</span>`;
+  }
+
+  function _qaBadgesHtml(run) {
+    const o = run || {};
+    const parts = [];
+    if (o.qaAppScore != null) parts.push(_qaBadgeForScore(o.qaAppScore, 'App', o.qaAppPassed));
+    if (o.qaSlideScore != null && !o.qaSlideSkipped && o.buildMode !== 'app-only') {
+      parts.push(_qaBadgeForScore(o.qaSlideScore, 'Slides', o.qaSlidePassed));
+    }
+    if (!parts.length && o.qaScore != null) parts.push(_qaBadgeForScore(o.qaScore, '', null));
+    return parts.join('');
+  }
+
+  function _qaTierChipsHtml(run) {
+    const o = run || {};
+    if (o.qaAppScore != null && o.qaSlideScore != null && !o.qaSlideSkipped) {
+      return `<span class="chip ${scoreChipClass(o.qaAppScore)}" title="App tier">App ${Math.round(o.qaAppScore)}</span> ` +
+        `<span class="chip ${scoreChipClass(o.qaSlideScore)}" title="Slide tier">Slides ${Math.round(o.qaSlideScore)}</span>`;
+    }
+    if (o.qaAppScore != null) {
+      return `<span class="chip ${scoreChipClass(o.qaAppScore)}">App ${Math.round(o.qaAppScore)}</span>`;
+    }
+    if (o.qaScore != null) {
+      return `<span class="chip ${scoreChipClass(o.qaScore)}">${Math.round(o.qaScore)}</span>`;
+    }
+    return '<span style="color:rgba(255,255,255,0.3)">–</span>';
   }
 
   function _buildModeBadge(app) {
@@ -5837,7 +5911,7 @@
         ? `<span style="font-size:11px;color:rgba(255,255,255,0.35);margin-left:6px">:${app.port}</span>`
         : '';
 
-      const qaBadge = _qaBadgeForScore(app.qaScore);
+      const qaBadge = _qaBadgesHtml(app);
       const buildBadge = _buildModeBadge(app);
       const ownerBadge = app.owner && app.owner.login
         ? `<span title="Owner" style="font-size:10px;color:rgba(255,255,255,0.45);padding:2px 6px;background:rgba(255,255,255,0.05);border-radius:999px;border:1px solid rgba(255,255,255,0.1);flex-shrink:0">@${esc(app.owner.login)}</span>`

@@ -29,7 +29,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 
-const SMART_MODEL = 'claude-opus-4-7';
+const { OPUS_PRIMARY } = require('./anthropic-models');
+const SMART_MODEL = process.env.SMART_PLAID_MODEL || OPUS_PRIMARY;
 const MAX_TURNS   = 20;
 
 // Knowledge base files (read at construction time)

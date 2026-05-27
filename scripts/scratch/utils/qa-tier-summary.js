@@ -295,12 +295,94 @@ function resolveRecommendedRecovery({ buildMode, tierSummary, systemicReasons })
   return null;
 }
 
+function roundScore(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return null;
+  return Math.round(x * 10) / 10;
+}
+
+function avgFromAllStepScores(allStepScores, stepIds) {
+  if (!allStepScores || !Array.isArray(stepIds) || stepIds.length === 0) return null;
+  const vals = stepIds
+    .map((id) => Number(allStepScores[id]))
+    .filter((n) => Number.isFinite(n));
+  if (!vals.length) return null;
+  return roundScore(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+/**
+ * Dashboard-facing QA scores from a qa-report-*.json file.
+ * `qaScore` remains the report's blended overallScore (all steps in that walk).
+ * `qaAppScore` / `qaSlideScore` come from tierSummary when build-qa wrote it.
+ *
+ * @param {object|null} qaReport
+ * @returns {{
+ *   qaScore: number|null,
+ *   qaAppScore: number|null,
+ *   qaSlideScore: number|null,
+ *   qaAppPassed: boolean|null,
+ *   qaSlidePassed: boolean|null,
+ *   qaSlideSkipped: boolean,
+ * }}
+ */
+function extractDashboardQaScores(qaReport) {
+  const empty = {
+    qaScore: null,
+    qaAppScore: null,
+    qaSlideScore: null,
+    qaAppPassed: null,
+    qaSlidePassed: null,
+    qaSlideSkipped: false,
+  };
+  if (!qaReport || typeof qaReport !== 'object') return empty;
+
+  const overall =
+    typeof qaReport.overallScore === 'number' ? roundScore(qaReport.overallScore) : null;
+  const tier = qaReport.tierSummary;
+  const allStepScores =
+    qaReport.allStepScores && typeof qaReport.allStepScores === 'object'
+      ? qaReport.allStepScores
+      : null;
+
+  if (!tier || typeof tier !== 'object') {
+    return { ...empty, qaScore: overall, qaAppScore: overall };
+  }
+
+  const qaSlideSkipped = !!tier.slide?.skipped;
+  const qaAppPassed = typeof tier.app?.passed === 'boolean' ? tier.app.passed : null;
+  const qaSlidePassed =
+    typeof tier.slide?.passed === 'boolean' ? tier.slide.passed : null;
+
+  const qaAppScore =
+    tier.app?.avgScore != null
+      ? roundScore(tier.app.avgScore)
+      : avgFromAllStepScores(allStepScores, tier.app?.stepIds);
+
+  let qaSlideScore = null;
+  if (!qaSlideSkipped) {
+    qaSlideScore =
+      tier.slide?.avgScore != null
+        ? roundScore(tier.slide.avgScore)
+        : avgFromAllStepScores(allStepScores, tier.slide?.stepIds);
+  }
+
+  return {
+    qaScore: overall,
+    qaAppScore,
+    qaSlideScore,
+    qaAppPassed,
+    qaSlidePassed,
+    qaSlideSkipped,
+  };
+}
+
 module.exports = {
   computeTierSummary,
   resolveBuildMode,
   resolveRecommendedRecovery,
   buildStepKindMap,
   collectSystemicReasons,
+  extractDashboardQaScores,
   DEFAULT_THRESHOLD,
   SYSTEMIC_CATEGORIES,
 };

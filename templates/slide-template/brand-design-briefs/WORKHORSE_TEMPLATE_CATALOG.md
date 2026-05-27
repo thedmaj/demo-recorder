@@ -31,7 +31,7 @@ Every pipeline slide sets **both**:
 | 16 | Timeline | Plans | `timeline` | T8 | Dated milestones |
 | 17 | Roadmap | Plans | `roadmap` | T11 | Future phases / quarters |
 | 18 | Proof Quote | Proof | `customer-proof` | T10 | Logo bar + testimonial |
-| 19 | Code Window | Proof | `code` | T3 | API snippet / JSON highlight |
+| 19 | Code Window | Proof | `code` | T3 | Split: copy left, API `pre` right (full height) |
 | 20 | Action Cards | Close | `cta` | T11 | Next steps / recap CTAs |
 
 ## Logo + chrome (production — not showcase preview)

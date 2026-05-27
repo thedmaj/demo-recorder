@@ -106,8 +106,8 @@ assets/textures/         ← optional holo gradients (we use CSS instead)
 
 ```css
 :root {
-  --type-mega:     180px;   /* hero numbers (rare) */
-  --type-display:  110px;   /* title cover, section starters */
+  --type-mega:     108px;   /* hero numbers / triple stat (25% below prior 144px cap) */
+  --type-display:  88px;    /* T1 title hero (20% below legacy 110px) */
   --type-title:    72px;    /* default slide titles */
   --type-subtitle: 48px;    /* large body / accent */
   --type-body:     30px;    /* slide body */

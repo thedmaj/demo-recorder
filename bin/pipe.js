@@ -647,6 +647,7 @@ async function cmdSlideFix({ positional, flags }) {
   const args = [script];
   if (flags['max-iters']) args.push(`--max-iters=${flags['max-iters']}`);
   if (flags['skip-agent-task']) args.push('--skip-agent-task');
+  if (flags['allow-app-fail']) args.push('--allow-app-fail');
   console.log(c.bold(`[pipe] slide-fix on ${runId}`));
   const child = spawn('node', args, {
     cwd: PROJECT_ROOT,

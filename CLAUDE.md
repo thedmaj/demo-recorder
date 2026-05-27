@@ -51,7 +51,7 @@ Pipeline-specific reminders kept here (because build/QA agents sometimes don't l
 
 - Approved product names (use verbatim): **Plaid Identity Verification (IDV)**, **Plaid Instant Auth**, **Plaid Layer**, **Plaid Monitor**, **Plaid Signal**, **Plaid Assets**, **Plaid Protect**.
 - Quantify outcomes where possible: *Signal score 12 — ACCEPT*, *verified in 2.4 seconds*.
-- **Trust Index / Ti2** is **scoped**: allowed in **Plaid Protect demos only** (its current public marketing term — verified via Plaid GTM Playbook 2026 + Ti2 blog Oct 2025). Forbidden in non-Protect demos (Auth, Signal-only, Bank Income, CRA, etc.) because it confuses with Signal score branding. When used, demos must mark **Limited Availability** if disclosing GA status, and must NOT fabricate `/protect/*` endpoints or Ti2 response field shapes — those are NDA / private docs. See `inputs/products/plaid-protect.md` for the full rule.
+- **Trust Index / Ti2** is **scoped**: allowed in **Plaid Protect demos only** (verified via GTM Playbook 2026 + Ti2 blog Oct 2025). Forbidden in non-Protect demos because it confuses with Signal score branding. Retrieve TI via **`POST /protect/event/send`** or **`POST /protect/user/insights/get`** — **not** `/signal/evaluate`. Mark **Limited Availability** when disclosing GA status. Wire format: `inputs/products/plaid-protect.md`.
 - Active voice. No apologetic / filler words (*simply*, *just*, *unfortunately*, *robust*, *seamless*).
 - Main demo = happy path only: no error / declined / edge-case flows.
 
@@ -125,12 +125,11 @@ Two distinct products — misrouting causes the generated app to call the wrong 
 
 ### Plaid Protect — anti-fraud umbrella, never a single 'protect' product string (REQUIRED)
 
-Umbrella solution (Signal + IDV + Monitor + Trust Index/Ti2 + Rulesets). **NOT a single API** — `'protect'` must never appear in `products[]`. Full rules: [`inputs/products/plaid-protect.md`](inputs/products/plaid-protect.md).
+Umbrella solution (Trust Index/Ti2 + Signal + IDV + Monitor + Rulesets). **NOT a single API** — `'protect'` must never appear in `products[]`. Full rules: [`inputs/products/plaid-protect.md`](inputs/products/plaid-protect.md).
 
-- **Link products:** component strings only — `['signal']`, `['signal', 'identity_verification']`, `['monitor']`, etc. Never `['protect']`.
-- **Score retrieval:** `POST /signal/evaluate`. `ruleset.result` values: `ACCEPT`, `REROUTE`, `REVIEW` — `REJECT` is NOT documented.
-- **Explainability:** `core_attributes` + `ruleset.triggered_rule_details.internal_note`. Never fabricate a top-level `reason_codes: [...]` array.
-- **Trust Index / Ti2:** Limited Availability (March 2026). Range 1–100, higher = SAFER. Never fabricate `/protect/event/send`, `/protect/user/insights/get`, or `trust_index.*` field shapes (NDA).
+- **Trust Index (default Protect demo):** Link `['protect_linked_bank']` → after Link `onSuccess`, **`POST /protect/event/send`** (`event_type: LINK_SESSION_END`, `request_trust_index: true`) or **`POST /protect/user/insights/get`**. API panel shows `trust_index.{score, model, subscores}` (1–100, higher = SAFER). **`/signal/evaluate` does NOT return Trust Index** — do not use it for TI hero beats.
+- **Plaid Signal (optional component):** add `'signal'` to Link and call **`POST /signal/evaluate`** only when the prompt explicitly includes transaction-time Signal scoring. `ruleset.result`: `ACCEPT`, `REROUTE`, `REVIEW` — `REJECT` is NOT documented. Explainability: `core_attributes` + `ruleset.triggered_rule_details.internal_note` — never fabricate `reason_codes[]`.
+- **Trust Index / Ti2:** Limited Availability (March 2026). Use documented Protect response shapes from the product KB — do not label Signal `scores.*` as Trust Index.
 
 ### Plaid Cash Advance Score / EWA Score — Plaid Protect family, not standard Signal (REQUIRED)
 
@@ -243,7 +242,7 @@ Applies to all Layer demos using mobile-simulated host + Layer flows. Full produ
 ### API Response Accuracy
 - Use AskBill to verify exact field names and types before finalizing demo scripts
 - Plaid Signal ACH transaction risk scores: 1–99 (higher = HIGHER return risk — higher score means more likely to result in ACH return/failure). Realistic demo values for ACCEPT scenarios: 5–20 (low risk). Do NOT use scores 82–97 — those represent high-risk transactions that should receive REVIEW or REROUTE, not ACCEPT. **`REJECT` is not a documented `ruleset.result` value** — use `REROUTE` or render the host-app decision outside the API panel.
-- **Trust Index** is a real Plaid product (Limited Availability since March 2026; Ti2 shipped Oct 2025). Use the term ONLY in Plaid Protect demos, and never fabricate `/protect/*` endpoints or `trust_index.*` field shapes (NDA / private docs).
+- **Trust Index** is a real Plaid product (Limited Availability since March 2026; Ti2 shipped Oct 2025). Use ONLY in Plaid Protect demos via documented Protect APIs (`/protect/event/send`, `/protect/user/insights/get`) — never conflate with Signal `scores.*` from `/signal/evaluate`.
 - Identity verification statuses: `active`, `success`, `failed`, `pending_review`
 - Never show API error responses in main demo flows
 - Realistic but idealized data only (no 100/100 scores, no instant < 1s responses)

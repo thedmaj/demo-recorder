@@ -303,13 +303,19 @@ function writeSentinel(file, payload) {
 }
 
 function parseCliArgs(argv) {
-  const out = { maxIterations: null, emitAgentTask: true };
+  const out = { maxIterations: null, emitAgentTask: true, requireAppPassed: true };
   for (const a of argv) {
     if (a.startsWith('--max-iters=')) {
       const n = parseInt(a.slice('--max-iters='.length), 10);
       if (Number.isFinite(n) && n > 0) out.maxIterations = n;
     } else if (a === '--skip-agent-task') {
       out.emitAgentTask = false;
+    } else if (a === '--allow-app-fail') {
+      // Escape hatch: lets slide-fix run when the app tier hasn't passed yet.
+      // Use when the app failure is independent of slides (e.g. a panel-overlap
+      // issue on one host step) and you want to clear the slide-tier first so
+      // the residual app fix is the only thing left.
+      out.requireAppPassed = false;
     }
   }
   return out;
@@ -321,6 +327,7 @@ if (require.main === module) {
     runDir: RUN_DIR,
     maxIterations: cli.maxIterations || undefined,
     emitAgentTask: cli.emitAgentTask,
+    requireAppPassed: cli.requireAppPassed,
   }).then((result) => {
     if (result.skipped) {
       console.log('[slide-fix] skipped — see slide-fix-report.json');

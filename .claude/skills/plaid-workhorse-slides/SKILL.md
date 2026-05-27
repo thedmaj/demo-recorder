@@ -119,6 +119,7 @@ Use `var(--plaid-teal-500)` not `#42F0CD` literals when possible. No customer/ho
 
 ### Layout pitfalls (from slide QA)
 
+- **Code Window (`data-workhorse-layout="code"`)** → `.slide-stack.sc-code-split`: `.sc-code-copy` (headline + body) **left**, `.slide-code-block.sc-code-pane` + `pre.sc-code-pre` **right**. Do not stack `pre` under the title — the right column uses full slide height for 10–15 lines.
 - **Two-stat peer benchmarks** → `stat-highlight` (T4), not `data-table` (T7).
 - **Hero metrics** → one `.hero-stat-value` mint moment; do not bury the narration’s lead stat in a small grid cell.
 - **No footers** — pipeline slides omit `.chrome-foot`; put partnership labels in `.eyebrow-tag`.

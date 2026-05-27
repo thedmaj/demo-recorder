@@ -45,8 +45,9 @@ function extractFrames() {
 // ── 2. Analyze each frame with Claude vision ─────────────────────────────────
 async function analyzeFrame(framePath, second) {
   const imageData = fs.readFileSync(framePath).toString('base64');
+  const { OPUS_PRIMARY } = require('./scratch/utils/anthropic-models');
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
+    model: process.env.ANALYZE_MODEL || OPUS_PRIMARY,
     max_tokens: 300,
     messages: [{
       role: 'user',

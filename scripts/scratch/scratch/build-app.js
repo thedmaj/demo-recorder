@@ -670,11 +670,12 @@ async function hydrateApiSamplesForRelevantSlides(demoScript, productFamily) {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const ARCH_MODEL         = 'claude-opus-4-7';
+const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+const ARCH_MODEL         = process.env.BUILD_APP_MODEL || OPUS_PRIMARY;
 const ARCH_MAX_TOKENS    = 1024;
-const FRAMEWORK_MODEL    = 'claude-opus-4-7';
+const FRAMEWORK_MODEL    = process.env.BUILD_APP_MODEL || OPUS_PRIMARY;
 const FRAMEWORK_MAX_TOKENS = 1800;
-const BUILD_MODEL        = 'claude-opus-4-7';
+const BUILD_MODEL        = process.env.BUILD_APP_MODEL || OPUS_PRIMARY;
 const BUILD_BUDGET_TOKENS = 12000;
 // Adaptive thinking consumes tokens before output; for large demos (10+ steps
 // with multiple `.slide-root` insight screens) 32K can truncate the final
@@ -2014,10 +2015,10 @@ function extractText(content) {
 // ── Claude calls ──────────────────────────────────────────────────────────────
 
 /**
- * Call 1: Architecture brief (claude-sonnet-4-6, non-streaming, 1024 tokens).
+ * Call 1: Architecture brief (OPUS_PRIMARY, non-streaming, 1024 tokens).
  */
 async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
-  console.log('[Build] Call 1: Generating architecture brief (claude-opus-4-7)...');
+  console.log(`[Build] Call 1: Generating architecture brief (${ARCH_MODEL})...`);
 
   const { system, userMessages } = buildAppArchitectureBriefPrompt(demoScript, {
     plaidLinkLive: PLAID_LINK_LIVE,
@@ -2142,11 +2143,11 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
 }
 
 /**
- * Call 2: Full app generation (claude-opus-4-7, streaming, extended thinking).
+ * Call 2: Full app generation (OPUS_PRIMARY, streaming, extended thinking).
  * Streams progress dots to stdout.
  */
 async function generateApp(client, demoScript, architectureBrief, qaReport, brand, refinementOpts = {}) {
-  console.log('[Build] Call 2: Generating full HTML app (claude-opus-4-7 streaming)...');
+  console.log(`[Build] Call 2: Generating full HTML app (${BUILD_MODEL} streaming)...`);
   console.log('[Build] Progress: ');
 
   const designPlugin = loadDesignPlugin();

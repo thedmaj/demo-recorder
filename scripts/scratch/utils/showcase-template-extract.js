@@ -69,6 +69,7 @@ function tokenizeSkeletonCopy(html) {
   out = out.replace(/(<p[^>]*class="[^"]*slide-body-text[^"]*"[^>]*>)([\s\S]*?)(<\/p>)/gi, '$1{BODY}$3');
   out = out.replace(/(<div[^>]*class="[^"]*eyebrow-tag[^"]*"[^>]*>)([\s\S]*?)(<\/div>)/gi, '$1{EYEBROW}$3');
   out = out.replace(/(<div[^>]*class="[^"]*hero-stat-value[^"]*"[^>]*>)([\s\S]*?)(<\/div>)/gi, '$1{STAT_VALUE}$3');
+  out = out.replace(/(<pre[^>]*>)([\s\S]*?)(<\/pre>)/gi, '$1{CODE_SNIPPET}$3');
   return out;
 }
 

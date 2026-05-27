@@ -31,7 +31,7 @@
  *
  * Env:
  *   ANTHROPIC_API_KEY         required
- *   POST_SLIDES_MODEL         default 'claude-opus-4-7'
+ *   POST_SLIDES_MODEL         default OPUS_PRIMARY (claude-opus-4-7; set PIPELINE_OPUS_1M=true for 1M context beta)
  *   POST_SLIDES_MAX_TOKENS    default 6000
  */
 
@@ -53,7 +53,8 @@ const {
   injectSlideTypographyOverrides,
 } = require('../utils/normalize-slide-typography');
 
-const MODEL = process.env.POST_SLIDES_MODEL || 'claude-opus-4-7';
+const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+const MODEL = process.env.POST_SLIDES_MODEL || OPUS_PRIMARY;
 const MAX_TOKENS = Number(process.env.POST_SLIDES_MAX_TOKENS || 6000);
 const DEFAULT_MAX_ITERS = 1;
 

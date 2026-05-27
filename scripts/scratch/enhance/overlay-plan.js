@@ -144,12 +144,14 @@ async function main() {
     }
   }
 
-  console.log('[overlay-plan] Calling claude-opus-4-7 for overlay planning...');
+  const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+  const overlayModel = process.env.OVERLAY_PLAN_MODEL || OPUS_PRIMARY;
+  console.log(`[overlay-plan] Calling ${overlayModel} for overlay planning...`);
 
   const prompt = buildPrompt(videoAnalysis, stepTiming, demoScript, promptTxt);
 
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
+    model: overlayModel,
     max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
   });

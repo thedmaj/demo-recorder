@@ -192,8 +192,9 @@ async function main() {
 
   const prompt = buildPrompt(steps, transcript, productResearch);
 
+  const { OPUS_PRIMARY } = require('../utils/anthropic-models');
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
+    model: process.env.ENHANCE_SCRIPT_MODEL || OPUS_PRIMARY,
     max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
   });

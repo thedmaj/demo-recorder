@@ -10,7 +10,7 @@ use_cases:
   - "instant-account-verification"
   - "external-account-verification"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-25T16:17:40.725Z"
+last_ai_update: "2026-05-26T19:57:25.565Z"
 needs_review: true
 approved: true
 version: 1
@@ -133,6 +133,22 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-26 — Run: 2026-05-26-Opening-A-New-Pi-Auth-Identity-Signal-Transfer-Protect-v5 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can marry KYC data with bank-held identity data at the funding source like Plaid does via Identity Match","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"Database Auth delivers instant verification results embedded directly in Plaid Link with enhanced risk attributes feeding Identity Match and Signal","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"65% conversion uplift vs. micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs. alternatives","source":"Plaid internal / Gong calls","confidence":"high"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs. legacy matching; ~23% increase in successful verifications vs. aggregator/database mix","source":"Plaid internal","confidence":"high"}
+
+### 2026-05-26 — Run: 2026-05-26-Opening-A-New-Pi-Auth-Identity-Signal-Transfer-Protect-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can marry KYC data with bank-held identity data at the funding source like Plaid does via Identity Match","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"Database Auth delivers instant verification results embedded directly in Plaid Link with enhanced risk attributes feeding Identity Match and Signal","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"65% conversion uplift vs. micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs. alternatives","source":"Plaid internal / Gong calls","confidence":"high"}
+- [high] {"claim":"Identity Match pass-rate improvement: 20–30% vs. legacy matching; ~23% increase in successful verifications vs. aggregator/database mix","source":"Plaid internal","confidence":"high"}
 
 ### 2026-05-25 — Run: 2026-05-25-Personal-Banking-Linking-External-Auth-Identity-Signal-Transfer-v2 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**
