@@ -697,9 +697,12 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '#api-response-panel .tab:hover{color:#fff;}',
       '#api-response-panel .tab[aria-selected="true"]{background:var(--plaid-blue-600,#0B7BBC);color:#fff;box-shadow:0 1px 0 rgba(255,255,255,0.08) inset;}',
       // Toolbar
-      '#api-response-panel .panel-toolbar{display:flex !important;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--panel-bg-2);border-bottom:1px solid var(--panel-border);font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:10px;color:rgba(255,255,255,0.54);}',
-      '#api-response-panel .copy-btn{appearance:none;background:transparent;border:1px solid var(--panel-border);color:rgba(255,255,255,0.7);font:inherit;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;padding:4px 10px;border-radius:4px;cursor:pointer;transition:all 150ms cubic-bezier(0.4,0,0.2,1);}',
-      '#api-response-panel .copy-btn:hover{color:#fff;border-color:rgba(255,255,255,0.24);background:rgba(255,255,255,0.04);}',
+      // .panel-toolbar + .copy-btn removed from the template 2026-05-28.
+      // The display:none below guarantees they stay hidden even on older
+      // builds whose baked HTML still has the toolbar div, and on the
+      // legacy <span id="api-panel-content-type"> the patch script may
+      // have injected at runtime in prior versions.
+      '#api-response-panel .panel-toolbar, #api-response-panel #api-panel-content-type, #api-response-panel .copy-btn, #api-response-panel #api-panel-copy { display: none !important; }',
       // Code panes
       '#api-response-panel .code-wrap{position:relative;flex:1;min-height:0;overflow:hidden;}',
       '#api-response-panel pre.code{margin:0;padding:20px 24px 24px;font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:10px;line-height:1.65;color:#DCE7F2;overflow:auto;height:100%;tab-size:2;background:transparent;}',
@@ -1174,10 +1177,10 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
 
   if (!hasApiPanel && hasAnyApiData && html.includes('</body>')) {
     // Canonical API panel — Claude Design "API Panel (standalone)" template
-    // (2026-05-26 handoff bundle). Two-tab Request / Response panel with:
+    // (2026-05-26 handoff bundle, panel-toolbar + Copy button removed
+    // 2026-05-28 per user request). Two-tab Request / Response panel with:
     //   .toggle (chevron, left edge)
     //   .panel-head (eyebrow + .method/.path + .tabs)
-    //   .panel-toolbar (content-type label + Copy button)
     //   .code-wrap > pre.code[data-pane="req|res"] (renderjson panes)
     // Legacy id/data-testid attributes preserved so existing populateApiPanel
     // + build-qa selectors keep working.
@@ -1201,10 +1204,9 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
             '<button class="tab" id="tab-res" data-testid="api-panel-tab-response" role="tab" data-tab="res" aria-controls="api-pane-response" aria-selected="false">Response</button>',
           '</div>',
         '</header>',
-        '<div class="panel-toolbar">',
-          '<span id="api-panel-content-type">application/json · request body</span>',
-          '<button class="copy-btn" id="api-panel-copy" data-testid="api-panel-copy" type="button">Copy</button>',
-        '</div>',
+        // .panel-toolbar (application/json banner + Copy button) REMOVED
+        // 2026-05-28. Tabs sit flush against the code panes. Strip any
+        // residual .panel-toolbar from older runs via CSS below.
         '<div class="code-wrap">',
           '<pre class="code is-active" id="api-pane-request" data-testid="api-pane-request" data-pane="req" role="tabpanel" aria-labelledby="tab-req"></pre>',
           '<pre class="code" id="api-pane-response" data-testid="api-pane-response" data-pane="res" role="tabpanel" aria-labelledby="tab-res" hidden></pre>',
