@@ -323,9 +323,27 @@ function collectStepApiResponses(demoScript, { onlyStepIds } = {}) {
   const responses = {};
   const endpoints = {};
   const filterSet = onlyStepIds && onlyStepIds.length ? new Set(onlyStepIds) : null;
-  for (const step of (demoScript?.steps || [])) {
+  const steps = (demoScript && Array.isArray(demoScript.steps)) ? demoScript.steps : [];
+  // Identify landing/marketing steps that should NOT carry an API panel.
+  // Rule (2026-05-28): the FIRST step in the storyboard is a landing/marketing
+  // page if its endpoint is `/link/token/create` — that's setup, not a
+  // user-visible API call. Showing it overlaps the hero on screenshot and
+  // adds no narrative value. The next `/link/token/create` reference (right
+  // before Plaid Link launches) keeps its panel; only the FIRST one is hidden.
+  const landingExclusionIds = new Set();
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i];
+    if (!s || !stepHasApiResponse(s)) continue;
+    const ep = String(s.apiResponse.endpoint || '').toLowerCase();
+    if (/link\/token\/create/.test(ep)) {
+      landingExclusionIds.add(s.id);
+      break; // only the FIRST link/token/create step on the storyboard
+    }
+  }
+  for (const step of steps) {
     if (!stepHasApiResponse(step)) continue;
     if (filterSet && !filterSet.has(step.id)) continue;
+    if (landingExclusionIds.has(step.id)) continue; // landing page — no panel
     const ep = step.apiResponse.endpoint || '';
     const llmRequest = step.apiResponse.request;
     // Emit the WRAPPED shape { request, response } so the post-panels patch
@@ -667,21 +685,24 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '#api-response-panel.is-collapsed .toggle svg{transform:rotate(180deg);}',
       // Header + route + tabs
       '#api-response-panel .panel-head{padding:20px 24px 16px;border-bottom:1px solid var(--panel-border);display:flex !important;align-items:flex-end;justify-content:space-between;gap:24px;}',
-      '#api-response-panel .panel-head .eyebrow{color:var(--plaid-teal-500,#42F0CD);font-size:12px;line-height:1;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;display:block;}',
-      '#api-response-panel .panel-head .route{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:18px;line-height:1.2;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}',
-      '#api-response-panel .panel-head .method{display:inline-block;font-size:11px;font-weight:700;letter-spacing:0.08em;padding:3px 8px;border-radius:4px;background:rgba(66,240,205,0.14);color:var(--plaid-teal-500,#42F0CD);border:1px solid rgba(66,240,205,0.28);font-family:-apple-system,BlinkMacSystemFont,sans-serif;}',
+      // Panel typography reduced 20% (2026-05-28) per user request: smaller
+      // panel chrome so JSON content has more visual weight. Affects every
+      // text element inside #api-response-panel.
+      '#api-response-panel .panel-head .eyebrow{color:var(--plaid-teal-500,#42F0CD);font-size:10px;line-height:1;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;display:block;}',
+      '#api-response-panel .panel-head .route{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:14px;line-height:1.2;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}',
+      '#api-response-panel .panel-head .method{display:inline-block;font-size:9px;font-weight:700;letter-spacing:0.08em;padding:3px 8px;border-radius:4px;background:rgba(66,240,205,0.14);color:var(--plaid-teal-500,#42F0CD);border:1px solid rgba(66,240,205,0.28);font-family:-apple-system,BlinkMacSystemFont,sans-serif;}',
       '#api-response-panel .panel-head .path{color:rgba(255,255,255,0.92);}',
       '#api-response-panel .tabs{display:inline-flex !important;gap:2px;padding:3px;background:rgba(0,0,0,0.28);border:1px solid var(--panel-border);border-radius:8px;}',
-      '#api-response-panel .tab{appearance:none;border:0;background:transparent;font:inherit;color:rgba(255,255,255,0.62);padding:7px 14px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:color 150ms cubic-bezier(0.4,0,0.2,1),background 150ms cubic-bezier(0.4,0,0.2,1);}',
+      '#api-response-panel .tab{appearance:none;border:0;background:transparent;font:inherit;color:rgba(255,255,255,0.62);padding:7px 14px;border-radius:6px;font-size:10px;font-weight:500;cursor:pointer;transition:color 150ms cubic-bezier(0.4,0,0.2,1),background 150ms cubic-bezier(0.4,0,0.2,1);}',
       '#api-response-panel .tab:hover{color:#fff;}',
       '#api-response-panel .tab[aria-selected="true"]{background:var(--plaid-blue-600,#0B7BBC);color:#fff;box-shadow:0 1px 0 rgba(255,255,255,0.08) inset;}',
       // Toolbar
-      '#api-response-panel .panel-toolbar{display:flex !important;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--panel-bg-2);border-bottom:1px solid var(--panel-border);font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:12px;color:rgba(255,255,255,0.54);}',
-      '#api-response-panel .copy-btn{appearance:none;background:transparent;border:1px solid var(--panel-border);color:rgba(255,255,255,0.7);font:inherit;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:12px;padding:4px 10px;border-radius:4px;cursor:pointer;transition:all 150ms cubic-bezier(0.4,0,0.2,1);}',
+      '#api-response-panel .panel-toolbar{display:flex !important;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--panel-bg-2);border-bottom:1px solid var(--panel-border);font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:10px;color:rgba(255,255,255,0.54);}',
+      '#api-response-panel .copy-btn{appearance:none;background:transparent;border:1px solid var(--panel-border);color:rgba(255,255,255,0.7);font:inherit;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:10px;padding:4px 10px;border-radius:4px;cursor:pointer;transition:all 150ms cubic-bezier(0.4,0,0.2,1);}',
       '#api-response-panel .copy-btn:hover{color:#fff;border-color:rgba(255,255,255,0.24);background:rgba(255,255,255,0.04);}',
       // Code panes
       '#api-response-panel .code-wrap{position:relative;flex:1;min-height:0;overflow:hidden;}',
-      '#api-response-panel pre.code{margin:0;padding:20px 24px 24px;font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:13px;line-height:1.65;color:#DCE7F2;overflow:auto;height:100%;tab-size:2;background:transparent;}',
+      '#api-response-panel pre.code{margin:0;padding:20px 24px 24px;font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:10px;line-height:1.65;color:#DCE7F2;overflow:auto;height:100%;tab-size:2;background:transparent;}',
       '#api-response-panel [data-pane]{display:none !important;}',
       '#api-response-panel [data-pane].is-active{display:block !important;}',
       // renderjson tokens — Claude Design palette
@@ -862,6 +883,29 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     if (window.__apiPanelUserOpen) rerenderCurrentApiJson();
     return window.__apiPanelUserOpen;
   };
+
+  // Universal delegated click handler for the Request/Response tabs.
+  // Without this, the v12 panel's pre-baked tabs (in the canonical HTML
+  // shell post-panels emits) have NO click handler — only the legacy
+  // ensureTabStructure injection path wires handlers, and that path only
+  // runs when .side-panel-header is present (which v12 doesn't have).
+  // Result: clicking Request/Response did nothing on every v12 build.
+  // Capture-phase + .closest() so any descendant of a .tab/[role=tab]
+  // button (e.g. a span inside) also dispatches.
+  if (!window.__pipelineApiTabDelegateBound) {
+    window.__pipelineApiTabDelegateBound = true;
+    document.addEventListener('click', function(e) {
+      var t = e.target && e.target.closest
+        ? e.target.closest('#api-response-panel .tab[data-tab], #api-response-panel button[role="tab"][data-tab], #api-response-panel .api-panel-tab[data-tab], [data-testid="api-panel-tab-request"], [data-testid="api-panel-tab-response"]')
+        : null;
+      if (!t) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var which = t.getAttribute('data-tab') ||
+        (t.getAttribute('data-testid') === 'api-panel-tab-response' ? 'res' : 'req');
+      if (typeof window.switchApiTab === 'function') window.switchApiTab(which);
+    }, true);
+  }
 
   if (!window.renderjson) {
     var existing = document.querySelector('script[data-renderjson-lib]');
