@@ -326,8 +326,18 @@ function collectStepApiResponses(demoScript, { onlyStepIds } = {}) {
   for (const step of (demoScript?.steps || [])) {
     if (!stepHasApiResponse(step)) continue;
     if (filterSet && !filterSet.has(step.id)) continue;
-    responses[step.id] = step.apiResponse.response;
-    if (step.apiResponse.endpoint) endpoints[step.id] = step.apiResponse.endpoint;
+    const ep = step.apiResponse.endpoint || '';
+    const llmRequest = step.apiResponse.request;
+    // Emit the WRAPPED shape { request, response } so the post-panels patch
+    // script can render BOTH tabs. If the LLM provided a request body, use
+    // it verbatim; otherwise synthesize a canonical Plaid-shape request from
+    // the endpoint string. The patch-script's wrap logic recognizes any
+    // object with `request`/`response` keys and uses both panes.
+    responses[step.id] = {
+      request: (llmRequest !== undefined ? llmRequest : synthesizeRequestBody(ep, step, demoScript)),
+      response: step.apiResponse.response,
+    };
+    if (ep) endpoints[step.id] = ep;
   }
 
   // Auto-inject an onSuccess metadata panel for the step immediately after a
@@ -343,13 +353,135 @@ function collectStepApiResponses(demoScript, { onlyStepIds } = {}) {
     const targetId = synthesized.stepId;
     if (!filterSet || filterSet.has(targetId)) {
       if (!responses[targetId]) {
-        responses[targetId] = synthesized.response;
+        responses[targetId] = {
+          // Plaid Link onSuccess is a browser callback, not an HTTP call —
+          // request is intentionally null so the Request tab hides.
+          request: null,
+          response: synthesized.response,
+        };
         endpoints[targetId] = synthesized.endpoint;
       }
     }
   }
 
   return { responses, endpoints };
+}
+
+/**
+ * Synthesize a canonical Plaid request body for an endpoint string. This
+ * runs at post-panels bake time when the LLM-generated demo-script.json
+ * doesn't carry an explicit `apiResponse.request` (current schema only has
+ * `response`). The Plaid API request shapes are well-documented per
+ * endpoint, so we generate a realistic body from the endpoint path.
+ *
+ * Returns null for endpoints that have no HTTP request (e.g. Plaid Link
+ * onSuccess callback) — that null is preserved through the wrapping and
+ * the renderer hides the Request tab.
+ *
+ * @param {string} endpoint  "POST /auth/get" / "POST /transfer/authorization/create" / etc.
+ * @param {object} [step]    full demo-script step (for context — persona, products)
+ * @param {object} [demoScript] full demo-script (for cross-step context)
+ * @returns {object|null}
+ */
+function synthesizeRequestBody(endpoint, step, demoScript) {
+  const ep = String(endpoint || '').toLowerCase();
+  if (!ep) return null;
+  // Plaid Link onSuccess callback — not an HTTP request.
+  if (/onsuccess|onsuccess.*callback|link\s+onsuccess/.test(ep)) return null;
+  // Generic field helpers — try to pull realistic ids/persona from the script.
+  const persona = (demoScript && demoScript.persona) || {};
+  const personaName = persona.name || 'Demo Customer';
+  const personaEmail = persona.email || 'demo.customer@example.com';
+  const personaPhone = persona.phone || '+14155550199';
+  const personaAddress = persona.address || { street: '500 Market St', city: 'San Francisco', region: 'CA', postal_code: '94105', country: 'US' };
+  const clientName = (demoScript && demoScript.brand && demoScript.brand.name) || (persona.company || 'Demo Customer');
+  const accessToken = `access-sandbox-${slugify(clientName)}-checking`;
+  const accountId = 'blgvvBlXw3cq5GMPwqB6s6q4dLKB9WcVqGDGo';
+
+  // Route on path
+  if (/\/link\/token\/create/.test(ep)) {
+    const products = (demoScript && demoScript.products && Array.isArray(demoScript.products) ? demoScript.products : null) || ['transfer', 'signal'];
+    return {
+      client_id: 'PLAID_CLIENT_ID',
+      secret: 'PLAID_SECRET',
+      client_name: clientName,
+      language: 'en',
+      country_codes: ['US'],
+      products,
+      required_if_supported_products: ['identity'],
+      user: { client_user_id: `${slugify(clientName)}-${slugify(personaName)}-001` },
+    };
+  }
+  if (/\/auth\/get/.test(ep)) {
+    return { client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken, options: { account_ids: [accountId] } };
+  }
+  if (/\/identity\/match/.test(ep)) {
+    return {
+      client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken,
+      user: { legal_name: personaName, phone_number: personaPhone, email_address: personaEmail, address: personaAddress },
+    };
+  }
+  if (/\/identity\/get/.test(ep)) {
+    return { client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken };
+  }
+  if (/\/transfer\/authorization\/create/.test(ep)) {
+    return {
+      client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken,
+      account_id: accountId, funding_account_id: `funding-sandbox-${slugify(clientName)}-master`,
+      type: 'debit', network: 'same-day-ach', ach_class: 'web',
+      amount: '1000.00', iso_currency_code: 'USD',
+      user: { legal_name: personaName, email_address: personaEmail }, user_present: true,
+      idempotency_key: `${slugify(clientName)}-${slugify(personaName)}-001`,
+    };
+  }
+  if (/\/transfer\/create/.test(ep)) {
+    return {
+      client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken,
+      account_id: accountId, authorization_id: 'authorization-sandbox-placeholder',
+      type: 'debit', network: 'same-day-ach', ach_class: 'web',
+      amount: '1000.00', description: 'Demo opening deposit',
+    };
+  }
+  if (/\/signal\/evaluate/.test(ep)) {
+    return {
+      client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken,
+      account_id: accountId, client_transaction_id: 'demo-txn-001',
+      amount: 1000.0, user: { name: { full_name: personaName } }, is_recurring: false,
+      ruleset_key: 'account_funding_v1',
+    };
+  }
+  if (/\/protect\/(?:user\/insights\/get|event\/send)/.test(ep)) {
+    return {
+      client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken,
+      event_type: 'LINK_SESSION_END', request_trust_index: true,
+    };
+  }
+  if (/\/cra\/(?:check_report|base_report).*\/get/.test(ep)) {
+    return {
+      client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET',
+      user_token: 'user-sandbox-cra-placeholder',
+    };
+  }
+  if (/\/item\/public_token\/exchange/.test(ep)) {
+    return { client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', public_token: 'public-sandbox-placeholder' };
+  }
+  if (/\/liabilities\/get/.test(ep)) {
+    return { client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken };
+  }
+  if (/\/investments\/(?:holdings|transactions|auth)\/get/.test(ep)) {
+    return { client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken };
+  }
+  // Fallback for unrecognized endpoints — most server-to-server Plaid calls
+  // include at minimum a client_id + secret + access_token tuple.
+  return { client_id: 'PLAID_CLIENT_ID', secret: 'PLAID_SECRET', access_token: accessToken };
+}
+
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32) || 'demo';
 }
 
 /**

@@ -168,7 +168,12 @@ describe('onSuccess panel synthesis (v6)', () => {
     const { responses, endpoints } = collectStepApiResponses(script);
     assert.ok(responses['link-success'], 'link-success should have a synthesized response');
     assert.equal(endpoints['link-success'], 'Plaid Link onSuccess (callback)');
-    const resp = responses['link-success'];
+    // 2026-05-28: collectStepApiResponses now emits the WRAPPED v12 shape
+    // { request, response } — synthesized request is null for the Plaid
+    // Link onSuccess callback (browser callback, not an HTTP call).
+    const wrapped = responses['link-success'];
+    assert.equal(wrapped.request, null, 'onSuccess callback has no HTTP request');
+    const resp = wrapped.response;
     assert.ok(typeof resp.public_token === 'string' && resp.public_token.startsWith('public-sandbox-'));
     assert.equal(resp.metadata.institution.name, 'First Platypus Bank');
     assert.equal(resp.metadata.institution.institution_id, 'ins_109508');
@@ -193,7 +198,8 @@ describe('onSuccess panel synthesis (v6)', () => {
     };
     const { responses, endpoints } = collectStepApiResponses(script);
     // The existing Bank Income response wins; no onSuccess synthesis.
-    assert.deepEqual(responses['bank-income-review'].bank_income, [{ bank_income_id: 'abc' }]);
+    // 2026-05-28: wrapped v12 shape — response body lives under .response.
+    assert.deepEqual(responses['bank-income-review'].response.bank_income, [{ bank_income_id: 'abc' }]);
     assert.equal(endpoints['bank-income-review'], 'POST /credit/bank_income/get');
   });
 
@@ -246,7 +252,8 @@ describe('onSuccess panel synthesis (v6)', () => {
       ],
     };
     const { responses } = collectStepApiResponses(script);
-    const m = responses['connected'].metadata;
+    // 2026-05-28: wrapped v12 shape — response body lives under .response.
+    const m = responses['connected'].response.metadata;
     assert.equal(m.institution.name, 'Tartan Bank');
     assert.equal(m.institution.institution_id, 'ins_117650');
     assert.equal(m.accounts[0].name, 'Savings Account');
