@@ -13,6 +13,7 @@
     "demo:full": "node scripts/scratch/orchestrator.js",
     "demo:with-slides": "node scripts/scratch/orchestrator.js --with-slides",
     "demo:app-only": "node scripts/scratch/orchestrator.js --app-only",
+    "preview": "node scripts/preview-app.js",
     "demo:from:script": "node scripts/scratch/orchestrator.js --from=script",
     "demo:from:build": "node scripts/scratch/orchestrator.js --from=build",
     "demo:from:build-qa": "node scripts/scratch/orchestrator.js --from=build-qa",

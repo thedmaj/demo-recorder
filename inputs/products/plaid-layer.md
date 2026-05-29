@@ -127,6 +127,13 @@ encoded in the build prompt (`prompt-templates.js`) and the [onboarding skill](.
 12. **Returned identity is SUBMITTED, not verified** — store provenance; distinguish `submitted_identity` from a downstream IDV `verified_identity`; don't overwrite higher-trust records.
 13. **Persist `request_id`** (and `link_session_id` from metadata/webhooks when available) for debugging/supportability.
 
+> **Local preview (REQUIRED to see the live modals):** the Layer and IDV modals fetch
+> `/api/create-session-token`, `/api/create-idv-link-token`, and `/api/user-account-session-get`.
+> Opening the built `index.html` without the backend fails with `net::ERR_CONNECTION_REFUSED` and the
+> modal never loads. Preview with the live backend via **`npm run preview`** (serves `out/latest`) or
+> `npm run preview -- out/demos/<run>` — it loads `.env` and forces `PLAID_LINK_LIVE=true`. The
+> pipeline's `record` stage starts this same app-server automatically.
+
 ### End-to-end flow summary
 
 1. Call `POST /user/create` to get a persistent `user_token` per end-user (reuse across sessions).
