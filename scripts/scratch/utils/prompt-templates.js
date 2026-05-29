@@ -1450,6 +1450,19 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     typeof opts.layerMobileSkeletonHtml === 'string' ? opts.layerMobileSkeletonHtml.trim() : '';
   const promptText = typeof opts.promptText === 'string' ? opts.promptText : '';
   const useLayerMobileMockTemplate = shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled);
+  // Real Plaid Layer via the Web SDK (NOT the mobile mock): when the demo is a Layer
+  // flow with a real launch step and we are not in mobile-mock mode. The generated app
+  // uses Plaid.create + handler.open()/submit() against /api/create-session-token rather
+  // than hand-built simulated Layer screens. See plaid-layer-idv-onboarding skill.
+  const useRealLayerWebSdk = (() => {
+    if (useLayerMobileMockTemplate) return false;
+    const product = String(demoScript?.product || '').toLowerCase();
+    const flow = String(demoScript?.plaidSandboxConfig?.plaidLinkFlow || '').toLowerCase();
+    const hasLaunch = Array.isArray(demoScript?.steps) &&
+      demoScript.steps.some((s) => String((s && s.plaidPhase) || '').toLowerCase() === 'launch');
+    const layerSignaled = product.includes('layer') || flow === 'layer' || flow === 'layer-web-sdk';
+    return layerSignaled && hasLaunch;
+  })();
   const includeLiveLinkInstructionBlock = shouldIncludeLiveLinkInstructionBlock({
     demoScript,
     promptText,
@@ -1871,6 +1884,56 @@ contract that the next stage knows how to fill.\n` +
       text:
         `${embeddedLinkSkillBlock}\n\n` +
         `Treat this as implementation-critical whenever Plaid Link mode is embedded.`,
+    });
+  }
+  if (useRealLayerWebSdk) {
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## PLAID LAYER — REAL WEB SDK (NOT a mock)\n\n` +
+        `This demo uses the **real Plaid Layer Web SDK**. Do NOT build simulated Layer screens ` +
+        `(no \`layer-sign-up-instantly\` / \`layer-authenticate-device\` / \`layer-confirm-share\` ` +
+        `bottom-sheet divs) and do NOT use a mobile-simulator shell. The real Layer modal renders ` +
+        `itself; the host page only provides the launch trigger and the post-Layer review screens. ` +
+        `Source of truth: \`.claude/skills/plaid-layer-idv-onboarding/SKILL.md\`.\n\n` +
+        `**Single Layer launch step** (the demo-script step with \`"plaidPhase":"launch"\`):\n` +
+        `- Include the canonical launch CTA \`data-testid="link-external-account-btn"\` (a normal-scale ` +
+        `inline icon + label, never a hero graphic).\n` +
+        `- Wire the real SDK exactly in this order (open BEFORE submit — submit() postMessages into the ` +
+        `iframe, which must exist first):\n` +
+        '```javascript\n' +
+        `async function launchLayer() {\n` +
+        `  const r = await fetch('/api/create-session-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_user_id: window._clientUserId }) });\n` +
+        `  const { link_token } = await r.json();\n` +
+        `  const handler = Plaid.create({\n` +
+        `    token: link_token,\n` +
+        `    onSuccess: async (public_token) => {\n` +
+        `      const s = await fetch('/api/user-account-session-get', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ public_token }) });\n` +
+        `      window._layerIdentity = (await s.json()).identity || null;\n` +
+        `      window._plaidLinkComplete = true;\n` +
+        `      window.goToStep('<first-post-layer-step-id>');\n` +
+        `    },\n` +
+        `    onEvent: (eventName) => {\n` +
+        `      if (eventName === 'LAYER_NOT_AVAILABLE') handler.submit({ date_of_birth: '1989-03-14' });\n` +
+        `    },\n` +
+        `    onExit: () => {},\n` +
+        `  });\n` +
+        `  window._plaidHandler = handler;\n` +
+        `  handler.open();\n` +
+        `  setTimeout(() => handler.submit({ phone_number: '+14155550011' }), 600);\n` +
+        `}\n` +
+        '```\n' +
+        `- The launch CTA onclick calls \`launchLayer()\`. Set \`window._clientUserId\` once (a stable ` +
+        `non-PII id) and reuse it (Layer + IDV share it).\n` +
+        `- Eligible sandbox phone is **+14155550011** (LAYER_READY); OTP 123456. Do NOT use 415-555-1111 ` +
+        `(that is the mock convention, not real Layer).\n` +
+        `- \`window._plaidLinkComplete = true\` is set ONLY in \`onSuccess\`.\n\n` +
+        `**Post-Layer review step:** render the returned identity (name, address, DOB, email) from ` +
+        `\`window._layerIdentity\` as an **editable** summary — never hardcode bank names. No bank-account ` +
+        `linking screens (identity prefill only).\n\n` +
+        `**Verification method is owned by the IDV template — never a user choice.** Do NOT build a ` +
+        `"choose your verification depth" selector (SSN last-4 vs full SSN vs IDV). Any IDV beat is a ` +
+        `template-driven "verifying identity" screen only (status success / pending_review).`,
     });
   }
   if (useLayerMobileMockTemplate && layerMockTemplate) {

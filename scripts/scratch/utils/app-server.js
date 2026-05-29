@@ -395,6 +395,27 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
         return true;
       }
 
+      // Plaid Layer (real Web SDK): create a Layer session token. The generated host
+      // app fetches this on launch, then Plaid.create({token}) + handler.open() +
+      // handler.submit({phone_number}). Template defaults to PLAID_LAYER_TEMPLATE_ID
+      // inside plaid-backend.createSessionToken. See plaid-layer-idv-onboarding skill.
+      case '/api/create-session-token': {
+        const result = await plaid.createSessionToken({
+          client_user_id: body.client_user_id || body.clientUserId || null,
+          template_id:    body.template_id || body.templateId || null,
+        });
+        sendJson(res, 200, result);
+        return true;
+      }
+
+      // Plaid Layer onSuccess exchange: returns identity + items (no separate
+      // /item/public_token/exchange needed). See plaid-backend.userAccountSessionGet.
+      case '/api/user-account-session-get': {
+        const result = await plaid.userAccountSessionGet(body.public_token || body.publicToken);
+        sendJson(res, 200, result);
+        return true;
+      }
+
       default:
         sendJson(res, 404, { error: `Unknown API route: ${urlPath}` });
         return true;
