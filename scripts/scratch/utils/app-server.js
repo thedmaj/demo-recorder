@@ -416,6 +416,29 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
         return true;
       }
 
+      // Plaid Identity Verification (live IDV): create an IDV Link token. Requires a
+      // published IDV template (PLAID_IDV_TEMPLATE_ID). The generated app opens this
+      // via Plaid.create({token}).open(); onSuccess metadata.link_session_id is the
+      // identity_verification_id. See plaid-identity-verification.md.
+      case '/api/create-idv-link-token': {
+        const result = await plaid.createIdvLinkToken({
+          client_user_id: body.client_user_id || body.clientUserId || null,
+          template_id:    body.template_id || body.templateId || null,
+          client_name:    body.client_name || body.clientName || null,
+        });
+        sendJson(res, 200, result);
+        return true;
+      }
+
+      // IDV result lookup after onSuccess / STATUS_UPDATED webhook.
+      case '/api/identity-verification-get': {
+        const result = await plaid.getIdentityVerification(
+          body.identity_verification_id || body.identityVerificationId
+        );
+        sendJson(res, 200, result);
+        return true;
+      }
+
       default:
         sendJson(res, 404, { error: `Unknown API route: ${urlPath}` });
         return true;

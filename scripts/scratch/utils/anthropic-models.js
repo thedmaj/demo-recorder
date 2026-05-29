@@ -4,7 +4,7 @@
  *
  * Central registry of the Anthropic models the demo pipeline calls.
  *
- * Decision (2026-05-26): Default to **Claude Opus 4.7 (1M-context variant)**
+ * Decision (2026-05-29): Default to **Claude Opus 4.8 (1M context)**
  * for every Opus-tier stage. The 1M context gives ~5x headroom for:
  *   • Large storyboards (>14 beats) where structured-output script gen
  *     burns input on schema + skill files + product KBs.
@@ -34,20 +34,20 @@
 // enhance/enhance-script, enhance/analyze-video, sync-audio.
 //
 // Note on the 1M-context variant: the bracket-suffix form
-// `claude-opus-4-7[1m]` is Claude Code's INTERNAL notation, not an
+// `claude-opus-4-8[1m]` is Claude Code's INTERNAL notation, not an
 // Anthropic API model ID. To enable the 1M context window in API calls,
 // pass `betas: ['context-1m-2025-08-07']` to messages.create — see
-// OPUS_PRIMARY_BETAS below. The model ID itself is `claude-opus-4-7`.
-const OPUS_PRIMARY = process.env.PIPELINE_OPUS_MODEL || 'claude-opus-4-7';
+// OPUS_PRIMARY_BETAS below. The model ID itself is `claude-opus-4-8`.
+const OPUS_PRIMARY = process.env.PIPELINE_OPUS_MODEL || 'claude-opus-4-8';
 
 // Beta flags to enable on every Opus call. Stages that take the
 // registry path (read OPUS_PRIMARY) should also read this array and
-// forward it as `betas` on the messages.create call. Empty by default
-// for backward compat; set PIPELINE_OPUS_1M=true to opt in to 1M
-// context window across the pipeline.
-const OPUS_PRIMARY_BETAS = process.env.PIPELINE_OPUS_1M === 'true'
-  ? ['context-1m-2025-08-07']
-  : [];
+// forward it as `betas` on the messages.create call. 1M context is ON by
+// default for the Opus tier (large storyboards / iter-3 refinement / deck
+// templates routinely exceed 200K). Set PIPELINE_OPUS_1M=false to disable.
+const OPUS_PRIMARY_BETAS = process.env.PIPELINE_OPUS_1M === 'false'
+  ? []
+  : ['context-1m-2025-08-07'];
 
 // Sonnet — narration repace, story-echo, multi-modal recording analysis.
 // Short-horizon per-clip work; 200K context is plenty.

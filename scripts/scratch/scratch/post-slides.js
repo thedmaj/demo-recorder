@@ -72,8 +72,14 @@ function resolveHtmlPath(outDir, layout) {
 
 function stepBlockRegex(stepId) {
   const id = String(stepId).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  // Boundary lookahead = where this step's block ends. CRITICAL: include `<script`
+  // and the build-app API-panel placeholder comment (`API_PANEL_AND_LINK_EVENTS`).
+  // For the LAST slide step, the next-step / SIDE-PANELS / api-response-panel
+  // sentinels don't exist yet at post-slides time (post-panels injects them later),
+  // so without these the block captured everything up to </body> — swallowing the
+  // app's main controller <script> when the splice replaced it (dead navigation).
   return new RegExp(
-    `<div[^>]*\\bdata-testid="step-${id}"[^>]*>[\\s\\S]*?(?=<div[^>]*\\bdata-testid="step-|<!--[\\s\\S]*?SIDE PANELS[\\s\\S]*?-->|<div[^>]*\\bid="(?:link-events-panel|api-response-panel)"|<\\/body>)`,
+    `<div[^>]*\\bdata-testid="step-${id}"[^>]*>[\\s\\S]*?(?=<div[^>]*\\bdata-testid="step-|<script\\b|<!--[\\s\\S]*?(?:SIDE PANELS|API_PANEL_AND_LINK_EVENTS)[\\s\\S]*?-->|<div[^>]*\\bid="(?:link-events-panel|api-response-panel)"|<\\/body>)`,
     'i'
   );
 }

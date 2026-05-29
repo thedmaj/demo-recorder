@@ -1941,8 +1941,17 @@ contract that the next stage knows how to fill.\n` +
         `(name, address, DOB, email — **editable**) AND the linked bank accounts from \`window._layerItems\` ` +
         `(institution + masked account) to demonstrate identity AND bank data. Never hardcode bank names.\n\n` +
         `**Verification method is owned by the IDV template — never a user choice.** Do NOT build a ` +
-        `"choose your verification depth" selector (SSN last-4 vs full SSN vs IDV). Any IDV beat is a ` +
-        `template-driven "verifying identity" screen only (status success / pending_review).\n\n` +
+        `"choose your verification depth" selector (SSN last-4 vs full SSN vs IDV).\n` +
+        `**IDV step:** if the demo-script has a SECOND \`plaidPhase:"launch"\` step for identity ` +
+        `verification, wire it as a LIVE Plaid Identity Verification launch — a distinct CTA ` +
+        `\`data-testid="idv-launch-btn"\` (do NOT reuse link-external-account-btn). On click: fetch ` +
+        `\`POST /api/create-idv-link-token\`, then \`Plaid.create({ token, onSuccess:(pt,md)=>{ ` +
+        `window._idvId = md.link_session_id; window._idvComplete = true; ` +
+        `window.goToStep('<idv-success-step-id>'); }, onEvent:()=>{}, onExit:()=>{} }).open()\` ` +
+        `(IDV public_token is null; the id is metadata.link_session_id). The IDV **success** step shows ` +
+        `\`POST /identity_verification/get\` → \`status:"success"\` (steps kyc_check / ` +
+        `documentary_verification / selfie_check = success) as its apiResponse. If there is NO dedicated ` +
+        `IDV launch step, render IDV as a template-driven "verifying identity" screen only. Never show \`failed\`.\n\n` +
         `**Show the behind-the-scenes eligibility + webhooks** (these are invisible to the real user — ` +
         `surface them in the API/JSON panel and/or a small host "behind the scenes" callout so viewers ` +
         `see what Plaid is doing). At the appropriate steps, in order:\n` +

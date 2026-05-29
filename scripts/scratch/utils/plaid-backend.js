@@ -998,6 +998,49 @@ async function verifyLayerActivation(opts = {}) {
   }
 }
 
+/**
+ * Create a Plaid Identity Verification (IDV) Link token (live IDV session).
+ * Requires a published IDV template id (PLAID_IDV_TEMPLATE_ID). `gave_consent: true`
+ * skips the accept_tos step. See plaid-identity-verification.md.
+ *
+ * @param {object} [opts] - { templateId?, clientUserId?, clientName? }
+ * @returns {Promise<{link_token:string}>}
+ */
+async function createIdvLinkToken(opts = {}) {
+  const templateId = opts.template_id || opts.templateId || process.env.PLAID_IDV_TEMPLATE_ID || null;
+  if (!templateId) {
+    throw new Error('[plaid-backend] createIdvLinkToken requires an IDV template id (set PLAID_IDV_TEMPLATE_ID).');
+  }
+  const clientUserId = opts.client_user_id || opts.clientUserId || `idv-${Date.now()}`;
+  const result = await plaidPost('/link/token/create', {
+    client_name:   opts.client_name || opts.clientName || 'Demo',
+    language:      'en',
+    country_codes: ['US'],
+    products:      ['identity_verification'],
+    user:          { client_user_id: clientUserId },
+    identity_verification: { template_id: templateId, gave_consent: true },
+  });
+  const linkToken = result.link?.link_token || result.link_token;
+  if (!linkToken) throw new Error(`/link/token/create (IDV) failed: ${JSON.stringify(result)}`);
+  console.log(`[plaid-backend] IDV link token created (template=${templateId})`);
+  return { link_token: linkToken };
+}
+
+/**
+ * Retrieve an IDV session result. Use after the Link onSuccess (which returns the
+ * session id as metadata.link_session_id) or the STATUS_UPDATED webhook.
+ *
+ * @param {string} identityVerificationId
+ * @returns {Promise<object>} the /identity_verification/get response
+ */
+async function getIdentityVerification(identityVerificationId) {
+  const data = await plaidPost('/identity_verification/get', {
+    identity_verification_id: identityVerificationId,
+  });
+  console.log(`[plaid-backend] /identity_verification/get → status=${data.status || '?'}`);
+  return data;
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -1010,6 +1053,8 @@ module.exports = {
   createLinkToken,
   createConsumerReportLinkToken,
   createSessionToken,
+  createIdvLinkToken,
+  getIdentityVerification,
   exchangePublicToken,
   getAuth,
   getIdentityMatch,
