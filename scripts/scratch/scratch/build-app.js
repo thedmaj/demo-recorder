@@ -731,7 +731,12 @@ async function withAnthropicOverloadedRetry(label, fn) {
     try {
       return await fn();
     } catch (err) {
-      if (!isAnthropicOverloadedError(err) || attempt >= BUILD_OVERLOADED_MAX_RETRIES) {
+      // Retry on Anthropic overloaded_error AND on a stalled stream (idle-timeout) —
+      // the streaming model occasionally opens a stream then stops emitting tokens
+      // (observed with claude-opus-4-8 during availability blips), which would
+      // otherwise hang the build forever. Both are transient; back off and retry.
+      const retryable = isAnthropicOverloadedError(err) || err.isStreamIdleTimeout;
+      if (!retryable || attempt >= BUILD_OVERLOADED_MAX_RETRIES) {
         throw err;
       }
       const delayMs = Math.min(
@@ -2234,16 +2239,45 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
 
     let fullText = '';
     let chunkCount = 0;
+    let lastActivity = Date.now();
 
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        fullText += event.delta.text;
-        chunkCount++;
-        // Print a dot every 10 chunks to show progress without flooding stdout
-        if (chunkCount % 10 === 0) {
-          process.stdout.write('.');
+    // Idle-timeout watchdog: if the stream opens but stops emitting events for
+    // BUILD_STREAM_IDLE_MS (default 120s), abort it and throw a retryable error
+    // rather than hanging the build indefinitely (claude-opus-4-8 streaming has
+    // intermittently stalled mid-generation). withAnthropicOverloadedRetry retries.
+    const IDLE_MS = Number(process.env.BUILD_STREAM_IDLE_MS || 120000);
+    let idleTimer = null;
+    const idleGuard = new Promise((_, reject) => {
+      idleTimer = setInterval(() => {
+        if (Date.now() - lastActivity > IDLE_MS) {
+          clearInterval(idleTimer);
+          try { stream.abort && stream.abort(); } catch (_) {}
+          try { stream.controller && stream.controller.abort && stream.controller.abort(); } catch (_) {}
+          const e = new Error(`BUILD_STREAM_IDLE: no stream activity for ${Math.round(IDLE_MS / 1000)}s (${BUILD_MODEL} stalled)`);
+          e.isStreamIdleTimeout = true;
+          reject(e);
+        }
+      }, 5000);
+    });
+
+    const consume = (async () => {
+      for await (const event of stream) {
+        lastActivity = Date.now();
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          fullText += event.delta.text;
+          chunkCount++;
+          // Print a dot every 10 chunks to show progress without flooding stdout
+          if (chunkCount % 10 === 0) {
+            process.stdout.write('.');
+          }
         }
       }
+    })();
+
+    try {
+      await Promise.race([consume, idleGuard]);
+    } finally {
+      if (idleTimer) clearInterval(idleTimer);
     }
 
     process.stdout.write('\n');
