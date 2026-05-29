@@ -269,6 +269,27 @@ function autoFixDemoScript(demoScript) {
       });
       delete step.apiResponse;
     }
+
+    // Strip INCOMPLETE apiResponse from any non-insight step (host/slide/link/
+    // launch). The LLM sometimes attaches a partial apiResponse (missing endpoint
+    // or response) to non-insight steps — those render no JSON panel and otherwise
+    // fail validation ("incomplete apiResponse block"), halting the whole pipeline
+    // at the script stage. A COMPLETE apiResponse on a non-insight step is left intact.
+    if (step.apiResponse && !isInsightLikeStep(step) && !isValueSummaryStep(step)) {
+      const ar2 = step.apiResponse;
+      const complete = ar2.endpoint && ar2.response && typeof ar2.response === 'object'
+        && Object.keys(ar2.response).length > 0;
+      if (!complete) {
+        const beforeAr = JSON.stringify(ar2).slice(0, 80);
+        delete step.apiResponse;
+        fixes.push({
+          stepId: step.id || '(no-id)',
+          rule: 'strip-incomplete-apiresponse',
+          before: `incomplete apiResponse on non-insight step: ${beforeAr}`,
+          after: 'apiResponse removed',
+        });
+      }
+    }
   }
 
   // Collapse mistaken plaidPhase:"launch" on marketing/technical slides — keep one
