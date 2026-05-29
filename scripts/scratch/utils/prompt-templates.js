@@ -1942,7 +1942,20 @@ contract that the next stage knows how to fill.\n` +
         `(institution + masked account) to demonstrate identity AND bank data. Never hardcode bank names.\n\n` +
         `**Verification method is owned by the IDV template — never a user choice.** Do NOT build a ` +
         `"choose your verification depth" selector (SSN last-4 vs full SSN vs IDV). Any IDV beat is a ` +
-        `template-driven "verifying identity" screen only (status success / pending_review).`,
+        `template-driven "verifying identity" screen only (status success / pending_review).\n\n` +
+        `**Show the behind-the-scenes eligibility + webhooks** (these are invisible to the real user — ` +
+        `surface them in the API/JSON panel and/or a small host "behind the scenes" callout so viewers ` +
+        `see what Plaid is doing). At the appropriate steps, in order:\n` +
+        `1. Launch / phone submit → \`POST /session/token/create\` (Layer session created), then the ` +
+        `eligibility result as a Link event \`LAYER_READY\` ("Plaid matched this phone in the Plaid ` +
+        `Network"). (Ineligible path would be \`LAYER_NOT_AVAILABLE\`.)\n` +
+        `2. Device auth → webhook \`LAYER_AUTHENTICATION_PASSED\` (\`webhook_type:"LAYER"\`) — phone ` +
+        `ownership verified.\n` +
+        `3. Session finish → webhook \`SESSION_FINISHED\` (\`webhook_type:"LINK"\`, \`status:"SUCCESS"\`, ` +
+        `\`public_tokens:[…]\`).\n` +
+        `4. Prefill review → \`POST /user_account/session/get\` returning \`identity\` + \`items[]\`.\n` +
+        `Use realistic, idealized payloads; never invent fields. Provide these as the steps' ` +
+        `\`apiResponse\` (request/response or event JSON) so the JSON panel walks the sequence.`,
     });
   }
   if (useLayerMobileMockTemplate && layerMockTemplate) {

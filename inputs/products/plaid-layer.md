@@ -197,6 +197,46 @@ for the client or `PLAID_LAYER_TEMPLATE_ID` is wrong. The pipeline enforces this
 `plaid-backend.verifyLayerActivation()`, which halts the build before build-qa/record on failure.
 This runs whenever a demo uses Layer (`PLAID_LINK_LIVE=true` + a `plaidPhase:"launch"` step).
 
+### Layer re-initialization across runs (REQUIRED)
+
+`POST /user/create` is **one-time per `client_user_id`** — calling it again returns
+`400: a user already exists for this client user id`. Because Layer demos reuse a stable
+`client_user_id`, a naive second run fails to create the session token (the 500 seen at
+`/api/create-session-token`). Contract: **create the Plaid user once, then mint a NEW Layer
+session each run.**
+
+`plaid-backend.createSessionToken()` implements this via `getOrCreateLayerUserToken()`:
+
+- **Cache hit** (user created on a prior run) → reuse the stored `user_token`, skip `/user/create`,
+  and call `/session/token/create` for a fresh Layer session. (user created once; new session each run)
+- **Cache miss** → `/user/create`, cache the `user_token` (`out/.layer-user-cache.json`, gitignored).
+- **`already exists` 400 without a cached token** → Plaid has no API to recover an existing
+  `user_token` by `client_user_id`, so mint a fresh unique `client_user_id`
+  (`<id>-<timestamp>`) and create a new user for that session. Repeat runs never error.
+
+Do NOT call `/user/create` directly in generated apps; always go through
+`/api/create-session-token` (which uses `createSessionToken`).
+
+### Behind-the-scenes eligibility + webhooks (demo simulation — REQUIRED for Layer builds)
+
+Layer demos should **visualize the eligibility check and webhooks** at the appropriate steps so
+viewers see what happens behind the scenes (these are not user-visible in the real flow). Surface
+them in the API/JSON panel (and/or a host "behind the scenes" callout) in this order:
+
+1. **Launch / phone submit** — `POST /session/token/create` (Layer session created), then the
+   eligibility result as a Link event: **`LAYER_READY`** (happy path) — "Plaid matched this phone
+   number in the Plaid Network." (Ineligible would be `LAYER_NOT_AVAILABLE` → `LAYER_AUTOFILL_NOT_AVAILABLE`.)
+2. **Device auth** — webhook **`LAYER_AUTHENTICATION_PASSED`** (`webhook_type: "LAYER"`) — phone
+   ownership verified (OTP/SNA), so the host may skip its own OTP.
+3. **Session finish** — webhook **`SESSION_FINISHED`** (`webhook_type: "LINK"`, `status: "SUCCESS"`,
+   `public_tokens: […]`) — Layer session reached a terminal state.
+4. **Prefill review** — `POST /user_account/session/get` returns `identity` + `items[]` (identity
+   and linked bank accounts) in one call (no separate `/item/public_token/exchange`).
+
+Keep payloads realistic and idealized; never invent fields. The build prompt
+(`prompt-templates.js` real-Layer block) instructs this; see also
+[`plaid-layer-idv-onboarding`](../../.claude/skills/plaid-layer-idv-onboarding/SKILL.md).
+
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
 

@@ -873,15 +873,65 @@ async function evaluateSignal(accessToken, accountId, amount = 2500.00, opts = {
  * @param {string} [opts.templateId]    Layer template ID (default: PLAID_LAYER_TEMPLATE_ID env)
  * @returns {Promise<{ link_token: string, user_token: string }>}
  */
+// ── Layer user-token cache ──────────────────────────────────────────────────
+// Plaid `/user/create` is one-time per client_user_id — calling it again returns
+// `400: a user already exists for this client user id`. Layer demos reuse a stable
+// client_user_id, so a 2nd run would fail. We persist the user_token from the first
+// create and reuse it on later runs (user created ONCE; a NEW /session/token/create
+// runs each time). See plaid-layer.md "Layer re-initialization across runs".
+const LAYER_USER_CACHE_PATH = path.resolve(__dirname, '../../../out/.layer-user-cache.json');
+
+function readLayerUserCache() {
+  try { return JSON.parse(fs.readFileSync(LAYER_USER_CACHE_PATH, 'utf8')); } catch (_) { return {}; }
+}
+function writeLayerUserCache(cache) {
+  try {
+    fs.mkdirSync(path.dirname(LAYER_USER_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(LAYER_USER_CACHE_PATH, JSON.stringify(cache, null, 2));
+  } catch (_) { /* cache is best-effort */ }
+}
+
+/**
+ * Resolve a Plaid user_token for `clientUserId`, creating the user only once.
+ * - Cache hit            → reuse the stored user_token (no /user/create).
+ * - Cache miss           → /user/create, then cache the user_token.
+ * - "already exists" 400 → user exists but its token isn't cached; Plaid has no API
+ *   to recover it, so mint a fresh unique client_user_id and create a new user for
+ *   this session (keeps repeat demo runs from failing).
+ *
+ * @returns {Promise<{userToken:string, clientUserId:string, reused:boolean}>}
+ */
+async function getOrCreateLayerUserToken(clientUserId) {
+  const cache = readLayerUserCache();
+  if (cache[clientUserId] && cache[clientUserId].user_token) {
+    return { userToken: cache[clientUserId].user_token, clientUserId, reused: true };
+  }
+  try {
+    const r = await plaidPost('/user/create', { client_user_id: clientUserId });
+    if (!r.user_token) throw new Error(`/user/create returned no user_token: ${JSON.stringify(r)}`);
+    cache[clientUserId] = { user_token: r.user_token, created_at: new Date().toISOString() };
+    writeLayerUserCache(cache);
+    return { userToken: r.user_token, clientUserId, reused: false };
+  } catch (e) {
+    if (/already exists/i.test(String(e && e.message))) {
+      const freshId = `${clientUserId}-${Date.now()}`;
+      const r = await plaidPost('/user/create', { client_user_id: freshId });
+      if (!r.user_token) throw new Error(`/user/create (fresh id) returned no user_token: ${JSON.stringify(r)}`);
+      cache[freshId] = { user_token: r.user_token, created_at: new Date().toISOString(), alias_of: clientUserId };
+      writeLayerUserCache(cache);
+      console.log(`[plaid-backend] Layer user "${clientUserId}" already existed without a cached token — created fresh user "${freshId}" for this session.`);
+      return { userToken: r.user_token, clientUserId: freshId, reused: false };
+    }
+    throw e;
+  }
+}
+
 async function createSessionToken(opts = {}) {
   const templateId = opts.template_id || opts.templateId || process.env.PLAID_LAYER_TEMPLATE_ID || 'template_n31w56t6o9a7';
-  const clientUserId = opts.client_user_id || opts.clientUserId || `onboarding-${Date.now()}`;
+  const requestedClientUserId = opts.client_user_id || opts.clientUserId || `onboarding-${Date.now()}`;
 
-  const userResult = await plaidPost('/user/create', {
-    client_user_id: clientUserId,
-  });
-  const userToken = userResult.user_token;
-  if (!userToken) throw new Error(`/user/create failed: ${JSON.stringify(userResult)}`);
+  // Create the Plaid user once (cached), then mint a fresh Layer session each run.
+  const { userToken, clientUserId, reused } = await getOrCreateLayerUserToken(requestedClientUserId);
 
   const sessionResult = await plaidPost('/session/token/create', {
     template_id: templateId,
@@ -893,7 +943,7 @@ async function createSessionToken(opts = {}) {
   const linkToken = sessionResult.link?.link_token || sessionResult.link_token;
   if (!linkToken) throw new Error(`/session/token/create failed: ${JSON.stringify(sessionResult)}`);
 
-  console.log(`[plaid-backend] Layer session token created (template=${templateId})`);
+  console.log(`[plaid-backend] Layer session token created (template=${templateId}, user=${reused ? 'reused' : 'created'})`);
   return { link_token: linkToken, user_token: userToken };
 }
 

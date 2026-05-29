@@ -33,6 +33,16 @@ description: >-
 > **Activation check (pipeline-enforced):** every Layer build verifies activation via a successful
 > `/session/token/create` (`plaid-backend.verifyLayerActivation()` in the `plaid-link-qa` Layer
 > branch) — a failed token = Layer not provisioned / wrong `PLAID_LAYER_TEMPLATE_ID`, and halts the build.
+>
+> **Re-initialization across runs:** `/user/create` is one-time per `client_user_id` (re-calling →
+> `400 a user already exists`). `plaid-backend.createSessionToken()` creates the user **once** (caches
+> the `user_token` in `out/.layer-user-cache.json`), reuses it to mint a **new** `/session/token/create`
+> each run, and falls back to a fresh unique `client_user_id` if the user exists but isn't cached — so
+> repeat demo runs never hit the 500. Generated apps must call `/api/create-session-token`, never `/user/create`.
+>
+> **Visualize the behind-the-scenes eligibility + webhooks** in Layer build demos (API/JSON panel or a
+> host "behind the scenes" callout): `/session/token/create` → `LAYER_READY` → `LAYER_AUTHENTICATION_PASSED`
+> webhook → `SESSION_FINISHED` webhook (`public_tokens[]`) → `/user_account/session/get`.
 
 ## When to use this skill
 Use this skill whenever a task involves implementing Plaid Layer as the front-of-funnel onboarding step and then chaining a full Plaid Identity Verification (IDV) session — meaning Document Verification, Data Source (database) Verification, and Selfie/liveness check — to satisfy KYC. This skill is NOT for `/identity/get`, `/identity/match`, or any account‑ownership matching against bank data. It is specifically for the IDV product (`products: ["identity_verification"]`), which runs through Link as its own session and is mutually exclusive with other Plaid products in the same Link token.
