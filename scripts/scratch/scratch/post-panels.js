@@ -1565,10 +1565,25 @@ async function main() {
     }
   }
 
-  const { html: updated, changes } = normalizePanelsInHtml(html, demoScript, {
+  let { html: updated, changes } = normalizePanelsInHtml(html, demoScript, {
     onlyStepIds: cli.steps || null,
     pipelineAppOnlyHostUi,
   });
+
+  // Deterministic Layer/brand hardening (prevents recurring LLM misses before
+  // build-qa — see scripts/scratch/utils/layer-build-patches.js). Idempotent no-ops
+  // when not applicable.
+  const layerBuildPatches = require('../utils/layer-build-patches');
+  const tokenFix = layerBuildPatches.fixLayerTokenEndpoint(updated, demoScript);
+  if (tokenFix.changed) {
+    updated = tokenFix.html;
+    console.log('[post-panels] Layer hardening: rewrote /api/create-link-token → /api/create-session-token');
+  }
+  const discFix = layerBuildPatches.ensureBrandDisclosureFooter(updated, { runDir: outDir });
+  if (discFix.changed) {
+    updated = discFix.html;
+    console.log(`[post-panels] Brand hardening: injected verbatim regulatory disclosure footer (${(discFix.injected || []).length} missing)`);
+  }
 
   const slideStepCount = (demoScript.steps || []).filter((s) => isSlideStep(s)).length;
   const report = {
