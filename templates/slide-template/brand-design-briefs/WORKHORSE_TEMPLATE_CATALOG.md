@@ -36,7 +36,7 @@ Every pipeline slide sets **both**:
 
 ## Logo + chrome (production — not showcase preview)
 
-Showcase HTML scales `.chrome-logo` to ~140px for gallery readability. **Pipeline recordings use 28px** via `slide.css` + `pipeline-slide-contract.css`:
+The logo assets (`plaid-horizontal-*.png`) are **trimmed to the wordmark bounding box** (1040×390, no transparent padding), so `height: 28px` renders a true 28px-tall mark. Both showcase and pipeline recordings now use the canonical 28px via `slide.css` + `pipeline-slide-contract.css` (the showcase uses 56px purely for gallery-thumbnail legibility). **Do not re-introduce a 5×/140px scale override** — that only existed to compensate for the old square (1624×1624, ~4.4× padding) assets:
 
 ```css
 .slide-root .chrome-logo {

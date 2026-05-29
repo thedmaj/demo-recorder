@@ -308,6 +308,17 @@ function isValueSummaryStep(step) {
   return id === 'value-summary-slide' || /\bvalue summary\b/.test(label);
 }
 
+// A JSON panel is only meaningful when the API / Plaid Link / Layer / IDV call
+// actually returned tokens or metadata. An empty (or whitespace-only) response
+// object — which the LLM sometimes attaches to opening / narrative slides — must
+// NOT wire up a panel; an empty JSON rail on a landing slide is the bug this
+// guards against. Returns true only when there is real content to show.
+function responseHasContent(resp) {
+  if (resp == null || typeof resp !== 'object') return false;
+  if (Array.isArray(resp)) return resp.length > 0;
+  return Object.keys(resp).length > 0;
+}
+
 function stepHasApiResponse(step) {
   return !!(
     step &&
@@ -315,7 +326,8 @@ function stepHasApiResponse(step) {
     hasApiEndpoint(step) &&
     step.apiResponse &&
     step.apiResponse.response &&
-    typeof step.apiResponse.response === 'object'
+    typeof step.apiResponse.response === 'object' &&
+    responseHasContent(step.apiResponse.response)
   );
 }
 
@@ -330,13 +342,23 @@ function collectStepApiResponses(demoScript, { onlyStepIds } = {}) {
   // user-visible API call. Showing it overlaps the hero on screenshot and
   // adds no narrative value. The next `/link/token/create` reference (right
   // before Plaid Link launches) keeps its panel; only the FIRST one is hidden.
+  //
+  // EXCEPTION (2026-05-29): never suppress a real launch step. A
+  // `plaidPhase:"launch"` step genuinely surfaces the Link / Layer / IDV
+  // session token — that's exactly where a panel BELONGS. In Layer/IDV demos
+  // the sole `/link/token/create` IS the IDV launch (there is no separate
+  // marketing landing that pre-mints a token), so the old "hide the first one"
+  // heuristic wrongly stripped the IDV session panel. Only a passive
+  // (non-launch) leading setup step qualifies as a landing exclusion.
   const landingExclusionIds = new Set();
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i];
     if (!s || !stepHasApiResponse(s)) continue;
     const ep = String(s.apiResponse.endpoint || '').toLowerCase();
     if (/link\/token\/create/.test(ep)) {
-      landingExclusionIds.add(s.id);
+      if (String(s.plaidPhase || '').toLowerCase() !== 'launch') {
+        landingExclusionIds.add(s.id);
+      }
       break; // only the FIRST link/token/create step on the storyboard
     }
   }

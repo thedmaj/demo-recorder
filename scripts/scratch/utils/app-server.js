@@ -417,7 +417,8 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
       }
 
       // Plaid Identity Verification (live IDV): create an IDV Link token. Requires a
-      // published IDV template (PLAID_IDV_TEMPLATE_ID). The generated app opens this
+      // published IDV template (IDV_TEMPLATE_IDENTITY_BANK_OPTIONAL, falling back to
+      // PLAID_IDV_TEMPLATE_ID — resolved in plaid-backend.createIdvLinkToken). The generated app opens this
       // via Plaid.create({token}).open(); onSuccess metadata.link_session_id is the
       // identity_verification_id. See plaid-identity-verification.md.
       case '/api/create-idv-link-token': {

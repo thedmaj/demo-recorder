@@ -238,11 +238,15 @@
     .mint { color: var(--plaid-teal-500); }
     .mint-bg { background: rgba(66,240,205,0.14); color: var(--plaid-teal-500); }
 
-    /* Showcase override: scale chrome-logo 5x (canonical 28px -> 140px).
-       Position inherits from slide.css (top: var(--pad-top), right: var(--pad-x))
-       so the logo top-edge aligns with the topmost text on the slide. */
+    /* Showcase chrome-logo. The logo assets are now trimmed to the wordmark's
+       bounding box (1040x390, no transparent padding), so the canonical 28px
+       height renders a true 28px-tall mark. The old 5x (140px) override existed
+       only to compensate for the ~4.4x transparent padding in the square
+       (1624x1624) assets — no longer needed. A modest 2x keeps the gallery
+       thumbnails legible without distorting scale vs. the real slide.
+       Position inherits from slide.css (top: var(--pad-top), right: var(--pad-x)). */
     .showcase-slide .slide-root .chrome-logo {
-      height: 140px;
+      height: 56px;
     }
 
     /* Generic card */

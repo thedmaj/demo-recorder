@@ -1000,16 +1000,26 @@ async function verifyLayerActivation(opts = {}) {
 
 /**
  * Create a Plaid Identity Verification (IDV) Link token (live IDV session).
- * Requires a published IDV template id (PLAID_IDV_TEMPLATE_ID). `gave_consent: true`
- * skips the accept_tos step. See plaid-identity-verification.md.
+ * Requires a published IDV template id. Resolution order:
+ *   1. explicit opts.template_id / opts.templateId
+ *   2. IDV_TEMPLATE_IDENTITY_BANK_OPTIONAL (identity verification, bank linking optional)
+ *   3. PLAID_IDV_TEMPLATE_ID (legacy/default fallback)
+ * A skill (forthcoming) will select which named IDV template env var to use per
+ * use case; until then the bank-optional template is the default named template.
+ * `gave_consent: true` skips the accept_tos step. See plaid-identity-verification.md.
  *
  * @param {object} [opts] - { templateId?, clientUserId?, clientName? }
  * @returns {Promise<{link_token:string}>}
  */
 async function createIdvLinkToken(opts = {}) {
-  const templateId = opts.template_id || opts.templateId || process.env.PLAID_IDV_TEMPLATE_ID || null;
+  const templateId =
+    opts.template_id ||
+    opts.templateId ||
+    process.env.IDV_TEMPLATE_IDENTITY_BANK_OPTIONAL ||
+    process.env.PLAID_IDV_TEMPLATE_ID ||
+    null;
   if (!templateId) {
-    throw new Error('[plaid-backend] createIdvLinkToken requires an IDV template id (set PLAID_IDV_TEMPLATE_ID).');
+    throw new Error('[plaid-backend] createIdvLinkToken requires an IDV template id (set IDV_TEMPLATE_IDENTITY_BANK_OPTIONAL or PLAID_IDV_TEMPLATE_ID).');
   }
   const clientUserId = opts.client_user_id || opts.clientUserId || `idv-${Date.now()}`;
   const result = await plaidPost('/link/token/create', {
