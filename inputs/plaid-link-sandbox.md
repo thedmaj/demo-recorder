@@ -147,6 +147,13 @@ error_INTERNAL_SERVER_ERROR  error_USER_SETUP_REQUIRED
 via "Continue without phone number". Only use phone numbers above when the demo
 specifically tests the Remember Me / returning user flow.
 
+**Recording rule — saved-institution list dwell:** When the Remember Me saved-institution
+list appears, **wait 2 seconds** before clicking (lets the viewer read the list) and **do NOT
+scroll** — Tartan Bank is always at the top of the sandbox list; click it directly. Enforced in
+`record-local.js` `plaidSelectSavedInstitution()` via a `page.waitForTimeout(2000)` dwell between
+`institution-list-shown` and the click. Do not remove or shorten it. (Post-processing caps the
+list→confirm section at ~5s total.)
+
 ---
 
 ## 5. IDV Test Data — Leslie Knope (success)

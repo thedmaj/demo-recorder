@@ -45,6 +45,47 @@ npm run pipe -- qa-touchup  [RUN_ID] [--tier=app|slide]
 Run IDs default to the latest run when omitted. Stage names are the canonical stages from [CLAUDE.md](../../../CLAUDE.md):
 `research, ingest, script, brand-extract, script-critique, embed-script-validate, build, plaid-link-qa, build-qa, post-slides, post-panels, app-touchup, slide-fix, record, qa, figma-review, post-process, voiceover, coverage-check, auto-gap, resync-audio, embed-sync, audio-qa, ai-suggest-overlays, render, ppt, touchup`
 
+## `npm run demo` aliases + build mode
+
+`npm run pipe` is the agent driver; `npm run demo*` are the npm-script equivalents:
+
+| Command | Mode / stop | Notes |
+|---------|-------------|-------|
+| `npm run demo` | App-only, stops at `build-qa` | Agent-mode default (fast build→QA→fix loop) |
+| `npm run demo:full` | App-only, runs through render | |
+| `npm run demo:with-slides` (`--with-slides`) | App + slides phase + value-summary slide | |
+| `npm run demo:app-only` | Explicit app-only override | |
+| `npm run demo -- --from=STAGE` / `--to=STAGE` | Restart from / stop at a stage | |
+
+- **Single switch:** `PIPELINE_WITH_SLIDES=true|false` is the canonical env knob; the orchestrator's
+  `resolveBuildMode()` expands it into legacy envs (`BUILD_PHASE_SEQUENCE`, `BUILD_PHASE_SLIDES_ENABLED`,
+  `DEMO_MARKETING_SLIDE`, `SCRIPT_ZERO_SLIDE`).
+- **Resume/restart inherit** the original run's `run-manifest.json.buildMode`; override with the
+  dashboard checkbox + `overrideWithSlides:true`.
+- Every run prints `[Orchestrator] Mode: App-only (source: …)` / `App + Slides` at start.
+
+## Post-build app preview
+
+When both `build` and `record` are in the pipeline (skipped on `--from=record` or later), after
+`build` the orchestrator: (1) serves `scratch-app/` on **port 3739**, (2) opens
+`http://localhost:3739`, (3) pauses for human review (arrow keys / clicks to step) — press **ENTER**
+to start recording. Always interactive.
+
+## Build-QA scope by build mode
+
+`build-qa` walks `scratch-app` with Playwright, screenshots each script step, and runs the same
+Claude vision QA as post-record QA against `demo-script.json` `visualState` → `qa-report-build.json`.
+`BUILD_QA_STRICT=1` exits non-zero when the score is below `QA_PASS_THRESHOLD`.
+
+- **app-only:** judges `stepKind: "app"` steps against `visualState` only — does **not** require
+  concrete narration values (scores, amounts, decisions) on screen unless `visualState` explicitly
+  says they're visible (voiceover-only by design).
+- **app+slides / slide steps:** narration-strict gate — concrete narration claims must be visibly
+  evidenced in frames.
+- **Both modes:** brand wordmark/nav fidelity, Plaid Link CTA icon ratio, asset authenticity,
+  animation/state-progression (when in `visualState`), deterministic blockers, and panel-visibility
+  when `apiResponse` is declared.
+
 ## Structured events (`::PIPE::` markers)
 
 The orchestrator emits stable machine-readable markers on stdout. Grep or stream-parse these when monitoring a run:

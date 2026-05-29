@@ -36,9 +36,10 @@ A great reveal:
 
 ### Signal (ACH risk)
 Problem → developer needs ACH confidence → Signal score appears → ACCEPT/REVIEW/REROUTE
-- Signal score 0–99: lower = lower return risk. Demo ACCEPT range: 5–20
-- Never use scores 82–97 in ACCEPT scenarios (those are high-risk)
-- Never say "Trust Index" — say "ACH transaction risk score"
+- Signal score 1–99: higher = HIGHER ACH return risk. Demo ACCEPT range: 5–20 (low risk)
+- Never use scores 82–97 in ACCEPT scenarios (those are high-risk → REVIEW/REROUTE)
+- `ruleset.result` values: `ACCEPT`, `REVIEW`, `REROUTE`. **`REJECT` is NOT documented** — use REROUTE or render a host-app decision outside the API panel.
+- Don't call the Signal score "Trust Index". In a Signal demo it is the "Signal score" / "ACH transaction risk score". **Trust Index is a separate Plaid Protect product** (Limited Availability) — allowed ONLY in Plaid Protect demos via `/protect/event/send` or `/protect/user/insights/get`, never `/signal/evaluate`. See `inputs/products/plaid-protect.md`.
 
 ### Auth (account linking)
 Problem → user connects bank → Plaid Link → account + routing confirmed → integration complete
@@ -64,7 +65,8 @@ Problem → returning user friction → layer_ready event → pre-filled flow �
 - Steps that show loading spinners without resolving
 - Passive voice ("is verified", "is connected") — use active ("Plaid verifies", "connects")
 - Technical API jargon without customer-value context
-- Prohibited words: "simply", "just", "unfortunately", "robust", "seamless", "Trust Index"
+- Prohibited filler words: "simply", "just", "unfortunately", "robust", "seamless"
+- "Trust Index" is **scoped, not prohibited**: allowed in Plaid Protect demos only; never use it to label a Signal `scores.*` value (see Signal note above)
 - Host **Plaid Link launch** CTAs with a normal inline icon scale (the icon supports the label; it must not read as a hero graphic filling the button)
 
 ## Slide UX Guardrails
@@ -79,8 +81,18 @@ Problem → returning user friction → layer_ready event → pre-filled flow �
 - Confident, precise, outcome-focused
 - Lead with customer value, not technical implementation
 - Quantify value where possible
-- Approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth",
-  "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets"
+- Approved product names (verbatim): "Plaid Identity Verification (IDV)", "Plaid Instant Auth",
+  "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets", "Plaid Protect"
+- IDV statuses (use exactly): `active`, `success`, `failed`, `pending_review`
+
+## Host App Background (UX rule)
+
+- For **host/customer-branded app screens** (non-Plaid modal content), default the primary
+  page background to white or another light neutral when compatible with brand colors.
+- Keep brand identity through accent colors, typography, nav treatment, and CTA styles while
+  maintaining accessible contrast.
+- Keep Plaid-dark surfaces for Plaid-specific contexts (e.g. dedicated Plaid insight scenes),
+  not as the default host canvas. (Plaid-branded slides follow `plaid-slide-design` instead.)
 
 ## Plaid Link Narration Boundary Rule
 

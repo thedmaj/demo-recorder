@@ -73,10 +73,18 @@ The host demo app is **customer-branded** (Huntington, Zip, Chime, etc.). Slides
 - **Logo placement:** top-right, **28px** height, **75px above** the topmost text row — set by `slide.css` / `pipeline-slide-contract.css`. Do **not** inline `left:` or showcase-scale `height:` on `.chrome-logo`.
 - Partnership **text** naming the customer (e.g. "Plaid × Huntington") — still Plaid-styled, no customer color swatches
 
-## Pipeline canvas (not 1920×1080)
+## Pipeline canvas (not 1920×1080) — HARD CONTRACT
 
 Recorded slides target **1280×800 (16:10 responsive)** via `pipeline-slide-contract.css`.
 Author with DECK templates; do **not** set fixed `width:1440px;height:900px` on `.slide-root`.
+
+`scanSlideCanvasSize` (critical blocker, `app+slides` only) measures the rendered `.slide-root`
+and fails if **width < 75% viewport**, **height < 67% viewport**, or **aspect outside [1.40, 1.85]**
+(covers 16:9 = 1.78 and 16:10 = 1.60). Contract lives in `pipeline-slide-contract.css`
+(`max-width: min(1280px, calc(100vw - 80px))`, `aspect-ratio: 16/10`) — **zero `!important`**,
+cascade order authoritative (injected after `slide.css`). Never shadow it with a higher-priority
+`!important` block or add `min-height`/`aspect-ratio`/width overrides on `.slide-root` that shrink
+the slide. The API panel is a fixed overlay (z-index 2100) — reserve **no** width for it.
 
 ## Required DOM shape
 
@@ -161,3 +169,29 @@ Light slides: .slide-root.light | .cream | .holo per DECK_COMPOSITION background
 ```
 
 When in doubt, open DECK_DESIGN_SYSTEM.md — not the host app's `<style>` block.
+
+## Pipeline mechanics (when slides exist / don't)
+
+- **App-only invariant (HARD):** runs with `run-manifest.json.buildMode === 'app-only'` produce
+  **zero** slide artifacts — no slide steps, no placeholder, `post-slides` skips
+  (`{ skipped: true, reason: 'app-only' }`), slide-tier scanners gated off. `scanAppOnlyNoSlides`
+  fires `app-only-slide-leak` (critical) on any leak. Only the storyboard editor's
+  `insert-library-slide` flips a run to `app+slides`. See `tests/unit/app-only-zero-slides.test.js`.
+- **Slide-fix is the only slide recovery** — slides NEVER trigger `build-app` regeneration. When
+  `build-qa.tierSummary.slide.passed === false`, the orchestrator runs the slide-fix lane
+  (deterministic patches → `strip-slide-roots --steps=…` → `post-slides --steps=…` → scoped re-QA).
+  Host steps that already passed are not re-rolled. (Drive via `pipeline-cli`.)
+- **Drift checkpoint:** after build-qa passes, `slide-content-hash.json` SHA-256s every step block
+  (`source: 'build-qa'`). After `record`, `post-record-freeze.sentinel` exists → automated
+  `post-slides`/`slide-fix` re-runs SKIP (`reason: 'post_record_freeze'`); storyboard editor edits
+  are allowed but recompute the hash and flag `voiceoverStale`/`recordingStale`.
+- **Workhorse hybrid leak scanners** (`app+slides`, critical): `scanSlideWorkhorseThemeLeak`
+  (no `assets/themes/*.css` or CDN webfont imports inside `.slide-root`),
+  `scanSlideWorkhorseRuntimeLeak` (no `runtime.js`/`fx-runtime.js`/`chart.js`/`highlight.js`).
+  Motion attrs (`data-anim`, `data-fx`, `anim-*`) are warnings only. Pipeline slides are static + SVG.
+  See `.claude/skills/plaid-workhorse-slides/SKILL.md`.
+- **PPTX export font swap:** Manrope (sans), Playfair Display (display), JetBrains Mono (mono) —
+  export tooling (`scripts/export-plaid-deck.sh`) is separate from on-screen pipeline slides.
+- **Opt-in patches** (manual invoke only, do not auto-fire from QA): `slide-design-tokens-inject`,
+  `slide-shell-chrome-inject`, `slide-chrome-logo-canonical`, `slide-typography-floor` in
+  `scripts/scratch/utils/qa-patch-library.js` via `buildManualPatchMatch(name)` + `applyPatches()`.

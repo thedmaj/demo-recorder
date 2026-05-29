@@ -157,6 +157,24 @@ Preload `Plaid.create()` on page mount before the user types their phone — `su
 - `artifacts/api-server/src/routes/layer.ts` — `/start`, `/complete`, `plaidCall` wrapper, `redact()`.
 - `artifacts/layer-onboarding/src/pages/onboarding.tsx` — LayerStage state machine, preload pattern.
 
+### Layer × Identity Verification (IDV) interaction
+
+Layer prefills identity; it does **not verify** it. The data from `/user_account/session/get` is
+consumer-permissioned and user-editable — treat it as user-submitted. To KYC it, chain a full IDV
+session (Document + Data Source + Selfie/liveness). Key facts:
+
+- **Two sequential Link sessions**, joined by the **same `client_user_id`**: Layer via
+  `/session/token/create`, then IDV via `/link/token/create` with `products: ["identity_verification"]`.
+- **IDV is mutually exclusive** with all other products on its Link token — never combine
+  `identity_verification` with `auth`/`identity`/`transactions`/etc.
+- **Prefill IDV** with Layer's returned PII via `/identity_verification/create` (pre-provided fields
+  are skipped in the IDV UI) before creating the IDV Link token.
+- If Layer is ineligible (`LAYER_AUTOFILL_NOT_AVAILABLE` / non-`+1` phone), skip Layer and go
+  straight to IDV with the same `client_user_id`.
+
+IDV facts (endpoints, statuses, webhooks, sandbox persona): [`inputs/products/plaid-identity-verification.md`](plaid-identity-verification.md).
+Full sequencing playbook: [`plaid-layer-idv-onboarding`](../../.claude/skills/plaid-layer-idv-onboarding/SKILL.md) skill.
+
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
 
