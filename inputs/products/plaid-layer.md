@@ -12,7 +12,7 @@ use_cases:
   - "returning-user-verification"
   - "kyc-auto-fill"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-29T14:35:12.559Z"
+last_ai_update: "2026-05-29T19:14:29.500Z"
 needs_review: true
 approved: true
 version: 2
@@ -100,21 +100,42 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
 - Account-verification stories should omit DOB/SSN unless explicitly required
 - Identity verification and CRA-oriented stories typically require DOB + SSN fields on share confirmation
 - Do not route Layer-eligible users into fallback PII collection; fallback PII + Plaid Link is for ineligible users only.
-- For mobile Layer demos, show subtle helper text directly below the mobile frame with both routing numbers: `415-555-1111` (eligible) and `415-555-0011` (ineligible fallback).
-- Default prefilled phone value in Layer host capture should be the eligible number first (`415-555-1111`).
+- Sandbox eligibility numbers (real Layer Web SDK): **`+14155550011` is ELIGIBLE** (`LAYER_READY` — full identity + 2 linked banks; verified live 2026-05-29) and is the default prefilled value. `+14155550000` drives the INELIGIBLE path (`LAYER_NOT_AVAILABLE` → DOB retry → `LAYER_AUTOFILL_NOT_AVAILABLE`). **Do NOT use `415-555-1111`** — that is the legacy mobile-MOCK convention, not a valid real-Layer sandbox number.
 - In mobile demos, slide-like steps should auto-present in desktop mode (never inside the mobile simulator pane).
 
 ## Technical Implementation (Canonical — source of truth 2026-05-25)
+
+### Desktop Web SDK integration best practices (REQUIRED)
+
+These are the coding/implementation rules for a desktop web Layer integration. They are
+encoded in the build prompt (`prompt-templates.js`) and the [onboarding skill](../../.claude/skills/plaid-layer-idv-onboarding/SKILL.md).
+
+**Core pattern (event-driven state machine):** create → `submit(phone)` → wait `LAYER_READY` →
+`open()` → `onSuccess` → backend `/user_account/session/get`.
+
+1. **Create the handler early** — instantiate `Plaid.create` as soon as you have the `link_token`, not on the final CTA. Reduces submit latency and gives a stable handler reference.
+2. **Run eligibility on load** — call `submit({ phone_number })` as soon as the page loads so `LAYER_READY` resolves *before* the user clicks Continue; the Continue CTA then only calls `open()`.
+3. **Gate `open()` behind `LAYER_READY` only** — never `open()` right after `create()` or `submit()` (errors "Please submit Phone Number before opening Link").
+4. **Idempotent event handling** — guard `open()` with a `hasOpened` flag so duplicate `LAYER_READY`/rerenders don't open twice. In React use `useRef` for the guard.
+5. **One active handler per attempt** — don't recreate handlers mid-flow (avoids duplicate listeners, stale closures, multiple `open()`).
+6. **Register listeners once** — stable `onEvent`/`onSuccess` config; no duplicate attachment.
+7. **Separate phone and DOB submits** — only `submit({ date_of_birth })` *after* `LAYER_NOT_AVAILABLE` (Extended Autofill); never combine into one optimistic submit.
+8. **Normalize input before submit** — phone to E.164, DOB as `YYYY-MM-DD`, trim whitespace.
+9. **Submit may be dropped before preload-ready** — Plaid exposes no pre-submit "ready" event; retry `submit(phone)` until `LAYER_READY`/ineligibility resolves (the guards keep it idempotent).
+10. **Backend is the source of truth** — `onSuccess` is only the client handoff. Send `public_token` to your backend, which calls `/user_account/session/get` promptly and decides completion.
+11. **`/user_account/session/get` returns `items[]` (many, not one)** — iterate all Items; never hardcode `items[0]`.
+12. **Returned identity is SUBMITTED, not verified** — store provenance; distinguish `submitted_identity` from a downstream IDV `verified_identity`; don't overwrite higher-trust records.
+13. **Persist `request_id`** (and `link_session_id` from metadata/webhooks when available) for debugging/supportability.
 
 ### End-to-end flow summary
 
 1. Call `POST /user/create` to get a persistent `user_token` per end-user (reuse across sessions).
 2. Call `POST /session/token/create` server-side with `user_token` + `template_id` → get `link_token`.
-3. Frontend: `Plaid.create({ token: linkToken, onEvent, onSuccess, onExit })` then `handler.submit({ phoneNumber })`.
-4. Handle events:
-   - `LAYER_READY` → call `handler.open()` immediately.
-   - `LAYER_NOT_AVAILABLE` → collect DOB, then call `handler.submit({ phoneNumber, dateOfBirth })`.
-   - `LAYER_AUTOFILL_NOT_AVAILABLE` → fall back to standard signup form (no Layer identity available).
+3. Frontend: `Plaid.create({ token: linkToken, onEvent, onSuccess, onExit })`, then call `handler.submit({ phone_number })` (snake_case — **not** `phoneNumber`). **Submit AFTER the handler's preload iframe initializes** (e.g. `setTimeout(…, ~1200ms)`); submitting synchronously right after `create()` drops the call and no eligibility event fires (verified 2026-05-29).
+4. Handle events. **Order is critical: `submit()` first, `open()` ONLY after `LAYER_READY`** — calling `open()` before the eligibility result errors with "Please submit Phone Number before opening Link."
+   - `LAYER_READY` → call `handler.open()`.
+   - `LAYER_NOT_AVAILABLE` → optional Extended Autofill: `handler.submit({ date_of_birth })` (→ `LAYER_READY` or `LAYER_AUTOFILL_NOT_AVAILABLE`).
+   - `LAYER_AUTOFILL_NOT_AVAILABLE` → fall back to the storyboard's manual onboarding step (no Layer identity available).
 5. `onSuccess` fires with `public_token` → backend calls `POST /user_account/session/get` with `public_token`.
 6. Response: `{ user: { legal_name, email_address, phone_number, date_of_birth, address }, items: [{ item_id, access_token, institution_id }] }`.
 7. If `items[]` is present, use the `access_token` directly — **do not** also call `/item/public_token/exchange` (already done by Layer). Only call it explicitly if you need the exchange step visible in a demo API log.
@@ -186,7 +207,9 @@ Full sequencing playbook: [`plaid-layer-idv-onboarding`](../../.claude/skills/pl
   to the user.
 - Happy-path sandbox phone **`+14155550011`** (LAYER_READY) returns full identity **+ linked bank
   accounts** — use it to demonstrate identity and bank data together. (Web SDK ordering:
-  `handler.open()` then `handler.submit({ phone_number })`.)
+  `handler.submit({ phone_number })` FIRST, then `handler.open()` ONLY on the `LAYER_READY` event —
+  never `open()` before submit, and submit after the preload iframe initializes. See the End-to-end
+  flow above.)
 - **The form phone drives the eligibility check (REQUIRED).** The phone number entered in the
   onboarding form MUST be read from the input (normalized to E.164) and passed to
   `handler.submit({ phone_number })` — that submit is what triggers the Layer eligibility check
@@ -286,6 +309,13 @@ Keep payloads realistic and idealized; never invent fields. The build prompt
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-29 — Run: 2026-05-29-Demo-Identity-v3 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Pre-verified identity from bank-verified sources, not self-typed input
+- [high] Network effect — 45M+ saved Plaid profiles improve Layer coverage over time
+- [high] No additional verification step for returning users — identity already established with Plaid
+- [high] Template-driven field visibility — one integration covers pay-by-bank through strict KYC/CRA
 
 ### 2026-05-29 — Run: 2026-05-29-Demo-Identity-v2 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

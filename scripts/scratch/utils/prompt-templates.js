@@ -498,19 +498,13 @@ function renderBrandBlock(brand) {
   return lines.join('\n');
 }
 
-function shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled) {
-  if (!mobileVisualEnabled || !demoScript || !Array.isArray(demoScript.steps)) return false;
-  const product = String(demoScript.product || '').toLowerCase();
-  if (product.includes('layer')) return true;
-  return demoScript.steps.some((step) => {
-    const hay = [
-      step?.id,
-      step?.label,
-      step?.visualState,
-      step?.narration,
-    ].filter(Boolean).join(' ').toLowerCase();
-    return hay.includes('layer') && (hay.includes('phone') || hay.includes('mobile'));
-  });
+// REMOVED (2026-05-29): Plaid Layer is no longer built as a mobile mockup.
+// Layer is always implemented with the REAL Plaid Layer Web SDK (Plaid.create +
+// handler.submit/open), exactly like Plaid Link — a live modal that loads. This
+// permanently returns false so no mock-Layer template / mobile-frame / helper-
+// text scaffolding is ever injected; the live `useLayerWebSdk` block always runs.
+function shouldInjectLayerMobileMockTemplate() {
+  return false;
 }
 
 function shouldIncludeLiveLinkInstructionBlock({ demoScript, promptText, useLayerMobileMockTemplate }) {
@@ -1913,41 +1907,82 @@ contract that the next stage knows how to fill.\n` +
         `  if (!p.startsWith('+')) p = '+1' + p.replace(/^1/, '');\n` +
         `  return p; // E.164, normalized from the form value\n` +
         `}\n` +
-        `async function launchLayer() {\n` +
+        `// Event-driven state machine. Create the handler EARLY and run the\n` +
+        `// eligibility check (submit phone) ON PAGE LOAD so LAYER_READY is ready\n` +
+        `// before the user clicks Continue. The Continue CTA ONLY calls open()\n` +
+        `// (idempotent, gated on LAYER_READY). open() is NEVER called before\n` +
+        `// LAYER_READY (that errors "Please submit Phone Number before opening Link").\n` +
+        `let _layerHandler = null, _layerReady = false, _layerOpenRequested = false, _layerHasOpened = false, _layerIneligible = false;\n` +
+        `function _doLayerOpen() {\n` +
+        `  if (_layerHasOpened || !_layerHandler) return;   // idempotent: one open() per attempt\n` +
+        `  _layerHasOpened = true;\n` +
+        `  _layerHandler.open();\n` +
+        `}\n` +
+        `async function initLayerEligibility() {   // call ON LOAD\n` +
+        `  if (_layerHandler) return;              // one active handler per flow attempt\n` +
         `  const r = await fetch('/api/create-session-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_user_id: window._clientUserId }) });\n` +
+        `  if (!r.ok) { console.error('[create-session-token]', r.status); return; }\n` +
         `  const { link_token } = await r.json();\n` +
-        `  const handler = Plaid.create({\n` +
+        `  _layerHandler = Plaid.create({\n` +
         `    token: link_token,\n` +
         `    onSuccess: async (public_token) => {\n` +
+        `      // Frontend handoff only — backend is the source of truth. Exchange\n` +
+        `      // immediately and persist identity + ALL items (items[] may be many).\n` +
         `      const s = await fetch('/api/user-account-session-get', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ public_token }) });\n` +
         `      const data = await s.json();\n` +
-        `      window._layerIdentity = data.identity || null;\n` +
-        `      window._layerItems = data.items || [];   // linked bank accounts from Layer\n` +
+        `      window._layerIdentity = data.identity || null;   // SUBMITTED identity, not verified\n` +
+        `      window._layerItems = data.items || [];            // many Items, not one\n` +
+        `      window._layerRequestId = data.request_id || null; // persist for supportability\n` +
         `      window._plaidLinkComplete = true;\n` +
         `      window.goToStep('<first-post-layer-step-id>');\n` +
         `    },\n` +
         `    onEvent: (eventName) => {\n` +
-        `      // ELIGIBILITY ROUTING — the entered phone decides the path:\n` +
-        `      //  LAYER_READY → Layer proceeds (onSuccess advances to the prefill path).\n` +
-        `      //  LAYER_NOT_AVAILABLE → optional Extended Autofill retry with DOB.\n` +
-        `      //  LAYER_AUTOFILL_NOT_AVAILABLE → ineligible: route to the storyboard's manual\n` +
-        `      //    fallback step (use-case specific — Plaid Link link / IDV launch / generic PII entry).\n` +
-        `      if (eventName === 'LAYER_NOT_AVAILABLE') {\n` +
-        `        handler.submit({ date_of_birth: '1975-01-18' }); // Extended Autofill sandbox DOB\n` +
+        `      if (eventName === 'LAYER_READY') {\n` +
+        `        _layerReady = true;\n` +
+        `        if (_layerOpenRequested) _doLayerOpen();        // Continue already clicked → open now\n` +
+        `      } else if (eventName === 'LAYER_NOT_AVAILABLE') {\n` +
+        `        _layerHandler.submit({ date_of_birth: '1975-01-18' }); // Extended Autofill — SEPARATE submit\n` +
         `      } else if (eventName === 'LAYER_AUTOFILL_NOT_AVAILABLE') {\n` +
-        `        try { handler.destroy(); } catch(_) {}\n` +
-        `        window.goToStep('<manual-fallback-step-id>');\n` +
+        `        _layerIneligible = true;\n` +
+        `        try { _layerHandler.destroy(); } catch(_) {}\n` +
+        `        window.goToStep('<manual-fallback-step-id>'); // use-case-specific fallback\n` +
         `      }\n` +
         `    },\n` +
-        `    onExit: () => {},\n` +
+        `    onExit: (err) => { console.warn('Layer exited', err); },\n` +
         `  });\n` +
-        `  window._plaidHandler = handler;\n` +
-        `  handler.open();\n` +
-        `  // REQUIRED: the phone number ENTERED IN THE FORM is the eligibility-check input.\n` +
-        `  // Re-read it at submit time and submit it to the Layer session — never hardcode.\n` +
-        `  setTimeout(() => handler.submit({ phone_number: _formPhoneE164() }), 600);\n` +
+        `  window._plaidHandler = _layerHandler;\n` +
+        `  // Submit the FORM phone (never hardcode). A submit before the preload iframe\n` +
+        `  // is ready is silently dropped and Plaid has no pre-submit ready event, so\n` +
+        `  // retry until LAYER_READY/ineligibility resolves (guards keep it idempotent).\n` +
+        `  let _t = 0; const _iv = setInterval(() => {\n` +
+        `    if (_layerReady || _layerIneligible || _t >= 6) { clearInterval(_iv); return; }\n` +
+        `    _t++; try { _layerHandler.submit({ phone_number: _formPhoneE164() }); } catch(_) {}\n` +
+        `  }, 900);\n` +
         `}\n` +
+        `function launchLayer() {   // Continue CTA — eligibility already ran on load\n` +
+        `  if (_layerIneligible) { window.goToStep('<manual-fallback-step-id>'); return; }\n` +
+        `  _layerOpenRequested = true;\n` +
+        `  if (_layerReady) _doLayerOpen();\n` +
+        `  else if (!_layerHandler) initLayerEligibility(); // safety net\n` +
+        `}\n` +
+        `// Run the eligibility check as soon as the page loads.\n` +
+        `if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initLayerEligibility);\n` +
+        `else initLayerEligibility();\n` +
         '```\n' +
+        `**Desktop Layer integration best practices (REQUIRED):**\n` +
+        `1. Create the handler EARLY (as soon as you have the link_token) — on page load, not on the final CTA.\n` +
+        `2. Run it as an event-driven state machine: create → submit(phone) → wait LAYER_READY → open() → onSuccess → backend \`/user_account/session/get\`.\n` +
+        `3. Run the eligibility check ON LOAD so LAYER_READY is ready before the user clicks Continue; the Continue CTA only calls open().\n` +
+        `4. One active handler per attempt — do not recreate handlers mid-flow.\n` +
+        `5. Gate open() behind LAYER_READY ONLY — never open() right after create() or submit().\n` +
+        `6. Idempotent event handling — guard with a \`hasOpened\` flag so duplicate LAYER_READY/rerenders don't open twice.\n` +
+        `7. Separate phone and DOB submits — only submit({date_of_birth}) AFTER LAYER_NOT_AVAILABLE (Extended Autofill), never combined.\n` +
+        `8. Normalize input before submit — phone to E.164, DOB as YYYY-MM-DD, trim whitespace.\n` +
+        `9. Register listeners once — stable config, no duplicate onEvent attachment.\n` +
+        `10. Backend is the source of truth — onSuccess is only the client handoff; exchange the public_token via \`/user_account/session/get\` promptly.\n` +
+        `11. \`/user_account/session/get\` returns an **items[]** array — handle MANY Items, never \`items[0]\` only.\n` +
+        `12. Treat returned identity as **submitted, not verified** (distinct from a downstream IDV verdict).\n` +
+        `13. Persist \`request_id\` (and \`link_session_id\` when available) for supportability.\n` +
         `- **The form phone drives eligibility (REQUIRED):** the value in \`data-testid="onboarding-phone-input"\` ` +
         `MUST be read (normalized to E.164) and passed to \`handler.submit({ phone_number })\` — this is the ` +
         `Layer eligibility check (\`LAYER_READY\` / \`LAYER_NOT_AVAILABLE\`). Never submit a hardcoded number. ` +
@@ -1995,59 +2030,9 @@ contract that the next stage knows how to fill.\n` +
         `\`apiResponse\` (request/response or event JSON) so the JSON panel walks the sequence.`,
     });
   }
-  if (useLayerMobileMockTemplate && layerMockTemplate) {
-    if (opts.plaidLinkLive && !includeLiveLinkInstructionBlock) {
-      contentBlocks.push({
-        type: 'text',
-        text:
-          `## LAYER MOCK PRIORITY MODE\n\n` +
-          `This run indicates a Layer mobile mock prototype. Do NOT inject the full LIVE PLAID LINK MODE instruction block.\n` +
-          `Treat Layer mock flow as primary unless the prompt explicitly requires both Layer and live Plaid Link fallback paths.`,
-      });
-    }
-    contentBlocks.push({
-      type: 'text',
-      text:
-        `## LAYER MOBILE MOCK TEMPLATE LIBRARY (REUSABLE)\n\n` +
-        `${layerMockTemplate}\n\n` +
-        `Apply this template when rendering mobile-simulated Layer moments.\n` +
-        `Critical requirements:\n` +
-        `- Keep screen 1 host-owned (eligibility capture) and screens 2-4 Layer-owned mock panels.\n` +
-        `- Screen 1 should ask for phone to begin onboarding/signup/application; do not present it as an eligibility-check message.\n` +
-        `- **Layer mock colors:** Use ONLY the CSS variables \`--layer-brand-accent\`, \`--layer-brand-accent-hover\`, \`--layer-brand-tint-bg\`, \`--layer-phone-input-border\`, \`--layer-host-page-bg-from\`, \`--layer-host-page-bg-to\` for host eligibility chrome AND Layer sheet CTAs, consent card tint, spinners, and bank chip fills. The pipeline injects these from the current run's \`brand.colors\` — do **not** hardcode hex/rgb for Layer or host mobile accents and do **not** introduce parallel primary-color variables (e.g. \`--pm-primary\`) for those surfaces.\n` +
-        `- Replace only variable tokens (company/contact/account/address values) to match this demo; preserve canonical Layer template layout/CSS/logo placement/static copy.\n` +
-        `- Keep all layer mock screens within the existing mobile simulator shell pattern.\n` +
-        `- For mock mode, do not depend on live SDK iframe visibility for these 3 Layer screens.\n` +
-        `- Routing contract is mandatory: if user is Layer-eligible, complete onboarding directly and do NOT collect fallback PII.\n` +
-        `- Only ineligible users may continue to fallback PII collection and then standard Plaid Link bank linking.\n` +
-        `- Include subtle helper text directly below the mobile frame with both routing numbers: 415-555-1111 (eligible) and 415-555-0011 (ineligible fallback).\n` +
-        `- Prefill the host phone input with eligible number 415-555-1111 by default.\n`,
-    });
-  }
-  if (useLayerMobileMockTemplate && layerMobileSkeletonHtml) {
-    contentBlocks.push({
-      type: 'text',
-      text:
-        `## LAYER MOBILE MOCK — CANONICAL SKELETON (HARD CONTRACT)\n\n` +
-        `When this section is present, the generated app MUST conform to the following HTML as the **structural source of truth** for Layer mobile mock layout, ` +
-        `CSS patterns (including mobile-shell fill rules), runtime hooks, Plaid logo usage, host visual placeholder, and eligibility helper. ` +
-        `Map \`data-testid="step-…"\` and narration copy to this run's demo-script.json and brand; do **not** invent an alternate Layer presentation (different sheet structure, missing helper, duplicate PLAID wordmark, or decorative credit-card hero).\n\n` +
-        `Non-negotiable reminders:\n` +
-        `- Wrap steps in \`.app-main\`; primary phone chrome carries \`data-testid="mobile-simulator-shell"\` (exact string must appear in HTML for mobile-visual QA).\n` +
-        `- Global fixed \`data-testid="layer-eligibility-helper-text"\` with both sandbox numbers and outcomes.\n` +
-        `- Layer modal header: \`<img src="./plaid-logo-horizontal-black-white-background.png" alt="Plaid">\` only — wordmark image includes the Plaid name; **remove** any adjacent "PLAID" text.\n` +
-        `- Host marketing slot: \`host-use-case-visual-slot\` / \`data-testid="host-use-case-visual-placeholder"\` (set image src per product).\n\n` +
-        '### Full canonical reference\n\n```html\n' +
-        layerMobileSkeletonHtml +
-        '\n```\n',
-    });
-  }
-  if (useLayerMobileMockTemplate) {
-    contentBlocks.push({
-      type: 'text',
-      text: buildLayerShareFieldGuardrailBlock(demoScript),
-    });
-  }
+  // Mock-Layer template / mobile-skeleton / share-field guardrail blocks REMOVED
+  // (2026-05-29). Layer is always the live Plaid Layer Web SDK modal (see the
+  // useLayerWebSdk block above) — there is no mobile-mockup path anymore.
   contentBlocks.push({
     type: 'text',
     text:

@@ -29,9 +29,8 @@ const {
   buildAppArchitectureBriefPrompt,
   buildAppFrameworkPlanPrompt,
   buildAppGenerationPrompt,
-  shouldInjectLayerMobileMockTemplate,
 } = require('../utils/prompt-templates');
-const { buildLayerMockBrandTokensStyle } = require('../utils/layer-mock-brand-tokens');
+// layer-mock-brand-tokens module removed (2026-05-29) — Layer is a live Web SDK modal.
 const { inferProductFamily } = require('../utils/product-profiles');
 const { inferPlaidLinkProductsFromPrompt } = require('../utils/link-token-create-config');
 const { buildCuratedProductKnowledge, buildCuratedDigest } = require('../utils/product-knowledge');
@@ -670,7 +669,16 @@ async function hydrateApiSamplesForRelevantSlides(demoScript, productFamily) {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const { OPUS_PRIMARY } = require('../utils/anthropic-models');
+const { OPUS_PRIMARY, OPUS_PRIMARY_BETAS } = require('../utils/anthropic-models');
+// Route Opus calls through the beta Messages endpoint when betas are enabled
+// (e.g. the 1M-context window). Falls back to the standard endpoint otherwise.
+const OPUS_BETAS = Array.isArray(OPUS_PRIMARY_BETAS) && OPUS_PRIMARY_BETAS.length ? OPUS_PRIMARY_BETAS : null;
+function opusMessagesCreate(client, args) {
+  return OPUS_BETAS ? client.beta.messages.create({ ...args, betas: OPUS_BETAS }) : client.messages.create(args);
+}
+function opusMessagesStream(client, args) {
+  return OPUS_BETAS ? client.beta.messages.stream({ ...args, betas: OPUS_BETAS }) : client.messages.stream(args);
+}
 const ARCH_MODEL         = process.env.BUILD_APP_MODEL || OPUS_PRIMARY;
 const ARCH_MAX_TOKENS    = 1024;
 const FRAMEWORK_MODEL    = process.env.BUILD_APP_MODEL || OPUS_PRIMARY;
@@ -2029,7 +2037,7 @@ async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
   });
 
   const response = await withAnthropicOverloadedRetry('Call 1 architecture brief', () =>
-    client.messages.create({
+    opusMessagesCreate(client, {
       model:      ARCH_MODEL,
       max_tokens: ARCH_MAX_TOKENS,
       system,
@@ -2053,7 +2061,7 @@ async function getFrameworkPlan(client, demoScript, architectureBrief, framework
     pipelineAppOnlyHostUi: !!frameworkOpts.pipelineAppOnlyHostUi,
   });
   const response = await withAnthropicOverloadedRetry('Call 1b framework plan', () =>
-    client.messages.create({
+    opusMessagesCreate(client, {
       model: FRAMEWORK_MODEL,
       max_tokens: FRAMEWORK_MAX_TOKENS,
       system,
@@ -2094,27 +2102,12 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
   }
   if (!html.includes('window.goToStep')) layer1Issues.push('Missing window.goToStep');
   if (!html.includes('window.getCurrentStep')) layer1Issues.push('Missing window.getCurrentStep');
-  if (!html.includes('id="api-response-panel"')) layer1Issues.push('Missing api-response-panel shell');
-  if (!html.includes('id="link-events-panel"')) layer1Issues.push('Missing link-events-panel shell');
-
-  const stepsNeedingJsonRail = (demoScript.steps || []).filter((s) => {
-    if (isValueSummaryStep(s)) return false;
-    const r = s?.apiResponse?.response;
-    return r != null && typeof r === 'object' && !Array.isArray(r) && Object.keys(r).length > 0;
-  });
-  if (stepsNeedingJsonRail.length > 0) {
-    const needToggle = () =>
-      html.includes('data-testid="api-panel-toggle"') ||
-      html.includes("data-testid='api-panel-toggle'") ||
-      html.includes('class="api-panel-edge-toggle"') ||
-      html.includes("class='api-panel-edge-toggle'");
-    if (!needToggle()) {
-      layer1Issues.push('API JSON rail contract: missing data-testid="api-panel-toggle"');
-    }
-    if (!html.includes('id="api-response-content"') && !html.includes("id='api-response-content'")) {
-      layer1Issues.push('API JSON rail contract: missing #api-response-content inside api-response-panel');
-    }
-  }
+  // Pass 2 of legacy panel cleanup (2026-05-27): the LLM is no longer told to
+  // emit api-response-panel / link-events-panel / api-panel-toggle /
+  // api-response-content. Those are injected post-build by post-panels.js
+  // using the Claude Design v12 markup. So layer-1 validation only checks
+  // that goToStep / getCurrentStep + step containers exist — panel presence
+  // is post-panels' job, not the LLM's.
 
   for (const row of pwRows) {
     if (!row || !row.id || !stepIds.includes(row.id)) {
@@ -2123,16 +2116,18 @@ function validateLayerContracts({ html, playwrightScript, demoScript, mobileVisu
   }
   if (!pwRows.length) layer2Issues.push('Playwright script contains zero steps');
   const isEmbeddedMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
-  if (PLAID_LINK_LIVE && !isEmbeddedMode && !html.includes('data-testid="link-external-account-btn"')) {
+  const hasRealLaunchStep = (demoScript?.steps || []).some(
+    (s) => String((s && s.plaidPhase) || '').toLowerCase() === 'launch'
+  );
+  if (PLAID_LINK_LIVE && hasRealLaunchStep && !isEmbeddedMode && !html.includes('data-testid="link-external-account-btn"')) {
     layer2Issues.push('Missing canonical Plaid launch CTA data-testid="link-external-account-btn"');
   }
 
   if (!html.includes('renderjson.min.js')) {
     layer3Issues.push('Missing renderjson viewer script');
   }
-  if (mobileVisualEnabled && !html.includes('mobile-simulator-shell')) {
-    layer3Issues.push('Mobile visual mode enabled but no mobile-simulator-shell marker found');
-  }
+  // Mock-mobile "mobile-simulator-shell" contract REMOVED (2026-05-29) — Layer is
+  // a live Web SDK modal rendered over the desktop host UI, not a phone mockup.
 
   return {
     layer1Framework: { passed: layer1Issues.length === 0, issues: layer1Issues },
@@ -2154,16 +2149,12 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   const slideCssPath = path.join(PROJECT_ROOT, 'templates/slide-template/slide.css');
   const slideShellPath = path.join(PROJECT_ROOT, 'templates/slide-template/pipeline-slide-shell.html');
   const slideShellRulesPath = path.join(PROJECT_ROOT, 'templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md');
-  const layerMockTemplatePath = path.join(PROJECT_ROOT, 'templates/mobile-layer-mock/LAYER_MOCK_TEMPLATE.md');
-  const layerMobileSkeletonPath = path.join(
-    PROJECT_ROOT,
-    'templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html'
-  );
+  // Mock-Layer mobile template/skeleton loading REMOVED (2026-05-29). Layer is
+  // built with the live Plaid Layer Web SDK (a real modal, like Plaid Link) —
+  // there is no mobile-mockup skeleton/template anymore.
   let slideTemplateRules = '';
   let slideTemplateCss = '';
   let slideTemplateShellHtml = '';
-  let layerMockTemplate = '';
-  let layerMobileSkeletonHtml = '';
   try {
     if (fs.existsSync(slideShellRulesPath)) {
       slideTemplateRules = fs.readFileSync(slideShellRulesPath, 'utf8');
@@ -2176,24 +2167,8 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
         '\n'
       );
     }
-    if (fs.existsSync(layerMockTemplatePath)) layerMockTemplate = fs.readFileSync(layerMockTemplatePath, 'utf8');
-    if (fs.existsSync(layerMobileSkeletonPath)) {
-      layerMobileSkeletonHtml = fs.readFileSync(layerMobileSkeletonPath, 'utf8');
-      console.log('[Build] Loaded Layer mobile skeleton hard contract for build prompt');
-    } else {
-      console.warn('[Build] Layer mobile skeleton not found — hard contract block omitted:', layerMobileSkeletonPath);
-    }
   } catch (e) {
     console.warn('[Build] Warning: could not load slide template assets:', e.message);
-  }
-  if (
-    shouldInjectLayerMobileMockTemplate(demoScript, !!refinementOpts.mobileVisualEnabled) &&
-    !String(layerMobileSkeletonHtml || '').trim()
-  ) {
-    console.error(
-      '[Build] Layer mobile mock builds require the canonical skeleton at templates/mobile-layer-mock/layer-mobile-skeleton-from-2026-03-23-layer-v2.html (missing or empty).'
-    );
-    process.exit(1);
   }
 
   const siteRefPath = path.join(RUN_LAYOUT.brandDir, 'site-reference.png');
@@ -2218,8 +2193,6 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       slideTemplateRules,
       slideTemplateCss,
       slideTemplateShellHtml,
-      layerMockTemplate,
-      layerMobileSkeletonHtml,
       qaFrames:           refinementOpts.qaFrames   || [],
       prevTestids:        refinementOpts.prevTestids || [],
       humanFeedback:      refinementOpts.humanFeedback || '',
@@ -2246,7 +2219,7 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
   );
 
   return withAnthropicOverloadedRetry('Call 2 full HTML', async () => {
-    const stream = await client.messages.stream({
+    const stream = await opusMessagesStream(client, {
       model:      BUILD_MODEL,
       max_tokens: BUILD_MAX_TOKENS,
       thinking: {
@@ -2972,63 +2945,17 @@ async function main(opts = {}) {
     domErrors.push('window.getCurrentStep not found in generated HTML');
   }
 
-  // 2b. API panel contract: if any step has apiResponse data, the global panel chrome
-  // must exist so build-qa, manual preview, and recording can all surface the same JSON rail.
+  // 2b. API panel contract — Pass 2 of legacy panel cleanup (2026-05-27):
+  // the LLM no longer emits #api-response-panel / #api-response-content /
+  // #api-panel-toggle / .api-panel-edge-toggle. post-panels.js injects the
+  // Claude Design v12 markup post-build using the canonical stable IDs.
+  // The old contract (panel must exist in LLM-emitted HTML) is no longer
+  // enforced here; we only forbid duplicate inline JSON rails that the LLM
+  // sometimes emits inside step divs (those still mask the global panel).
   const stepsWithApiData = (demoScript.steps || []).filter((s) =>
     !isValueSummaryStep(s) && hasApiEndpoint(s) && s.apiResponse?.response
   );
   if (stepsWithApiData.length > 0) {
-    const hasPanel =
-      html.includes('id="api-response-panel"') || html.includes("id='api-response-panel'");
-    const hasContent =
-      html.includes('id="api-response-content"') ||
-      html.includes("id='api-response-content'") ||
-      html.includes('data-testid="api-response-content"');
-    if (hasPanel && !hasContent) {
-      html = html.replace(
-        /(<div[^>]*\bid\s*=\s*["']api-response-panel["'][^>]*>)/i,
-        '$1<div id="api-response-content" data-testid="api-response-content"></div>'
-      );
-      console.log('[Build] Injected missing #api-response-content inside api-response-panel');
-    }
-    if (!html.includes('id="api-response-panel"') && !html.includes("id='api-response-panel'")) {
-      domErrors.push('Global api-response-panel not found in generated HTML.');
-    }
-    if (
-      !html.includes('id="api-response-content"') &&
-      !html.includes("id='api-response-content'") &&
-      !html.includes('data-testid="api-response-content"')
-    ) {
-      domErrors.push('Global api-response-content not found in generated HTML.');
-    }
-    // Deterministic panel chrome merge: enforce a single edge toggle icon control.
-    if (hasPanel) {
-      html = html.replace(
-        /<button[^>]*(?:id|data-testid)\s*=\s*["']api-json-panel-(?:show|hide)["'][^>]*>[\s\S]*?<\/button>/gi,
-        ''
-      );
-      const hasToggle = /data-testid=["']api-panel-toggle["']|id=["']api-panel-toggle["']/i.test(html);
-      if (!hasToggle) {
-        const toggleMarkup =
-          '<button type="button" id="api-panel-toggle" data-testid="api-panel-toggle" class="api-panel-edge-toggle" aria-label="Expand API JSON panel" aria-expanded="false"><span class="api-panel-toggle-icon" aria-hidden="true"></span></button>';
-        let merged = false;
-        html = html.replace(
-          /(<div[^>]*\bid\s*=\s*["']api-response-panel["'][^>]*>)/i,
-          (m) => {
-            merged = true;
-            return `${m}${toggleMarkup}`;
-          }
-        );
-        if (merged) {
-          console.log('[Build] Enforced canonical API panel edge toggle via template merge');
-        } else {
-          domErrors.push('Failed to inject canonical API panel edge toggle into #api-response-panel.');
-        }
-      }
-    }
-
-    // Enforce one canonical raw JSON rail. Any extra inline JSON panel containers in step
-    // layouts are contract violations that create repetitive QA churn.
     const forbiddenInlineJsonPanelMatches = [
       ...html.matchAll(/<(?:div|aside|section)[^>]*\b(?:id|class)\s*=\s*["'][^"']*(?:json-panel|insight-right|auth-json-panel|api-json-panel|raw-json)[^"']*["'][^>]*>/gi),
     ]
@@ -3036,7 +2963,7 @@ async function main(opts = {}) {
       .filter(tag => !/api-response-panel|api-response-content/i.test(tag));
     if (forbiddenInlineJsonPanelMatches.length > 0) {
       const example = forbiddenInlineJsonPanelMatches[0].slice(0, 140);
-      domErrors.push(`Found duplicate inline raw JSON panel markup. Use only #api-response-panel. Example: ${example}`);
+      domErrors.push(`Found duplicate inline raw JSON panel markup. Use only #api-response-panel (injected by post-panels). Example: ${example}`);
     }
   }
   // Detect malformed "function {" (no name, no params) — a JS syntax error that prevents
@@ -3216,8 +3143,15 @@ async function main(opts = {}) {
     }
   }
 
-  // 5b. Live Plaid launch CTA must always exist for plaid-link-qa selector contract.
-  if (PLAID_LINK_LIVE) {
+  // 5b. Live Plaid launch CTA must exist for the plaid-link-qa selector contract —
+  // but only when the script actually has a real-SDK launch step. Layer-mock /
+  // mobile-mock flows simulate the Plaid experience (host eligibility + bottom sheet)
+  // and have no real launch CTA; requiring one wrongly hard-fails the build. This
+  // mirrors plaid-link-qa.js, which skips when no plaidPhase=launch step is present.
+  const hasRealLaunchStep = (demoScript.steps || []).some(
+    (s) => String((s && s.plaidPhase) || '').toLowerCase() === 'launch'
+  );
+  if (PLAID_LINK_LIVE && hasRealLaunchStep) {
     const isEmbeddedMode = !!(linkModeAdapter && linkModeAdapter.id === 'embedded');
     if (!isEmbeddedMode) {
       const ctaPatch = ensureCanonicalLaunchCtaInHtml(html, demoScript);
@@ -3558,25 +3492,9 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     console.log('[Build] Injected runtime mobile-shell (mobile-simulated default)');
   }
 
-  // Layer mock: :root colors from brand only (runs even if mobile-runtime script was already in HTML from a prior refinement).
-  if (
-    mobileVisualEnabled &&
-    shouldInjectLayerMobileMockTemplate(demoScript, mobileVisualEnabled) &&
-    html.includes('</head>') &&
-    !html.includes('id="layer-mock-brand-tokens"')
-  ) {
-    let layerBrandStyle;
-    try {
-      layerBrandStyle = buildLayerMockBrandTokensStyle(brand);
-    } catch (e) {
-      console.error(e.message || String(e));
-      process.exit(1);
-    }
-    html = html.replace('</head>', `${layerBrandStyle}\n</head>`);
-    console.log(
-      `[Build] Injected Layer mock :root brand tokens (${brand.slug || brand.name || 'brand'})`
-    );
-  }
+  // Mock-Layer :root brand-token injection REMOVED (2026-05-29) — Layer is a
+  // live Web SDK modal, not a mobile-mockup sheet, so there are no mock Layer
+  // CSS custom properties to inject.
 
   // ── Harden generated click bindings (avoid null.addEventListener crash) ────
   // Some model outputs bind listeners to deduped selectors (e.g. -dup2) that do

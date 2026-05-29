@@ -1146,6 +1146,21 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     }
   };
 
+  // Apply the correct panel state for the initially-active step ON LOAD. The
+  // panel CSS forces display:flex (overriding the shell's inline display:none),
+  // so without this the JSON panel shows on the opening/landing step even when
+  // that step carries no API data. Running goToStep for the active step hides it.
+  (function applyInitialPanelState() {
+    function run() {
+      var active = document.querySelector('.step.active[data-testid]');
+      var id = active ? active.dataset.testid.replace(/^step-/, '') : null;
+      if (id) { try { window.goToStep(id); } catch (_) {} }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run);
+    else run();
+    setTimeout(run, 0);
+  })();
+
   window.addEventListener('resize', function() {
     if (!window.__apiPanelUserOpen) return;
     var panel = document.getElementById('api-response-panel');
@@ -1365,7 +1380,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     token-only mode, pre-link manual nav). When live data is present,
   //     the panel header label gets a " — live" suffix so operators can
   //     visually distinguish real vs synthesized in screen recordings.
-  const POST_PANELS_PATCH_VERSION = 'v11';
+  const POST_PANELS_PATCH_VERSION = 'v12';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);

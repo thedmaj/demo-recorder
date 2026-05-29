@@ -61,6 +61,16 @@ function normalizeForCompare(s) {
 // reproduction of the host's marketing site.
 const MARKETING_NAV_TERMS = /^(pricing|docs|developers?|customers?|company|blog|careers|partners|contact|sign\s?in|sign\s?up|log\s?in|login|get started|start free|try (it )?free|book a demo|request a demo|changelog|api reference|api status|trust|security|enterprise|solutions|use cases|industries|resources|about|why\s+\w+|platform|products?|payments?|gaming|trading|fintech|payroll|compliance)$/i;
 
+// Corporate / marketing-site IA phrases common to CONSUMER financial-institution
+// websites (regional banks, credit unions). A customer account-opening (OAO) or
+// dashboard host UI is NOT a reproduction of these top-nav links, so when the
+// brand profile's nav is dominated by them the deterministic nav-fidelity check
+// must be skipped (this was the recurring `brand-nav-label-missing` false
+// positive on bank OAO clones — e.g. Pinnacle's "About Pinnacle / Investor
+// Relations / Who We Are / Client Stories / Supporting Our Community"). Matched
+// anywhere in the label (not anchored), since these are multi-word phrases.
+const MARKETING_NAV_PHRASES = /\b(about (us|\w+)|who we are|our (story|company|team|mission|values|history|community)|investor relations|investors?|corporate (social )?responsib|social responsib|sustainability|(client|customer|success) stories|(supporting|serving) (our )?communit|community|newsroom|press( room| release)?|media (center|room)|leadership|find a (branch|location|atm)|locations?|branches|atms?|accessibility|sitemap|diversity|inclusion|governance|personal banking|business banking|commercial banking|wealth (management)?)\b/i;
+
 /**
  * Heuristic: does this nav.items[] array look like a marketing-site IA rather
  * than a customer-app dashboard nav?
@@ -98,6 +108,8 @@ function looksLikeMarketingNav(items) {
     if (wordCount >= 4) labelSignals++;
     // Known marketing/site-utility term.
     if (MARKETING_NAV_TERMS.test(label)) labelSignals++;
+    // Consumer-bank corporate/marketing IA phrase (anywhere in the label).
+    if (MARKETING_NAV_PHRASES.test(label)) labelSignals++;
     if (labelSignals > 0) signals++;
   }
   // Mega-menu scrape artifacts (e.g. Zip "Store DirectoryFind a Store") — never customer-app nav.

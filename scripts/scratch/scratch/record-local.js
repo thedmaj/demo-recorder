@@ -1044,6 +1044,83 @@ function matchPlaidLinkPhase(stepId) {
 }
 
 /**
+ * Detect which Plaid product a `plaidPhase:"launch"` step launches.
+ * @returns {'idv'|'layer'|'link'}
+ */
+function detectLaunchProduct(stepId, target) {
+  const hay = `${stepId || ''} ${target || ''}`.toLowerCase();
+  if (/\bidv\b|identity[-_]?verification|idv[-_]launch/.test(hay)) return 'idv';
+  if (/\blayer\b/.test(hay)) return 'layer';
+  return 'link';
+}
+
+/**
+ * Launch a LIVE Plaid Layer or IDV modal (real Plaid SDK) and — above all —
+ * VERIFY the modal loads. Mirrors the verified app behavior: the CTA onclick
+ * opens the modal (Layer: eligibility ran on load → open on Continue; IDV:
+ * open on click). Optionally vision-navigates the modal screens, then waits on
+ * the product-specific completion flag (Layer: _plaidLinkComplete, IDV:
+ * _idvComplete). Recording proceeds even if completion can't be auto-driven —
+ * the priority is capturing the live modal loading.
+ * @param {'layer'|'idv'} product
+ */
+async function executeLayerOrIdvLaunch(page, product) {
+  const isIdv = product === 'idv';
+  const ctaSelectors = isIdv
+    ? ['[data-testid="idv-launch-btn"]', 'button[onclick*="launchIdv"]']
+    : ['[data-testid="link-external-account-btn"]', 'button[onclick*="launchLayer"]'];
+  const doneFlag = isIdv ? '_idvComplete' : '_plaidLinkComplete';
+  console.log(`  [Plaid ${product}] launching live modal...`);
+
+  // 1. Click the launch CTA (opens the modal via the app's launch handler).
+  let clicked = false;
+  for (const sel of ctaSelectors) {
+    try {
+      const btn = page.locator(sel).first();
+      if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await btn.click({ force: true, timeout: 5000 });
+        console.log(`  [Plaid ${product}] clicked launch CTA "${sel}"`);
+        clicked = true;
+        break;
+      }
+    } catch (_) {}
+  }
+  if (!clicked) console.warn(`  [Plaid ${product}] launch CTA not found — modal may open via on-load logic`);
+
+  // 2. VERIFY the modal loads (the live Plaid iframe appears). PRIMARY GOAL.
+  let modalLoaded = false;
+  try {
+    await plaidLinkWaitReady(page);
+    modalLoaded = true;
+    console.log(`  [Plaid ${product}] live modal loaded ✓`);
+  } catch (e) {
+    console.warn(`  [Plaid ${product}] modal did not load within timeout: ${e.message}`);
+  }
+
+  // 3. Optional vision navigation of the modal screens (best effort).
+  if (modalLoaded && USE_BROWSER_AGENT) {
+    for (let i = 0; i < 6; i++) {
+      const done = await page.evaluate((f) => window[f] === true, doneFlag).catch(() => false);
+      if (done) break;
+      await agent.visionClick(
+        page,
+        'Inside the Plaid modal, click the primary action button to proceed — it may say ' +
+        '"Continue", "Allow", "Agree", "Share", "Submit", "Get started", "Take photo", or "Done". ' +
+        'Click only inside the Plaid modal/sheet, not the host page behind it.',
+        { retries: 2, waitAfterMs: 1800 }
+      ).catch(() => {});
+    }
+  }
+
+  // 4. Wait for the product completion flag (best effort — recording proceeds regardless).
+  await page.waitForFunction((f) => window[f] === true, doneFlag, { timeout: isIdv ? 60000 : 45000 })
+    .then(() => console.log(`  [Plaid ${product}] ${doneFlag} fired ✓`))
+    .catch(() => console.warn(`  [Plaid ${product}] ${doneFlag} not set within timeout — advancing recording`));
+
+  return { modalLoaded };
+}
+
+/**
  * Execute the live Plaid Link actions for a given phase.
  *
  * When USE_BROWSER_AGENT=true (default when PLAID_LINK_LIVE + ANTHROPIC_API_KEY):
@@ -2681,27 +2758,35 @@ async function main(opts = {}) {
         await page.evaluate(`window.goToStep('${goToStepId}')`).catch(() => {});
         await page.waitForTimeout(500);
 
-        // Execute the real Plaid Link iframe actions for this phase
+        // Multi-launch / product-aware live modal. A demo may launch Plaid Link,
+        // Plaid Layer, AND/OR live IDV — each is a real Plaid modal. Layer/IDV use
+        // a different open contract and completion flag than classic Link, so they
+        // go through executeLayerOrIdvLaunch (verifies the modal LOADS, optional
+        // vision navigation, waits the right flag). Classic Plaid Link is unchanged.
+        const launchProduct = (plaidPhase === 'launch')
+          ? detectLaunchProduct(stepId, stepEntry.target)
+          : 'link';
         try {
-          await executePlaidLinkPhase(page, plaidPhase);
+          if (plaidPhase === 'launch' && (launchProduct === 'layer' || launchProduct === 'idv')) {
+            await executeLayerOrIdvLaunch(page, launchProduct);
+          } else {
+            await executePlaidLinkPhase(page, plaidPhase);
+          }
         } catch (plaidErr) {
-          console.warn(`  [Plaid Link] Phase "${plaidPhase}" failed: ${plaidErr.message}`);
+          console.warn(`  [Plaid ${launchProduct}] Phase "${plaidPhase}" failed: ${plaidErr.message}`);
         }
 
-        // Ensure the Plaid modal is closed before advancing — if onSuccess fired, destroy()
-        // was already called. If the automation timed out, we must force-close it here so
-        // the modal doesn't overlay all subsequent steps in the recording.
+        // Ensure the modal is closed before advancing — if onSuccess fired, the
+        // app advanced already; if automation timed out, force-close the correct
+        // handler so it doesn't overlay subsequent steps in the recording.
         if (plaidPhase === 'launch') {
-          const closed = await page.evaluate(`
-            (function() {
-              if (window._plaidHandler) {
-                try { window._plaidHandler.destroy(); } catch(e) {}
-                return true;
-              }
-              return false;
-            })()
-          `).catch(() => false);
-          if (closed) console.log('  [Plaid Link] Ensured Plaid modal closed after launch phase.');
+          const closed = await page.evaluate((product) => {
+            var h = product === 'idv' ? window._idvHandler : window._plaidHandler;
+            window._plaidModalOpened = false;
+            if (h && h.destroy) { try { h.destroy(); } catch (e) {} return true; }
+            return false;
+          }, launchProduct).catch(() => false);
+          if (closed) console.log(`  [Plaid ${launchProduct}] Ensured modal closed after launch phase.`);
         }
 
         // Add a short tail wait so the Plaid modal fade-out doesn't bleed into

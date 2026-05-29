@@ -35,9 +35,19 @@ description: >-
 > returns identity **+ linked banks**.
 >
 > **The form phone drives eligibility (REQUIRED).** Read the onboarding phone input value (normalize
-> to E.164) and pass it to `handler.submit({ phone_number })` after `handler.open()` — that submit is
-> the eligibility check. Never submit a hardcoded number; re-read the field at submit time. Prefill the
-> input with the eligible sandbox number so the happy path passes.
+> to E.164) and pass it to `handler.submit({ phone_number })` — that submit is the eligibility check.
+> **Order is critical: `submit()` FIRST, then `handler.open()` ONLY on `LAYER_READY`** (opening before
+> the eligibility result errors with "Please submit Phone Number before opening Link"). Submit AFTER the
+> handler preload initializes (a synchronous submit right after `create()` is dropped — retry until
+> `LAYER_READY`). Never submit a hardcoded number; re-read the field at submit time. Prefill the input
+> with the eligible sandbox number (`+14155550011`) so the happy path passes.
+>
+> **Best-practice pattern (desktop):** create the handler EARLY and run the eligibility check (submit
+> phone) **on page load** so `LAYER_READY` is ready before the user clicks the CTA — the CTA then only
+> calls `open()` (idempotent `hasOpened` guard, gated on `LAYER_READY`). One handler per attempt; phone
+> and DOB submits are separate; backend `/user_account/session/get` is the source of truth and returns
+> `items[]` (many, not one). Full 13-point list: [`plaid-layer.md` → "Desktop Web SDK integration best
+> practices"](../../../inputs/products/plaid-layer.md).
 >
 > **Activation check (pipeline-enforced):** every Layer build verifies activation via a successful
 > `/session/token/create` (`plaid-backend.verifyLayerActivation()` in the `plaid-link-qa` Layer

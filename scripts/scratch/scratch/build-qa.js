@@ -157,12 +157,24 @@ function getPlaidLaunchStepId(demoScript) {
   return null;
 }
 
-function isPlaidLaunchRow(row, launchStepId) {
-  if (!launchStepId) return false;
+// ALL plaidPhase:"launch" step ids. A demo may have more than one live launch
+// (e.g. Plaid Layer prefill + a separate live IDV session) — token-only mode
+// must skip the live modal for EVERY launch, not just the first, or the second
+// modal opens during the walk and bleeds into the following step's frames.
+function getPlaidLaunchStepIds(demoScript) {
+  return (demoScript.steps || [])
+    .filter((s) => s && s.plaidPhase === 'launch')
+    .map((s) => s.id);
+}
+
+function isPlaidLaunchRow(row, launchStepIdOrIds) {
+  if (!launchStepIdOrIds) return false;
+  const ids = Array.isArray(launchStepIdOrIds) ? launchStepIdOrIds : [launchStepIdOrIds];
+  if (ids.length === 0) return false;
   const id = row.stepId || row.id;
   // Step ID from plaidPhase:'launch' is authoritative; regex is redundant and causes false
   // negatives when the generated button testid doesn't match (e.g. "link-your-bank-btn").
-  return id === launchStepId && row.action === 'click';
+  return ids.includes(id) && row.action === 'click';
 }
 
 function resolveBuildQaPlaidMode(raw) {
@@ -222,18 +234,25 @@ async function runTokenOnlyLinkProbe(page, demoScript) {
 }
 
 /** build-qa cannot drive the Plaid iframe; fake onSuccess so post-link steps are testable. */
-async function simulateSandboxPlaidLinkComplete(page, demoScript) {
+async function simulateSandboxPlaidLinkComplete(page, demoScript, currentLaunchId) {
   const steps = demoScript.steps || [];
-  const launchIdx = steps.findIndex(s => s && s.plaidPhase === 'launch');
+  // Advance to the step AFTER the launch step currently being walked. For
+  // multi-launch demos (Layer + live IDV) each launch must advance to its own
+  // post-link step — keying off the first launch only would send the IDV
+  // launch back to the Layer post-step. Falls back to the first launch.
+  const launchIdx = currentLaunchId
+    ? steps.findIndex(s => s && s.id === currentLaunchId)
+    : steps.findIndex(s => s && s.plaidPhase === 'launch');
   const nextId = launchIdx >= 0 && launchIdx < steps.length - 1 ? steps[launchIdx + 1].id : null;
   await page.evaluate((nid) => {
     window._plaidLinkComplete = true;
     if (!window._plaidAccountName) window._plaidAccountName = 'Plaid Checking';
     if (!window._plaidAccountMask) window._plaidAccountMask = '0000';
     if (!window._plaidInstitutionName) window._plaidInstitutionName = 'First Platypus Bank';
-    if (window._plaidHandler) {
-      try { window._plaidHandler.destroy(); } catch (e) {}
-    }
+    // Destroy BOTH possible handlers (Layer = _plaidHandler, IDV = _idvHandler)
+    // so neither live modal lingers over the following step's frames.
+    if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch (e) {} }
+    if (window._idvHandler) { try { window._idvHandler.destroy(); } catch (e) {} }
     if (nid && typeof window.goToStep === 'function') window.goToStep(nid);
   }, nextId);
   await page.waitForTimeout(500);
@@ -1645,7 +1664,15 @@ function scanRenderjsonDisclosureStyling(html) {
   // Skip rules that look like the post-panels v8 canonical override block —
   // those legitimately set width:auto, height:auto, background:transparent,
   // and those are the FIX not the bug.
-  const POST_PANELS_OVERRIDE = /#api-response-panel\s+(a\.)?disclosure|#api-response-panel\s+button\.disclosure/i;
+  // Any `.disclosure` rule scoped under #api-response-panel is panel-owned —
+  // either the post-panels v8+ canonical override (which legitimately sets a
+  // small fixed width on the inline toggle) or panel chrome. The LLM-source bug
+  // this check targets is a GLOBAL/host `.disclosure` rule, not a panel-scoped
+  // one. The older regex only matched `#api-response-panel a.disclosure` /
+  // `button.disclosure` and missed the current shim selector
+  // `#api-response-panel .renderjson .disclosure`, producing a false-positive
+  // critical blocker (2026-05-29). Match any panel-scoped `.disclosure` rule.
+  const POST_PANELS_OVERRIDE = /#api-response-panel\b[^{]*\.disclosure|#api-response-panel\s+(a\.)?disclosure|#api-response-panel\s+button\.disclosure/i;
   const offenders = [];
   for (const css of styleBlocks) {
     // Find all rules where the selector list contains a token matching
@@ -2230,6 +2257,13 @@ async function evaluateAssetAuthenticity(page) {
 
 function evaluateApiStoryAlignment(step) {
   const issues = [];
+  // Live-launch steps (plaidPhase:"launch") surface a SESSION-CREATION call
+  // (e.g. POST /link/token/create or /session/token/create) — not a product
+  // result. The narration legitimately describes the product (identity, auth,
+  // etc.), but the launch step's panel shows token creation, so product-result
+  // field alignment does not apply. The product RESULT panel lives on the
+  // post-launch step. Skip alignment enforcement on launch steps (2026-05-29).
+  if (String(step?.plaidPhase || '').toLowerCase() === 'launch') return issues;
   const endpoint = String(step?.apiResponse?.endpoint || '').toLowerCase();
   const responseBlob = JSON.stringify(step?.apiResponse?.response || {}).toLowerCase();
   const story = [
@@ -3317,7 +3351,11 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
           suggestion: 'Merge templates/slide-template/pipeline-slide-shell.html edge toggle contract (single icon control + toggleApiPanel()).',
         });
       }
-      if (!state.apiPanelVisible) {
+      // Visible-panel requirement applies to SLIDE-tier insight steps (the rail
+      // is their content). HOST steps keep the panel collapsed by default (a
+      // peek the user can expand) — a present + populated collapsed panel is
+      // valid there, so only require visibility for slide-like steps.
+      if (!state.apiPanelVisible && isSlideLikeStep(step)) {
         diagnostics.push({
           stepId: step.id,
           category: 'panel-visibility',
@@ -3523,41 +3561,11 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
       });
     }
   }
-  if (needsLayerHelperAudit) {
-    const helperText = String(state.layerHelperText || '');
-    const hasEligibleNumber = helperText.includes('415-555-1111');
-    const hasIneligibleNumber = helperText.includes('415-555-0011');
-    if (!state.layerHelperVisible || !hasEligibleNumber || !hasIneligibleNumber) {
-      diagnostics.push({
-        stepId: step.id,
-        category: 'layer-helper-text-contract',
-        severity: 'critical',
-        issue: 'Layer helper text below mobile frame is missing, hidden, or missing required eligible/ineligible phone numbers.',
-        suggestion: 'Render visible helper text below the mobile frame with 415-555-1111 (eligible) and 415-555-0011 (ineligible fallback).',
-      });
-    }
-  }
-  if (isLayerEligibilityCapture) {
-    const phoneVal = String(state.activePhoneInputValue || '');
-    if (phoneVal && !/415\D*555\D*1111/.test(phoneVal)) {
-      diagnostics.push({
-        stepId: step.id,
-        category: 'layer-helper-text-contract',
-        severity: 'critical',
-        issue: `Layer eligibility capture phone input is not prefilled with eligible number (found "${phoneVal}").`,
-        suggestion: 'Prefill phone input with 415-555-1111 as default for Layer flows.',
-      });
-    }
-    if (!phoneVal) {
-      diagnostics.push({
-        stepId: step.id,
-        category: 'layer-helper-text-contract',
-        severity: 'warning',
-        issue: 'Layer eligibility capture step has no detectable phone prefill value.',
-        suggestion: 'Prefill the phone input with 415-555-1111 to make eligible path the default first experience.',
-      });
-    }
-  }
+  // Mock-Layer "helper text below the mobile frame" + 415-555-1111 prefill
+  // contract REMOVED (2026-05-29). Layer is a live Plaid Layer Web SDK modal
+  // (like Plaid Link); the eligible sandbox number is +14155550011 and there is
+  // no mobile-frame helper text. Eligibility is exercised by the live modal, not
+  // asserted via mock helper copy.
   if (isSlideLikeStep(step) && !state.activeStepHasSlideRoot) {
     diagnostics.push({
       stepId: step.id,
@@ -4020,6 +4028,8 @@ async function main(opts = {}) {
     ` [plaidMode=${plaidQaMode}]`
   );
   const launchStepId = getPlaidLaunchStepId(demoScript);
+  // Every live-launch step (supports multi-launch demos: Layer + live IDV).
+  const launchStepIds = getPlaidLaunchStepIds(demoScript);
   let tokenOnlyProbe = null;
 
   for (let i = 0; i < rows.length; i++) {
@@ -4054,14 +4064,14 @@ async function main(opts = {}) {
         }
       } catch (_) {}
     }
-    const isLaunchRow = isPlaidLaunchRow(row, launchStepId);
+    const isLaunchRow = isPlaidLaunchRow(row, launchStepIds);
     // Is this the first step AFTER the Plaid Link launch? If so, Plaid's
     // onSuccess handshake legitimately shows a "Linking account…" spinner
     // on the host page for a few seconds before the real post-link state
     // renders — give capture an extended stability window.
     const prevRowIdx = i - 1;
     const prevRow = prevRowIdx >= 0 ? rows[prevRowIdx] : null;
-    const isFirstPostLaunchRow = !isLaunchRow && prevRow && isPlaidLaunchRow(prevRow, launchStepId);
+    const isFirstPostLaunchRow = !isLaunchRow && prevRow && isPlaidLaunchRow(prevRow, launchStepIds);
     // Standard stability window for every captured frame — short, harmless.
     // Launch step (embedded mode) needs longer for the widget to finish
     // mounting past its own "Continuing in Plaid Link…" loading state.
@@ -4176,14 +4186,21 @@ async function main(opts = {}) {
     }
 
     // Align active host step with demo-script for Plaid launch: button may live on prior step DOM.
-    if (isPlaidLaunchRow(row, launchStepId)) {
+    if (isPlaidLaunchRow(row, launchStepIds)) {
       try {
         await forceStepActive(page, stepId);
         await page.waitForTimeout(400);
       } catch (_) {}
     }
 
-    if (step && stepRequiresGlobalJsonRail(step)) {
+    // Force-open the JSON rail ONLY for slide-tier steps (insight slides whose
+    // layout reserves space for the rail). On HOST steps the panel is a fixed
+    // overlay that covers the host UI — force-opening it buries the step's real
+    // content (e.g. the "Identity verified" success card) behind the panel and
+    // tanks the vision score. Host steps keep the panel collapsed (its default,
+    // and what the recording shows); the panel's content is still validated by
+    // the deterministic panel checks regardless of visual expansion.
+    if (step && stepRequiresGlobalJsonRail(step) && isSlideLikeStep(step)) {
       try {
         await prepareGlobalJsonRailForBuildQa(page, stepId);
         await page.waitForTimeout(160);
@@ -4255,7 +4272,7 @@ async function main(opts = {}) {
       } else {
         console.log('[build-qa] Simulating Plaid Link success (sandbox) — iframe not automated in build-qa');
       }
-      await simulateSandboxPlaidLinkComplete(page, demoScript);
+      await simulateSandboxPlaidLinkComplete(page, demoScript, stepId);
     }
   }
 
