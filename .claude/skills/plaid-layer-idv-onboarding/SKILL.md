@@ -17,6 +17,10 @@ description: >-
 > [`inputs/products/plaid-identity-verification.md`](../../../inputs/products/plaid-identity-verification.md).
 > Update those KBs when an endpoint/field/status changes; update this skill when the *sequencing*
 > changes. (Convention: product KB = indexed per-product facts; skill = how-to / cross-product flow.)
+> For **standalone IDV** (Link session request/response shapes, webhook payloads, the
+> `/identity_verification/get` response + status enums, and the four `/retry` strategies), see the
+> "Identity Verification — API patterns" section of
+> [`inputs/products/plaid-identity-verification.md`](../../../inputs/products/plaid-identity-verification.md).
 >
 > **In the demo-recording pipeline,** both Layer and IDV run through the **real Plaid Link SDK** as a
 > single `plaidPhase: "launch"` step each — do **not** build simulated step divs. This skill's backend
