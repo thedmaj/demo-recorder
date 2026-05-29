@@ -23,6 +23,16 @@ description: >-
 > sequencing informs the post-link host beats and API panels; the on-screen build contract is in
 > [`plaid-demo-app-build`](../plaid-demo-app-build/SKILL.md), sandbox creds/persona in
 > [`inputs/plaid-link-sandbox.md`](../../../inputs/plaid-link-sandbox.md).
+>
+> **Onboarding entry = phone number only; path is automatic.** Collect ONLY a mobile phone number at
+> onboarding; the Layer-vs-fallback branch is decided automatically by eligibility
+> (`LAYER_READY` → Layer; `LAYER_NOT_AVAILABLE`/`LAYER_AUTOFILL_NOT_AVAILABLE` → fallback). Never show
+> an "onboard with Plaid vs. continue manually" choice. Happy-path sandbox phone `+14155550011`
+> returns identity **+ linked banks**.
+>
+> **Activation check (pipeline-enforced):** every Layer build verifies activation via a successful
+> `/session/token/create` (`plaid-backend.verifyLayerActivation()` in the `plaid-link-qa` Layer
+> branch) — a failed token = Layer not provisioned / wrong `PLAID_LAYER_TEMPLATE_ID`, and halts the build.
 
 ## When to use this skill
 Use this skill whenever a task involves implementing Plaid Layer as the front-of-funnel onboarding step and then chaining a full Plaid Identity Verification (IDV) session — meaning Document Verification, Data Source (database) Verification, and Selfie/liveness check — to satisfy KYC. This skill is NOT for `/identity/get`, `/identity/match`, or any account‑ownership matching against bank data. It is specifically for the IDV product (`products: ["identity_verification"]`), which runs through Link as its own session and is mutually exclusive with other Plaid products in the same Link token.

@@ -1894,22 +1894,30 @@ contract that the next stage knows how to fill.\n` +
         `This demo uses the **real Plaid Layer Web SDK**. Do NOT build simulated Layer screens ` +
         `(no \`layer-sign-up-instantly\` / \`layer-authenticate-device\` / \`layer-confirm-share\` ` +
         `bottom-sheet divs) and do NOT use a mobile-simulator shell. The real Layer modal renders ` +
-        `itself; the host page only provides the launch trigger and the post-Layer review screens. ` +
+        `itself; the host page only provides the onboarding entry and the post-Layer review screens. ` +
         `Source of truth: \`.claude/skills/plaid-layer-idv-onboarding/SKILL.md\`.\n\n` +
-        `**Single Layer launch step** (the demo-script step with \`"plaidPhase":"launch"\`):\n` +
-        `- Include the canonical launch CTA \`data-testid="link-external-account-btn"\` (a normal-scale ` +
-        `inline icon + label, never a hero graphic).\n` +
+        `**Onboarding entry = mobile phone number ONLY (auto path — no user choice).**\n` +
+        `- The launch step (\`"plaidPhase":"launch"\`) collects ONLY a mobile phone number, prefilled ` +
+        `with the sandbox value, plus a single **"Continue"** button. That button IS the canonical ` +
+        `launch CTA \`data-testid="link-external-account-btn"\` (normal-scale inline icon + label).\n` +
+        `- Do **NOT** present an "Onboard with Plaid vs. continue manually" choice, a "Prefill with ` +
+        `Plaid" button, or a separate "Continue manually" button. Whether the user gets Layer or a ` +
+        `fallback is decided **automatically by Layer eligibility** (\`LAYER_READY\` → Layer proceeds; ` +
+        `\`LAYER_NOT_AVAILABLE\`/\`LAYER_AUTOFILL_NOT_AVAILABLE\` → fallback). Never surface that branch.\n` +
         `- Wire the real SDK exactly in this order (open BEFORE submit — submit() postMessages into the ` +
         `iframe, which must exist first):\n` +
         '```javascript\n' +
         `async function launchLayer() {\n` +
+        `  var phone = (document.querySelector('[data-testid="onboarding-phone-input"]') || {}).value || '+14155550011';\n` +
         `  const r = await fetch('/api/create-session-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_user_id: window._clientUserId }) });\n` +
         `  const { link_token } = await r.json();\n` +
         `  const handler = Plaid.create({\n` +
         `    token: link_token,\n` +
         `    onSuccess: async (public_token) => {\n` +
         `      const s = await fetch('/api/user-account-session-get', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ public_token }) });\n` +
-        `      window._layerIdentity = (await s.json()).identity || null;\n` +
+        `      const data = await s.json();\n` +
+        `      window._layerIdentity = data.identity || null;\n` +
+        `      window._layerItems = data.items || [];   // linked bank accounts from Layer\n` +
         `      window._plaidLinkComplete = true;\n` +
         `      window.goToStep('<first-post-layer-step-id>');\n` +
         `    },\n` +
@@ -1920,17 +1928,18 @@ contract that the next stage knows how to fill.\n` +
         `  });\n` +
         `  window._plaidHandler = handler;\n` +
         `  handler.open();\n` +
-        `  setTimeout(() => handler.submit({ phone_number: '+14155550011' }), 600);\n` +
+        `  setTimeout(() => handler.submit({ phone_number: phone }), 600);\n` +
         `}\n` +
         '```\n' +
-        `- The launch CTA onclick calls \`launchLayer()\`. Set \`window._clientUserId\` once (a stable ` +
-        `non-PII id) and reuse it (Layer + IDV share it).\n` +
-        `- Eligible sandbox phone is **+14155550011** (LAYER_READY); OTP 123456. Do NOT use 415-555-1111 ` +
-        `(that is the mock convention, not real Layer).\n` +
+        `- The phone input carries \`data-testid="onboarding-phone-input"\`, prefilled with the eligible ` +
+        `sandbox number. The Continue CTA onclick calls \`launchLayer()\`. Set \`window._clientUserId\` ` +
+        `once (a stable non-PII id) and reuse it (Layer + IDV share it).\n` +
+        `- Eligible sandbox phone is **+14155550011** (LAYER_READY — full identity + 2 linked banks); ` +
+        `OTP 123456. Do NOT use 415-555-1111 (that is the mock convention, not real Layer).\n` +
         `- \`window._plaidLinkComplete = true\` is set ONLY in \`onSuccess\`.\n\n` +
-        `**Post-Layer review step:** render the returned identity (name, address, DOB, email) from ` +
-        `\`window._layerIdentity\` as an **editable** summary — never hardcode bank names. No bank-account ` +
-        `linking screens (identity prefill only).\n\n` +
+        `**Post-Layer review step:** render the Layer happy-path result from \`window._layerIdentity\` ` +
+        `(name, address, DOB, email — **editable**) AND the linked bank accounts from \`window._layerItems\` ` +
+        `(institution + masked account) to demonstrate identity AND bank data. Never hardcode bank names.\n\n` +
         `**Verification method is owned by the IDV template — never a user choice.** Do NOT build a ` +
         `"choose your verification depth" selector (SSN last-4 vs full SSN vs IDV). Any IDV beat is a ` +
         `template-driven "verifying identity" screen only (status success / pending_review).`,

@@ -911,6 +911,43 @@ async function userAccountSessionGet(publicToken) {
   return data;
 }
 
+/**
+ * Verify Plaid Layer is properly activated by creating a real Layer session token.
+ *
+ * A successful /session/token/create (returning a link_token) confirms the
+ * PLAID_LAYER_TEMPLATE_ID and Layer product access are provisioned for this
+ * client. Used by plaid-link-qa as a deterministic activation check that runs
+ * whenever a demo uses Layer — independent of the generated app's fetch wiring.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.templateId]    Layer template id (defaults to PLAID_LAYER_TEMPLATE_ID).
+ * @param {string} [opts.clientUserId]  Stable non-PII id (defaults inside createSessionToken).
+ * @returns {Promise<{ok:boolean, linkToken:(string|null), templateId:string, error:(string|null)}>}
+ */
+async function verifyLayerActivation(opts = {}) {
+  const templateId = opts.templateId || opts.template_id || process.env.PLAID_LAYER_TEMPLATE_ID || null;
+  try {
+    const result = await createSessionToken({
+      template_id: templateId,
+      client_user_id: opts.clientUserId || opts.client_user_id || null,
+    });
+    const linkToken = result && result.link_token ? result.link_token : null;
+    return {
+      ok: !!(linkToken && String(linkToken).length > 0),
+      linkToken,
+      templateId: templateId || '(default)',
+      error: linkToken ? null : 'no link_token in /session/token/create response',
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      linkToken: null,
+      templateId: templateId || '(default)',
+      error: (e && e.message) ? e.message : String(e),
+    };
+  }
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -928,4 +965,5 @@ module.exports = {
   getIdentityMatch,
   evaluateSignal,
   userAccountSessionGet,
+  verifyLayerActivation,
 };

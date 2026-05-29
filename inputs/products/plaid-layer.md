@@ -12,8 +12,8 @@ use_cases:
   - "returning-user-verification"
   - "kyc-auto-fill"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-25"
-needs_review: false
+last_ai_update: "2026-05-29T12:56:28.567Z"
+needs_review: true
 approved: true
 version: 2
 last_vp_research: "2026-05-25"
@@ -175,6 +175,28 @@ session (Document + Data Source + Selfie/liveness). Key facts:
 IDV facts (endpoints, statuses, webhooks, sandbox persona): [`inputs/products/plaid-identity-verification.md`](plaid-identity-verification.md).
 Full sequencing playbook: [`plaid-layer-idv-onboarding`](../../.claude/skills/plaid-layer-idv-onboarding/SKILL.md) skill.
 
+### Onboarding entry contract (REQUIRED)
+
+- The onboarding entry collects **only a mobile phone number** (prefilled with the sandbox value for
+  demos), plus a single **Continue** trigger. Submitting the phone runs Layer eligibility.
+- The Layer-vs-fallback path is decided **automatically by eligibility** — `LAYER_READY` → Layer
+  proceeds; `LAYER_NOT_AVAILABLE` (optionally retry with DOB) / `LAYER_AUTOFILL_NOT_AVAILABLE` →
+  fallback. **Never present "onboard with Plaid vs. continue manually" as a user choice**, and do not
+  render a separate "Prefill with Plaid" / "Continue manually" button pair. The branch is invisible
+  to the user.
+- Happy-path sandbox phone **`+14155550011`** (LAYER_READY) returns full identity **+ linked bank
+  accounts** — use it to demonstrate identity and bank data together. (Web SDK ordering:
+  `handler.open()` then `handler.submit({ phone_number })`.)
+
+### Layer activation check (REQUIRED — pipeline-enforced)
+
+Every Layer build must verify Layer is actually activated by obtaining a **successful
+`/session/token/create`** (a non-empty `link_token`). A failed token means Layer is not provisioned
+for the client or `PLAID_LAYER_TEMPLATE_ID` is wrong. The pipeline enforces this in
+[`plaid-link-qa`](../../scripts/scratch/scratch/plaid-link-qa.js) (Layer branch) via
+`plaid-backend.verifyLayerActivation()`, which halts the build before build-qa/record on failure.
+This runs whenever a demo uses Layer (`PLAID_LINK_LIVE=true` + a `plaidPhase:"launch"` step).
+
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
 
@@ -192,6 +214,27 @@ Full sequencing playbook: [`plaid-layer-idv-onboarding`](../../.claude/skills/pl
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-29 — Run: 2026-05-29-New-to-bank-Applicant-From-Synovuss-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Pre-verified identity from bank-verified sources
+- [high] Network effect at scale
+- [high] No additional verification step for returning users
+- [high] Template-driven field visibility
+
+### 2026-05-29 — Run: 2026-05-29-New-to-bank-Applicant-From-Synovuss-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Pre-verified identity from bank-verified sources, not user-typed input
+- [high] Network effect — 45M+ saved Plaid profiles improve Layer coverage over time
+- [high] No additional verification step for returning users — identity already established with Plaid
+- [high] Template-driven field visibility — one integration covers pay-by-bank through strict KYC/CRA
+
+### 2026-05-29 — Run: 2026-05-29-New-to-bank-Applicant-Arriving-From-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Pre-verified identity from bank-verified sources (not self-typed)
+- [high] Network effect at scale — 45M+ saved Plaid profiles improve Layer coverage over time
+- [high] No additional verification step for returning users — identity already established with Plaid
+- [high] Template-driven field visibility — one integration covers pay-by-bank through strict KYC/CRA
 
 ### 2026-05-21 — Run: 2026-05-21-Demo-Identity-Layer-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

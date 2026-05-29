@@ -292,6 +292,45 @@ async function main(opts = {}) {
     return;
   }
 
+  // ── Plaid Layer activation check (runs whenever Layer is used) ───────────────
+  // Layer launches via /session/token/create (not /api/create-link-token), so the
+  // standard create-link-token smoke test below does not apply. Instead verify the
+  // Layer activation token directly: a successful /session/token/create confirms
+  // PLAID_LAYER_TEMPLATE_ID + Layer product access are provisioned. A failure here
+  // halts before build-qa/record so a misprovisioned Layer can't ship a broken demo.
+  const isLayerDemo =
+    String(demoScript.product || '').toLowerCase().includes('layer') ||
+    String((demoScript.plaidSandboxConfig && demoScript.plaidSandboxConfig.plaidLinkFlow) || '').toLowerCase() === 'layer';
+  if (isLayerDemo) {
+    const plaidBackend = require('../utils/plaid-backend');
+    const clientUserId = (demoScript.plaidSandboxConfig && demoScript.plaidSandboxConfig.clientUserId) || undefined;
+    console.log('[plaid-link-qa] Layer demo — verifying Plaid Layer activation via /session/token/create…');
+    const activation = await plaidBackend.verifyLayerActivation({ clientUserId });
+    if (!activation.ok) {
+      const detail = {
+        passed: false,
+        mode: qaMode,
+        stage: 'layer-activation',
+        layerActivation: activation,
+        message:
+          `Plaid Layer activation failed: ${activation.error} (template=${activation.templateId}). ` +
+          `Verify PLAID_LAYER_TEMPLATE_ID and that Layer is provisioned for this client.`,
+      };
+      writeReport(detail);
+      console.error('[plaid-link-qa] CRITICAL: ' + detail.message);
+      process.exit(1);
+    }
+    console.log(`[plaid-link-qa] Layer activation OK (template=${activation.templateId}; link_token returned).`);
+    writeReport({
+      passed: true,
+      mode: qaMode,
+      stage: 'layer-activation',
+      launchSignal: 'layer-session-token-activation',
+      layerActivation: { ok: true, templateId: activation.templateId, hasLinkToken: true },
+    });
+    return;
+  }
+
   const rows = playwrightScript.steps || [];
   let launchIdx = rows.findIndex((r) => (r.stepId || r.id) === launchStep.id && r.action === 'click');
   if (launchIdx < 0) {
