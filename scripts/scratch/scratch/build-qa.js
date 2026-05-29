@@ -1886,29 +1886,57 @@ async function evaluateStepState(page, stepId) {
     const slideRootStyle = slideRoot ? window.getComputedStyle(slideRoot) : null;
     const slideInlineStyle = slideRoot ? String(slideRoot.getAttribute('style') || '') : '';
     const slideRootRect = slideRoot ? slideRoot.getBoundingClientRect() : null;
-    // Content-clipping detector: how far the lowest visible text/content inside
-    // the slide-root extends BELOW the canvas's bottom edge. The canvas uses
+    // Content-clipping detector: how far the lowest/right-most visible content
+    // inside the slide-root extends BEYOND the canvas edge. The canvas uses
     // overflow:hidden, so any positive value = content clipped by the letterbox
-    // (the "blue border clips the bottom text" bug). Measure leaf text nodes +
-    // the foot/stat row; ignore the chrome-logo (decorative, sits in the margin).
+    // ("blue border clips the content" bug). Detects BOTH:
+    //   • TEXT clips — leaf text nodes (e.g. a stat caption cut at the bottom).
+    //   • OBJECT clips — visual elements (img/svg, or a box with a
+    //     background/border/box-shadow — e.g. a step CARD or media tile) whose
+    //     border-box extends past the canvas. Object clips are easy to miss
+    //     visually (a card just looks a little short), so they're measured too.
+    // Ignores the chrome-logo (decorative, lives in the top margin) and any
+    // element whose box ≈ the slide-root itself (full-bleed background layers).
     let slideContentOverflowPx = 0;
     let slideClippedText = '';
+    let slideClippedKind = '';
     if (slideRoot && slideRootRect) {
       const clipBottom = slideRootRect.bottom;
       const clipRight = slideRootRect.right;
+      const clipTop = slideRootRect.top;
+      const clipLeft = slideRootRect.left;
+      const rootW = slideRootRect.width;
+      const isVisualBox = (el, cs) => {
+        const tag = el.tagName;
+        if (tag === 'IMG' || tag === 'SVG' || tag === 'CANVAS' || tag === 'VIDEO' || /svg/i.test(tag)) return true;
+        const bg = cs.backgroundColor;
+        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return true;
+        if (cs.backgroundImage && cs.backgroundImage !== 'none') return true;
+        if (parseFloat(cs.borderTopWidth) || parseFloat(cs.borderBottomWidth) ||
+            parseFloat(cs.borderLeftWidth) || parseFloat(cs.borderRightWidth)) return true;
+        if (cs.boxShadow && cs.boxShadow !== 'none') return true;
+        return false;
+      };
       const nodes = slideRoot.querySelectorAll('*');
       for (const n of nodes) {
-        if (n.classList && n.classList.contains('chrome-logo')) continue;
-        const txt = (n.textContent || '').trim();
-        if (!txt || n.children.length > 0) continue; // leaf text only
+        if (n.classList && (n.classList.contains('chrome-logo') || n.classList.contains('frame'))) continue;
         const cs = window.getComputedStyle(n);
         if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity || '1') === 0) continue;
         const rr = n.getBoundingClientRect();
         if (rr.width === 0 || rr.height === 0) continue;
-        const overBottom = rr.bottom - clipBottom;
-        const overRight = rr.right - clipRight;
-        const over = Math.max(overBottom, overRight);
-        if (over > slideContentOverflowPx) { slideContentOverflowPx = over; slideClippedText = txt.slice(0, 60); }
+        const txt = (n.textContent || '').trim();
+        const isLeafText = !!txt && n.children.length === 0;
+        const visual = isVisualBox(n, cs);
+        if (!isLeafText && !visual) continue;
+        // Skip full-bleed background layers (box ≈ the slide-root on both axes) —
+        // their edges legitimately coincide with the canvas, not a clip.
+        if (!isLeafText && rr.width >= rootW - 2 && Math.abs(rr.bottom - clipBottom) <= 2 && Math.abs(rr.top - clipTop) <= 2) continue;
+        const over = Math.max(rr.bottom - clipBottom, rr.right - clipRight, clipTop - rr.top, clipLeft - rr.left);
+        if (over > slideContentOverflowPx) {
+          slideContentOverflowPx = over;
+          slideClippedKind = isLeafText ? 'text' : 'object';
+          slideClippedText = (txt || (n.tagName.toLowerCase() + (n.className ? '.' + String(n.className).split(' ')[0] : ''))).slice(0, 60);
+        }
       }
       slideContentOverflowPx = Math.round(slideContentOverflowPx);
     }
@@ -2013,6 +2041,7 @@ async function evaluateStepState(page, stepId) {
       activeStepHasSlideRoot: Boolean(active?.querySelector('.slide-root')),
       slideContentOverflowPx,
       slideClippedText,
+      slideClippedKind,
       activeStepText: (active?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 5000),
       activeStepPreCodeCount: active ? active.querySelectorAll('pre, code').length : 0,
       activeStepJsonHintNodeCount: active ? active.querySelectorAll('[class*="json"], [id*="json"], [data-testid*="json"]').length : 0,
@@ -3610,12 +3639,15 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
   // deterministic blocker; slide-fix trims content (fewer/shorter lines, drop a
   // stat) rather than a font-clamp enforcer. Threshold > 6px ignores sub-pixel rounding.
   if (isSlideLikeStep(step) && Number(state.slideContentOverflowPx || 0) > 6) {
+    const kind = state.slideClippedKind === 'object' ? 'an OBJECT (card/image/shape)' : 'TEXT';
     diagnostics.push({
       stepId: step.id,
       category: 'slide-content-clipped',
       severity: 'critical',
-      issue: `Slide content is clipped by the canvas edge — content extends ${state.slideContentOverflowPx}px beyond the slide-root (overflow:hidden). Clipped near: "${state.slideClippedText || ''}".`,
-      suggestion: 'Reduce content so it fits the 16/10 canvas: drop or shorten the lowest row (e.g. a stat callout), tighten body copy, or reduce inter-block spacing. Do NOT rely on the letterbox to hide overflow.',
+      issue: `Slide content is clipped by the canvas edge — ${kind} extends ${state.slideContentOverflowPx}px beyond the slide-root (overflow:hidden). Clipped element: "${state.slideClippedText || ''}".`,
+      suggestion: state.slideClippedKind === 'object'
+        ? 'A visual element (e.g. a step card, media tile, or image row) is cut off by the letterbox. Reduce its size or the number/height of items, tighten vertical spacing, or shorten copy inside it so the whole object fits the 16/10 canvas. Do NOT rely on the letterbox to hide overflow.'
+        : 'Reduce content so it fits the 16/10 canvas: drop or shorten the lowest row (e.g. a stat callout), tighten body copy, or reduce inter-block spacing. Do NOT rely on the letterbox to hide overflow.',
       deterministicBlocker: true,
     });
   }

@@ -185,6 +185,17 @@
    WITHOUT !important — LLM may reduce via inline style when content
    density demands it. */
 
+/* Long-title auto-condense (2026-05-29): titles of ~7+ words look better one
+   notch smaller so they fit on one line. The `.is-long` class is applied
+   deterministically at render time (post-slides title-fit runtime) — no LLM
+   prompt burden, soft (only when the word count warrants). Scoped to titles. */
+.slide-root .h-title.is-long {
+  font-size: calc(var(--type-title) * 0.8);
+}
+.slide-root .h-display.is-long {
+  font-size: calc(var(--type-display) * 0.8);
+}
+
 .slide-root .h-title em,
 .slide-root .h-title .bowery-accent {
   font-family: var(--font-display);

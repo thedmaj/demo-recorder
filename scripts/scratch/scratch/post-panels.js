@@ -1061,8 +1061,8 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       tabs.setAttribute('role', 'tablist');
       tabs.setAttribute('data-testid', 'api-panel-tabs');
       tabs.innerHTML =
-        '<button class="api-panel-tab is-active" data-tab="request" data-testid="api-panel-tab-request" role="tab" aria-selected="true">Request</button>' +
-        '<button class="api-panel-tab" data-tab="response" data-testid="api-panel-tab-response" role="tab" aria-selected="false">Response</button>';
+        '<button class="api-panel-tab" data-tab="request" data-testid="api-panel-tab-request" role="tab" aria-selected="false">Request</button>' +
+        '<button class="api-panel-tab is-active" data-tab="response" data-testid="api-panel-tab-response" role="tab" aria-selected="true">Response</button>';
       header.appendChild(tabs);
       // Bind click handlers (delegation would also work — explicit is clearer)
       var btns = tabs.querySelectorAll('.api-panel-tab');
@@ -1078,12 +1078,12 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       // Wipe any legacy single-content children to avoid double-rendering
       body.innerHTML = '';
       var paneReq = document.createElement('div');
-      paneReq.className = 'api-panel-pane is-active';
+      paneReq.className = 'api-panel-pane';
       paneReq.id = 'api-pane-request';
       paneReq.setAttribute('data-pane', 'request');
       paneReq.setAttribute('data-testid', 'api-pane-request');
       var paneRes = document.createElement('div');
-      paneRes.className = 'api-panel-pane';
+      paneRes.className = 'api-panel-pane is-active';
       paneRes.id = 'api-pane-response';
       paneRes.setAttribute('data-pane', 'response');
       paneRes.setAttribute('data-testid', 'api-pane-response');
@@ -1102,7 +1102,14 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     _origGoToStep(id);
     var panel = document.getElementById('api-response-panel');
     if (!panel) return;
+    // v12 panel header renders the API name/route as #api-panel-method (the HTTP
+    // verb) + #api-panel-path (the route). Older markup used a single
+    // #api-panel-endpoint / #api-endpoint-label. Resolve all so the route always
+    // shows (this is why "API name and route were missing" — the override only
+    // wrote the legacy id, which the v12 markup doesn't have).
     var endpoint = document.getElementById('api-panel-endpoint') || document.getElementById('api-endpoint-label');
+    var methodEl = document.getElementById('api-panel-method');
+    var pathEl = document.getElementById('api-panel-path');
     var stepData = window._stepApiResponses && window._stepApiResponses[id];
     if (stepData) {
       var endpointLabel = _eps[id] || stepData.endpoint || '';
@@ -1121,9 +1128,21 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
         // Legacy flat / wrapped-as-data shape: treat the whole thing as response
         responseData = (stepData && stepData.data != null) ? stepData.data : stepData;
       }
-      if (endpoint && endpointLabel) {
-        endpoint.textContent = endpointLabel.replace(/\\s—\\s+live$/, '') + liveEndpointSuffix;
+      // Render the API name + route. Split "POST /session/token/create" into
+      // method + path for the v12 header; fall back to the single legacy label.
+      var cleanLabel = String(endpointLabel).replace(/\\s—\\s+live$/, '') + liveEndpointSuffix;
+      var m = cleanLabel.match(/^\\s*([A-Z]+)\\s+(\\S.*)$/);
+      if (methodEl || pathEl) {
+        if (m) {
+          if (methodEl) methodEl.textContent = m[1];
+          if (pathEl) pathEl.textContent = m[2];
+        } else {
+          // No leading verb — show the whole label as the path (e.g. a callback).
+          if (methodEl) methodEl.textContent = '';
+          if (pathEl) pathEl.textContent = cleanLabel;
+        }
       }
+      if (endpoint && endpointLabel) endpoint.textContent = cleanLabel; // legacy single-label markup
       // Build the tabbed structure (idempotent), then render each pane independently.
       var refs = ensureTabStructure(panel);
       if (refs) {
@@ -1131,8 +1150,9 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
         if (refs.tabRes) refs.tabRes.style.display = responseData ? '' : 'none';
         renderApiJson(refs.paneReq, requestData);
         renderApiJson(refs.paneRes, responseData);
-        // Default tab: Request when present, else Response.
-        window.switchApiTab(requestData ? 'request' : 'response');
+        // Default tab: RESPONSE (the result is the story); the user navigates to
+        // Request. Fall back to Request only when there is no response payload.
+        window.switchApiTab(responseData ? 'response' : 'request');
       }
       window.__lastApiJsonData = responseData;  // back-compat for rerenderCurrentApiJson
       var openByDefault =
@@ -1236,17 +1256,19 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
               '<span class="path" id="api-panel-path" data-testid="api-panel-path"></span>',
             '</div>',
           '</div>',
+          // Response is the DEFAULT tab (the result is the story); user navigates
+          // to Request. Order keeps Request first visually, but Response is active.
           '<div class="tabs" role="tablist" aria-label="Request or response">',
-            '<button class="tab" id="tab-req" data-testid="api-panel-tab-request" role="tab" data-tab="req" aria-controls="api-pane-request" aria-selected="true">Request</button>',
-            '<button class="tab" id="tab-res" data-testid="api-panel-tab-response" role="tab" data-tab="res" aria-controls="api-pane-response" aria-selected="false">Response</button>',
+            '<button class="tab" id="tab-req" data-testid="api-panel-tab-request" role="tab" data-tab="req" aria-controls="api-pane-request" aria-selected="false">Request</button>',
+            '<button class="tab is-active" id="tab-res" data-testid="api-panel-tab-response" role="tab" data-tab="res" aria-controls="api-pane-response" aria-selected="true">Response</button>',
           '</div>',
         '</header>',
         // .panel-toolbar (application/json banner + Copy button) REMOVED
         // 2026-05-28. Tabs sit flush against the code panes. Strip any
         // residual .panel-toolbar from older runs via CSS below.
         '<div class="code-wrap">',
-          '<pre class="code is-active" id="api-pane-request" data-testid="api-pane-request" data-pane="req" role="tabpanel" aria-labelledby="tab-req"></pre>',
-          '<pre class="code" id="api-pane-response" data-testid="api-pane-response" data-pane="res" role="tabpanel" aria-labelledby="tab-res" hidden></pre>',
+          '<pre class="code" id="api-pane-request" data-testid="api-pane-request" data-pane="req" role="tabpanel" aria-labelledby="tab-req" hidden></pre>',
+          '<pre class="code is-active" id="api-pane-response" data-testid="api-pane-response" data-pane="res" role="tabpanel" aria-labelledby="tab-res"></pre>',
           // Legacy id container for any populateApiPanel callers that still
           // write to #api-response-content. Hidden by default; modern
           // populateApiPanel writes into #api-pane-request / #api-pane-response
@@ -1380,7 +1402,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     token-only mode, pre-link manual nav). When live data is present,
   //     the panel header label gets a " — live" suffix so operators can
   //     visually distinguish real vs synthesized in screen recordings.
-  const POST_PANELS_PATCH_VERSION = 'v12';
+  const POST_PANELS_PATCH_VERSION = 'v13';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);

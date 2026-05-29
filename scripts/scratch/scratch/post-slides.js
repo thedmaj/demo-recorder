@@ -462,9 +462,42 @@ function ensureSlideDesignStylesInHead(html, templates) {
   // slide.css's bare `.slide-root` rule, and its later position closes any
   // tie. Showcase classes sit in the middle so contract rules can still
   // override them when contracts require (e.g. typography ceilings).
+  // Deterministic long-title auto-fit runtime (2026-05-29). Long slide titles
+  // (~7+ words) read better on ONE line, so shrink the title font just enough to
+  // fit one line — down to a readable floor (0.62× of the template size). This
+  // measures actual wrapping (more robust than a fixed % step) and replaces
+  // per-title font-size guidance in the build prompt: zero context-window cost,
+  // soft (only fires when the title actually wraps), idempotent, and skips any
+  // title the build deliberately marked `data-titlefit-skip`. Re-fits on resize.
+  const titleFitRuntime =
+    `<script data-slide-title-fit="v2">\n` +
+    `(function(){\n` +
+    `  function oneLine(t, lh){ return t.getBoundingClientRect().height <= lh * 1.4; }\n` +
+    `  function fitOne(t){\n` +
+    `    if (t.hasAttribute('data-titlefit-skip')) return;\n` +
+    `    t.style.fontSize = '';                                  // reset prior fit (idempotent)\n` +
+    `    var base = parseFloat(getComputedStyle(t).fontSize) || 0;\n` +
+    `    if (!base) return;\n` +
+    `    var lh = parseFloat(getComputedStyle(t).lineHeight) || base * 1.1;\n` +
+    `    if (oneLine(t, lh)) return;                             // already one line\n` +
+    `    var scale = 1, min = 0.62;\n` +
+    `    while (scale > min){\n` +
+    `      scale -= 0.05;\n` +
+    `      t.style.fontSize = (base * scale) + 'px';\n` +
+    `      var lh2 = parseFloat(getComputedStyle(t).lineHeight) || base * scale * 1.1;\n` +
+    `      if (oneLine(t, lh2)) break;\n` +
+    `    }\n` +
+    `  }\n` +
+    `  function fit(){ document.querySelectorAll('.slide-root .h-title, .slide-root .h-display').forEach(fitOne); }\n` +
+    `  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit); else fit();\n` +
+    `  setTimeout(fit, 0);\n` +
+    `  window.addEventListener('resize', fit);\n` +
+    `})();\n` +
+    `</script>\n`;
   const designBlock =
     `${markerStart}\n` +
     `<style data-post-slides-design-system="v1">\n${scopedColors}\n${scopedSlide}\n</style>\n` +
+    titleFitRuntime +
     markerEnd;
   const showcaseBlock = showcase
     ? `\n<!-- POST-SLIDES SHOWCASE CLASSES v1 -->\n` +
