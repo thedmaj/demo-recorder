@@ -470,8 +470,13 @@ function ensureSlideDesignStylesInHead(html, templates) {
   // soft (only fires when the title actually wraps), idempotent, and skips any
   // title the build deliberately marked `data-titlefit-skip`. Re-fits on resize.
   const titleFitRuntime =
-    `<script data-slide-title-fit="v2">\n` +
+    `<script data-slide-title-fit="v3">\n` +
     `(function(){\n` +
+    `  // Only NUDGE a title onto one line when a GENTLE reduction achieves it.\n` +
+    `  // If one line can't be reached within the floor (a genuine multi-line\n` +
+    `  // display headline, e.g. \"Account opening / shouldn't end in / abandonment.\"),\n` +
+    `  // REVERT to the designed size — never leave a title shrunk-but-still-wrapped.\n` +
+    `  var MIN = 0.70;   // don't shrink past ~30%; below this it's a real multi-line headline\n` +
     `  function oneLine(t, lh){ return t.getBoundingClientRect().height <= lh * 1.4; }\n` +
     `  function fitOne(t){\n` +
     `    if (t.hasAttribute('data-titlefit-skip')) return;\n` +
@@ -480,13 +485,14 @@ function ensureSlideDesignStylesInHead(html, templates) {
     `    if (!base) return;\n` +
     `    var lh = parseFloat(getComputedStyle(t).lineHeight) || base * 1.1;\n` +
     `    if (oneLine(t, lh)) return;                             // already one line\n` +
-    `    var scale = 1, min = 0.62;\n` +
-    `    while (scale > min){\n` +
+    `    var scale = 1, fitted = false;\n` +
+    `    while (scale - 0.05 >= MIN){\n` +
     `      scale -= 0.05;\n` +
     `      t.style.fontSize = (base * scale) + 'px';\n` +
     `      var lh2 = parseFloat(getComputedStyle(t).lineHeight) || base * scale * 1.1;\n` +
-    `      if (oneLine(t, lh2)) break;\n` +
+    `      if (oneLine(t, lh2)) { fitted = true; break; }\n` +
     `    }\n` +
+    `    if (!fitted) t.style.fontSize = '';                     // revert — leave as designed (multi-line hero)\n` +
     `  }\n` +
     `  function fit(){ document.querySelectorAll('.slide-root .h-title, .slide-root .h-display').forEach(fitOne); }\n` +
     `  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit); else fit();\n` +
