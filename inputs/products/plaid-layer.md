@@ -12,7 +12,7 @@ use_cases:
   - "returning-user-verification"
   - "kyc-auto-fill"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-29T12:56:28.567Z"
+last_ai_update: "2026-05-29T14:35:12.559Z"
 needs_review: true
 approved: true
 version: 2
@@ -187,6 +187,38 @@ Full sequencing playbook: [`plaid-layer-idv-onboarding`](../../.claude/skills/pl
 - Happy-path sandbox phone **`+14155550011`** (LAYER_READY) returns full identity **+ linked bank
   accounts** — use it to demonstrate identity and bank data together. (Web SDK ordering:
   `handler.open()` then `handler.submit({ phone_number })`.)
+- **The form phone drives the eligibility check (REQUIRED).** The phone number entered in the
+  onboarding form MUST be read from the input (normalized to E.164) and passed to
+  `handler.submit({ phone_number })` — that submit is what triggers the Layer eligibility check
+  (`LAYER_READY` / `LAYER_NOT_AVAILABLE`). **Never submit a hardcoded phone**; prefill the input with
+  the eligible sandbox number so the happy path passes. Re-read the field at submit time so an edited
+  value is honored.
+
+### Eligibility routing → use-case-specific fallback (REQUIRED)
+
+The entered phone number doesn't just gate Layer — it **routes the entire demo experience**. The
+eligibility result selects between the Layer happy path and the storyboard's manual onboarding path:
+
+| Eligibility event | Meaning | Demo route |
+|---|---|---|
+| `LAYER_READY` | Phone matched in the Plaid Network | Layer proceeds → prefill review (identity + linked banks) → continue |
+| `LAYER_NOT_AVAILABLE` | Autofill not immediately available | Optional Extended-Autofill retry: `handler.submit({ date_of_birth })` |
+| `LAYER_AUTOFILL_NOT_AVAILABLE` | Ineligible — no Layer identity | **Route to the storyboard's manual fallback step** |
+
+- The **manual fallback is use-case specific** — it is whatever the storyboard outlines for the
+  ineligible path: **linking a bank account through real Plaid Link**, **launching an Identity
+  Verification session**, or **a generic (non-Plaid) PII entry screen**. The demo-script designates
+  this fallback step; the generated app wires `window.goToStep('<manual-fallback-step-id>')` to it in
+  the `LAYER_AUTOFILL_NOT_AVAILABLE` branch (after `handler.destroy()`). If the storyboard declares no
+  explicit fallback, default to the first non-Layer manual host step.
+- **Sandbox phone → outcome** (for testing both branches):
+  - `+14155550011` → `LAYER_READY` → Layer happy path (full identity + 2 linked banks).
+  - `+14155550000` → `LAYER_NOT_AVAILABLE` → (DOB retry) → `LAYER_AUTOFILL_NOT_AVAILABLE` → fallback.
+  - `+1415555XXXX` partial-profile numbers exercise Extended-Autofill / partial paths — see the
+    `plaid-layer-idv-onboarding` skill's sandbox phone table for the full matrix.
+- This is the core Layer demo idea: **phone entry determines eligibility, eligibility determines the
+  experience.** A happy-path-only storyboard still wires the eligible phone; storyboards that want to
+  show the fallback declare the use-case-specific fallback step and prefill an ineligible phone.
 
 ### Layer activation check (REQUIRED — pipeline-enforced)
 
@@ -254,6 +286,13 @@ Keep payloads realistic and idealized; never invent fields. The build prompt
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-29 — Run: 2026-05-29-Demo-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Pre-verified identity from bank-verified sources (not self-typed)
+- [high] Network effect at scale — 45M+ saved Plaid profiles improve Layer coverage over time
+- [high] No additional verification step for returning users — identity already established with Plaid
+- [high] Template-driven field visibility — one integration covers pay-by-bank through strict KYC/CRA
 
 ### 2026-05-29 — Run: 2026-05-29-New-to-bank-Applicant-From-Synovuss-Identity-v2 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

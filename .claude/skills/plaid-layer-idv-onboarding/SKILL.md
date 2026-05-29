@@ -34,6 +34,11 @@ description: >-
 > an "onboard with Plaid vs. continue manually" choice. Happy-path sandbox phone `+14155550011`
 > returns identity **+ linked banks**.
 >
+> **The form phone drives eligibility (REQUIRED).** Read the onboarding phone input value (normalize
+> to E.164) and pass it to `handler.submit({ phone_number })` after `handler.open()` — that submit is
+> the eligibility check. Never submit a hardcoded number; re-read the field at submit time. Prefill the
+> input with the eligible sandbox number so the happy path passes.
+>
 > **Activation check (pipeline-enforced):** every Layer build verifies activation via a successful
 > `/session/token/create` (`plaid-backend.verifyLayerActivation()` in the `plaid-link-qa` Layer
 > branch) — a failed token = Layer not provisioned / wrong `PLAID_LAYER_TEMPLATE_ID`, and halts the build.
@@ -492,16 +497,31 @@ This is the most commonly mis‑implemented part of the integration. The decisio
 
 | Scenario | Event sequence | Action |
 |---|---|---|
-| US phone in Plaid Network, meets template eligibility | `LAYER_READY` after `handler.submit({ phone_number })` | Call `handler.open()`. Run full Layer flow. On `onSuccess`, call `/user_account/session/get`, then proceed to IDV with prefill. |
+| US phone in Plaid Network, meets template eligibility | `LAYER_READY` after `handler.submit({ phone_number })` | Call `handler.open()`. Run full Layer flow. On `onSuccess`, call `/user_account/session/get`, then proceed (e.g. to IDV) with prefill. |
 | US phone, partial profile match via Extended Autofill | `LAYER_NOT_AVAILABLE` → submit DOB → `LAYER_READY` | Call `handler.open()`. Same as above; expect a profile with no linked bank Items more often. |
-| Non‑US phone, or phone not in Plaid Network at all | `LAYER_NOT_AVAILABLE` → submit DOB → `LAYER_AUTOFILL_NOT_AVAILABLE` (or single `LAYER_NOT_AVAILABLE` if you skip DOB) | Discard the Layer handler. Skip Layer entirely. Go straight to IDV. |
+| Non‑US phone, or phone not in Plaid Network at all | `LAYER_NOT_AVAILABLE` → submit DOB → `LAYER_AUTOFILL_NOT_AVAILABLE` (or single `LAYER_NOT_AVAILABLE` if you skip DOB) | Discard the Layer handler. Skip Layer. **Route to the storyboard's use-case-specific manual fallback.** |
 
-**Non‑Layer (fallback) branch:**
-- Do NOT call `/session/token/create` again.
-- Do NOT call `/user_account/session/get` (there is no Layer public_token).
-- Proceed directly to **Step 6** with whatever PII you've collected from your own form. The IDV Link UI will collect anything you didn't prefill.
-- Reuse the same `client_user_id` you would have used for Layer, so the user's IDV session is properly attributed.
-- If your fallback also creates a regular (non‑Layer) Link token for bank linking, include the user's `phone_number` in the `/link/token/create` user object — Plaid will use it to fast‑track the OTP step.
+**Non‑Layer (fallback) branch — the fallback is use-case specific:**
+
+The phone entry decides eligibility, and eligibility decides the experience. When ineligible
+(`LAYER_AUTOFILL_NOT_AVAILABLE`), route to whatever manual onboarding the storyboard outlines — it is
+**not always IDV**. The three canonical fallbacks:
+
+1. **Link a bank account through real Plaid Link** — create a regular (non-Layer) `/link/token/create`
+   token and launch standard Link. Include the user's `phone_number` in the `user` object so Plaid
+   fast-tracks OTP.
+2. **Launch an Identity Verification session** — proceed to **Step 6** (create IDV Link token) with
+   whatever PII you've collected; the IDV Link UI collects anything you didn't prefill.
+3. **A generic (non-Plaid) PII entry screen** — a plain signup form with no Plaid call at all, when
+   the use case's manual path doesn't involve Plaid.
+
+In the generated app, the `LAYER_AUTOFILL_NOT_AVAILABLE` branch does
+`handler.destroy()` then `window.goToStep('<manual-fallback-step-id>')` — the demo-script designates
+which step that is. Common rules for the fallback branch:
+- Do NOT call `/session/token/create` again, and do NOT call `/user_account/session/get` (there is no
+  Layer public_token).
+- Reuse the same `client_user_id` you would have used for Layer, so any downstream session (IDV, Link)
+  is properly attributed.
 
 **Critical eligibility caveats:**
 - A `+44` (UK) or any non‑`+1` phone number will always return `LAYER_NOT_AVAILABLE`. Branch your UI accordingly.
@@ -534,6 +554,13 @@ This is the most commonly mis‑implemented part of the integration. The decisio
 | 515-555-0019 | Standard profile, savings only |
 
 Extended Autofill DOB to use: `1975-01-18`.
+
+**Routing by phone (which branch the demo takes):** `415-555-0011` (default) is the **eligible**
+happy path (`LAYER_READY` → Layer prefill). `415-555-0000` (no identity, no bank) drives the
+**ineligible** path (`LAYER_NOT_AVAILABLE` → DOB retry → `LAYER_AUTOFILL_NOT_AVAILABLE`), which routes
+to the storyboard's use-case-specific manual fallback (Plaid Link / IDV / generic PII entry). The
+`515-555-00xx` partial-profile numbers exercise Extended-Autofill paths (missing email/DOB/SSN/etc.).
+To demo the fallback, prefill an ineligible number; to demo the happy path, prefill `415-555-0011`.
 
 **IDV sandbox behavior** (Leslie Knope is the canonical test user):
 - The only base identity that passes Data Source by default is Leslie Knope (configurable additional sample identities via the Dashboard Sample Identities page).

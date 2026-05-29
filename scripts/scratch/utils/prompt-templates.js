@@ -1907,8 +1907,13 @@ contract that the next stage knows how to fill.\n` +
         `- Wire the real SDK exactly in this order (open BEFORE submit — submit() postMessages into the ` +
         `iframe, which must exist first):\n` +
         '```javascript\n' +
+        `function _formPhoneE164() {\n` +
+        `  var el = document.querySelector('[data-testid="onboarding-phone-input"]');\n` +
+        `  var p = ((el && el.value) || '+14155550011').replace(/[^\\d+]/g, '');\n` +
+        `  if (!p.startsWith('+')) p = '+1' + p.replace(/^1/, '');\n` +
+        `  return p; // E.164, normalized from the form value\n` +
+        `}\n` +
         `async function launchLayer() {\n` +
-        `  var phone = (document.querySelector('[data-testid="onboarding-phone-input"]') || {}).value || '+14155550011';\n` +
         `  const r = await fetch('/api/create-session-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_user_id: window._clientUserId }) });\n` +
         `  const { link_token } = await r.json();\n` +
         `  const handler = Plaid.create({\n` +
@@ -1922,20 +1927,43 @@ contract that the next stage knows how to fill.\n` +
         `      window.goToStep('<first-post-layer-step-id>');\n` +
         `    },\n` +
         `    onEvent: (eventName) => {\n` +
-        `      if (eventName === 'LAYER_NOT_AVAILABLE') handler.submit({ date_of_birth: '1989-03-14' });\n` +
+        `      // ELIGIBILITY ROUTING — the entered phone decides the path:\n` +
+        `      //  LAYER_READY → Layer proceeds (onSuccess advances to the prefill path).\n` +
+        `      //  LAYER_NOT_AVAILABLE → optional Extended Autofill retry with DOB.\n` +
+        `      //  LAYER_AUTOFILL_NOT_AVAILABLE → ineligible: route to the storyboard's manual\n` +
+        `      //    fallback step (use-case specific — Plaid Link link / IDV launch / generic PII entry).\n` +
+        `      if (eventName === 'LAYER_NOT_AVAILABLE') {\n` +
+        `        handler.submit({ date_of_birth: '1975-01-18' }); // Extended Autofill sandbox DOB\n` +
+        `      } else if (eventName === 'LAYER_AUTOFILL_NOT_AVAILABLE') {\n` +
+        `        try { handler.destroy(); } catch(_) {}\n` +
+        `        window.goToStep('<manual-fallback-step-id>');\n` +
+        `      }\n` +
         `    },\n` +
         `    onExit: () => {},\n` +
         `  });\n` +
         `  window._plaidHandler = handler;\n` +
         `  handler.open();\n` +
-        `  setTimeout(() => handler.submit({ phone_number: phone }), 600);\n` +
+        `  // REQUIRED: the phone number ENTERED IN THE FORM is the eligibility-check input.\n` +
+        `  // Re-read it at submit time and submit it to the Layer session — never hardcode.\n` +
+        `  setTimeout(() => handler.submit({ phone_number: _formPhoneE164() }), 600);\n` +
         `}\n` +
         '```\n' +
-        `- The phone input carries \`data-testid="onboarding-phone-input"\`, prefilled with the eligible ` +
-        `sandbox number. The Continue CTA onclick calls \`launchLayer()\`. Set \`window._clientUserId\` ` +
-        `once (a stable non-PII id) and reuse it (Layer + IDV share it).\n` +
+        `- **The form phone drives eligibility (REQUIRED):** the value in \`data-testid="onboarding-phone-input"\` ` +
+        `MUST be read (normalized to E.164) and passed to \`handler.submit({ phone_number })\` — this is the ` +
+        `Layer eligibility check (\`LAYER_READY\` / \`LAYER_NOT_AVAILABLE\`). Never submit a hardcoded number. ` +
+        `Prefill the field with the eligible sandbox number. The Continue CTA onclick calls \`launchLayer()\`; ` +
+        `set \`window._clientUserId\` once (stable non-PII id) and reuse it (Layer + IDV share it).\n` +
         `- Eligible sandbox phone is **+14155550011** (LAYER_READY — full identity + 2 linked banks); ` +
         `OTP 123456. Do NOT use 415-555-1111 (that is the mock convention, not real Layer).\n` +
+        `- **Eligibility routing (REQUIRED):** the entered phone decides the experience. Eligible numbers ` +
+        `(LAYER_READY) get the Layer prefill happy path; ineligible numbers (LAYER_AUTOFILL_NOT_AVAILABLE) ` +
+        `route to the storyboard's **manual onboarding fallback** step. The fallback is **use-case specific** ` +
+        `and is whatever the storyboard outlines — linking a bank via real Plaid Link, launching an IDV ` +
+        `session, or a generic (non-Plaid) PII entry screen. Wire \`window.goToStep('<manual-fallback-step-id>')\` ` +
+        `to that step (the demo-script's designated fallback step; if none is declared, default to the first ` +
+        `non-Layer manual host step). Sandbox: \`+14155550000\` → LAYER_NOT_AVAILABLE → (DOB retry) → ` +
+        `LAYER_AUTOFILL_NOT_AVAILABLE; the 5155550xxx numbers exercise partial-profile / Extended-Autofill paths ` +
+        `(see the plaid-layer-idv-onboarding skill sandbox table).\n` +
         `- \`window._plaidLinkComplete = true\` is set ONLY in \`onSuccess\`.\n\n` +
         `**Post-Layer review step:** render the Layer happy-path result from \`window._layerIdentity\` ` +
         `(name, address, DOB, email — **editable**) AND the linked bank accounts from \`window._layerItems\` ` +
