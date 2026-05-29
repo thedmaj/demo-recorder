@@ -21,8 +21,12 @@
   --type-mono: 26px;
   --type-mono-sm: 22px;
 
-  --pad-top: 100px;
-  --pad-bottom: 88px;
+  /* Frame padding trimmed (2026-05-29) to reclaim vertical room — the bottom
+     stat/foot row was overflowing the 16/10 canvas and getting clipped by the
+     letterbox edge (overflow:hidden). pad-top stays ≥75px so .chrome-logo
+     (top: pad-top - 75px) remains on-canvas. */
+  --pad-top: 84px;
+  --pad-bottom: 56px;
   --pad-x: 120px;
 
   box-sizing: border-box;
@@ -101,7 +105,11 @@
  */
 .step.active .slide-root {
   width: 100%;
-  max-width: min(1280px, calc(100vw - 80px));
+  /* Larger 16/10 canvas with a thin letterbox (2026-05-29). The old
+     min(1280px, 100vw-80px) → 1280×800 left only 612px of content height after
+     frame padding, so content-heavy slides clipped at the bottom. A near-full
+     canvas (thin navy frame) fills the viewport height and gives ~+75px room. */
+  max-width: min(1400px, calc(100vw - 24px));
   margin-left: auto;
   margin-right: auto;
 }

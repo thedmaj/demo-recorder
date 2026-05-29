@@ -134,6 +134,7 @@ const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'slide-workhorse-theme-leak',
   'slide-workhorse-runtime-leak',
   'slide-text-overlap',
+  'slide-content-clipped',
   'slide-forbidden-sales-cta',
   'cra-lendscore-host-layout',
   'host-logo-contrast',
@@ -1885,6 +1886,32 @@ async function evaluateStepState(page, stepId) {
     const slideRootStyle = slideRoot ? window.getComputedStyle(slideRoot) : null;
     const slideInlineStyle = slideRoot ? String(slideRoot.getAttribute('style') || '') : '';
     const slideRootRect = slideRoot ? slideRoot.getBoundingClientRect() : null;
+    // Content-clipping detector: how far the lowest visible text/content inside
+    // the slide-root extends BELOW the canvas's bottom edge. The canvas uses
+    // overflow:hidden, so any positive value = content clipped by the letterbox
+    // (the "blue border clips the bottom text" bug). Measure leaf text nodes +
+    // the foot/stat row; ignore the chrome-logo (decorative, sits in the margin).
+    let slideContentOverflowPx = 0;
+    let slideClippedText = '';
+    if (slideRoot && slideRootRect) {
+      const clipBottom = slideRootRect.bottom;
+      const clipRight = slideRootRect.right;
+      const nodes = slideRoot.querySelectorAll('*');
+      for (const n of nodes) {
+        if (n.classList && n.classList.contains('chrome-logo')) continue;
+        const txt = (n.textContent || '').trim();
+        if (!txt || n.children.length > 0) continue; // leaf text only
+        const cs = window.getComputedStyle(n);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity || '1') === 0) continue;
+        const rr = n.getBoundingClientRect();
+        if (rr.width === 0 || rr.height === 0) continue;
+        const overBottom = rr.bottom - clipBottom;
+        const overRight = rr.right - clipRight;
+        const over = Math.max(overBottom, overRight);
+        if (over > slideContentOverflowPx) { slideContentOverflowPx = over; slideClippedText = txt.slice(0, 60); }
+      }
+      slideContentOverflowPx = Math.round(slideContentOverflowPx);
+    }
     const slideBody = active ? active.querySelector('.slide-body') : null;
     const slideBodyStyle = slideBody ? window.getComputedStyle(slideBody) : null;
     const slideTable = active ? active.querySelector('.slide-root table') : null;
@@ -1984,6 +2011,8 @@ async function evaluateStepState(page, stepId) {
       apiContentLength: (apiBody?.textContent || '').trim().length,
       apiEndpointText: (endpoint?.textContent || '').trim(),
       activeStepHasSlideRoot: Boolean(active?.querySelector('.slide-root')),
+      slideContentOverflowPx,
+      slideClippedText,
       activeStepText: (active?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 5000),
       activeStepPreCodeCount: active ? active.querySelectorAll('pre, code').length : 0,
       activeStepJsonHintNodeCount: active ? active.querySelectorAll('[class*="json"], [id*="json"], [data-testid*="json"]').length : 0,
@@ -3573,6 +3602,21 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
       severity: 'warning',
       issue: 'A slide-like step does not include the expected .slide-root structure.',
       suggestion: 'Render slide scenes using the shared slide template contract.',
+    });
+  }
+  // Content-clipping detector (2026-05-29): slide content overflowing the 16/10
+  // canvas is clipped by the letterbox edge (overflow:hidden) — the "blue border
+  // clips the bottom text" bug. This is a rendering defect, so flag it as a
+  // deterministic blocker; slide-fix trims content (fewer/shorter lines, drop a
+  // stat) rather than a font-clamp enforcer. Threshold > 6px ignores sub-pixel rounding.
+  if (isSlideLikeStep(step) && Number(state.slideContentOverflowPx || 0) > 6) {
+    diagnostics.push({
+      stepId: step.id,
+      category: 'slide-content-clipped',
+      severity: 'critical',
+      issue: `Slide content is clipped by the canvas edge — content extends ${state.slideContentOverflowPx}px beyond the slide-root (overflow:hidden). Clipped near: "${state.slideClippedText || ''}".`,
+      suggestion: 'Reduce content so it fits the 16/10 canvas: drop or shorten the lowest row (e.g. a stat callout), tighten body copy, or reduce inter-block spacing. Do NOT rely on the letterbox to hide overflow.',
+      deterministicBlocker: true,
     });
   }
   if (isSlideLikeStep(step)) {

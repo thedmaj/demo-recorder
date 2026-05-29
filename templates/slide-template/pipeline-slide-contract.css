@@ -34,11 +34,12 @@
  * ----------------------------------------------------------------------------
  */
 
-/* Slide canvas sizing — 1280×800-class default; JSON panel is a fixed overlay
- * (z-index 2100) and never shrinks the slide canvas. No !important. */
+/* Slide canvas sizing — near-full 16/10 canvas with a thin letterbox (2026-05-29);
+ * fills the viewport height so content-heavy slides don't clip at the bottom.
+ * JSON panel is a fixed overlay (z-index 2100) and never shrinks the canvas. */
 .step.active .slide-root {
   width: 100%;
-  max-width: min(1280px, calc(100vw - 80px));
+  max-width: min(1400px, calc(100vw - 24px));
   margin-left: auto;
   margin-right: auto;
 }

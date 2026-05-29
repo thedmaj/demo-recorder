@@ -35,7 +35,7 @@ All paths relative to repo root:
 | `templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md` | DOM merge contract for build + post-slides |
 | `templates/slide-template/colors_and_type.css` | CSS custom properties (injected in `<head>`) |
 | `templates/slide-template/slide.css` | Scoped rules under `.slide-root` only |
-| `templates/slide-template/pipeline-slide-contract.css` | Canvas 1280×800, typography ceilings |
+| `templates/slide-template/pipeline-slide-contract.css` | Canvas ~1400×875 (thin letterbox), typography ceilings |
 
 **Do not** invent colors, fonts, or layout patterns outside these files.
 
@@ -75,13 +75,22 @@ The host demo app is **customer-branded** (Huntington, Zip, Chime, etc.). Slides
 
 ## Pipeline canvas (not 1920×1080) — HARD CONTRACT
 
-Recorded slides target **1280×800 (16:10 responsive)** via `pipeline-slide-contract.css`.
-Author with DECK templates; do **not** set fixed `width:1440px;height:900px` on `.slide-root`.
+Recorded slides target a **near-full 16/10 canvas with a thin navy letterbox** via
+`pipeline-slide-contract.css` (`max-width: min(1400px, calc(100vw - 24px))` → ~1400×875 on
+1440×900). The old 1280×800 letterbox left only ~612px content height after frame padding, so
+content-heavy slides clipped at the bottom (2026-05-29). Frame padding is `--pad-top:84px` /
+`--pad-bottom:56px` (pad-top ≥75px keeps `.chrome-logo` on-canvas). Author with DECK templates; do
+**not** set fixed `width:1440px;height:900px` on `.slide-root`.
+
+**Content-clip detector (`slide-content-clipped`, critical blocker):** `build-qa` measures whether
+slide content extends beyond the `.slide-root` edge (clipped by `overflow:hidden`). If content still
+overflows, **trim the content** (drop/shorten the lowest row — e.g. a stat callout — tighten body
+copy, reduce spacing); do NOT rely on the letterbox to hide overflow, and do NOT add font-clamps.
 
 `scanSlideCanvasSize` (critical blocker, `app+slides` only) measures the rendered `.slide-root`
 and fails if **width < 75% viewport**, **height < 67% viewport**, or **aspect outside [1.40, 1.85]**
 (covers 16:9 = 1.78 and 16:10 = 1.60). Contract lives in `pipeline-slide-contract.css`
-(`max-width: min(1280px, calc(100vw - 80px))`, `aspect-ratio: 16/10`) — **zero `!important`**,
+(`max-width: min(1400px, calc(100vw - 24px))`, `aspect-ratio: 16/10`) — **zero `!important`**,
 cascade order authoritative (injected after `slide.css`). Never shadow it with a higher-priority
 `!important` block or add `min-height`/`aspect-ratio`/width overrides on `.slide-root` that shrink
 the slide. The API panel is a fixed overlay (z-index 2100) — reserve **no** width for it.
