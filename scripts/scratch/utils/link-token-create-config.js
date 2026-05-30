@@ -549,9 +549,27 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   // Protect intent or the family is a Protect family — then ensure a base
   // account-linking product remains (signal/monitor are ride-alongs).
   const lcPrompt = promptText.toLowerCase();
+  // Negation-aware: prompts often mention Protect terms only to EXCLUDE them
+  // (e.g. the Signal reminder "Never use the term 'Trust Index'"). A naive
+  // match treats that as Protect intent and wrongly keeps protect_linked_bank.
+  // Count a Protect signal only when at least one mention sits in a clean
+  // (non-negated) ~60-char window of the whitespace-collapsed prompt.
+  const collapsedPrompt = lcPrompt.replace(/\s+/g, ' ');
+  const PROTECT_NEG = /\bnot\b|\bnever\b|n['’]t\b|\bwithout\b|\bexclud\w*|\bavoid\b|\bdon't\b|\bdo not\b/i;
+  const protectIntentAffirmative = (re) => {
+    const gre = new RegExp(re.source, 'gi');
+    let mm;
+    while ((mm = gre.exec(collapsedPrompt))) {
+      const s = Math.max(0, mm.index - 60);
+      const e = Math.min(collapsedPrompt.length, mm.index + mm[0].length + 20);
+      if (!PROTECT_NEG.test(collapsedPrompt.slice(s, e))) return true;
+      if (gre.lastIndex === mm.index) gre.lastIndex++;
+    }
+    return false;
+  };
   const genuineProtectIntent =
-    /\bplaid\s+protect\b/.test(lcPrompt) || /\btrust\s+index\b/.test(lcPrompt) ||
-    /\bti2\b/.test(lcPrompt) || /\bprotect_linked_bank\b/.test(lcPrompt) ||
+    protectIntentAffirmative(/\bplaid\s+protect\b/) || protectIntentAffirmative(/\btrust\s+index\b/) ||
+    protectIntentAffirmative(/\bti2\b/) || protectIntentAffirmative(/\bprotect_linked_bank\b/) ||
     /\/protect\/event\/send\b/.test(lcPrompt) || /\/protect\/user\/insights\b/.test(lcPrompt);
   const isProtectFamily = /protect|trust_index/.test(String(productFamily).toLowerCase());
   const droppedProtect = [];
