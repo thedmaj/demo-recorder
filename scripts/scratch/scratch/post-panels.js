@@ -154,20 +154,71 @@ function buildSlideHostIsolationScript() {
 (function() {
   if (window.__pipelineSlideHostIsolationApplied) return;
   window.__pipelineSlideHostIsolationApplied = true;
+
+  // ── Plaid session variables (E2) ──────────────────────────────────────────
+  // The Link onSuccess callback fills these from metadata.institution.name /
+  // accounts[0].{name,mask}. metadata.institution can be null (micro-deposit /
+  // manual flows) and account name/mask are nullable, so default to the sandbox
+  // values — no screen (pre-Link, edge-case, or a step that renders before
+  // onSuccess) should ever show an empty bank/account label. Any element with
+  // data-plaid-institution / data-plaid-account-name / data-plaid-account-mask
+  // is auto-filled from the live (or default) values.
+  window._plaidInstitutionName = window._plaidInstitutionName || 'First Platypus Bank';
+  window._plaidAccountName = window._plaidAccountName || 'Plaid Checking';
+  window._plaidAccountMask = window._plaidAccountMask || '0000';
+  window.paintPlaidVars = function() {
+    try {
+      document.querySelectorAll('[data-plaid-institution]').forEach(function(e){ e.textContent = window._plaidInstitutionName; });
+      document.querySelectorAll('[data-plaid-account-name]').forEach(function(e){ e.textContent = window._plaidAccountName; });
+      document.querySelectorAll('[data-plaid-account-mask]').forEach(function(e){ e.textContent = window._plaidAccountMask; });
+    } catch (_) {}
+  };
+
+  // ── Insight-slide API-panel gutter (A) ────────────────────────────────────
+  // A .slide-root step that also carries its own apiResponse shows the fixed
+  // #api-response-panel — which, as a right-anchored overlay, clips the left
+  // slide content. On those steps only: expand + narrow the panel and reserve
+  // a left gutter so the slide content (title, cards, table) clears it.
+  var gutterStyle = document.getElementById('pipeline-slide-api-gutter-style');
+  if (!gutterStyle) {
+    gutterStyle = document.createElement('style');
+    gutterStyle.id = 'pipeline-slide-api-gutter-style';
+    gutterStyle.textContent = [
+      'body.pipeline-slide-api-gutter #api-response-panel,',
+      'body.pipeline-slide-api-gutter section#api-response-panel { width: min(440px, 40vw) !important; }',
+      'body.pipeline-slide-api-gutter .step.active .slide-root .slide-stack {',
+      '  max-width: calc(100% - 480px) !important; margin-right: auto !important;',
+      '  align-self: flex-start !important;',
+      '}'
+    ].join('\\n');
+    (document.head || document.documentElement).appendChild(gutterStyle);
+  }
+  function stepHasApiPanel(stepId) {
+    try { return !!((window._stepApiResponses || {})[stepId]); } catch (_) { return false; }
+  }
+
   function syncSlideHostMode(stepId) {
     var el = document.querySelector('[data-testid="step-' + stepId + '"]');
     var isSlide = !!(el && el.querySelector('.slide-root'));
     document.body.classList.toggle('pipeline-slide-active', isSlide);
+    var insightSlide = isSlide && stepHasApiPanel(stepId);
+    document.body.classList.toggle('pipeline-slide-api-gutter', insightSlide);
+    if (insightSlide) {
+      var panel = document.getElementById('api-response-panel');
+      if (panel) { panel.classList.remove('is-collapsed', 'api-panel-collapsed'); window.__apiPanelUserOpen = true; }
+    }
+    if (window.paintPlaidVars) window.paintPlaidVars();
   }
   var orig = window.goToStep;
   if (typeof orig === 'function') {
     window.goToStep = function(id) {
       var r = orig.apply(this, arguments);
-      syncSlideHostMode(id);
+      try { setTimeout(function(){ syncSlideHostMode(id); }, 0); } catch (_) { syncSlideHostMode(id); }
       return r;
     };
   }
   function bootstrap() {
+    if (window.paintPlaidVars) window.paintPlaidVars();
     var active = document.querySelector('.step.active');
     if (!active) return;
     var tid = active.getAttribute('data-testid') || '';

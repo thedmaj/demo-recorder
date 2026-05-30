@@ -1615,9 +1615,13 @@ function injectEmbeddedLinkRuntimeHandler(html, demoScript, linkModeAdapter, pro
       var onSuccess = function(public_token, metadata) {
         try {
           window._plaidPublicToken = public_token || '';
-          window._plaidInstitutionName = metadata && metadata.institution ? metadata.institution.name : (window._plaidInstitutionName || '');
-          window._plaidAccountName = metadata && metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].name : (window._plaidAccountName || '');
-          window._plaidAccountMask = metadata && metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].mask : (window._plaidAccountMask || '');
+          // metadata.institution can be null (micro-deposit/manual flows) and
+          // account name/mask are nullable — always fall back to the sandbox
+          // defaults so no screen ever renders an empty bank/account label.
+          window._plaidInstitutionName = (metadata && metadata.institution && metadata.institution.name) || window._plaidInstitutionName || 'First Platypus Bank';
+          window._plaidAccountName = (metadata && metadata.accounts && metadata.accounts[0] && metadata.accounts[0].name) || window._plaidAccountName || 'Plaid Checking';
+          window._plaidAccountMask = (metadata && metadata.accounts && metadata.accounts[0] && metadata.accounts[0].mask) || window._plaidAccountMask || '0000';
+          if (typeof window.paintPlaidVars === 'function') { try { window.paintPlaidVars(); } catch (_) {} }
           window._plaidLinkComplete = true;
           ${firstPostLinkStepId ? `if (typeof window.goToStep === 'function') window.goToStep(${JSON.stringify(firstPostLinkStepId)});` : ''}
         } catch (_) {}

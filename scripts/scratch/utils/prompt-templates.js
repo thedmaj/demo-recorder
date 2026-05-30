@@ -2198,11 +2198,11 @@ contract that the next stage knows how to fill.\n` +
           `         window._plaidPublicToken = public_token;\n` +
           `         window._plaidLinkComplete = true;\n` +
           `         if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }\n` +
-          `         if (metadata && metadata.institution) window._plaidInstitutionName = metadata.institution.name;\n` +
-          `         if (metadata && metadata.accounts && metadata.accounts[0]) {\n` +
-          `           window._plaidAccountName = metadata.accounts[0].name;\n` +
-          `           window._plaidAccountMask = metadata.accounts[0].mask;\n` +
-          `         }\n` +
+          `         // institution can be null (micro-deposit/manual); name/mask are nullable — default to sandbox values so screens never show blanks.\n` +
+          `         window._plaidInstitutionName = (metadata && metadata.institution && metadata.institution.name) || window._plaidInstitutionName || 'First Platypus Bank';\n` +
+          `         window._plaidAccountName = (metadata && metadata.accounts && metadata.accounts[0] && metadata.accounts[0].name) || window._plaidAccountName || 'Plaid Checking';\n` +
+          `         window._plaidAccountMask = (metadata && metadata.accounts && metadata.accounts[0] && metadata.accounts[0].mask) || window._plaidAccountMask || '0000';\n` +
+          `         if (typeof window.paintPlaidVars === 'function') window.paintPlaidVars();\n` +
           `         window.goToStep('<FIRST_POST_LINK_STEP_ID>');\n` +
           `       },\n` +
           `       onExit: function(err) { console.warn('Plaid exited', err); },\n` +
@@ -2239,10 +2239,13 @@ contract that the next stage knows how to fill.\n` +
           `   e. Match the captured screenshot as closely as possible (see images below).\n` +
           `   f. NEVER add style="display:..." to a .step div — use only CSS class toggling.\n\n` +
           `5. DYNAMIC BANK DATA: Institution name, account name, and account mask come from the real\n` +
-          `   onSuccess callback. Display them using window._plaidInstitutionName,\n` +
-          `   window._plaidAccountName, window._plaidAccountMask.  For the simulated screens that\n` +
-          `   appear BEFORE onSuccess fires, show placeholder text (e.g. "Your Bank") that gets\n` +
-          `   replaced by the goToStep handler for post-link steps.\n` +
+          `   onSuccess callback. PREFERRED: mark any element that shows the bank/account with\n` +
+          `   data-plaid-institution / data-plaid-account-name / data-plaid-account-mask — the\n` +
+          `   pipeline runtime (window.paintPlaidVars) auto-fills them on load, on every goToStep,\n` +
+          `   and after onSuccess. These ALWAYS resolve: they default to "First Platypus Bank" /\n` +
+          `   "Plaid Checking" / "0000" before the live session sets them, so a screen is NEVER blank.\n` +
+          `   You may also read window._plaidInstitutionName / _plaidAccountName / _plaidAccountMask\n` +
+          `   directly (same defaults). Do NOT hardcode a specific bank name in static markup.\n` +
           `   For bank logo: always use a generic Heroicons building-library SVG — never fetch real logos.\n\n` +
           `6. COMPLETION FLAG: window._plaidLinkComplete = true is set in onSuccess callback only.\n` +
           `   Also set it in the goToStep handler for the link-success step so the recording does not\n` +
@@ -2310,9 +2313,10 @@ contract that the next stage knows how to fill.\n` +
           `       token: data.link_token,\n` +
           `       onSuccess: function(public_token, metadata) {\n` +
           `         window._plaidPublicToken = public_token;\n` +
-          `         window._plaidInstitutionName = metadata.institution ? metadata.institution.name : '';\n` +
-          `         window._plaidAccountName = metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].name : '';\n` +
-          `         window._plaidAccountMask = metadata.accounts && metadata.accounts[0] ? metadata.accounts[0].mask : '';\n` +
+          `         window._plaidInstitutionName = (metadata.institution && metadata.institution.name) || window._plaidInstitutionName || 'First Platypus Bank';\n` +
+          `         window._plaidAccountName = (metadata.accounts && metadata.accounts[0] && metadata.accounts[0].name) || window._plaidAccountName || 'Plaid Checking';\n` +
+          `         window._plaidAccountMask = (metadata.accounts && metadata.accounts[0] && metadata.accounts[0].mask) || window._plaidAccountMask || '0000';\n` +
+          `         if (typeof window.paintPlaidVars === 'function') window.paintPlaidVars();\n` +
           `         window._plaidLinkComplete = true;\n` +
           `         if (window._plaidHandler) { try { window._plaidHandler.destroy(); } catch(e) {} }\n` +
           `         window.goToStep('<FIRST_POST_LINK_STEP_ID>');\n` +
