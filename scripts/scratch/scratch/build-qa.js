@@ -2162,8 +2162,15 @@ async function evaluateStepState(page, stepId) {
       slideTextWraps: (() => {
         const slideRoot = active ? active.querySelector('.slide-root') : null;
         if (!slideRoot) return [];
-        const HEADLINE_LIKE = /\b(h-title|hero-stat-value|sc-stat|sc-eyebrow|eyebrow-tag|h-section|h-subtitle|stat-value)\b/i;
-        const SHORT_TAG = new Set(['H1', 'H2', 'H3', 'H4', 'STRONG', 'EM', 'SPAN']);
+        // Lead-title / display-stat-VALUE classes only. The auto-shrink-to-one-
+        // line routine must NEVER touch sub-bullets, stat captions, or body copy
+        // — shrinking a long caption to fit one line makes it microscopic
+        // (e.g. a stat label collapsing to ~10px). NON_TITLE is an explicit
+        // exclude: note that \bsc-stat\b also matches "sc-stat-label", so the
+        // label guard below is what keeps captions out.
+        const HEADLINE_LIKE = /\b(h-title|hero-title|headline|h-hero|display-title|hero-stat-value|sc-stat|stat-value|h-section)\b/i;
+        const NON_TITLE = /(?:label|caption|sub-?title|sub-?head|subhead|eyebrow|body|bullet|footnote|disclaimer|note|meta|detail|copy|desc)/i;
+        const SHORT_TAG = new Set(['H1', 'H2', 'H3']);
         const candidates = [];
         for (const el of Array.from(slideRoot.querySelectorAll('*'))) {
           const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
@@ -2176,6 +2183,9 @@ async function evaluateStepState(page, stepId) {
           if (cs.display === 'none' || cs.visibility === 'hidden') continue;
           if (Number(cs.opacity || '1') === 0) continue;
           const className = String(el.className || '');
+          // Sub-bullets / stat captions / body labels are never lead titles —
+          // exclude them outright so the one-line-fit shrink can't apply.
+          if (NON_TITLE.test(className)) continue;
           const isHeadlineLike = HEADLINE_LIKE.test(className);
           const isShortTag = SHORT_TAG.has(el.tagName);
           // Skip multi-sentence body copy — natural wrapping is expected.

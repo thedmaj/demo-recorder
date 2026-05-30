@@ -748,16 +748,21 @@ const PATCHES = [
         // 24px floor removed 2026-05-27 — templates own sizing.
         const target = Math.max(1, Math.round(Number(meta.recommendedFontSizePx) || 0));
         if (!target || target >= Math.round(meta.currentFontSizePx || 0)) continue;
+        // Lead-title / display-stat-VALUE classes ONLY — never sub-bullets or
+        // captions. Exact-match so "sc-stat-label" (a caption) does NOT match
+        // "sc-stat" and get shrunk to microscopic size.
         const classList = String(meta.classes || '')
           .split(/\s+/)
           .filter(Boolean)
-          .filter((c) => /^(?:h-title|hero-stat-value|sc-stat|sc-eyebrow|eyebrow-tag|h-section|h-subtitle|stat-value)$/i.test(c));
-        // Prefer a class-scoped selector for canonical classes; otherwise fall
-        // back to the bare tag. Tags alone are coarser but acceptable for
-        // unique headlines inside .slide-root.
+          .filter((c) => /^(?:h-title|hero-title|headline|h-hero|display-title|hero-stat-value|sc-stat|stat-value|h-section)$/i.test(c));
+        // Prefer a class-scoped selector for canonical title classes. Only fall
+        // back to a bare TAG for true heading tags (h1–h3) — never generic
+        // containers (div/span/p/li), since `.slide-root div { font-size }`
+        // would shrink EVERY div on the slide (captions included).
+        const tag = String(meta.tag || '').toLowerCase();
         const selectorRoot = classList.length > 0
           ? `.${classList[0]}`
-          : String(meta.tag || '').toLowerCase();
+          : (/^h[1-3]$/.test(tag) ? tag : '');
         if (!selectorRoot) continue;
         const entry = byStep.get(stepId) || new Map();
         const prev = entry.get(selectorRoot);
