@@ -4628,7 +4628,16 @@ async function main() {
 // every `require('orchestrator')` (including from tests) would kick off the
 // whole pipeline.
 if (require.main === module) {
-  main().catch(err => {
+  main().then(() => {
+    // Force a clean exit after a successful run. On success main() resolves but
+    // Node only exits when the event loop drains — a lingering handle (the
+    // heartbeat interval, an app-server socket from build-qa, etc.) otherwise
+    // keeps the orchestrator alive as an idle zombie (observed running ~5h and
+    // causing `resume` to target the wrong run). Cleanup stops the heartbeat +
+    // releases the lock; exit(0) guarantees termination at the --to stage.
+    orchestratorCleanup();
+    process.exit(0);
+  }).catch(err => {
     cliError(`[Orchestrator] Fatal error: ${err.message}`);
     emitPipeEvent('pipeline_end', { status: 'failed', message: err.message });
     if (err.stack) console.error(err.stack);

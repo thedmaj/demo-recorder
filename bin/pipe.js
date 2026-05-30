@@ -290,7 +290,7 @@ function parsePipeEvent(line) {
 
 // ── Command: status ──────────────────────────────────────────────────────────
 function cmdStatus({ positional, flags }) {
-  const runDir = resolveRunDir(positional[0] || null);
+  const runDir = resolveRunDir(positional[0] || flags['run-id'] || flags.runId || null);
   const status = computeStatus(runDir);
   if (flags.json) {
     process.stdout.write(JSON.stringify(status, null, 2) + '\n');
@@ -349,7 +349,7 @@ function cmdStatus({ positional, flags }) {
 
 // ── Command: monitor ─────────────────────────────────────────────────────────
 function cmdMonitor({ positional, flags }) {
-  const runDir = resolveRunDir(positional[0] || null);
+  const runDir = resolveRunDir(positional[0] || flags['run-id'] || flags.runId || null);
   const runId = path.basename(runDir);
   const pollMs = Number(flags['poll-ms'] || flags.pollMs || 30000);
   const pollInterval = Number.isFinite(pollMs) && pollMs > 0 ? pollMs : 30000;
@@ -479,7 +479,7 @@ function cmdList({ flags }) {
 
 // ── Command: logs ────────────────────────────────────────────────────────────
 function cmdLogs({ positional, flags }) {
-  const runDir = resolveRunDir(positional[0] || null);
+  const runDir = resolveRunDir(positional[0] || flags['run-id'] || flags.runId || null);
   const logFile = path.join(runDir, 'artifacts', 'logs', 'pipeline-build.log.md');
   if (!fs.existsSync(logFile)) {
     console.error(`No log file: ${logFile}`);
@@ -516,8 +516,8 @@ function cmdLogs({ positional, flags }) {
 }
 
 // ── Command: continue ────────────────────────────────────────────────────────
-function cmdContinue({ positional }) {
-  const runDir = resolveRunDir(positional[0] || null);
+function cmdContinue({ positional, flags = {} }) {
+  const runDir = resolveRunDir(positional[0] || flags['run-id'] || flags.runId || null);
   const signal = path.join(runDir, 'continue.signal');
   fs.writeFileSync(signal, 'continue\n', 'utf8');
   console.log(c.green(`✓ Wrote continue signal → ${signal}`));
@@ -526,7 +526,7 @@ function cmdContinue({ positional }) {
 
 // ── Command: stop ────────────────────────────────────────────────────────────
 function cmdStop({ positional, flags }) {
-  const runDir = resolveRunDir(positional[0] || null);
+  const runDir = resolveRunDir(positional[0] || flags['run-id'] || flags.runId || null);
   const status = computeStatus(runDir);
   if (!status.activePid) {
     console.log(c.dim('No active orchestrator for ' + status.runId));
@@ -588,7 +588,10 @@ async function cmdNew({ flags }) {
 
 // ── Command: resume ──────────────────────────────────────────────────────────
 async function cmdResume({ positional, flags }) {
-  const runId = positional[0] || path.basename(readLatestRunDir() || '');
+  // Accept RUN_ID either positionally (`pipe resume <RUN_ID>`) OR via
+  // --run-id= ; without this, `--run-id=` silently fell through to "latest"
+  // and resumed the WRONG run (a stale/zombie run could be "latest").
+  const runId = positional[0] || flags['run-id'] || flags.runId || path.basename(readLatestRunDir() || '');
   if (!runId) throw new Error('No run to resume — pass RUN_ID.');
   runDirFromId(runId); // validate
   const args = [`--run-id=${runId}`];
