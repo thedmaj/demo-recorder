@@ -134,6 +134,31 @@ async function main() {
     llm = { issues: [], skipped: true, reason: 'no-anthropic-key' };
   }
 
+  // Plaid sandbox institution names look "fake" (First Platypus Bank, Tartan
+  // Bank, …) but are the CANONICAL, correct banks for these demos — the Link
+  // session genuinely returns them. A selected sandbox bank must never fail the
+  // pipeline, so drop any bank-name realism finding that flags one of them.
+  // (See inputs/plaid-link-sandbox.md.)
+  const SANDBOX_BANKS = /first platypus bank|platypus oauth bank|tartan bank|houndstooth bank|tattersall|royal bank of plaid|flexible platypus|first gingham|gingham credit union|pers fed|second platypus/i;
+  const isSandboxBankFinding = (i) => {
+    const kind = String(i.kind || '');
+    const ev = String(i.evidence || i.message || '');
+    const bankNameRule = /bank.?name|institution|unrealistic.?bank|fake.?bank/i.test(kind);
+    return bankNameRule && SANDBOX_BANKS.test(ev);
+  };
+  const dropExplain = (label, arr) => {
+    const kept = arr.filter((i) => {
+      if (isSandboxBankFinding(i)) {
+        console.log(`  [allowlist] suppressed ${label} finding for Plaid sandbox bank — ${i.kind}: ${String(i.evidence || '').slice(0, 80)}`);
+        return false;
+      }
+      return true;
+    });
+    return kept;
+  };
+  deterministic.issues = dropExplain('deterministic', deterministic.issues);
+  if (llm && Array.isArray(llm.issues)) llm.issues = dropExplain('haiku', llm.issues);
+
   const allIssues = [...deterministic.issues, ...((llm && llm.issues) || [])];
   const criticalCount = allIssues.filter(i => i.severity === 'critical').length;
   const warningCount = allIssues.filter(i => i.severity === 'warning').length;

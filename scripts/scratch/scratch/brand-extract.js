@@ -179,8 +179,17 @@ async function fetchFromBrandfetch(domain) {
   const url = `https://api.brandfetch.io/v2/brands/${encodeURIComponent(domain)}`;
   console.log(`[BrandExtract] Brandfetch lookup: ${domain}`);
 
+  // Node's fetch has no usable default timeout for a hanging host (undici's
+  // headersTimeout is ~300s), so several domain-guess attempts against a slow
+  // host stacked up to ~17min stalls (observed on coxautoinc.com /
+  // current.com). Cap each attempt with an AbortController so a bad host falls
+  // through to the Playwright/Haiku fallbacks quickly.
+  const TIMEOUT_MS = Number(process.env.BRANDFETCH_TIMEOUT_MS || 15000);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
   try {
     const res = await fetch(url, {
+      signal: ac.signal,
       headers: {
         Authorization: `Bearer ${BRANDFETCH_API_KEY}`,
         ...(BRANDFETCH_CLIENT_ID ? { 'X-Brandfetch-Client-Id': BRANDFETCH_CLIENT_ID } : {}),
@@ -201,8 +210,11 @@ async function fetchFromBrandfetch(domain) {
     console.log(`[BrandExtract] Brandfetch: found ${data.name || domain}`);
     return data;
   } catch (err) {
-    console.warn(`[BrandExtract] Brandfetch fetch error: ${err.message}`);
+    const msg = err.name === 'AbortError' ? `timed out after ${TIMEOUT_MS}ms` : err.message;
+    console.warn(`[BrandExtract] Brandfetch fetch error: ${msg}`);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -1201,39 +1201,53 @@ async function main() {
   // — must use adaptive thinking + output_config.effort. Script generation is
   // intelligence-sensitive (structured output with multi-constraint per beat),
   // so default to `high` effort; `xhigh` for stricter quality at higher cost.
-  const response = await client.messages.create({
-    model:      MODEL,
-    max_tokens: MAX_TOKENS,
-    thinking:   { type: 'adaptive' },
-    output_config: { effort: process.env.SCRIPT_EFFORT || 'high' },
-    system:      systemPrompt,
-    messages:    messagesWithToolDirective,
-    tools:       [GENERATE_DEMO_SCRIPT_TOOL],
-    tool_choice: { type: 'auto' },
-  });
+  // Retry the generation when the model returns an incomplete script — under
+  // overload the structured-output call has returned (a) no valid steps array
+  // or (b) a truncated script missing the Plaid Link launch step. Both hard-
+  // failed the whole run; a retry succeeds once the transient window passes.
+  const SCRIPT_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCRIPT_MAX_ATTEMPTS || 3));
+  const requireLaunchStep = String(process.env.PLAID_LINK_LIVE || '').trim() === 'true';
+  let demoScript = null;
+  let lastReason = '';
+  for (let attempt = 1; attempt <= SCRIPT_MAX_ATTEMPTS; attempt++) {
+    const response = await client.messages.create({
+      model:      MODEL,
+      max_tokens: MAX_TOKENS,
+      thinking:   { type: 'adaptive' },
+      output_config: { effort: process.env.SCRIPT_EFFORT || 'high' },
+      system:      systemPrompt,
+      messages:    messagesWithToolDirective,
+      tools:       [GENERATE_DEMO_SCRIPT_TOOL],
+      tool_choice: { type: 'auto' },
+    });
 
-  // Extract demo script — prefer tool_use block (structured output), fall back to text extraction
-  let demoScript;
-  const toolBlock = response.content.find(
-    b => b.type === 'tool_use' && b.name === 'generate_demo_script'
-  );
-
-  if (toolBlock) {
-    console.log('[Script] Extracted demo script from tool_use block (structured output).');
-    demoScript = toolBlock.input;
-  } else {
-    console.warn('[Script] No tool_use block found — falling back to text extraction.');
-    try {
-      demoScript = extractJSON(response.content);
-    } catch (err) {
-      console.error(err.message);
-      process.exit(1);
+    // Extract — prefer tool_use block (structured output), fall back to text.
+    let candidate = null;
+    const toolBlock = response.content.find(
+      b => b.type === 'tool_use' && b.name === 'generate_demo_script'
+    );
+    if (toolBlock) {
+      console.log(`[Script] Extracted demo script from tool_use block (structured output)${attempt > 1 ? ` (attempt ${attempt})` : ''}.`);
+      candidate = toolBlock.input;
+    } else {
+      console.warn('[Script] No tool_use block found — falling back to text extraction.');
+      try { candidate = extractJSON(response.content); } catch (err) { lastReason = err.message; candidate = null; }
     }
+
+    // Completeness gate (mirrors the downstream validations that used to hard-exit).
+    if (!candidate || !candidate.steps || !Array.isArray(candidate.steps) || candidate.steps.length === 0) {
+      lastReason = lastReason || 'no valid steps array';
+    } else if (requireLaunchStep && !candidate.steps.some(s => s && (s.plaidPhase === 'launch' || s.sceneType === 'link'))) {
+      lastReason = 'no Plaid Link launch step (plaidPhase:"launch" / sceneType:"link")';
+    } else {
+      demoScript = candidate;
+      break;
+    }
+    console.warn(`[Script] Generation attempt ${attempt}/${SCRIPT_MAX_ATTEMPTS} incomplete (${lastReason})${attempt < SCRIPT_MAX_ATTEMPTS ? ' — retrying…' : ''}`);
   }
 
-  // Validate minimum structure
-  if (!demoScript.steps || !Array.isArray(demoScript.steps) || demoScript.steps.length === 0) {
-    console.error('[Script] Claude response did not contain valid steps array');
+  if (!demoScript) {
+    console.error(`[Script] Claude response did not contain a complete script after ${SCRIPT_MAX_ATTEMPTS} attempt(s): ${lastReason}`);
     process.exit(1);
   }
   demoScript.plaidLinkMode = embeddedLinkSkillBundle.mode;
