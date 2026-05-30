@@ -2785,39 +2785,61 @@ async function runScratchPipeline({
         });
       }
 
-      // In app+slides mode, run post-slides + post-panels INLINE here so the
-      // upcoming build-qa pass actually walks slide steps and scores them.
-      // The canonical post-slides/post-panels stages still run later (after
-      // the full build phase loop completes) and are idempotent, so this
-      // inline pass is purely additive and does not break --from / --to
-      // semantics. App-only runs skip this entirely.
-      if (
-        phaseMode === 'app' &&
-        String(process.env.PIPELINE_WITH_SLIDES || '').trim().toLowerCase() === 'true'
-      ) {
-        const inlineSlidesStrategy = String(process.env.BUILD_SLIDES_STRATEGY || 'post-agent').toLowerCase();
-        if (inlineSlidesStrategy !== 'inline' && shouldRun('post-slides')) {
-          await stageRunner('post-slides', async () => {
-            try {
-              delete require.cache[require.resolve('./scratch/post-slides')];
-              const mod = require('./scratch/post-slides');
-              if (typeof mod.main === 'function') await mod.main();
-            } catch (e) {
-              cliWarn(`[Orchestrator] post-slides (inline-pre-buildqa) failed: ${e.message}`);
+      // Inline pre-build-qa pass: post-slides + post-panels must run BEFORE
+      // build-qa so the QA walker sees hydrated slide content and the v12
+      // API panel. The canonical post-slides/post-panels stages run again
+      // later (after the build-phase loop) and are idempotent, so this
+      // inline pass is purely additive.
+      //
+      // NOTE 2026-05-27: these MUST NOT be gated by `shouldRun()` or
+      // `stageRunner()` — both filter on the --from/--to range. The
+      // canonical post-slides/post-panels stages sit AFTER build-qa in
+      // STAGES, so `resume --from=build --to=build-qa` would exclude them.
+      // Without this inline pre-buildqa pass, build-qa runs on
+      // panel-less, placeholder-only HTML and emits `missing-panel` +
+      // `blank-slide` CRITICALs across every step.
+      // We call runStage(name, fn, timer) directly to bypass the range
+      // filter while still emitting stage telemetry.
+      if (phaseMode === 'app') {
+        const isAppPlusSlides = (() => {
+          const env = String(process.env.PIPELINE_WITH_SLIDES || '').trim().toLowerCase();
+          if (env === 'true') return true;
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            const mfPath = path.join(versionedDir, 'run-manifest.json');
+            if (fs.existsSync(mfPath)) {
+              const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
+              return mf && mf.buildMode === 'app+slides';
             }
-          });
+          } catch (_) { /* ignore */ }
+          return false;
+        })();
+        if (isAppPlusSlides) {
+          const inlineSlidesStrategy = String(process.env.BUILD_SLIDES_STRATEGY || 'post-agent').toLowerCase();
+          if (inlineSlidesStrategy !== 'inline') {
+            await runStage('post-slides', async () => {
+              try {
+                delete require.cache[require.resolve('./scratch/post-slides')];
+                const mod = require('./scratch/post-slides');
+                if (typeof mod.main === 'function') await mod.main();
+              } catch (e) {
+                cliWarn(`[Orchestrator] post-slides (inline-pre-buildqa) failed: ${e.message}`);
+              }
+            }, timer);
+          }
         }
-        if (shouldRun('post-panels')) {
-          await stageRunner('post-panels', async () => {
-            try {
-              delete require.cache[require.resolve('./scratch/post-panels')];
-              const mod = require('./scratch/post-panels');
-              if (typeof mod.main === 'function') await mod.main();
-            } catch (e) {
-              cliWarn(`[Orchestrator] post-panels (inline-pre-buildqa) failed: ${e.message}`);
-            }
-          });
-        }
+        // post-panels is the host-app API panel contract — needed regardless
+        // of slide tier. Always run before build-qa.
+        await runStage('post-panels', async () => {
+          try {
+            delete require.cache[require.resolve('./scratch/post-panels')];
+            const mod = require('./scratch/post-panels');
+            if (typeof mod.main === 'function') await mod.main();
+          } catch (e) {
+            cliWarn(`[Orchestrator] post-panels (inline-pre-buildqa) failed: ${e.message}`);
+          }
+        }, timer);
       }
 
       if (!shouldRun('build-qa')) break;
