@@ -101,16 +101,23 @@ function extractPromptEntities(promptText) {
   };
 
   // ── brand ──
+  // Priority order matters: in the story-first template **Host:** is the
+  // canonical brand, while **Company / context:** is FREEFORM context (e.g.
+  // "Dealer finance desk; 'Verify income…'") — not a brand name. Check the
+  // authoritative brand fields (Host / Brand / Customer / Company) FIRST and
+  // fall back to the freeform "Company / context" line only as a last resort,
+  // so we don't mistake context prose for the brand.
   const brandLinePatterns = [
-    /\*\*Company\s*\/\s*context:\*\*\s*([^\n]+)/i,
-    /\bCompany\s*\/\s*context:\s*([^\n]+)/i,
-    /\*\*Company:\*\*\s*([^\n]+)/i,
-    /\bCompany:\s*([^\n]+)/i,
+    /\*\*Host:\*\*\s*\**\s*([^—*\n]+)/i,
+    /^Host:\s*([^—\n]+)/m,
     /\*\*Brand:\*\*\s*([^\n]+)/i,
     /\bBrand:\s*([^\n]+)/i,
     /\*\*Customer:\*\*\s*([^\n]+)/i,
     /\bCustomer:\s*([^\n]+)/i,
-    /^Host:\s*([^—\n]+)/m,
+    /\*\*Company:\*\*\s*([^\n]+)/i,
+    /\bCompany:\s*(?!\s*\/)([^\n]+)/i,
+    /\*\*Company\s*\/\s*context:\*\*\s*([^\n]+)/i,
+    /\bCompany\s*\/\s*context:\s*([^\n]+)/i,
   ];
   for (const re of brandLinePatterns) {
     const m = text.match(re);
@@ -189,6 +196,39 @@ function extractPromptEntities(promptText) {
         .filter(Boolean)
     );
   }
+
+  // Story-first template form: the products header sits on its own line and the
+  // product list follows on the NEXT line(s), e.g.
+  //   **Products featured (approved names only):**
+  //   Plaid Link, **Plaid Bank Income**
+  // The same-line declRe above can't see those, so read the block after a
+  // "Products [featured]:" header up to the next blank line / heading / table.
+  const allLines = text.split('\n');
+  for (let i = 0; i < allLines.length; i++) {
+    // Require PLURAL "products" (optionally "products featured/used", "key
+    // products", "APIs") so we don't match singular headers like "Primary
+    // product family:" and slurp the family value as a product.
+    if (!/^[*_\s>#-]*(?:products(?:\s+featured|\s+used)?|key\s+products|apis)\b[^\n]*:\s*\**\s*$/i.test(allLines[i])) continue;
+    for (let j = i + 1; j < allLines.length && j <= i + 4; j++) {
+      const raw = allLines[j].trim();
+      if (!raw) break;                                   // blank → end of block
+      if (/^[-*]{2,}|^#{1,6}\s|^\||^\[\[/.test(raw)) break; // heading/table/sentinel
+      if (/[`"[\]{}]/.test(raw)) break;                  // code / API-shape line
+      if (/:\s*$/.test(raw)) break;                      // another header
+      // Strip parenthetical qualifiers ("(foundation)", "(beta — hero)",
+      // "(linked account context)", "(CRA / Check)") BEFORE splitting, so a
+      // "/" inside a qualifier doesn't fragment the product name and the
+      // qualifier text doesn't end up in the slug.
+      const cleanedLine = raw.split(/[.](?=\s|$)/)[0].replace(/\([^)]*\)/g, ' ');
+      declared.push(
+        ...cleanedLine.split(/[|,;/]/g).map((s) => s.trim()).filter(Boolean)
+      );
+      // Most prompts put the whole list on one line; keep scanning a couple
+      // more only if they look like continuation list items.
+      if (!/^[-*]/.test(allLines[j + 1] ? allLines[j + 1].trim() : '')) break;
+    }
+  }
+
   const declaredText = declared.join(' ').toLowerCase();
 
   const productAdds = [];
@@ -218,14 +258,43 @@ function extractPromptEntities(promptText) {
     if (cleaned) addProduct(cleaned);
   }
 
-  // Keyword fallback (only adds if we don't already have it):
-  if (/\bauth\b|\binstant auth\b/.test(lower)) addProduct('Auth');
-  if (/\bidentity\s*(?:match|verification)?\b|\bidv\b/.test(lower)) addProduct('Identity Match');
-  if (/\bsignal\b/.test(lower)) addProduct('Signal');
-  if (/\bstatements\b/.test(lower)) addProduct('Statements');
-  if (/\bcra\b|\bbase report\b|\bconsumer report\b/.test(lower)) addProduct('CRA Base Report');
-  if (/\bbank income\b/.test(lower)) addProduct('Bank Income');
-  if (/\bincome\s+insights\b/.test(lower)) addProduct('Income Insights');
+  // Keyword fallback (only adds if we don't already have it).
+  // Negation-aware: prompts routinely EXCLUDE products in prose ("do not
+  // bundle `auth`, `identity`, or `signal`", "NOT Plaid Check / CRA",
+  // "Layer / OAuth / IDV — not in scope"). A naive whole-text scan treats
+  // those exclusions as EXPECTED products and emits false "product-missing"
+  // criticals downstream. Only count a keyword as affirmative when at least
+  // one line that mentions it is NOT a negation/exclusion line.
+  const NEG_RE = /\bnot\b|\bnever\b|n['’]t\b|\bwithout\b|\bexclud\w*|\bnor\b|\binstead\b|\brather than\b|\bout of scope\b|\bnot in scope\b|❌/i;
+  // Operate on whitespace-collapsed text so a negation that wraps onto a
+  // separate physical line ("…do not bundle `auth`,\n`identity`, or `signal`")
+  // still sits in the same window as the keyword. For each match, inspect a
+  // window ~55 chars before + ~28 after (covers leading "do not bundle …" and
+  // trailing "… — not in scope"). Affirmative iff at least one match has a
+  // clean (non-negated) window.
+  const collapsed = lower.replace(/\s+/g, ' ');
+  const mentionedAffirmatively = (re) => {
+    const gre = new RegExp(re.source, 'gi');
+    let mm;
+    while ((mm = gre.exec(collapsed))) {
+      const s = Math.max(0, mm.index - 55);
+      const e = Math.min(collapsed.length, mm.index + mm[0].length + 28);
+      if (!NEG_RE.test(collapsed.slice(s, e))) return true;
+      if (gre.lastIndex === mm.index) gre.lastIndex++; // guard zero-width
+    }
+    return false; // all mentions negated, or none found → don't add
+  };
+  if (mentionedAffirmatively(/\bauth\b|\binstant auth\b/i)) addProduct('Auth');
+  if (mentionedAffirmatively(/\bidentity\s*(?:match|verification)?\b|\bidv\b/i)) addProduct('Identity Match');
+  // "signal" is also common English ("cash-flow signal", "strong signal") —
+  // require the product form ("Plaid Signal") in prose, or a declared mention.
+  if ((mentionedAffirmatively(/\bplaid\s+signal\b/i) || /\bsignal\b/.test(declaredText))) addProduct('Signal');
+  if (mentionedAffirmatively(/\bcra\b|\bbase report\b|\bconsumer report\b/i)) addProduct('CRA Base Report');
+  if (mentionedAffirmatively(/\bbank income\b/i)) addProduct('Bank Income');
+  if (mentionedAffirmatively(/\bincome\s+insights\b/i)) addProduct('Income Insights');
+  // "Statements" is common English ("bank statements") — declared-list only,
+  // same rationale as Layer / Transfer below.
+  if (/\bstatements\b/.test(declaredText)) addProduct('Statements');
   // Two products are added ONLY from the declared list — both have words that
   // are common English (Layer = stack of approvals, Transfer = the verb), so
   // a free-text keyword scan would produce false positives that get flagged
