@@ -10,7 +10,7 @@ use_cases:
   - "consumer-report-income-review"
   - "income-stability-assessment"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-05-25T15:56:09.783Z"
+last_ai_update: "2026-05-29T22:56:26.434Z"
 needs_review: true
 approved: true
 version: 1
@@ -157,6 +157,16 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-29 — Run: 2026-05-29-Application-Dashboard-With-An-CRA-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Keep income-oriented report context inside the same Plaid Check consumer-report workflow.","status":"approved"}
+- [high] {"claim":"Avoid blending consumer-report review with separate traditional income-verification product flows.","status":"approved"}
+- [high] {"claim":"Model-driven income insights on ability-to-pay: historical average monthly income (gross & net), forecasted income (next 3 months), predicted next payment date, employer name / income provider, and 13+ income type categories.","source":"CRA Income Insights Model Fact Sheet, Nov 2025","status":"DRAFT"}
+- [high] {"claim":"Built as FCRA-compliant upgrade to Bank Income; GTM advises migrating US Bank Income users to CRA Income Insights when using data for underwriting or income verification.","source":"Glean GTM research, Oct 2025","status":"DRAFT"}
+- [high] {"claim":"High-precision salary categorization (~0.90 precision, ~0.92 recall).","source":"CRA Income Insights Model Fact Sheet, Nov 2025","status":"DRAFT"}
+- [high] {"claim":"Employer/income provider normalization returns a name on ~64% of income streams.","source":"CRA Income Insights Model Fact Sheet, Nov 2025","status":"DRAFT"}
+- [high] {"claim":"Frequency detection: 57% all streams, 83% on streams with 3+ transactions, 95-98% on salary/retirement/LTD.","source":"CRA Income Insights Model Fact Sheet, Nov 2025","status":"DRAFT"}
 
 ### 2026-05-25 — Run: 2026-05-25-Demo-CRA-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**
