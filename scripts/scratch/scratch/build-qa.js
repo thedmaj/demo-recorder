@@ -2441,6 +2441,20 @@ function evaluateApiStoryAlignment(step) {
       responseHints: ['liabilities', 'mortgage', 'student', 'credit', 'apr', 'current_balance', 'last_payment_amount', 'origination_principal_amount'],
       label: 'liabilities context',
     },
+    {
+      key: 'transactions',
+      storyPattern: /\btransaction|merchant|category|spend|purchase|sync|cash ?flow\b/i,
+      endpointPattern: /\/transactions\/(sync|get)\b/,
+      responseHints: ['added', 'modified', 'removed', 'transactions', 'merchant_name', 'personal_finance_category', 'category', 'amount', 'date', 'name'],
+      label: 'transactions context',
+    },
+    {
+      key: 'investments',
+      storyPattern: /\binvestment|holding|ticker|portfolio|securit|allocation|brokerage\b/i,
+      endpointPattern: /\/investments\/(holdings|transactions)\/get\b/,
+      responseHints: ['holdings', 'securities', 'security_id', 'ticker_symbol', 'quantity', 'institution_value', 'institution_price', 'cost_basis', 'iso_currency_code'],
+      label: 'investments holdings context',
+    },
   ];
 
   const endpointCheck = checks.find((c) => c.endpointPattern.test(endpoint));
