@@ -540,6 +540,40 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   merged = sanitizeClientRequest(merged);
   if (!merged.products || !merged.products.length) merged.products = defaultProductsForFamily(productFamily);
 
+  // Guard: AskBill's suggestedClientRequest sometimes returns Plaid Protect
+  // umbrella products (protect_linked_bank / protect_transactions / monitor)
+  // for funding / Signal demos that are NOT Protect demos. protect_linked_bank
+  // requires special account enablement and 400s /link/token/create on accounts
+  // without it (e.g. "not enabled for protect_linked_bank"), halting the build.
+  // Strip those umbrella products unless the prompt genuinely signals Plaid
+  // Protect intent or the family is a Protect family — then ensure a base
+  // account-linking product remains (signal/monitor are ride-alongs).
+  const lcPrompt = promptText.toLowerCase();
+  const genuineProtectIntent =
+    /\bplaid\s+protect\b/.test(lcPrompt) || /\btrust\s+index\b/.test(lcPrompt) ||
+    /\bti2\b/.test(lcPrompt) || /\bprotect_linked_bank\b/.test(lcPrompt) ||
+    /\/protect\/event\/send\b/.test(lcPrompt) || /\/protect\/user\/insights\b/.test(lcPrompt);
+  const isProtectFamily = /protect|trust_index/.test(String(productFamily).toLowerCase());
+  const droppedProtect = [];
+  if (!genuineProtectIntent && !isProtectFamily && Array.isArray(merged.products)) {
+    merged.products = merged.products.filter((p) => {
+      const drop = /^(?:protect_linked_bank|protect_transactions|monitor)$/.test(String(p));
+      if (drop) droppedProtect.push(p);
+      return !drop;
+    });
+    // signal/monitor/protect_* are ride-along risk products that need a base
+    // account-linking product — guarantee one is present.
+    const BASE = /^(?:auth|transactions|identity|investments|investments_auth|liabilities|income_verification|cra_base_report)$/;
+    if (!merged.products.some((p) => BASE.test(String(p)))) {
+      merged.products = mergeProductLists(['auth'], merged.products);
+    }
+  }
+  if (droppedProtect.length) {
+    console.warn(
+      `[link-token-create-config] stripped non-Protect umbrella product(s) [${droppedProtect.join(', ')}] for family=${productFamily} (no Plaid Protect intent in prompt) → [${merged.products.join(', ')}]`
+    );
+  }
+
   // Enforce Plaid product-mix rules before persisting. The merge pass above
   // can produce illegal combinations (e.g. cra_income_insights +
   // income_verification when prompt language mentions both). Intent is
@@ -557,6 +591,11 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   if (mix.droppedNonCraIncomeIncompatible.length) {
     mixWarnings.push(
       `dropped products incompatible with income_verification: ${mix.droppedNonCraIncomeIncompatible.join(', ')}`
+    );
+  }
+  if (droppedProtect.length) {
+    mixWarnings.push(
+      `dropped Plaid Protect umbrella products (no Protect intent): ${droppedProtect.join(', ')}`
     );
   }
   if (mixWarnings.length) {
@@ -580,6 +619,7 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
       ? {
           droppedCra: mix.droppedCra,
           droppedNonCraIncomeIncompatible: mix.droppedNonCraIncomeIncompatible,
+          droppedProtectUmbrella: droppedProtect,
           intent: intentForMix,
         }
       : null,
