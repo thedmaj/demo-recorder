@@ -2025,7 +2025,21 @@ async function evaluateStepState(page, stepId) {
       apiPanelExists: Boolean(apiPanel),
       apiPanelVisible: isVisible(apiPanel, apiStyle) && !(apiPanel && (apiPanel.classList.contains('api-panel-collapsed') || apiPanel.classList.contains('is-collapsed'))),
       apiBodyVisible: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).display !== 'none' : false,
-      apiBodyOverflowY: apiBodyContainer ? window.getComputedStyle(apiBodyContainer).overflowY : '',
+      // v12 panels make .code-wrap overflow:hidden and let the inner
+      // <pre.code> pane (apiBody) do the actual scrolling (overflow:auto). The
+      // container's overflowY therefore reads "hidden" even though the panel
+      // scrolls fine — report the scrollable child's value when the container
+      // itself isn't scrollable, so we don't false-flag every v12 build.
+      apiBodyOverflowY: (function () {
+        if (!apiBodyContainer) return '';
+        const c = window.getComputedStyle(apiBodyContainer).overflowY;
+        if (/(auto|scroll)/i.test(c)) return c;
+        if (apiBody) {
+          const ic = window.getComputedStyle(apiBody).overflowY;
+          if (/(auto|scroll)/i.test(ic)) return ic;
+        }
+        return c;
+      })(),
       apiJsonToggleExists: Boolean(apiToggle),
       apiPanelChromeTriplet: Boolean(apiToggle),
       apiPanelHasEdgeToggleClass: Boolean(apiToggle && String(apiToggle.className || '').includes('api-panel-edge-toggle')),
