@@ -965,6 +965,180 @@ function evaluateResearchSufficiency({
   };
 }
 
+// ── Parallel gap-fill (fan-out research agents) ──────────────────────────────
+// Instead of a long sequential Claude↔tool loop, gap-fill mode can: (1) PLAN a
+// set of INDEPENDENT gap questions in one call, (2) research them all
+// CONCURRENTLY (each question is its own worker / "agent"), then (3) SYNTHESIZE
+// once. This collapses N sequential round-trips into plan → fan-out → synth and
+// is dramatically faster (and resilient) when the model/MCP is slow.
+
+const PLAN_RESEARCH_GAPS_TOOL = {
+  name: 'plan_research_gaps',
+  description:
+    'Plan the targeted gap-fill research as a set of INDEPENDENT questions that can be researched in ' +
+    'PARALLEL (no question may depend on another question\'s answer). The Plaid integration skill + ' +
+    'per-product KB baseline already cover common flows — only list questions for genuine gaps (exact ' +
+    'field names, sample JSON, sandbox nuances, or messaging/Gong needs). Fewer, sharper questions are ' +
+    'better — do NOT pad. Each gap is dispatched to its own worker simultaneously.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      gaps: {
+        type: 'array',
+        description: '3–8 independent gap questions (fewer is fine if the baseline already covers the brief).',
+        items: {
+          type: 'object',
+          properties: {
+            tool: { type: 'string', enum: ['ask_plaid_docs', 'glean_chat'], description: 'Which research tool answers this gap.' },
+            question: { type: 'string', description: 'A focused, self-contained question/query for the chosen tool.' },
+            intent: { type: 'string', enum: ['gong', 'collateral', 'objections', 'customer_story', 'competitive', 'general'], description: 'For glean_chat only: source intent.' },
+            answerFormat: { type: 'string', enum: ['bullet_list', 'prose', 'json_sample', 'field_list'], description: 'For ask_plaid_docs only: desired answer shape.' },
+          },
+          required: ['tool', 'question'],
+        },
+      },
+    },
+    required: ['gaps'],
+  },
+};
+
+// Bounded-concurrency map: run fn over items with at most `limit` in flight,
+// preserving result order.
+async function concurrentMap(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runner = async () => {
+    while (true) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      results[idx] = await fn(items[idx], idx);
+    }
+  };
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workerCount }, runner));
+  return results;
+}
+
+// Returns { structured } on success, or null to signal the caller should fall
+// back to the sequential tool loop.
+async function runParallelGapfill(context, productSlug, researchOpts, client) {
+  const mode = 'gapfill';
+  const { OPUS_PRIMARY } = require('./utils/anthropic-models');
+  const model = process.env.RESEARCH_SYNTH_MODEL || OPUS_PRIMARY;
+  const toolCaps = getResearchToolCaps();
+  const { system, messages } = buildResearchMessages(context, productSlug, researchOpts);
+
+  // 1. PLAN ─ one call enumerates independent gap questions.
+  let gaps = [];
+  try {
+    const planResp = await client.messages.create({
+      model,
+      max_tokens: 1500,
+      system,
+      tools: [PLAN_RESEARCH_GAPS_TOOL],
+      tool_choice: { type: 'tool', name: 'plan_research_gaps' },
+      messages: [
+        ...messages,
+        {
+          role: 'user',
+          content:
+            'Plan the gap-fill research now. Call plan_research_gaps with INDEPENDENT questions that can be ' +
+            'researched in parallel — each must stand alone (no question depends on another\'s answer). Only ' +
+            'include genuine gaps not already covered by the integration skill or the per-product KB. Prefer ' +
+            'ask_plaid_docs for API/schema facts; use glean_chat only when the brief explicitly needs ' +
+            'Gong/collateral/customer stories.',
+        },
+      ],
+    });
+    const planBlock = planResp.content.find((b) => b.type === 'tool_use' && b.name === 'plan_research_gaps');
+    gaps = Array.isArray(planBlock?.input?.gaps) ? planBlock.input.gaps : [];
+  } catch (err) {
+    console.warn(`[Research][parallel] gap planning failed: ${err.message} — falling back to sequential loop.`);
+    return null;
+  }
+
+  gaps = gaps
+    .filter((g) => g && typeof g.question === 'string' && g.question.trim() &&
+      (g.tool === 'ask_plaid_docs' || g.tool === 'glean_chat'))
+    .slice(0, Math.max(1, parseInt(process.env.RESEARCH_GAP_MAX || '8', 10)));
+  if (gaps.length === 0) {
+    console.warn('[Research][parallel] planner returned 0 gaps — falling back to sequential loop.');
+    return null;
+  }
+  console.log(`[Research][parallel] planned ${gaps.length} independent gap question(s); dispatching concurrently...`);
+  appendPipelineLogJson('[RESEARCH] Parallel gap plan', { gaps }, { runDir: OUT_DIR });
+
+  // 2. FAN-OUT ─ research every gap concurrently (each is its own worker/agent).
+  const concurrency = Math.max(1, parseInt(process.env.RESEARCH_GAP_CONCURRENCY || '5', 10));
+  const askBillCache = new Map();
+  const normQ = (q) => String(q || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const evidence = await concurrentMap(gaps, concurrency, async (g) => {
+    const t0 = Date.now();
+    try {
+      let result;
+      if (g.tool === 'ask_plaid_docs') {
+        const key = normQ(g.question);
+        if (askBillCache.has(key)) {
+          result = await askBillCache.get(key);
+        } else {
+          const p = executeTool('ask_plaid_docs', { question: g.question, answerFormat: g.answerFormat })
+            .then((r) => (typeof r === 'string' ? r : JSON.stringify(r, null, 2)));
+          askBillCache.set(key, p);
+          result = await p;
+        }
+      } else {
+        result = await executeTool('glean_chat', { query: g.question, intent: g.intent });
+      }
+      const str = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+      console.log(`  ✓ [${g.tool}] ${g.question.slice(0, 60)} → ${str.length} chars (${Math.round((Date.now() - t0) / 1000)}s)`);
+      appendResearchToolExchange({ iteration: 'parallel-gapfill', toolName: g.tool, query: g.question, response: str, maxChars: toolCaps.logMaxChars }, { runDir: OUT_DIR });
+      const cap = g.tool === 'glean_chat' ? toolCaps.glean : toolCaps.ask_plaid_docs;
+      return { tool: g.tool, question: g.question, content: str.slice(0, cap) };
+    } catch (err) {
+      console.warn(`  ✗ [${g.tool}] ${g.question.slice(0, 60)} error: ${err.message}`);
+      appendResearchToolExchange({ iteration: 'parallel-gapfill', toolName: g.tool, query: g.question, error: err.message }, { runDir: OUT_DIR });
+      return { tool: g.tool, question: g.question, content: `Error: ${err.message}`, error: true };
+    }
+  });
+
+  // 3. SYNTHESIZE ─ one call merges all gap evidence into structured output.
+  const evidenceText = evidence
+    .map((e) => `### ${e.tool} — ${e.question}\n${e.content}`)
+    .join('\n\n')
+    .slice(-120000);
+  try {
+    const synthResp = await client.messages.create({
+      model,
+      max_tokens: 4096,
+      system,
+      tools: [{ name: 'synthesize_research', description: synthesizeToolDescription(mode), input_schema: SYNTHESIZE_INPUT_SCHEMA }],
+      tool_choice: { type: 'tool', name: 'synthesize_research' },
+      messages: [
+        ...messages,
+        {
+          role: 'user',
+          content:
+            'Parallel gap-fill research is complete. Below are the answers to each planned gap question. Call ' +
+            'synthesize_research ONCE with the structured output, combining this evidence with the integration ' +
+            'skill + per-product KB baseline. Put anything still unresolved in gapQuestions. Do NOT request more tools.\n\n' +
+            '===== GAP RESEARCH RESULTS =====\n' + evidenceText,
+        },
+      ],
+    });
+    const synthBlock = synthResp.content.find((b) => b.type === 'tool_use' && b.name === 'synthesize_research');
+    if (synthBlock) {
+      console.log('[Research][parallel] structured synthesis received.');
+      appendPipelineLogJson('[RESEARCH] Parallel synthesis (tool)', synthBlock.input, { runDir: OUT_DIR });
+      return { structured: synthBlock.input };
+    }
+    console.warn('[Research][parallel] synthesis returned no tool block — falling back to sequential loop.');
+    return null;
+  } catch (err) {
+    console.warn(`[Research][parallel] synthesis failed: ${err.message} — falling back to sequential loop.`);
+    return null;
+  }
+}
+
 // ── Main research loop ─────────────────────────────────────────────────────────
 
 async function runResearch(context, productSlug, researchOpts = {}) {
@@ -1028,6 +1202,25 @@ async function runResearch(context, productSlug, researchOpts = {}) {
     } catch (err) {
       console.warn(`Could not write research-sufficiency-report.json: ${err.message}`);
     }
+  }
+
+  // Parallel gap-fill fast path: plan independent gap questions, research them
+  // concurrently, then synthesize once. Default ON for gapfill mode; disable
+  // with RESEARCH_PARALLEL_GAPFILL=false. Any failure falls through to the
+  // sequential tool loop below.
+  const parallelGapfillEnabled =
+    mode === 'gapfill' &&
+    String(process.env.RESEARCH_PARALLEL_GAPFILL || 'true').trim().toLowerCase() !== 'false';
+  if (parallelGapfillEnabled) {
+    console.log('[Research] Parallel gap-fill enabled — planning + fanning out gap questions concurrently.');
+    appendPipelineLogSection('[RESEARCH] Parallel gap-fill', ['mode=gapfill', 'path=plan→fanout→synthesize'], { runDir: OUT_DIR });
+    const parallelResult = await runParallelGapfill(context, productSlug, researchOpts, client);
+    if (parallelResult && parallelResult.structured) {
+      sufficiencyReport.finalDecisionPath = 'parallel-gapfill';
+      persistSufficiencyReport();
+      return parallelResult;
+    }
+    console.warn('[Research] Parallel gap-fill produced no result — continuing with the sequential tool loop.');
   }
 
   while (true) {
@@ -1154,9 +1347,16 @@ async function runResearch(context, productSlug, researchOpts = {}) {
       // Add assistant message with all content blocks
       messages.push({ role: 'assistant', content: response.content });
 
-      // Execute tools in parallel
-      const toolResults = [];
-      for (const block of toolBlocks) {
+      // Execute all tool calls in this turn CONCURRENTLY. AskBill results are
+      // deduped across the whole run via a PROMISE cache, so identical
+      // questions — even fired in the same turn — share a single network call.
+      const toolResults = await Promise.all(toolBlocks.map(async (block) => {
+        const cap =
+          block.name === 'glean_chat'
+            ? toolCaps.glean
+            : block.name === 'ask_plaid_docs'
+              ? toolCaps.ask_plaid_docs
+              : toolCaps.default;
         try {
           let result;
           let deduped = false;
@@ -1164,11 +1364,12 @@ async function runResearch(context, productSlug, researchOpts = {}) {
             const norm = normalizeAskBillQuestion(block.input.question);
             if (askBillCache.has(norm)) {
               deduped = true;
-              result = askBillCache.get(norm);
+              result = await askBillCache.get(norm);
             } else {
-              result = await executeTool(block.name, block.input);
-              const toStore = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-              askBillCache.set(norm, toStore);
+              const p = executeTool(block.name, block.input)
+                .then((r) => (typeof r === 'string' ? r : JSON.stringify(r, null, 2)));
+              askBillCache.set(norm, p);
+              result = await p;
             }
           } else {
             result = await executeTool(block.name, block.input);
@@ -1184,17 +1385,11 @@ async function runResearch(context, productSlug, researchOpts = {}) {
             response: resultStr,
             maxChars: toolCaps.logMaxChars,
           }, { runDir: OUT_DIR });
-          const cap =
-            block.name === 'glean_chat'
-              ? toolCaps.glean
-              : block.name === 'ask_plaid_docs'
-                ? toolCaps.ask_plaid_docs
-                : toolCaps.default;
-          toolResults.push({
+          return {
             type: 'tool_result',
             tool_use_id: block.id,
             content: resultStr.substring(0, cap),
-          });
+          };
         } catch (err) {
           console.warn(`  ✗ ${block.name} error: ${err.message}`);
           appendResearchToolExchange({
@@ -1203,14 +1398,14 @@ async function runResearch(context, productSlug, researchOpts = {}) {
             query: block.input.question || block.input.query || '',
             error: err.message,
           }, { runDir: OUT_DIR });
-          toolResults.push({
+          return {
             type: 'tool_result',
             tool_use_id: block.id,
             content: `Error: ${err.message}`,
             is_error: true,
-          });
+          };
         }
-      }
+      }));
 
       messages.push({ role: 'user', content: toolResults });
       const compacted = compactResearchMessages(messages, toolCaps.compactKeepTail);
