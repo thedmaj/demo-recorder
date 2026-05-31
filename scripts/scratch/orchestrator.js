@@ -1693,9 +1693,28 @@ async function runAgentTouchupGate({ runDir, iteration, fixModeDecision, phaseMo
   const relTask = path.relative(PROJECT_ROOT, taskPath);
   cliLog(`[Orchestrator] agent-touchup gate (iter ${iteration}, phase=${phaseMode}): ${summary.failingStepCount} failing step(s), score ${summary.overallScore ?? '?'}/${summary.passThreshold}.`);
   cliLog(`[Orchestrator]   task: ${relTask}`);
+
+  // Autonomous mode (SCRATCH_AUTO_APPROVE / PIPELINE_NONINTERACTIVE, no TTY):
+  // there is no interactive agent at the keyboard to edit the task and run
+  // `pipe continue`, so a blocking gate would orphan the orchestrator forever
+  // (observed: idle orchestrators left after a failed build-qa). Skip the gate,
+  // which breaks the refinement loop and lets the run complete cleanly at this
+  // build-qa verdict. The touch-up task is still written for an operator/agent
+  // to act on later (edit + re-run build-qa, or `pipe continue <runId>`).
+  const autonomousGate =
+    (process.env.SCRATCH_AUTO_APPROVE === 'true' || parseBoolEnv(process.env.PIPELINE_NONINTERACTIVE, false)) &&
+    !process.stdin.isTTY;
+  if (autonomousGate) {
+    cliLog(`[Orchestrator]   autonomous mode — not blocking; run ends at this verdict. Touch-up task: ${relTask}`);
+    emitPipeEvent('qa_touchup_gate_autoskip', {
+      iteration, phase: phaseMode, runId: path.basename(runDir), taskPath,
+      overallScore: summary.overallScore, passThreshold: summary.passThreshold,
+    });
+    return { skipped: true, autoSkipped: true, summary };
+  }
+
   cliLog(`[Orchestrator]   open it in Cursor or Claude Code (Agent mode) and edit the failing steps,`);
   cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${path.basename(runDir)}`);
-
   await promptContinue(
     `QA touchup ready (iter ${iteration}). Open ${relTask} in your AI agent, edit the ` +
     `failing steps, then continue.`
@@ -2928,6 +2947,23 @@ async function runScratchPipeline({
         if (ranLanes.agentGateRequested) {
           // The lane wrote a qa-{app-touchup,slide-fix}-task.md and we are
           // running under an agent context — hand control to the agent.
+          // Autonomous mode has no interactive agent to edit + `pipe continue`,
+          // so blocking here would orphan the orchestrator. Break the loop and
+          // let the run complete at this verdict (task files remain for later).
+          const autonomousGate =
+            (process.env.SCRATCH_AUTO_APPROVE === 'true' || parseBoolEnv(process.env.PIPELINE_NONINTERACTIVE, false)) &&
+            !process.stdin.isTTY;
+          if (autonomousGate) {
+            cliLog(
+              `[Orchestrator] Tier-aware recovery (iter ${iter}): autonomous mode — not blocking; ` +
+              `ending at this verdict. Task(s): ${ranLanes.taskFiles.join(' / ')}.`
+            );
+            emitPipeEvent('qa_recovery_gate_autoskip', {
+              iteration: iter, runId: path.basename(versionedDir),
+              failingTiers: ranLanes.failingTiers, taskFiles: ranLanes.taskFiles,
+            });
+            break;
+          }
           // Skip the LLM build for the next iteration: the agent edits
           // existing HTML and `pipe continue` re-runs build-qa.
           process.env.__ORCH_SKIP_NEXT_BUILD = 'true';
