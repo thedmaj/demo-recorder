@@ -592,6 +592,31 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
     );
   }
 
+  // CRA-family demos must NOT carry `signal` (ACH return-risk scoring at
+  // transaction time) just because AskBill's suggestedClientRequest or a stray
+  // keyword pulled it in — CRA is consumer-report underwriting, a different
+  // surface (observed: Rain CRA + CarMax cashflow both got spurious signal).
+  // Strip `signal` for CRA families unless the prompt GENUINELY features Plaid
+  // Signal (affirmative "Plaid Signal" / "/signal/evaluate") or it's in the
+  // declared product list. (protectIntentAffirmative is a generic negation-aware
+  // affirmative-mention check; reused here.)
+  const isCraResolved =
+    /^cra_|income_insights/.test(String(productFamily).toLowerCase()) ||
+    (Array.isArray(merged.products) && merged.products.some((p) => /^cra_|consumer_report/i.test(String(p))));
+  const genuineSignalIntent =
+    protectIntentAffirmative(/\bplaid\s+signal\b/) ||
+    /\/signal\/evaluate\b/.test(lcPrompt) ||
+    /\bsignal\b/.test(declaredText);
+  if (
+    isCraResolved && !genuineSignalIntent &&
+    Array.isArray(merged.products) && merged.products.some((p) => String(p).toLowerCase() === 'signal')
+  ) {
+    merged.products = merged.products.filter((p) => String(p).toLowerCase() !== 'signal');
+    console.warn(
+      `[link-token-create-config] stripped 'signal' from CRA-family products (no explicit Plaid Signal intent) for family=${productFamily} → [${merged.products.join(', ')}]`
+    );
+  }
+
   // Enforce Plaid product-mix rules before persisting. The merge pass above
   // can produce illegal combinations (e.g. cra_income_insights +
   // income_verification when prompt language mentions both). Intent is
