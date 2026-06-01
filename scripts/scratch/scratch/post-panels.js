@@ -725,7 +725,7 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       // Panel chrome
       '#api-response-panel.panel,section#api-response-panel{',
       '  position:fixed !important;top:0 !important;right:0 !important;bottom:0 !important;left:auto !important;',
-      '  width:min(1080px,92vw) !important;min-width:0 !important;max-width:none !important;height:auto !important;',
+      '  width:min(720px,92vw) !important;min-width:0 !important;max-width:none !important;height:auto !important;',
       '  background:var(--panel-bg) !important;',
       '  border-left:1px solid var(--panel-border) !important;',
       '  box-shadow:0 32px 80px rgba(2,37,68,0.14),0 8px 24px rgba(2,37,68,0.08);',
@@ -738,7 +738,7 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       // Collapsed: slide out + carry chevron with us to the viewport right edge
       '#api-response-panel.panel.is-collapsed,#api-response-panel.is-collapsed{',
       '  transform:translateX(100%) !important;',
-      '  width:min(1080px,92vw) !important;pointer-events:none;',
+      '  width:min(720px,92vw) !important;pointer-events:none;',
       '}',
       '#api-response-panel.is-collapsed .toggle{pointer-events:auto;}',
       // Chevron toggle
@@ -758,15 +758,15 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '#api-response-panel.is-collapsed .toggle svg{transform:rotate(180deg);}',
       // Header + route + tabs
       '#api-response-panel .panel-head{padding:20px 24px 16px;border-bottom:1px solid var(--panel-border);display:flex !important;align-items:flex-end;justify-content:space-between;gap:24px;}',
-      // Panel typography reduced 20% (2026-05-28) then a further 30%
-      // (2026-06-01) per user request, alongside the +50% expanded width — more
-      // JSON fits in a wider panel at a smaller type size.
-      '#api-response-panel .panel-head .eyebrow{color:var(--plaid-teal-500,#42F0CD);font-size:7px;line-height:1;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;display:block;}',
-      '#api-response-panel .panel-head .route{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:10px;line-height:1.2;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}',
-      '#api-response-panel .panel-head .method{display:inline-block;font-size:6px;font-weight:700;letter-spacing:0.08em;padding:3px 8px;border-radius:4px;background:rgba(66,240,205,0.14);color:var(--plaid-teal-500,#42F0CD);border:1px solid rgba(66,240,205,0.28);font-family:-apple-system,BlinkMacSystemFont,sans-serif;}',
+      // Panel typography reduced 20% (2026-05-28) per user request: smaller
+      // panel chrome so JSON content has more visual weight. Affects every
+      // text element inside #api-response-panel.
+      '#api-response-panel .panel-head .eyebrow{color:var(--plaid-teal-500,#42F0CD);font-size:10px;line-height:1;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:8px;display:block;}',
+      '#api-response-panel .panel-head .route{font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:14px;line-height:1.2;color:#fff;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}',
+      '#api-response-panel .panel-head .method{display:inline-block;font-size:9px;font-weight:700;letter-spacing:0.08em;padding:3px 8px;border-radius:4px;background:rgba(66,240,205,0.14);color:var(--plaid-teal-500,#42F0CD);border:1px solid rgba(66,240,205,0.28);font-family:-apple-system,BlinkMacSystemFont,sans-serif;}',
       '#api-response-panel .panel-head .path{color:rgba(255,255,255,0.92);}',
       '#api-response-panel .tabs{display:inline-flex !important;gap:2px;padding:3px;background:rgba(0,0,0,0.28);border:1px solid var(--panel-border);border-radius:8px;}',
-      '#api-response-panel .tab{appearance:none;border:0;background:transparent;font:inherit;color:rgba(255,255,255,0.62);padding:7px 14px;border-radius:6px;font-size:7px;font-weight:500;cursor:pointer;transition:color 150ms cubic-bezier(0.4,0,0.2,1),background 150ms cubic-bezier(0.4,0,0.2,1);}',
+      '#api-response-panel .tab{appearance:none;border:0;background:transparent;font:inherit;color:rgba(255,255,255,0.62);padding:7px 14px;border-radius:6px;font-size:10px;font-weight:500;cursor:pointer;transition:color 150ms cubic-bezier(0.4,0,0.2,1),background 150ms cubic-bezier(0.4,0,0.2,1);}',
       '#api-response-panel .tab:hover{color:#fff;}',
       '#api-response-panel .tab[aria-selected="true"]{background:var(--plaid-blue-600,#0B7BBC);color:#fff;box-shadow:0 1px 0 rgba(255,255,255,0.08) inset;}',
       // Toolbar
@@ -778,7 +778,7 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       '#api-response-panel .panel-toolbar, #api-response-panel #api-panel-content-type, #api-response-panel .copy-btn, #api-response-panel #api-panel-copy { display: none !important; }',
       // Code panes
       '#api-response-panel .code-wrap{position:relative;flex:1;min-height:0;overflow:hidden;}',
-      '#api-response-panel pre.code{margin:0;padding:20px 24px 24px;font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:7px;line-height:1.65;color:#DCE7F2;overflow:auto;height:100%;tab-size:2;background:transparent;}',
+      '#api-response-panel pre.code{margin:0;padding:20px 24px 24px;font-family:"SF Mono","JetBrains Mono",ui-monospace,monospace;font-size:10px;line-height:1.65;color:#DCE7F2;overflow:auto;height:100%;tab-size:2;background:transparent;}',
       '#api-response-panel [data-pane]{display:none !important;}',
       '#api-response-panel [data-pane].is-active{display:block !important;}',
       // renderjson tokens — Claude Design palette
