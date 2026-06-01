@@ -2434,8 +2434,21 @@ function evaluateApiStoryAlignment(step) {
       label: 'identity context',
     },
     {
+      // Connection-repair / Link update mode (item_login_required recovery).
+      // Listed BEFORE 'auth' so a re-authentication / reconnect story matches
+      // here instead of false-matching the auth-rails context (the word
+      // "re-authenticate" otherwise tripped the auth pattern).
+      key: 'updateMode',
+      storyPattern: /update[\s_-]?mode|item_login_required|login_repaired|re-?auth\w*|reconnect|repair (?:the )?connection|relink/i,
+      endpointPattern: /reset_login|login_repaired|item_login_required|update[\s_-]?mode/i,
+      responseHints: ['link_token', 'expiration', 'reset_login', 'login_repaired', 'item_login_required', 'item_id', 'request_id', 'access_token'],
+      label: 'update-mode / connection-repair context',
+    },
+    {
       key: 'auth',
-      storyPattern: /\bauth|routing|account number|ach rails|wire routing|depository\b/i,
+      // Word-boundary the tokens so "authenticate"/"authentication"/"authorize"
+      // don't false-match the auth-rails context (e.g. on a re-auth beat).
+      storyPattern: /\bauth\b|\brouting\b|\baccount number\b|\bach rails\b|\bwire routing\b|\bdepository\b/i,
       endpointPattern: /\/auth\/get\b/,
       responseHints: ['numbers', 'ach', 'routing', 'account', 'mask', 'subtype'],
       label: 'auth rails context',
