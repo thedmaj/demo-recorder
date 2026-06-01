@@ -1051,6 +1051,74 @@ async function getIdentityVerification(identityVerificationId) {
   return data;
 }
 
+// ── Update mode (connection repair) ─────────────────────────────────────────
+//
+// "Reconnect bank" relaunches Plaid Link in UPDATE MODE to repair an Item in
+// ITEM_LOGIN_REQUIRED. Verified flow (AskBill 2026-06-01):
+//   • Server mints an update-mode link_token via /link/token/create with the
+//     existing access_token and NO products (login-repair). Tokens expire fast.
+//   • Client launches the SAME way (Plaid.create({token,...}) + open()).
+//   • onSuccess fires with a public_token but you DO NOT exchange it — the
+//     existing access_token stays valid. Recovery confirmed by ITEM/LOGIN_REPAIRED.
+// Sandbox testing: force the state with /sandbox/item/reset_login, then re-auth
+// with user_good/pass_good.
+
+/**
+ * Sandbox: force an Item into ITEM_LOGIN_REQUIRED so update mode can be tested.
+ * @param {{ accessToken: string }} opts
+ */
+async function resetLogin({ accessToken } = {}) {
+  if (!accessToken) throw new Error('resetLogin: accessToken required');
+  const data = await plaidPost('/sandbox/item/reset_login', { access_token: accessToken });
+  console.log(`[plaid-backend] /sandbox/item/reset_login → reset_login=${data.reset_login}`);
+  return data;
+}
+
+/**
+ * Create a self-contained Sandbox Item (no Link) and return its access_token.
+ * Used so a demo "reconnect" beat can repair a real Item without depending on
+ * the primary Link session. Defaults to First Platypus Bank + transactions.
+ * @param {{ institutionId?: string, initialProducts?: string[] }} [opts]
+ * @returns {Promise<{ access_token: string, item_id: string }>}
+ */
+async function createSandboxItemAccessToken(opts = {}) {
+  const institutionId = opts.institutionId || 'ins_109508'; // First Platypus Bank (non-OAuth)
+  const initialProducts = Array.isArray(opts.initialProducts) && opts.initialProducts.length
+    ? opts.initialProducts
+    : ['transactions'];
+  const pub = await plaidPost('/sandbox/public_token/create', {
+    institution_id: institutionId,
+    initial_products: initialProducts,
+  });
+  const exchanged = await plaidPost('/item/public_token/exchange', { public_token: pub.public_token });
+  console.log(`[plaid-backend] sandbox item created (item_id=${exchanged.item_id?.slice(0, 12)}…) for update-mode repair`);
+  return { access_token: exchanged.access_token, item_id: exchanged.item_id };
+}
+
+/**
+ * Mint an UPDATE-MODE link_token for an existing Item (login repair). Pass the
+ * existing access_token and OMIT products. Returns the link_token to launch in
+ * Plaid Link exactly like a normal session.
+ * @param {{ accessToken: string, clientUserId?: string, clientName?: string }} opts
+ * @returns {Promise<{ link_token: string, expiration: string }>}
+ */
+async function createUpdateModeLinkToken(opts = {}) {
+  const accessToken = opts.accessToken || opts.access_token;
+  if (!accessToken) throw new Error('createUpdateModeLinkToken: accessToken required');
+  const clientUserId = opts.clientUserId || opts.client_user_id || 'demo-user-001';
+  const clientName = resolvePromptDerivedClientName(opts) || opts.clientName || opts.client_name || 'Plaid Demo';
+  // Update mode for login repair: access_token + user, NO products.
+  const data = await plaidPost('/link/token/create', {
+    client_name: clientName,
+    language: 'en',
+    country_codes: ['US'],
+    user: { client_user_id: clientUserId },
+    access_token: accessToken,
+  });
+  console.log(`[plaid-backend] update-mode link token created (len=${(data.link_token || '').length}, exp=${data.expiration || '?'})`);
+  return { link_token: data.link_token, expiration: data.expiration };
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -1071,4 +1139,7 @@ module.exports = {
   evaluateSignal,
   userAccountSessionGet,
   verifyLayerActivation,
+  resetLogin,
+  createSandboxItemAccessToken,
+  createUpdateModeLinkToken,
 };

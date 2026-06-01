@@ -353,6 +353,44 @@ async function handleApiRoute(req, res, urlPath, context = {}) {
         return true;
       }
 
+      case '/api/create-update-link-token': {
+        // "Reconnect bank" → relaunch Plaid Link in UPDATE MODE to repair an
+        // ITEM_LOGIN_REQUIRED Item. Self-contained for demos: if the caller
+        // didn't supply an existing access_token, create a Sandbox Item, force
+        // it into ITEM_LOGIN_REQUIRED (/sandbox/item/reset_login), then mint an
+        // update-mode link_token (access_token, NO products). The client
+        // launches it like a normal Link session; on success it must NOT
+        // exchange the public_token — the existing access_token stays valid.
+        let accessToken = body.access_token || body.accessToken || null;
+        let itemId = body.item_id || body.itemId || null;
+        if (!accessToken) {
+          const sandboxItem = await plaid.createSandboxItemAccessToken({
+            institutionId: body.institution_id || body.institutionId || null,
+            initialProducts: body.initial_products || body.initialProducts || null,
+          });
+          accessToken = sandboxItem.access_token;
+          itemId = sandboxItem.item_id;
+        }
+        // Force the login-required state so update mode has something to repair.
+        try { await plaid.resetLogin({ accessToken }); }
+        catch (e) { console.warn(`[app-server] /api/create-update-link-token: reset_login skipped (${e && e.message || e})`); }
+        const upd = await plaid.createUpdateModeLinkToken({
+          accessToken,
+          clientUserId: body.userId || body.user_id || body.client_user_id || undefined,
+          clientName: body.clientName || body.client_name,
+          runDir: context.runDir || process.env.PIPELINE_RUN_DIR || null,
+        });
+        sendJson(res, 200, {
+          link_token: upd.link_token,
+          expiration: upd.expiration,
+          access_token: accessToken,
+          item_id: itemId,
+          update_mode: true,
+          reset_login: true,
+        });
+        return true;
+      }
+
       case '/api/exchange-public-token': {
         const result = await plaid.exchangePublicToken(body.public_token, {
           productFamily:   body.productFamily || body.product_family || null,

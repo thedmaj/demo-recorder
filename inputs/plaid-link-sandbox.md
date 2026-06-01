@@ -201,3 +201,36 @@ or `/session/token/create` with `template_id` for Layer + CRA.
 | Bank Income (traditional) | First Platypus Bank | `user_bank_income` | `{}` | Non-OAuth only; not CRA-primary |
 | MFA | First Platypus Bank | `user_good` | `mfa_device` | OTP: `1234` |
 | Error test | First Platypus Bank | `user_good` | `error_ITEM_LOCKED` | Any `error_*` value |
+| Update mode (repair) | (existing Item) | `user_good` | `pass_good` | Relaunch Link in update mode — see §8 |
+
+---
+
+## 8. Update Mode (connection repair)
+
+When a bank connection lapses (Item enters **`ITEM_LOGIN_REQUIRED`**), a **"Reconnect bank"**
+action must **actually relaunch Plaid Link in UPDATE MODE** — never a static/host illustration.
+Update mode re-auths the existing Item in place: no new Item, no `public_token` re-exchange, no
+lost history. (Verified via AskBill, 2026-06-01.)
+
+**Server — mint the update-mode link token** (`/link/token/create`): pass the existing
+`access_token` and **OMIT `products`** (login-repair). Update-mode tokens expire fast (~30 min).
+**Client — launch identically** to a normal session: `Plaid.create({ token, onSuccess, onExit,
+onEvent })` then `handler.open()`. `onSuccess` fires with a `public_token` but you **do NOT** call
+`/item/public_token/exchange` — the existing `access_token` stays valid. Recovery is confirmed by
+the **`ITEM` / `LOGIN_REPAIRED`** webhook.
+
+**Sandbox testing — force and repair `item_login_required`:**
+1. Have an Item's `access_token` (or create one: `/sandbox/public_token/create` →
+   `/item/public_token/exchange`).
+2. `POST /sandbox/item/reset_login` (`access_token`) → forces `ITEM_LOGIN_REQUIRED` (fires
+   `ITEM`/`ERROR`).
+3. `POST /link/token/create` (`access_token`, no `products`) → update-mode `link_token`.
+4. Launch Link, re-auth with **`user_good` / `pass_good`** → Link closes, Item repaired,
+   `ITEM`/`LOGIN_REPAIRED` fires.
+
+**Demo pipeline:** the app-server exposes **`POST /api/create-update-link-token`** (backed by
+`plaid-backend.createUpdateModeLinkToken` + `resetLogin`). With no body it is self-contained —
+it creates a Sandbox Item, forces `ITEM_LOGIN_REQUIRED`, and returns an update-mode `link_token` —
+so a "Reconnect bank" CTA can launch a **real** update-mode Link: fetch the token →
+`Plaid.create({ token }).open()` → `onSuccess` (mark repaired, **no exchange**). Pass an existing
+`access_token` in the body to repair that specific Item instead.

@@ -1807,6 +1807,24 @@ contract that the next stage knows how to fill.\n` +
     });
   }
 
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## UPDATE MODE — "Reconnect bank" launches a REAL Plaid Link (connection repair)\n\n` +
+      `If a beat depicts a lapsed bank connection (Item in ITEM_LOGIN_REQUIRED) with a "Reconnect" / ` +
+      `"Repair connection" CTA, that CTA MUST relaunch Plaid Link in **update mode** with the real ` +
+      `SDK — NOT a static host card or screenshot.\n` +
+      `- Fetch the token from **POST /api/create-update-link-token** (no body needed — it is ` +
+      `self-contained in sandbox: creates an Item, forces ITEM_LOGIN_REQUIRED, returns an ` +
+      `update-mode link_token built from the existing access_token with NO products[]).\n` +
+      `- Launch identically to the primary flow: \`Plaid.create({ token, onSuccess, onExit, onEvent }).open()\`.\n` +
+      `- In onSuccess (update mode): mark the connection repaired and set window._plaidLinkComplete=true; ` +
+      `**do NOT** call /api/exchange-public-token — the existing access_token stays valid (recovery = ` +
+      `ITEM/LOGIN_REPAIRED). Re-auth in sandbox with user_good / pass_good.\n` +
+      `- Keep the PRIMARY connection as the single plaidPhase:"launch" recorded step; the reconnect ` +
+      `beat is a separate host-triggered launch. Full reference: inputs/plaid-link-sandbox.md §8.\n`,
+  });
+
   const brandSiteB64 =
     typeof opts.brandSiteReferenceBase64 === 'string' ? opts.brandSiteReferenceBase64.trim() : '';
   if (brandSiteB64) {

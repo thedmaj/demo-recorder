@@ -257,6 +257,26 @@ Pure helpers (tests): `sanitizeProductsForLinkTokenMix` (link-token-create-confi
 `resolveCreateLinkTokenProducts` / `loadResearchLinkTokenConfig` (app-server.js). Tests:
 `tests/unit/link-token-create-config.test.js`, `tests/unit/app-server-link-token-resolution.test.js`.
 
+## Update mode — "Reconnect bank" launches a REAL Plaid Link (never a host illustration)
+
+When a beat depicts a lapsed connection (Item in `ITEM_LOGIN_REQUIRED`) and a **"Reconnect bank"**
+action, the CTA MUST relaunch Plaid Link in **update mode** with the real SDK — do NOT fake it with
+a host card/screenshot.
+
+- **Token:** fetch from **`POST /api/create-update-link-token`** (app-server, backed by
+  `plaid-backend.createUpdateModeLinkToken` + `resetLogin`). Body-less call is self-contained: it
+  creates a Sandbox Item, forces `ITEM_LOGIN_REQUIRED` via `/sandbox/item/reset_login`, and returns
+  an update-mode `link_token` (built from the existing `access_token`, **no `products[]`**).
+- **Launch:** identical to a normal session — `Plaid.create({ token, onSuccess, onExit, onEvent })`
+  then `handler.open()`. Reuse the `## Plaid.create callback pattern`.
+- **onSuccess in update mode:** mark the connection repaired; **do NOT** call
+  `/api/exchange-public-token` — the existing `access_token` stays valid. Recovery is confirmed by
+  the `ITEM` / `LOGIN_REPAIRED` webhook (sandbox: re-auth `user_good` / `pass_good`).
+- **Recording note:** this is a SECOND Link launch. Keep the PRIMARY connection as the single
+  `plaidPhase:"launch"` recorded step; a reconnect/update-mode beat is a separate host-triggered
+  launch (fine for non-recorded / build-qa runs). Full reference + sandbox testing:
+  `inputs/plaid-link-sandbox.md` §8.
+
 ## Related skills / references
 
 - Embedded Link UX: `skills/plaid-link-embedded-link-skill.md`
