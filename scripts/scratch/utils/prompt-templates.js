@@ -1825,6 +1825,22 @@ contract that the next stage knows how to fill.\n` +
       `beat is a separate host-triggered launch. Full reference: inputs/plaid-link-sandbox.md §8.\n`,
   });
 
+  contentBlocks.push({
+    type: 'text',
+    text:
+      `## MULTI-ITEM LINK (CRA default) — onSuccess fires EMPTY\n\n` +
+      `CRA / Consumer Report demos run in multi-item link mode (enable_multi_item_link:true, set by ` +
+      `the backend) so one session can connect multiple institutions into a single Consumer Report. ` +
+      `The client behavior differs: **onSuccess fires EMPTY (no public_token).** Wire completion ` +
+      `defensively so the demo never stalls waiting for a token:\n` +
+      `- In onSuccess (may be empty): set window._plaidLinkComplete=true and goToStep(<first post-link step>).\n` +
+      `- ALSO in onEvent: if (eventName === 'HANDOFF') window._plaidLinkComplete=true; — multi-item ` +
+      `onSuccess can be empty/late, HANDOFF is the reliable session-end signal.\n` +
+      `- NEVER require a public_token to advance and do NOT call /api/exchange-public-token with an ` +
+      `empty token. (Real token retrieval is server-side via SESSION_FINISHED / ITEM_ADD_RESULT — ` +
+      `out of scope for the recorded happy path.) Reference: inputs/plaid-link-sandbox.md §9.\n`,
+  });
+
   const brandSiteB64 =
     typeof opts.brandSiteReferenceBase64 === 'string' ? opts.brandSiteReferenceBase64.trim() : '';
   if (brandSiteB64) {

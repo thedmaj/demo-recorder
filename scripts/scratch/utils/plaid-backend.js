@@ -300,6 +300,8 @@ const CREATE_LINK_TOKEN_WRAPPER_KEYS = new Set([
   'run_dir',
   'linkMode',
   'link_mode',
+  'enableMultiItemLink',
+  'enable_multi_item_link',
 ]);
 
 function resolveLinkMode(opts = {}) {
@@ -436,6 +438,17 @@ async function createLinkToken(opts = {}) {
     }
     if (opts.cra_options) body.cra_options = opts.cra_options;
     else if (!body.cra_options) body.cra_options = { days_requested: 180 };
+  }
+
+  // Multi-item link: one session can add Items at multiple institutions; Plaid
+  // (and Plaid Check for CRA) combines them. Mapped explicitly to the snake_case
+  // API field (the camelCase wrapper key is excluded from the generic copy).
+  // NOTE: onSuccess fires EMPTY in multi-item — tokens arrive via SESSION_FINISHED
+  // / ITEM_ADD_RESULT webhooks; not compatible with Embedded Institution Search,
+  // Same-Day/Instant Micro-deposits, or Database Auth.
+  if (opts.enableMultiItemLink ?? opts.enable_multi_item_link) {
+    body.enable_multi_item_link = true;
+    console.log('[plaid-backend] enable_multi_item_link=true (multi-institution session)');
   }
 
   const modeBody = linkModeAdapter.prepareCreateLinkTokenBody(body);
@@ -781,6 +794,15 @@ async function createConsumerReportLinkToken(flat = {}) {
       flat.consumer_report_permissible_purpose ||
       (hasCraProducts(requestedProducts) ? 'EXTENSION_OF_CREDIT' : undefined),
     cra_options: flat.cra_options || (hasCraProducts(requestedProducts) ? { days_requested: 180 } : undefined),
+    // CRA Consumer Reports use MULTI-ITEM LINK by default so a member can
+    // connect accounts at multiple institutions in one session and Plaid Check
+    // builds a single Consumer Report spanning them. Disable with
+    // CRA_MULTI_ITEM_LINK=false. (Multi-item onSuccess fires empty — public
+    // tokens arrive via SESSION_FINISHED / ITEM_ADD_RESULT; see
+    // inputs/plaid-link-sandbox.md §9.)
+    enableMultiItemLink:
+      flat.enableMultiItemLink ?? flat.enable_multi_item_link ??
+      (String(process.env.CRA_MULTI_ITEM_LINK || 'true').trim().toLowerCase() !== 'false'),
     plaidCheckUserId: plaidUserId || undefined,
     userToken: plaidUserId ? undefined : legacyToken || undefined,
     runDir: flat.runDir || undefined,

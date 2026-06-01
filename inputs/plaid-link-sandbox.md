@@ -234,3 +234,36 @@ it creates a Sandbox Item, forces `ITEM_LOGIN_REQUIRED`, and returns an update-m
 so a "Reconnect bank" CTA can launch a **real** update-mode Link: fetch the token →
 `Plaid.create({ token }).open()` → `onSuccess` (mark repaired, **no exchange**). Pass an existing
 `access_token` in the body to repair that specific Item instead.
+
+---
+
+## 9. Multi-Item Link (one session, multiple institutions)
+
+Multi-Item Link lets a member connect Items at **multiple institutions in a single Link session**.
+For **Plaid Check / CRA** it builds a **single Consumer Report spanning all connected institutions**
+(the generic multi-item flow replaced the old income-specific one and supports all Plaid + Plaid
+Check products). (Verified via AskBill, 2026-06-01.)
+
+**Enable** (`/link/token/create`): `enable_multi_item_link: true`. The same token config applies to
+every Item added in the session. In the demo pipeline this is **ON by default for CRA**
+(`plaid-backend.createConsumerReportLinkToken`; disable with `CRA_MULTI_ITEM_LINK=false`).
+
+**Token retrieval is different — `onSuccess` fires EMPTY** (no `public_token`). Public tokens arrive via:
+- **`LINK` / `ITEM_ADD_RESULT`** webhook — one per Item (`public_token`, `link_session_id`, `link_token`).
+- **`LINK` / `SESSION_FINISHED`** webhook — at session end (`status`, `link_session_id`, `public_tokens[]`).
+- **`/link/token/get`** fallback (~**6h** after `finished_at`): `link_sessions[].results.item_add_results[]`
+  (and **`results.cra_item_add_results`** / `cra_update_results` for Plaid Check). The legacy
+  `on_success.public_token` is deprecated for multi-item (only carries one token).
+
+**Client completion (since `onSuccess` is empty):** do NOT rely on `onSuccess` for the token or for
+completion. Detect "Link done" via **`onEvent` `HANDOFF`** and/or `onExit`, then confirm server-side
+(`SESSION_FINISHED` / `/link/token/get`). In the demo app: set `window._plaidLinkComplete = true`
+on `onSuccess` **and** on the `HANDOFF` event (multi-item onSuccess may be empty/late), and never
+require a `public_token` to advance.
+
+**Incompatible with** (plan a separate Link flow if any are needed): **Embedded Institution Search**,
+**Same-Day Micro-deposits**, **Instant Micro-deposits**, **Database Auth** (non-credential-based Auth).
+
+**Sandbox:** launch normally with the multi-item `link_token`; add `user_good` / `pass_good` (or
+`user_credit_profile_*` for CRA) at each institution. `SESSION_FINISHED` fires with the
+`public_tokens[]` when the user finishes the session.

@@ -277,6 +277,24 @@ a host card/screenshot.
   launch (fine for non-recorded / build-qa runs). Full reference + sandbox testing:
   `inputs/plaid-link-sandbox.md` §8.
 
+## Multi-item Link (CRA default) — onSuccess fires EMPTY
+
+CRA Consumer Report demos use **multi-item link** by default (`enable_multi_item_link:true`,
+set by `plaid-backend.createConsumerReportLinkToken`; disable via `CRA_MULTI_ITEM_LINK=false`) so a
+member can connect multiple institutions into one Consumer Report.
+
+Critical client difference: **`onSuccess` fires EMPTY** (no `public_token`). The app MUST NOT
+require a public token to advance. Wire completion defensively:
+- In `onSuccess` (may be empty): set `window._plaidLinkComplete = true` and `goToStep(firstPostLink)`.
+- ALSO in `onEvent`: when `eventName === 'HANDOFF'`, set `window._plaidLinkComplete = true`
+  (multi-item onSuccess can be empty/late; HANDOFF is the reliable session-end signal).
+- Do NOT call `/api/exchange-public-token` with an empty token. Real token retrieval is server-side
+  (`SESSION_FINISHED` / `ITEM_ADD_RESULT` webhooks, or `/link/token/get`) — out of scope for the
+  recorded happy path, but never block the demo waiting for a client-side public token.
+
+Not compatible with Embedded Institution Search, Same-Day/Instant Micro-deposits, or Database Auth.
+Full reference: `inputs/plaid-link-sandbox.md` §9.
+
 ## Related skills / references
 
 - Embedded Link UX: `skills/plaid-link-embedded-link-skill.md`
