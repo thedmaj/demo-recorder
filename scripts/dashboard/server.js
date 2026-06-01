@@ -1578,7 +1578,8 @@ app.post('/api/slide-library/slides/:slideId/ai-edit', slideLibraryUploadJson, a
       content: `Request: ${message}\n\nCurrent slide HTML:\n${currentHtml}`,
     });
 
-    const completion = await client.messages.create({
+    console.log(`[AI Edit][slide-library] model=${cfg.models.full} 1M=${aiEditUses1M(cfg.models.full)} maxTokens=${cfg.maxTokens.full}`);
+    const completion = await aiEditMessagesCreate(client, {
       model: cfg.models.full,
       max_tokens: cfg.maxTokens.full,
       system: systemPrompt,
@@ -4985,7 +4986,10 @@ function readEnvString(name, fallback) {
 function getAiEditRuntimeConfig() {
   const fullMaxTokens = readEnvInt(
     'DASHBOARD_AI_EDIT_MAX_TOKENS_FULL',
-    readEnvInt('DASHBOARD_AI_EDIT_FULL_MAX_TOKENS', 20000, { min: 512, max: 64000 }),
+    // Full-document rewrite: bump the default output budget to 32k so a
+    // large-document edit isn't truncated before the (now 1M) context is the
+    // limiter. Still env-overridable up to 64k.
+    readEnvInt('DASHBOARD_AI_EDIT_FULL_MAX_TOKENS', 32000, { min: 512, max: 64000 }),
     { min: 512, max: 64000 }
   );
   return {
@@ -4994,8 +4998,14 @@ function getAiEditRuntimeConfig() {
       elementCss: readEnvString('DASHBOARD_AI_EDIT_MODEL_ELEMENT_CSS', 'claude-haiku-4-5-20251001'),
       element: readEnvString('DASHBOARD_AI_EDIT_MODEL_ELEMENT', 'claude-haiku-4-5-20251001'),
       step: readEnvString('DASHBOARD_AI_EDIT_MODEL_STEP', 'claude-haiku-4-5-20251001'),
-      full: readEnvString('DASHBOARD_AI_EDIT_MODEL_FULL', 'claude-opus-4-7'),
+      // Full-document rewrite uses the strongest editor (Opus 4.8) + the 1M
+      // context beta (see aiEditMessagesCreate). Maximizes the editing window
+      // for large slides / whole-app touchups.
+      full: readEnvString('DASHBOARD_AI_EDIT_MODEL_FULL', 'claude-opus-4-8'),
     },
+    // Enable the 1M-context beta on Opus full-document edits (default on).
+    // Disable with DASHBOARD_AI_EDIT_1M=false to fall back to the 200K window.
+    oneMillionContext: readEnvBool('DASHBOARD_AI_EDIT_1M', true),
     maxTokens: {
       css: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_CSS', 4000, { min: 256, max: 64000 }),
       elementCss: readEnvInt('DASHBOARD_AI_EDIT_MAX_TOKENS_ELEMENT_CSS', 6000, { min: 256, max: 64000 }),
@@ -5027,6 +5037,28 @@ function getAiEditPublicConfig() {
     conversationMaxCharsPerTurn: cfg.conversation.maxCharsPerTurn,
     conversationMaxTotalChars: cfg.conversation.maxTotalChars,
   };
+}
+
+// 1M-context beta for AI-edit calls. Mirrors the pipeline pattern
+// (build-app.js): the 1M window is unlocked via the beta namespace +
+// `betas: ['context-1m-2025-08-07']`, and only applies to Opus-tier models.
+// Haiku-tier scoped edits (css/element/step) don't support it and don't need
+// it, so they take the plain create() path.
+const AI_EDIT_1M_BETA = 'context-1m-2025-08-07';
+
+function aiEditUses1M(model) {
+  const cfg = getAiEditRuntimeConfig();
+  return !!cfg.oneMillionContext && /opus/i.test(String(model || ''));
+}
+
+// Single entry point for AI-edit model calls. Forwards the 1M-context beta on
+// Opus full-document rewrites; falls back to the standard call (200K) for
+// Haiku-tier scoped edits or when 1M is disabled / unsupported by the SDK.
+async function aiEditMessagesCreate(client, args) {
+  if (aiEditUses1M(args.model) && client && client.beta && client.beta.messages) {
+    return client.beta.messages.create({ ...args, betas: [AI_EDIT_1M_BETA] });
+  }
+  return client.messages.create(args);
 }
 
 function clampSnippet(value, maxChars) {
@@ -5759,9 +5791,9 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
     messages.push({ role: 'user', content: userContent });
 
     const model = modeModel[mode] || cfg.models.full;
-    console.log(`[AI Edit] mode=${mode} model=${model} tokens≈${Math.round(userContent.length / 4)} run=${runId}`);
+    console.log(`[AI Edit] mode=${mode} model=${model} 1M=${aiEditUses1M(model)} tokens≈${Math.round(userContent.length / 4)} run=${runId}`);
 
-    const response = await client.messages.create({
+    const response = await aiEditMessagesCreate(client, {
       model,
       max_tokens: maxTokens,
       system: systemPrompt,
