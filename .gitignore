@@ -32,3 +32,10 @@ demoland-*
 # Plaid Link recipe system (Layer 3 recorder writes here)
 inputs/plaid-recipes/_backups/
 tmp-recipe-harness.html
+
+# Transient debugging artifacts (not knowledge/code/skills)
+.playwright-mcp/
+artifacts/
+/*.png
+inputs/prompt.*-backup.*
+inputs/*.bak
