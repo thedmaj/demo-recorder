@@ -1,0 +1,107 @@
+================================================================================
+Betterment — Consolidate Held-Away Investments with Plaid Investments Move
+================================================================================
+
+**Host:** **Betterment** — digital wealth / robo-advisor
+**Canonical URL:** https://www.betterment.com
+**Brand URL:** https://betterment.com
+
+**User journey (one sentence):**
+A Betterment customer transfers their held-away IRA from an external brokerage into Betterment in a single guided flow — Plaid's embedded Link widget authenticates the external brokerage and hands Betterment broker-sourced account, ownership, and position data to pre-fill the ACATS submission.
+
+**Story arc (short prose):**
+Initiating an ACATS transfer today means hunting for a paper statement, typing an account number, DTC code, and holdings by hand, then waiting days to learn the transfer was rejected for NIGO data (30–50% of ACATS transfers are rejected for mismatched names, wrong account numbers, or bad positions). Plaid Investments Move fixes the inputs: in Betterment's transfer-setup page an embedded Plaid Link widget is mounted inline showing the most-used brokerages; the customer clicks their brokerage tile, authenticates in the modal that surfaces, and approves read-only access. Plaid returns the owner name, full account number, DTC number, and every position — broker-sourced and verified. Betterment pre-fills the ACATS form, shows exactly what will move, and submits. Reveal: 300% more successful ACATS transfers and 90% fewer failures vs. manual entry, with time-to-fund shrinking from weeks of re-submissions to a single guided session.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Investments Move
+
+**Solutions supported:**
+Investment Account Transfers, Asset Transfers (ACATS), Wealth Onboarding
+
+**Primary product family:** `other`
+
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link — embedded Link** (embedded institution search), single `plaidPhase:"launch"` step, mounted via `Plaid.createEmbedded` on `data-testid="plaid-embedded-link-container"`. The embedded widget IS the launch CTA — clicking an institution tile surfaces the Plaid modal. Do NOT render a separate "Connect external broker" button or emit `data-testid="link-external-account-btn"`.
+  [x] **Embedded widget sizing** (wealth onboarding → large profile ~700×350, 6–9 brokerage tiles). Emit on the launch step: `window.__embeddedLinkUseCase='wealth_onboarding_acats'`, `window.__embeddedLinkSizeProfile='large'`, `window.__embeddedLinkExpectedInstitutionTileCount=9`. Pre-link trust messaging + the embedded widget must be in the SAME launch step.
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`. Investments Move is built on Investments: Link token uses `"products":["investments_auth"]`; insight screens pull the investment account (`type:"investment"`, `subtype:"ira"`) from `/investments/auth/get` (with `numbers.acats[]` + DTC), NOT a depository account.
+
+Narration boundary for embedded Link: the launch step's narration describes content visible INSIDE the embedded widget + the surfaced modal (institution search, credential entry, account confirmation) — not the act of opening it.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Title slide: "Moving investments shouldn't take weeks." Subhead on ACATS friction + the 30–50% NIGO rejection stat. | Frame the problem: paper statements, hand-keyed account numbers, days of waiting, high rejection. | — |
+| 2 | host | Betterment portfolio dashboard; "Transfer investments" quick-action card ("Bring your IRA or brokerage to Betterment in minutes."). | Position the problem; end narration on the action trigger. | Click `Transfer investments` |
+| 3 | link | Transfer-setup page with embedded Plaid Link mounted inline. Left: destination ("Betterment Traditional IRA — Carla R."), settlement window (3–6 business days), trust chips (256-bit encryption · Plaid never stores credentials · read-only). Right: embedded widget ~700×350, 9 brokerage tiles (Vanguard, Fidelity, Schwab, Robinhood, E*TRADE, Merrill, TD Ameritrade, Webull, Public) + search + Plaid co-brand. `plaidPhase:"launch"`. | Inside-widget: "Carla picks Vanguard, signs in, and confirms her Traditional IRA." | `onSuccess` → public_token + institution + account metadata |
+| 4 | insight | `POST /investments/auth/get` JSON in side panel. Card: owner match ("Carla Ruiz ↔ Carla A. Ruiz — matched"), `investment`/`ira`, account # `••••5555`, DTC `1111`, `data_sources=INSTITUTION` for numbers/owners/holdings. | Reveal broker-sourced identifiers + ownership — the exact fields that cause 30–50% of ACATS rejections when keyed by hand. | Continue to "Review positions" |
+| 5 | insight | Holdings table from `holdings[]`+`securities[]`: US Treasury Bill 5.43% 10/2024 ($94,808 · CUSIP 912797HE0), VTI 312 sh ($24,102), VXUS 185 sh ($5,930), cash sweep $3,610. Total $128,450. | Every position pre-identified with CUSIP + cost basis, ready for the receiving custodian — no re-keying. | Continue to "Review transfer" |
+| 6 | host | Betterment ACATS review with all fields pre-filled (Delivering firm: Vanguard · Acct ••••5555 · Traditional IRA · Owner: Carla A. Ruiz · DTC 1111 · Full transfer · 4 holdings). Consent checkbox. | ACATS form filled in seconds with verified data; Carla only authorises. | Click `Authorize transfer` |
+| 7 | host | Success: green check, "Transfer initiated · est. settlement Apr 23." Secondary card: "300% more successful transfers, 90% fewer ACATS failures vs. manual entry." | Close the loop: faster time-to-AUM, one session, lower rejection rate. | End on `Track transfer` |
+| 8 | slide | Value-summary slide: "300% more successful transfers · 90% fewer ACATS failures · weeks → one session." | Recap the quantified outcome. | — |
+
+**Product-specific reminders:**
+- Investments Move (NOT standard `investments`): use `investments_auth` in `/link/token/create`; endpoint `/investments/auth/get`. Do NOT show `/accounts/balance/get` or `/auth/get` on insight screens.
+- Embedded Link UX contract (STRICT): no extra launch button; widget fills its container; large profile (~700×350); runtime metadata globals emitted; inside-widget narration.
+- Happy path only. Do NOT depict ACATS rail movement — Plaid returns data; the receiving broker initiates ACATS ("Betterment submits the ACATS transfer").
+
+**Compliance / user data:** Read-only Investments data-permission flow via Plaid Link; ownership verified against broker-of-record (`owners` in `/investments/auth/get`). No extra compliance step beyond in-Link consent.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Carla A. Ruiz — mid-career marketing director, Betterment customer
+**Company / context:** External Traditional IRA at Vanguard; Betterment is the consolidating destination (Traditional IRA).
+
+**Sample on-screen fields (use verbatim — no generic placeholders):**
+- External institution: Vanguard · account mask ••••5555 · DTC 1111 · `investment`/`ira` (Traditional)
+- Owner: Carla A. Ruiz (matched against "Carla Ruiz")
+- Portfolio total: $128,450.00
+- Holdings: US Treasury Bill 5.43% 10/2024 ($94,808.00 · CUSIP 912797HE0); VTI 312 sh ($24,102.00); VXUS 185 sh ($5,930.00); cash sweep ($3,610.00)
+- Destination: Betterment Traditional IRA · est. settlement 3–6 business days
+- Embedded brokerages (9 tiles): Vanguard, Fidelity, Schwab, Robinhood, E*TRADE, Merrill, TD Ameritrade, Webull, Public
+- Proof points: "300% more successful ACATS transfers" / "90% fewer failures vs. manual entry"
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Betterment-style neutral-light canvas (host pages light). Top nav: Betterment wordmark, "Portfolio", "Planning", "Cash", avatar. Left-rail: "Portfolio total · $72,310 · +8.4% YTD." CTA on the entry step is "Transfer investments" (card) → the transfer-setup step mounts the embedded Plaid Link widget inline (no separate launch button).
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Two slides: (1) opening problem slide (ACATS friction + 30–50% rejection), (8) closing value-summary (300% / 90% / weeks→one-session). Plaid-branded deck slides; no JSON rail on slides.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Stats from `inputs/plaid-value-props.md` + Plaid case study (300% / 90%), not duplicated
+  [x] Product names match `CLAUDE.md` ("Plaid Link", "Plaid Investments Move")
+  [x] Storyboard order matches goToStep flow (open slide → entry → embedded launch → auth insight → holdings insight → review → success → close slide)
+  [x] Plaid Link mode = embedded; no launch button; large widget profile
+  [x] app+slides build
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

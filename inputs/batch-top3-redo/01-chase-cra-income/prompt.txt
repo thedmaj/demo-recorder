@@ -1,0 +1,102 @@
+================================================================================
+Chase Sapphire — Verify income for card underwriting with Consumer Report by Plaid Check
+================================================================================
+
+**Host:** **Chase Sapphire** — consumer credit-card application / underwriting
+**Canonical URL:** https://www.chase.com
+**Brand URL:** https://www.chase.com
+
+**User journey (one sentence):**
+A Chase Sapphire applicant reaches the income-verification step, connects their bank through Plaid Link under an FCRA permissible purpose, and Consumer Report by Plaid Check returns report-derived Income Insights that give underwriters bank-connected income context — no PDFs or manual doc chasing.
+
+**Story arc (short prose):**
+Income verification for a card application usually means uploading pay stubs, hunting for PDFs, and days of manual review. The applicant instead taps "Verify income with your bank," completes a familiar Plaid Link connection (Consumer Report by Plaid Check, permissible purpose = extension of credit), and the report generates asynchronously. When the report is ready, Income Insights surfaces categorized income streams, historical and forecasted average monthly income, and predicted next-payment timing — a structured, FCRA-aligned input to ability-to-pay review. Close on an underwriting-ready outcome: faster review, fewer follow-ups, decision still under the lender's policy.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Consumer Report by Plaid Check (Income Insights)
+
+**Solutions supported:**
+Consumer Report Underwriting, Income Verification
+
+**Primary product family:** `income_insights`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-income-insights.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase:"launch"` step (CRA Link; no simulated screens).
+  [x] **CRA / Plaid Check** — `/user/create` first (async report); `/link/token/create` products `["cra_base_report","cra_income_insights"]`, `consumer_report_permissible_purpose:"EXTENSION_OF_CREDIT"`, `cra_options.days_requested:365`, webhook for `USER_CHECK_REPORT_READY`. Income insight endpoint is exactly `/cra/check_report/income_insights/get`. Do NOT use `/credit/bank_income/get` or `/credit/payroll_income/get`.
+  [x] **Sandbox / persona** — CRA Link persona `user_credit_*` + `pass_good` (NOT `user_bank_income`); non-OAuth First Platypus Bank (`ins_109508`). Use `window._plaidInstitutionName/_plaidAccountName/_plaidAccountMask` for institution/account labels — never hardcode a bank name.
+
+CRA Link narration boundary: the pre-Link step ends on the tap ("…she taps Verify income with your bank."); the Link step narrates content visible inside the modal.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Title: "Income verification shouldn't mean PDFs." Subhead on manual doc-hunting + days of review friction. | Frame the underwriting friction problem. | — |
+| 2 | host | Chase Sapphire application, "Income verification" step in a progress stepper; applicant profile (Ava Johnson). Primary CTA: "Verify income with your bank." | Position the problem; end narration on the tap. | Tap `Verify income with your bank` |
+| 3 | link | Live CRA Plaid Link modal — institution search, sign-in, account confirmation. `plaidPhase:"launch"`. | Inside-modal: familiar Plaid connection under a consumer-report consent. | `onSuccess` → public_token + institution/account metadata |
+| 4 | host | Report-generation status: "Generating your Consumer Report… we'll be notified when it's ready." Spinner / report-ready beat. | Async lifecycle: the report generates after consent; the platform is notified via webhook when ready. | Auto-advance / Continue when ready |
+| 5 | insight | `POST /cra/check_report/income_insights/get` JSON in the side panel. Card shows: historical avg monthly income, forecasted avg monthly income, income streams categorized (e.g., salary + gig), predicted next-payment date. | Reveal: report-derived, categorized income context — a structured input to ability-to-pay/DTI review. | Continue to outcome |
+| 6 | host | Underwriting-ready outcome: verified income context summarized; "Continue application." Compliance-safe framing (no approval promise). | Close: faster review, fewer follow-ups — decision stays under the lender's policy. | End on `Continue application` |
+| 7 | slide | Value-summary slide: report-derived income context · faster review · FCRA-aligned · decision under your policy. | Recap the value, compliance-safe. | — |
+
+**Product-specific reminders:**
+- Compliance-safe language only: "can help," "supports," "an input to underwriting"; never promise approvals or SLAs. Lenders remain responsible for decisions.
+- Required: a report-ready/processing beat BEFORE the Income Insights insight step.
+- Populate `apiResponse.response` with a realistic (not tiny) income-insights JSON so the panel shows the narrated fields.
+
+**Compliance / user data:** FCRA consumer-report flow — `/user/create` with identity (name, DOB, email, phone, address) before the report; permissible purpose = EXTENSION_OF_CREDIT.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Ava Johnson — applying for a Chase Sapphire card; needs income verification for underwriting.
+**Company / context:** Application dashboard with an "Income verification" progress indicator.
+
+**Sample on-screen fields (use verbatim — no generic placeholders):**
+- client_user_id: ava-chase-sapphire-001 · name Ava Johnson · +12125550199 · ava.johnson@example.com · 55 W Elm St, Austin, TX 78701
+- Report window: last 12 months (`cra_options.days_requested:365`)
+- Income insights: historical average monthly income, forecasted average monthly income, categorized income streams (salary + gig), predicted next-payment date — use realistic, non-round figures.
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Chase-style light application surface. Header: Chase Sapphire card-application branding, applicant name, progress stepper. Main card: "Income Verification" with one primary CTA to launch Plaid Link. After Link: a report-generation status panel (no JSON). On the insight beat: the global `#api-response-panel` (collapsed by default). Never show raw JSON on host steps.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Two Plaid-branded slides: (1) opening problem (income-verification friction), (7) closing value-summary (report-derived income context, faster review, FCRA-aligned). No JSON rail on slides.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Story order: open slide → entry → CRA Link → report-ready beat → Income Insights insight → outcome → close slide
+  [x] Insight endpoint exactly `/cra/check_report/income_insights/get`; report-ready beat present
+  [x] Link products `cra_base_report` + `cra_income_insights`; permissible purpose EXTENSION_OF_CREDIT
+  [x] No `/credit/bank_income/get` or `/credit/payroll_income/get`; compliance-safe claims
+  [x] app+slides build
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

@@ -1,0 +1,213 @@
+================================================================================
+BVNK ACH On-Ramp — Instantly fund a stablecoin virtual account from any US bank
+================================================================================
+
+**Host:** **BVNK** — fintech / stablecoin payments infrastructure (US business + B2B2C reseller)
+**Canonical URL:** https://www.bvnk.com/
+**Brand URL** (for `brand-extract`): https://www.bvnk.com
+
+**Opportunity context (Salesforce — open):**
+- Opportunity: `FIN | NB | BVNK | ABIS Reseller` (`006UV00000aBhUjYAK`)
+- Stage: `Evaluation`  •  Probability: `30%`  •  Forecast: `Best Case`
+- Close Date: `2026-07-01`  •  Critical event: `Q3 go-live`
+- ACV: `$100,000`  •  MRR: `$10,000`
+- Type: `New Customer`  •  GTM Model: `Reseller`  •  Business Model: `B2B2C`
+- Use cases: `Inbound Bank Payments: Account Funding`, `Fraud & Risk Prevention`
+- Use case detail: `Account-funding`
+- Primary products (SFDC): `Auth; Identity; Balance`
+- Account: `BVNK` (`0011Q00002UL4KoQAL`) — Fintech, Strategic, ~433 employees
+- AE: Chi Le Tang  •  Manager: Xander O'Han  •  Contact: Amit Cheela
+- Pain point (verbatim): "BVNK does not have access to ACH-pull rails, nor OB"
+- Competitive context (prior closed-lost opp): Trustly mentioned for ACH; not active in this opp
+
+**Solution Fit (from Gong call "Plaid + BVNK | Solutions Overview + Demo", 2026-04-29):**
+- Plaid positioned as the US ACH journey: account linking, account verification, and fraud
+  controls for embedded-partner flows.
+- Reseller model with distinct end-client IDs is the cleanest scalable approach for BVNK's
+  B2B2C setup; embedded partners get fully wrapped Plaid Link UX with their own branding.
+- Perceived benefits BVNK called out: embedded-partner branding flexibility, traffic
+  segregation by end-client ID, low-friction wrapped partner experience, optional headless
+  front end, **Identity Match plus Signal for verification and ACH risk checks**.
+
+**Business objectives (derived from Salesforce + Gong):**
+- Give BVNK's embedded partners a turnkey US ACH on-ramp into BVNK virtual accounts.
+- Reduce drop-off on first-time funding by replacing manual account-and-routing entry and
+  micro-deposits with credential-based bank linking.
+- Confirm account ownership before moving money (Identity Match for B2C and SMB users).
+- Make fast funding decisions with real-time ACH return-risk scoring (Signal) so good
+  users get instant credit and risky funding gets stepped up — without exposing BVNK or
+  its embedded partners to ACH return loss.
+
+**User journey (one sentence):**
+A US small-business owner using a BVNK-powered virtual account links her business
+checking with Plaid, gets verified for ownership, receives a low-risk ACH decision, and
+funds her account instantly to settle a stablecoin payout to an overseas supplier.
+
+**Story arc (short prose):**
+BVNK's embedded partner needs a US ACH on-ramp into a BVNK USD virtual account. The
+partner brand is in front of the customer; Plaid runs invisibly underneath via BVNK's
+reseller integration. The customer connects her bank in one Plaid Link session, BVNK
+sees verified routing and account numbers, an Identity Match score that confirms she
+owns the linked account, and a low Signal ACH return-risk score that authorizes
+instant funding — turning a multi-day funding step into seconds without giving up
+fraud and risk controls.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Instant Auth**, **Plaid Identity Match** (under Auth), **Plaid Signal**
+
+**Solutions supported** (used to query Solutions Master foundation):
+Inbound Bank Payments: Account Funding, Fraud & Risk Prevention
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`funding`
+
+**Primary messaging file for this demo** (owns stats):
+`inputs/products/plaid-auth.md` (Auth + Identity Match); `inputs/products/plaid-signal.md`
+for ACH risk narrative. Do not duplicate stats from `inputs/plaid-value-props.md`.
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, modal mode, single `plaidPhase: "launch"` step
+      per `CLAUDE.md`
+  [ ] **Plaid Layer** / OAuth / IDV — not in scope for this flow
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`
+      (First Platypus Bank, `user_good` / `pass_good`, Remember Me OTP `123456`)
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, NO SLIDES)
+-------------------------------------------------------------------------------
+
+| # | Beat Type | What the viewer sees | Narration focus | Reveal / CTA |
+|---|-----------|----------------------|-----------------|--------------|
+| 1 | host | BVNK virtual-account dashboard for Priya's USD account; balance `$0.00`; pending payout to supplier; primary CTA `Add funds` | Establish the on-ramp problem: she needs USD in her BVNK virtual account fast to release a supplier payout. | `Add funds` |
+| 2 | host | Funding amount + source step: `$5,000.00` selected, two source tiles — `Connect a bank` (recommended) and `Wire transfer` | Position bank linking as the fast, low-friction option vs. wires; reinforce that BVNK powers this experience for its embedded partners. | `Continue` |
+| 3 | host | Single pre-Link explainer card: short copy on secure linking + one CTA | Set expectations for the modal in plain language; end narration on the CTA trigger. | `Link your bank` |
+| 4 | link | Real Plaid Link flow (consent → OTP → institution → account select → success) | Narrate only what is visible inside Link — recognized returning user, one-time code, account selection, connection complete. | Link callback `onSuccess` |
+| 5 | host | BVNK "Verifying your account" screen with **right-side API response panel** showing the **Auth + Identity Match** payloads side by side (verified routing/account, business and owner name match scores) | Frame Auth as instant account verification (no micro-deposits) and Identity Match as ownership confirmation; quantify with concrete match scores. | `Account verified` |
+| 6 | host | BVNK "Evaluating ACH risk" screen with **API response panel** showing the **Signal** payload: score 12 (low return risk), `decision: ACCEPT`, top risk attributes | Explain low Signal score = low ACH return risk; show how BVNK uses it to authorize instant funding and protect downstream stablecoin settlement. | `Approved for instant funding` |
+| 7 | host | BVNK "Funds available now" success state — virtual account balance updated to `$5,000.00`, supplier payout marked `Releasing`, summary of what just happened (linked, verified, scored, funded) | Reinforce the outcome: one Plaid session replaces routing-entry + micro-deposits + manual review; BVNK's embedded partners get this same wrapped flow under their own brand. | `Done` |
+
+**Insight presentation rules (host, not slide):**
+- Insight beats (5 and 6) MUST stay inside BVNK-branded host chrome — do **not** generate
+  `sceneType: "slide"` steps. Use the global `#api-response-panel` (right side) on those
+  steps, with JSON body collapsed by default and revealed via the panel toggle.
+- Single shared `#api-response-panel` per `CLAUDE.md` — do not create per-step duplicate
+  panels or use a separate slide layout.
+- Step `data-testid`s for expand/collapse must be unique per step
+  (`api-sidebar-expand-btn-auth`, `api-sidebar-expand-btn-signal`, etc.).
+
+**Product-specific reminders:**
+- **Plaid Link**: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"`
+  step. No simulated link-consent / link-otp / link-account-select steps.
+- **Link narration boundary**: pre-Link step ends on the button trigger
+  (`...she taps Link your bank.`); Link step narration starts inside the modal only.
+- **Auth / Identity Match**: show realistic `routing`, `account` (masked), and dual name
+  match scores (business name + owner name). Identity Match is part of the Auth product —
+  do not introduce a separate "Plaid Identity" product name.
+- **Signal**: low score = low ACH return risk. Use a realistic ACCEPT score in the **5–20**
+  band (the spec uses **12**). Do **not** use scores 80+ for an ACCEPT scenario. Never
+  use the term "Trust Index".
+- Happy path only: no declined / failed / step-up branches.
+
+**Compliance / user data (one line):**
+Use only consented business-owner data; show ACCEPT as a policy decision based on
+verification + Signal evidence (no implied guarantee of approval).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Priya Patel, founder & CEO of Amber Mills Coffee Roasters (US small business)
+**Company / context:** Imports green coffee from Colombia; uses BVNK to hold USD in a
+virtual account and convert to stablecoin for fast supplier payouts. Today she needs
+to top up her BVNK USD virtual account from her business checking to release a
+$5,000 payout to her supplier in Medellín.
+**Sample fields that must appear on screen:** legal business name, owner full name,
+funding amount, linked institution + masked account, Auth routing/account fields,
+Identity Match business and owner name scores, Signal score with decision and one or
+two top risk attributes.
+
+Recommended structured data (kept consistent across screens):
+- `client_user_id`: `bvnk-amber-mills-priya-001`
+- `end_client_id`: `bvnk_partner_demo_001` (illustrates BVNK's reseller end-client segregation)
+- `business_legal_name`: `Amber Mills Coffee Roasters LLC`
+- `owner_full_name`: `Priya Patel`
+- `requested_account_type`: `USD virtual account`
+- `funding_amount_usd`: `5000.00`
+- `funding_source_institution`: `First Platypus Bank`
+- `funding_source_account`: `Business Checking •••• 0211`
+- `auth_status`: `verified`
+- `business_name_match_score`: `0.96`
+- `owner_name_match_score`: `0.94`
+- `signal_score`: `12`           (lower = lower ACH return risk)
+- `signal_decision`: `ACCEPT`
+- `signal_top_attributes`:
+  - `account_age_days`: `1820`
+  - `nsf_overdraft_count_30d`: `0`
+  - `available_balance_at_initiation`: `12480.55`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use BVNK-inspired payments-platform UI: clean light canvas (white / very light neutral),
+brand-accent typography and CTAs (BVNK uses a dark brand mark — keep accents tasteful and
+accessible), structured cards for the virtual-account hero and funding flow, and a clear
+"BVNK" wordmark in the top-left of the host shell. Sidebar nav suggestions: `Home`,
+`Virtual accounts`, `Payouts`, `Reports`, `Settings`. Default the host page background
+to a light neutral per the `CLAUDE.md` host UX rule; reserve any dark Plaid-branded
+surfacing for the `#api-response-panel` body when expanded.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+INFERRED API STACK (IMPLEMENTATION INTENT)
+-------------------------------------------------------------------------------
+
+Use these endpoints and sequencing for this use case:
+1. `POST /link/token/create` (products: `auth`; optional `identity_match` request via
+   token config or downstream `/identity/match` call)
+2. Plaid Link `onSuccess` → token exchange path
+3. `POST /auth/get`
+4. `POST /identity/match` (business-name and owner-name match dimensions)
+5. `POST /signal/evaluate` (score + decision + top risk attributes)
+6. `POST /signal/decision/report` (optional follow-up; not required to render in host UI)
+
+API panel expectations:
+- Show request and response samples that support each beat's claim.
+- For `/identity/match`, include separate `business_name_match` and `owner_name_match`
+  fields so the business-vs-owner distinction is visible on screen.
+- For `/signal/evaluate`, surface the chosen score, decision, and 2–3 top risk
+  attributes — keep payload realistic, do not pad with every available field.
+
+-------------------------------------------------------------------------------
+NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+-------------------------------------------------------------------------------
+
+This demo is APP-ONLY. Do not generate `sceneType: "slide"` steps.
+Do not add a final value-summary slide.
+End on a host outcome step (`Funds available now`) with clear CTA / result.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (`plaid-auth.md` + `plaid-signal.md`, not duplicated
+      from `plaid-value-props.md`)
+  [x] Product names and family match `CLAUDE.md` (Auth, Identity Match, Signal; family `funding`)
+  [x] Storyboard order matches intended `goToStep` flow (7 beats: 4 host + 1 link + 2 host-with-insight + 1 host outcome — all host/link, no slides)
+  [x] Live Link vs mock consistent with pipeline env (modal mode, real SDK)
+  [x] No slide beats included
+  [x] App-only — run with `npm run demo` (default) or `npm run demo:full`
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

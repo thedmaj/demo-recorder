@@ -124,17 +124,24 @@ function findResumableRunId({ promptContent, resumeRunId, sourceRunId }) {
   return null;
 }
 
-function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promptContent }) {
+function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promptContent, buildMode }) {
   const resumableRunId = findResumableRunId({
     promptContent,
     resumeRunId,
     sourceRunId,
   });
 
+  // Respect a manifest-declared app-only build: forcing --with-slides on an
+  // app-only-by-design prompt (e.g. BVNK) fabricates slide steps and overrides
+  // the prompt-derived buildMode on resume. Default remains app+slides.
+  const appOnly = String(buildMode || '').toLowerCase() === 'app-only';
+  const slidesFlag = appOnly ? [] : ['--with-slides'];
+  if (appOnly) console.log('[batch] buildMode=app-only — omitting --with-slides');
+
   const args = resumableRunId
     ? [
         'run', 'pipe', '--', 'resume', resumableRunId,
-        '--with-slides',
+        ...slidesFlag,
         '--non-interactive',
         '--from=ingest',
         `--to=${to}`,
@@ -142,7 +149,7 @@ function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promp
     : [
         'run', 'pipe', '--', 'new',
         `--prompt=${promptPath}`,
-        '--with-slides',
+        ...slidesFlag,
         '--non-interactive',
         `--to=${to}`,
         `--research=${research || 'messaging'}`,
@@ -238,6 +245,7 @@ function main() {
         resumeRunId,
         sourceRunId: entry.sourceRunId || null,
         promptContent,
+        buildMode: entry.buildMode || null,
       });
       result.researchSkipped = Boolean(resumableRunId);
       result.resumedFromRunId = resumableRunId || null;

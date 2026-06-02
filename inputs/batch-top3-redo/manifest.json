@@ -1,0 +1,31 @@
+{
+  "label": "top3-redo",
+  "note": "Redo of the top-3 highest-scoring builds from the 2026-05-30 10-build run (Chase 95, BVNK 93, Betterment 90), to measure the impact of post-research code changes (panel width/font, no-h-scroll QA, etc.). Research is reused via fingerprint match (resume from ingest).",
+  "runs": [
+    {
+      "id": "01-chase-cra-income",
+      "company": "Chase",
+      "website": "https://www.chase.com/",
+      "promptFile": "inputs/batch-top3-redo/01-chase-cra-income/prompt.txt",
+      "sourceRunId": "2026-05-29-Application-Dashboard-With-An-CRA-Identity-v1",
+      "previousScore": 95
+    },
+    {
+      "id": "02-bvnk-onramp",
+      "company": "BVNK",
+      "website": "https://www.bvnk.com/",
+      "promptFile": "inputs/batch-top3-redo/02-bvnk-onramp/prompt.txt",
+      "sourceRunId": "2026-05-30-Imports-Green-Coffee-From-Auth-Identity-Signal-Transfer-Protect-v1",
+      "buildMode": "app-only",
+      "previousScore": 93
+    },
+    {
+      "id": "03-betterment-investments-move",
+      "company": "Betterment",
+      "website": "https://www.betterment.com/",
+      "promptFile": "inputs/batch-top3-redo/03-betterment-investments-move/prompt.txt",
+      "sourceRunId": "2026-05-29-External-Traditional-Ira-At-Auth-Transfer-Statements-v1",
+      "previousScore": 90
+    }
+  ]
+}
