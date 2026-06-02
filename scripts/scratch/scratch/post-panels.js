@@ -150,7 +150,7 @@ function refreshPipelineSlideContractInHtml(html) {
 }
 
 function buildSlideHostIsolationScript() {
-  return `<script id="pipeline-slide-host-isolation-v2">
+  return `<script id="pipeline-slide-host-isolation-v3">
 (function() {
   if (window.__pipelineSlideHostIsolationApplied) return;
   window.__pipelineSlideHostIsolationApplied = true;
@@ -184,6 +184,12 @@ function buildSlideHostIsolationScript() {
     gutterStyle = document.createElement('style');
     gutterStyle.id = 'pipeline-slide-api-gutter-style';
     gutterStyle.textContent = [
+      // Slide steps must be full-bleed — never inherit a host .step max-width
+      // clamp (the build LLM sometimes emits .step{max-width:1040px} for host
+      // cards, which drags a slide-root below the >=1080px canvas contract and
+      // trips slide-canvas-size). Unclamp any step that hosts a slide-root.
+      'body.pipeline-slide-active .step.active { max-width: none !important; }',
+      '.step:has(> .slide-root) { max-width: none !important; }',
       'body.pipeline-slide-api-gutter #api-response-panel,',
       'body.pipeline-slide-api-gutter section#api-response-panel { width: min(440px, 40vw) !important; }',
       // In the narrow gutter (~440px) the wide-panel white-space:pre overflows
@@ -251,10 +257,10 @@ function ensureSlideHostIsolation(html) {
   html = refreshPipelineSlideContractInHtml(html);
   if (html !== beforeContract) changes.refreshedSlideContract = true;
 
-  // Bumped to v2 (2026-06-02): gutter-mode JSON wrap rule. Strip any stale
-  // older isolation block so the new version's CSS (incl. the pre-wrap rule)
-  // takes effect on existing builds.
-  if (!html.includes('pipeline-slide-host-isolation-v2')) {
+  // Bumped to v3 (2026-06-02): gutter-mode JSON wrap rule + slide-step
+  // full-bleed unclamp. Strip any stale older isolation block so the new
+  // version's CSS takes effect on existing builds.
+  if (!html.includes('pipeline-slide-host-isolation-v3')) {
     html = html.replace(/<script id="pipeline-slide-host-isolation-v\d+">[\s\S]*?<\/script>\s*/g, '');
     html = html.replace('</body>', `${buildSlideHostIsolationScript()}\n</body>`);
     changes.addedSlideIsolationScript = true;
