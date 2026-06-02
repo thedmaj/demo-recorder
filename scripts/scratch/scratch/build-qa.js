@@ -2048,6 +2048,20 @@ async function evaluateStepState(page, stepId) {
       })(),
       apiJsonToggleExists: Boolean(apiToggle),
       apiPanelChromeTriplet: Boolean(apiToggle),
+      // Horizontal-scroll guard: the expanded JSON rail must read without a
+      // horizontal scrollbar (vertical scroll is fine). Measure the active
+      // <pre.code> pane — scrollWidth > clientWidth means long lines overflow
+      // (white-space:pre never wraps), so the viewer would have to scroll
+      // sideways to see the code. Skip when the pane isn't laid out (clientWidth
+      // tiny → not expanded) to avoid false positives.
+      apiPanelCodeOverflowsX: (function () {
+        if (!apiBody) return false;
+        const cw = apiBody.clientWidth || 0;
+        if (cw < 50) return false;
+        return (apiBody.scrollWidth - cw) > 8;
+      })(),
+      apiPanelCodeScrollWidth: apiBody ? apiBody.scrollWidth : 0,
+      apiPanelCodeClientWidth: apiBody ? apiBody.clientWidth : 0,
       apiPanelHasEdgeToggleClass: Boolean(apiToggle && String(apiToggle.className || '').includes('api-panel-edge-toggle')),
       hasToggleApiFunction: typeof window.toggleApiPanel === 'function',
       bankLogoPresent: Boolean(bankLogo),
@@ -3492,6 +3506,18 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
           severity: 'warning',
           issue: 'window.toggleApiPanel() is missing — the edge toggle icon must call a shared collapse/expand implementation.',
           suggestion: 'Define toggleApiPanel() per templates/slide-template/PIPELINE_SLIDE_SHELL_RULES.md.',
+        });
+      }
+      // Expanded JSON rail must read without horizontal scroll (vertical is
+      // fine). Slide-tier steps force-open the panel before capture, so the
+      // measurement reflects the real expanded width.
+      if (isSlideLikeStep(step) && state.apiPanelVisible && state.apiPanelCodeOverflowsX) {
+        diagnostics.push({
+          stepId: step.id,
+          category: 'panel-horizontal-scroll',
+          severity: 'warning',
+          issue: `Expanded API JSON panel needs horizontal scroll to read the code (pre.code scrollWidth ${state.apiPanelCodeScrollWidth}px > clientWidth ${state.apiPanelCodeClientWidth}px). Vertical scroll is OK; horizontal is not.`,
+          suggestion: 'The code must fit the panel width (post-panels sets min(1080px,92vw) + 12px font). Shorten very long string values in this step\'s apiResponse fixture (tokens, URLs, base64) or trim deep nesting so no line overflows.',
         });
       }
       if (state.apiContentLength < MIN_JSON_PANEL_CHARS) {

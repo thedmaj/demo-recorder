@@ -88,6 +88,14 @@ delegates to `post-panels.buildPanelPatchScript()`). The emitted shell uses thes
 
 - Default state `.panel.is-collapsed` (slides off-screen right; 48px chevron peek handle).
   build-qa's `prepareGlobalJsonRailForBuildQa` strips the collapsed class for screenshots.
+- **Design spec (2026-06-02 default, owned by `post-panels.js` — do not override per-build):**
+  panel **width `min(1080px, 92vw)`**; code/JSON `pre.code` **font-size 12px** (eyebrow & tabs
+  12px, route 14px, method 9px); `__API_PANEL_CONFIG` defaults `collapsedByDefault:true`,
+  `jsonExpandLevel:999`, `autoResize:true`, `minWidthPx:420`, `maxWidthViewportRatio:0.75`. The
+  wide panel + 12px font exist so the expanded JSON reads **without horizontal scroll** —
+  build-qa enforces this on slide-tier steps (`panel-horizontal-scroll` check; vertical scroll
+  is fine). Bumping the patch version (`POST_PANELS_PATCH_VERSION`) forces these onto existing
+  builds when post-panels re-runs.
 - Legacy markup (`.side-panel*`, `.api-panel-edge-toggle`, `#api-response-content`,
   `#api-panel-endpoint`) is removed — do not emit it.
 - **Do not style `.disclosure`** (renderjson toggles) beyond `color`/`cursor`; any
