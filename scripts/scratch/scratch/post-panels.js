@@ -150,7 +150,7 @@ function refreshPipelineSlideContractInHtml(html) {
 }
 
 function buildSlideHostIsolationScript() {
-  return `<script id="pipeline-slide-host-isolation-v1">
+  return `<script id="pipeline-slide-host-isolation-v2">
 (function() {
   if (window.__pipelineSlideHostIsolationApplied) return;
   window.__pipelineSlideHostIsolationApplied = true;
@@ -186,6 +186,13 @@ function buildSlideHostIsolationScript() {
     gutterStyle.textContent = [
       'body.pipeline-slide-api-gutter #api-response-panel,',
       'body.pipeline-slide-api-gutter section#api-response-panel { width: min(440px, 40vw) !important; }',
+      // In the narrow gutter (~440px) the wide-panel white-space:pre overflows
+      // horizontally (build-qa panel-horizontal-scroll). Wrap long JSON lines so
+      // the code reads with vertical scroll only — no horizontal scroll.
+      'body.pipeline-slide-api-gutter #api-response-panel pre.code,',
+      'body.pipeline-slide-api-gutter #api-response-panel .renderjson {',
+      '  white-space: pre-wrap !important; overflow-wrap: anywhere !important; word-break: break-word !important;',
+      '}',
       'body.pipeline-slide-api-gutter .step.active .slide-root .slide-stack {',
       '  max-width: calc(100% - 480px) !important; margin-right: auto !important;',
       '  align-self: flex-start !important;',
@@ -244,7 +251,11 @@ function ensureSlideHostIsolation(html) {
   html = refreshPipelineSlideContractInHtml(html);
   if (html !== beforeContract) changes.refreshedSlideContract = true;
 
-  if (!html.includes('pipeline-slide-host-isolation-v1')) {
+  // Bumped to v2 (2026-06-02): gutter-mode JSON wrap rule. Strip any stale
+  // older isolation block so the new version's CSS (incl. the pre-wrap rule)
+  // takes effect on existing builds.
+  if (!html.includes('pipeline-slide-host-isolation-v2')) {
+    html = html.replace(/<script id="pipeline-slide-host-isolation-v\d+">[\s\S]*?<\/script>\s*/g, '');
     html = html.replace('</body>', `${buildSlideHostIsolationScript()}\n</body>`);
     changes.addedSlideIsolationScript = true;
   }
@@ -1458,7 +1469,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     token-only mode, pre-link manual nav). When live data is present,
   //     the panel header label gets a " — live" suffix so operators can
   //     visually distinguish real vs synthesized in screen recordings.
-  const POST_PANELS_PATCH_VERSION = 'v15';
+  const POST_PANELS_PATCH_VERSION = 'v16';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);
