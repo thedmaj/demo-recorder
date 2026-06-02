@@ -4710,6 +4710,42 @@ async function launchDemoAppServer(runId) {
         res.status(500).json({ error: e.message });
       }
     });
+    demoApp.post('/api/create-update-link-token', async (req, res) => {
+      // "Reconnect bank" → relaunch Plaid Link in UPDATE MODE (login repair).
+      // Mirrors app-server.js: if no access_token supplied, mint a self-contained
+      // Sandbox Item, force ITEM_LOGIN_REQUIRED, then issue an update-mode link_token
+      // (access_token, NO products). onSuccess must NOT exchange the public_token.
+      try {
+        const body = req.body || {};
+        const plaid = getPlaid();
+        let accessToken = body.access_token || body.accessToken || null;
+        let itemId = body.item_id || body.itemId || null;
+        if (!accessToken) {
+          const sandboxItem = await plaid.createSandboxItemAccessToken({
+            institutionId: body.institution_id || body.institutionId || null,
+            initialProducts: body.initial_products || body.initialProducts || null,
+          });
+          accessToken = sandboxItem.access_token;
+          itemId = sandboxItem.item_id;
+        }
+        try { await plaid.resetLogin({ accessToken }); }
+        catch (e) { console.warn(`[DemoApp] create-update-link-token: reset_login skipped (${e && e.message || e})`); }
+        const upd = await plaid.createUpdateModeLinkToken({
+          accessToken,
+          clientUserId: body.userId || body.user_id || body.client_user_id || undefined,
+          clientName: body.clientName || body.client_name || runClientName,
+          runDir,
+        });
+        res.json({
+          link_token: upd.link_token,
+          expiration: upd.expiration,
+          access_token: accessToken,
+          item_id: itemId,
+          update_mode: true,
+          reset_login: true,
+        });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
     demoApp.post('/api/exchange-public-token', async (req, res) => {
       try { res.json(await getPlaid().exchangePublicToken(req.body.public_token, req.body)); } catch (e) { res.status(500).json({ error: e.message }); }
     });

@@ -1129,12 +1129,18 @@ async function createUpdateModeLinkToken(opts = {}) {
   if (!accessToken) throw new Error('createUpdateModeLinkToken: accessToken required');
   const clientUserId = opts.clientUserId || opts.client_user_id || 'demo-user-001';
   const clientName = resolvePromptDerivedClientName(opts) || opts.clientName || opts.client_name || 'Plaid Demo';
+  // Sandbox returning-user phone (Remember Me / +14155550011). Prefilling the
+  // phone on the update-mode token surfaces the returning-user prompt during the
+  // "reconnect" repair flow. Overridable via opts; defaults to the sandbox phone.
+  const phoneNumber = opts.phoneNumber || opts.phone_number || '+14155550011';
+  const user = { client_user_id: clientUserId };
+  if (phoneNumber) user.phone_number = phoneNumber;
   // Update mode for login repair: access_token + user, NO products.
   const data = await plaidPost('/link/token/create', {
     client_name: clientName,
     language: 'en',
     country_codes: ['US'],
-    user: { client_user_id: clientUserId },
+    user,
     access_token: accessToken,
   });
   console.log(`[plaid-backend] update-mode link token created (len=${(data.link_token || '').length}, exp=${data.expiration || '?'})`);
