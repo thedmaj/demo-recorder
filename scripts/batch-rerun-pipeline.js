@@ -133,10 +133,13 @@ function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promp
 
   // Respect a manifest-declared app-only build: forcing --with-slides on an
   // app-only-by-design prompt (e.g. BVNK) fabricates slide steps and overrides
-  // the prompt-derived buildMode on resume. Default remains app+slides.
+  // the prompt-derived buildMode on resume. Pass --app-only explicitly (not
+  // just omit --with-slides) — on resume the orchestrator otherwise INHERITS
+  // buildMode=app+slides from the existing run-manifest and needs an explicit
+  // CLI override. Default remains app+slides.
   const appOnly = String(buildMode || '').toLowerCase() === 'app-only';
-  const slidesFlag = appOnly ? [] : ['--with-slides'];
-  if (appOnly) console.log('[batch] buildMode=app-only — omitting --with-slides');
+  const slidesFlag = appOnly ? ['--app-only'] : ['--with-slides'];
+  if (appOnly) console.log('[batch] buildMode=app-only — passing --app-only');
 
   const args = resumableRunId
     ? [
