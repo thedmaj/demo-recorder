@@ -16,7 +16,7 @@ use_cases:
   - "recurring-ach-debit"
   - "fund-and-protect-bundle"
 last_human_review: ""
-last_ai_update: "2026-05-26T20:30:00Z"
+last_ai_update: "2026-05-31T00:00:00Z"
 last_vp_research: "2026-05-26"
 last_askbill_verification: "2026-05-26T20:30:00Z"
 needs_review: true
@@ -76,6 +76,10 @@ Feature Transfer in demos where the persona is funding a fintech account, disbur
 
 ## Customer Use Cases
 
+- Brokerage account funding: Auth + Identity Match connect and verify the account → Signal scores return risk inside `/transfer/authorization/create` → Transfer initiates same-day ACH debit before market close
+- Neobank DDA-to-investment transfer: one Plaid Link session authenticates the external DDA; Signal pre-screens; Transfer initiates with Plaid absorbing return risk for qualifying volume
+- Lending disbursement (credit push): `type: "credit"` pushes loan proceeds to borrower's verified account on same-day ACH or RTP (LA); Auth + Identity Match confirm ownership at disbursement time
+
 ### Brokerage Account Funding (Investment Platform)
 **Persona:** Head of Payments at investment platform (Robinhood/Public-class)
 **Problem:** ACH returns erode trust and capital — by the time a return posts (3+ days later), the user has churned and the funds are gone
@@ -98,6 +102,11 @@ Feature Transfer in demos where the persona is funding a fintech account, disbur
 <!-- ⚠️ HIGHEST PRIORITY for script generation — word-perfect, max 35 words each.
      The script generator uses these verbatim before any other source.
      HUMAN-OWNED — AI must not modify approved blocks. -->
+
+- Beat 1 (post-Link): "Jenna connects her checking account through Plaid Link — authenticated in seconds, no micro-deposits."
+- Beat 3A (authorization — Pattern A default): "Plaid authorizes the debit — Signal clears the transfer, low return risk, approved."
+- Beat 4 (transfer create): "Transfer initiates: same-day ACH, $100, pending. Jenna's funds are on their way."
+- Closing (Fund & Protect): "Account verified. Identity confirmed. Signal-backed authorization. Money moved — ACH or RTP, one SDK, one data network, no ACH blind spots."
 
 ### Account funding (debit) — 5-beat demo (PMM-validated)
 
@@ -376,7 +385,8 @@ Build agents default to pattern A. Use pattern B only when the prompt explicitly
 | `decision` | rationale code | Meaning |
 |---|---|---|
 | `declined` | `NSF` | Insufficient funds |
-| `declined` | `RISK` | Signal ruleset flagged high risk |
+| `declined` | `PAYMENT_RISK` | Signal ruleset flagged high risk — **use `PAYMENT_RISK`, not `RISK`** (AskBill-verified 2026-05-31) |
+| `declined` | `RISK_SCORE_EXCEEDED_THRESHOLD` | Signal score exceeded the customer-configured risk threshold |
 | `declined` | `TRANSFER_LIMIT_REACHED` | Customer-configured limit exceeded |
 | `approved` (non-null rationale) | `MANUALLY_VERIFIED_ITEM` | Couldn't run full risk — apply own policy |
 | `approved` (non-null rationale) | `ITEM_LOGIN_REQUIRED` | Auth lapsed; relink for next attempt |

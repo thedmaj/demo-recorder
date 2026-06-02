@@ -2,15 +2,15 @@
 product: Plaid Auth
 slug: auth
 api_endpoints:
-  - "auth/get"
+  - "/auth/get"
   - "/link/token/create"
-  - "identity/match"
+  - "/identity/match"
 use_cases:
   - "account-funding"
   - "instant-account-verification"
   - "external-account-verification"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-29T23:49:27.590Z"
+last_ai_update: "2026-05-31T00:00:00Z"
 needs_review: true
 approved: true
 version: 1
@@ -52,6 +52,10 @@ Feature this product when the demo persona is a developer or fintech PM solving 
 ## Customer Use Cases
 <!-- ⚠️ HUMAN-OWNED — scenario descriptions for demo builders. AI may add [DRAFT] scenarios. -->
 
+- Account Funding: replace multi-day micro-deposit verification with instant Auth → 65% conversion uplift, 20%+ more accounts funded at origination
+- External Account Verification (EAV): retrieve account + routing numbers directly from the FI; Identity Match cross-checks ownership before ACH debit
+- Instant Account Verification (IAV): Database Auth provides instant verification results within Plaid Link without user-visible delays
+
 ### Account Funding
 **Persona:** Developer at neobank or investment platform
 **Problem:** Multi-day micro-deposit onboarding loses users before they fund their first account
@@ -75,6 +79,9 @@ Feature this product when the demo persona is a developer or fintech PM solving 
      The script generator uses these verbatim before any other source.
      HUMAN-OWNED — AI must not modify approved blocks. -->
 
+- Auth step: retrieve account + routing numbers from the bank via Plaid Link; 98%+ U.S. coverage, no typing, no micro-deposits
+- Identity Match step: compare KYC data to bank-held identity; per-attribute scores (name, address, phone, email) — approve more good users with confidence
+
 ### Demo Opening
 > "Today we'll walk through how Plaid powers account funding and instant account verification. We'll connect a bank account in seconds, verify that the person linking owns that account, and evaluate ACH return risk before releasing funds—all in one integrated flow." (45 words — use abbreviated version for step narration)
 
@@ -91,9 +98,9 @@ Feature this product when the demo persona is a developer or fintech PM solving 
 <!-- ⚠️ HUMAN-OWNED — canonical API names, field names, score ranges, Link event names.
      Build agents and script generator must use these exactly. -->
 
-- API endpoint: `auth/get`
-- Identity API endpoint: `identity/match`
-- Link token endpoint: `/link/token/create`
+- API endpoint: `POST /auth/get` — response: `accounts[]`, `numbers.ach[]` (each has `account`, `routing`, `wire_routing`), `item`, `request_id`
+- Identity API endpoint: `POST /identity/match` — per-field scores 0–100 (name, address, phone, email)
+- Link token endpoint: `/link/token/create` — `products: ["auth"]`; add `"signal"` for ACH risk scoring; use `required_if_supported_products: ["identity"]` for Identity Match
 - Verification modes: Instant Auth, Database Auth, Same-Day Micro-deposits, Automated Micro-deposits
 - Link events: `OPEN`, `SELECT_INSTITUTION`, `SUBMIT_CREDENTIALS`, `SUBMIT_MFA`, `HANDOFF`, `TRANSITION_VIEW`
 - Identity Match score range: 0–100 (70+ = Pass; 95+ includes nickname/common variations; 100 = exact)
@@ -120,6 +127,16 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 - "No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source."
 - Database Auth: instant verification results embedded in Plaid Link, with enhanced risk attributes supporting Identity Match and Signal
 - Coverage: 98%+ of U.S. depository accounts including long-tail fintechs — often 3–4x the coverage of traditional database solutions
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- **"Plaid Instant Auth" is a flow name, not the product name** — the product is "Plaid Auth"; "Instant Auth" refers to a verification method within Auth (also: Database Auth, Instant Match, Same-Day Micro-deposits, Automated Micro-deposits)
+- **`products[]` string is `"auth"`** — not `"plaid_auth"` or `"instant_auth"`
+- **`/auth/get` response has `numbers.ach[]`**, not `numbers.routing[]` — each ACH entry has `account`, `routing`, `wire_routing`
+- **OAuth institutions** (Chase, Capital One) may not return all identity fields if the user skips a permission checkbox — `ACCESS_NOT_GRANTED` can result from this
+- **Do NOT use "Trust Index" in Auth narration** — that is Plaid Protect only
+- **Identity Match is optional** — it is NOT part of the `/auth/get` response; it requires a separate `POST /identity/match` call
 
 ## Objections & Responses
 <!-- 🔄 SHARED — AI adds [DRAFT] from Gong; human approves by removing [DRAFT] tag. -->

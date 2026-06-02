@@ -7,7 +7,7 @@ sources:
   - "Glean: Protect Overview + Plaid Verify Service (Slite eng docs)"
   - "Ti2 launch blog (plaid.com/blog/plaid-protect-trust-index/ — Oct 14 2025)"
   - "Public: plaid.com/docs/api/products/protect/ (endpoint index; field-level Protect schemas are partner/Sales-gated)"
-last_ai_update: "2026-05-25T23:38:44.465Z"
+last_ai_update: "2026-05-31T00:00:00Z"
 needs_review: true
 last_auto_build_sections:
   - "Proof Points & ROI Metrics"

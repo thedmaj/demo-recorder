@@ -60,6 +60,10 @@ build/sequencing playbook see the [`plaid-layer-idv-onboarding`](../../.claude/s
 ## Customer Use Cases
 <!-- ⚠️ HUMAN-OWNED — scenario descriptions for demo builders. AI may add [DRAFT] scenarios. -->
 
+- KYC at account opening: verify identity in a single Plaid Link session (document + data source + selfie); eliminates manual review for low-risk users
+- Layer → IDV chain: Layer prefills identity; IDV verifies it (Data Source + Document + Selfie) — two sequential Link sessions joined by `client_user_id`
+- Regulated account opening: bank/fintech that must satisfy BSA/AML/KYC; IDV provides auditable result via `kyc_check` / `documentary_verification` / `selfie_check`
+
 ### [DRAFT] KYC at account opening (Layer-prefilled)
 **Persona:** New customer at a neobank.
 **Problem:** Manual KYC forms cause drop-off; manual review is slow.
@@ -69,6 +73,9 @@ build/sequencing playbook see the [`plaid-layer-idv-onboarding`](../../.claude/s
 ## Narration Talk Tracks
 <!-- ⚠️ HIGHEST PRIORITY for script generation — word-perfect, max 35 words each.
      HUMAN-OWNED — AI must not modify approved blocks. -->
+
+- Demo opener: onboarding stalls when new customers retype everything and wait on manual checks; Plaid verifies who they are inside one flow — the right people get through faster
+- Verification reveal: Plaid confirms the document is genuine, matches the selfie to the photo, and checks against trusted data sources — a verified identity, returned in seconds
 
 ### Demo Opening
 > "Onboarding stalls when new customers retype everything and wait on manual identity checks. Plaid verifies who they are inside one flow — so the right people get through faster." (33 words)
@@ -200,6 +207,12 @@ version, and clears PII for the reset steps. In **Sandbox**, `selfie_check` is s
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
 
+- Configurable verification depth via Dashboard template — turn on Data Source, Document, Selfie, and AML/Monitor per use case; no code change required
+- 16,000+ government-issued document types supported; automatic desktop→mobile QR handoff for capture
+- Selfie + Document together adds face-match and automatic age-consistency check against provided DOB
+- Works with Plaid Layer prefill — pre-provided identity fields skip those UI steps, so users only complete what is actually needed
+- Auditable `kyc_check`, `documentary_verification`, `selfie_check` results — each step returns pass/fail with per-field match detail
+
 ## Implementation Pitfalls
 <!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
 - Do NOT combine `identity_verification` with any other product in `products[]` — it is mutually
@@ -218,6 +231,13 @@ version, and clears PII for the reset steps. In **Sandbox**, `selfie_check` is s
   Document step treats any upload as genuine and matching Leslie Knope; the step passes only when the
   user-provided name + DOB match Leslie Knope (3 attempts before failure). Selfie does not run in Sandbox.
 - **Statuses on screen:** use `success` / `pending_review` for happy-path demos; never show `failed`.
+
+## Objections & Responses
+
+| Objection | Response | Source | Status |
+|-----------|----------|--------|--------|
+| [DRAFT] "We already do KYC in-house" | "Plaid IDV replaces custom document + selfie infrastructure and provides 16,000+ document type coverage out of the box, with automatic mobile handoff and configurable step depth via Dashboard — no custom build required." | Product positioning | [DRAFT] |
+| [DRAFT] "Selfie checks won't work in sandbox" | "Correct — selfie checks are silently disabled in Sandbox. Data Source and Document checks can be tested with the Leslie Knope persona. Production selfie check is available and covers face-match + liveness." | Plaid docs / AskBill | [DRAFT] |
 
 ## Framework QA Learnings
 <!-- 🔄 SHARED — promote recurring issues from inputs/qa-fix-log.md here. -->

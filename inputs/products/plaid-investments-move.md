@@ -1,6 +1,7 @@
 ---
 last_vp_research: "2026-05-21"
-last_api_verified: "2026-05-21"
+last_api_verified: "2026-05-31"
+last_ai_update: "2026-05-31T00:00:00Z"
 sources:
   - "AskBill plaid_docs MCP — https://plaid.com/docs/investments-move/"
   - "Glean: Plaid Investments Move GTM Playbook (Feb 27 2026), Salesforce opps, Slack #proj-investments-move, Gong customer calls"
@@ -11,6 +12,12 @@ sources:
 > **Product family key:** `investments_move`
 > **Status (May 2026):** **Early Availability / Limited Access** — gated via LaunchDarkly flip by the customer's Plaid Account Manager. Public marketing page live since June 6, 2025.
 > **Plaid Sales engagement required.** Not self-serve. Mandatory data-partner reciprocity clause (6-month build commitment) — confirm with AM before pitching.
+
+## Overview
+Plaid Investments Move automates brokerage account transfer initiation via the ACATS network (US). It exposes the data the receiving broker needs to populate an inbound transfer form — account numbers, holdings, owners, and DTC codes — sourced directly from the institution where possible. The `products[]` string is `"investments_auth"` and the retrieval endpoint is `/investments/auth/get`. Early Availability / Sales-gated.
+
+## Where It Fits
+Feature Investments Move when the demo persona is a new customer at a brokerage (Robinhood, Public, retirement/IRA, crypto exchange offering self-directed brokerage) who wants to initiate an inbound ACATS transfer from their existing broker. Best paired with a "transfer your existing brokerage" narrative. Not for read-only portfolio viewing — use Plaid Investments (`"investments"`) for that.
 
 ## What this product is (and is NOT)
 
@@ -122,6 +129,54 @@ No Investments Move-specific webhooks. The flow reuses generic Item webhooks. Fa
 
 **Active pipeline (Glean Salesforce):** Kraken, OnePay, CashApp, Coinbase, Merrill.
 
+## Customer Use Cases
+
+- Brokerage inbound transfer (ACATS): one Link session returns account number, DTC codes, holdings list, and owner names — Robinhood: 90% drop in ACATS failures, 3× lift in successful transfers
+- Wealth platform asset consolidation: automate batch ACATS initiation across multiple departing accounts with `numbers.acats[].account` + `dtc_numbers`
+
+### Brokerage Inbound Transfer (ACATS)
+**Persona:** New brokerage customer who wants to move their existing portfolio
+**Problem:** ACATS transfer form requires precise account number, DTC code, and holdings data — users don't have this handy and manual entry causes delays or failures
+**Solution:** Plaid Investments Move pulls account number, DTC code, holders, and holdings list directly from the departing institution via one Link session
+**Outcome:** Robinhood saw 90% drop in ACATS failures and 3× lift in successful transfers; autofilled transfer form in seconds vs. multi-day manual process
+
+### Wealth Platform Asset Consolidation
+**Persona:** Investment platform consolidating assets from multiple legacy brokerages
+**Problem:** Batch ACATS requests require exact DTC codes and account numbers for each departing account
+**Solution:** `/investments/auth/get` returns `numbers.acats[].account`, `dtc_numbers`, and `owners` for each linked investment account
+**Outcome:** Automated transfer initiation at scale; manual PDFs and form-fill eliminated
+
+## Accurate Terminology
+<!-- ⚠️ HUMAN-OWNED — canonical API names, field names, score ranges, Link event names. -->
+
+- **`products[]` string:** `"investments_auth"` — NOT `"investments"` (that's read-only data access)
+- **Retrieval endpoint:** `POST /investments/auth/get` — response: `accounts[]`, `holdings[]`, `securities[]`, `owners[]`, `numbers.acats[]{account, account_id, dtc_numbers[]}`, `data_sources`
+- **`dtc_numbers`:** ordered by relevance; if empty, fall back to `/institutions/get_by_id` using `item.institution_id`
+- **`data_sources`:** tells the receiving broker whether each field came from `INSTITUTION` (high confidence) or fallback — `INSTITUTION` is the success state for ACATS automation
+- **No read-only portfolio data:** `/investments/holdings/get` and `/investments/transactions/get` are NOT used here; those are Plaid Investments endpoints
+- **Status:** Early Availability (Sales-gated) — not self-serve; mandatory data-partner reciprocity clause (6-month build commitment)
+- **Sandbox institution:** `ins_115616` (Vanguard); credentials `user_good` / `pass_good`
+- **Canada ATON:** NOT GA — do not promise ATON support
+
+## Competitive Differentiators
+<!-- ⚠️ HUMAN-OWNED -->
+
+- One Link session returns complete ACATS-ready dataset (account number, DTC, holdings list, owners) — replaces brittle manual entry or PDF-fax workflows
+- API-first path resolves in ~14s vs. ~50s scrape fallback; 70–80% of production traffic on the API path
+- Manual/fallback responses are not billed — risk-free integration economics
+- Customer outcome: Robinhood 90% drop in ACATS failures, 3× lift in successful transfers (Plaid internal, marketing-approved)
+- Pairs with standard Plaid Investments for prospects that want both transfer initiation AND ongoing portfolio read access
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- Do NOT use `"investments"` as the Link product — that returns read-only holdings/transactions. Use `"investments_auth"` for ACATS transfer data.
+- Do NOT call `/investments/holdings/get` or `/investments/transactions/get` — those are Investments (data access). Use `/investments/auth/get` for Investments Move.
+- Do NOT invent webhook names — the flow reuses generic Item webhooks; `INVESTMENTS_AUTH_READY` does not exist.
+- Do NOT promise Canada ATON support — not GA as of May 2026.
+- If `dtc_numbers[]` is empty, do NOT default to a hardcoded DTC — fall back to `/institutions/get_by_id` for the institution's DTC.
+- Sales engagement required before pitching — not self-serve; confirm AM before demo.
+
 ## Demo guidance — canonical happy path
 
 **Persona:** New customer of a brokerage (Robinhood-style, Public-style, retirement / IRA, crypto exchange offering self-directed brokerage) initiating an inbound transfer from their existing broker.
@@ -142,6 +197,28 @@ No Investments Move-specific webhooks. The flow reuses generic Item webhooks. Fa
 - Made-up webhook names — the flow reuses generic Item webhooks; do not invent `INVESTMENTS_AUTH_READY` etc.
 - Production ATON Canada — not GA yet.
 - The full `dtc_numbers[]` array as a list dump — show one or two, narrated.
+
+## Narration Talk Tracks
+
+- Transfer initiation beat: "When a new customer wants to bring their existing brokerage, Plaid Investments Move pulls account numbers, holdings, and DTC codes straight from their old broker — no PDFs, no manual entry."
+- ACATS data reveal: "DTC code eleven eleven, account TR five five five five, three holdings — the receiving broker has everything ACATS needs to initiate the transfer."
+
+## Proof Points & ROI Metrics
+
+| Metric | Value | Source | Confidence | Last Verified |
+|--------|-------|--------|------------|---------------|
+| Robinhood: ACATS failure reduction | 90% drop | Plaid internal (marketing-approved) | high | 2026-05-21 |
+| Robinhood: successful transfer lift | 3× | Plaid internal (marketing-approved) | high | 2026-05-21 |
+| API-path latency | ~14s | Glean GTM Playbook Feb 2026 | high | 2026-05-21 |
+| Scrape-fallback latency | ~50s | Glean GTM Playbook Feb 2026 | high | 2026-05-21 |
+| API-path traffic share | 70–80% | Glean GTM Playbook Feb 2026 | high | 2026-05-21 |
+
+## Objections & Responses
+
+| Objection | Response | Source | Status |
+|-----------|----------|--------|--------|
+| [DRAFT] "We handle ACATS manually" | "Manual ACATS forms have high error rates — wrong DTC codes or account numbers cause failures and delays. Plaid Investments Move pulls these directly from the institution with 90% fewer failures (Robinhood reference)." | Glean GTM | [DRAFT] |
+| [DRAFT] "Is this GA?" | "Investments Move is Early Availability — Sales-gated, not self-serve. Contact your Plaid account manager to confirm eligibility and the 6-month data-partner reciprocity commitment." | Glean GTM Playbook | [DRAFT] |
 
 ## Approved talk track (draft)
 

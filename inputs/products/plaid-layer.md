@@ -12,7 +12,7 @@ use_cases:
   - "returning-user-verification"
   - "kyc-auto-fill"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-29T19:14:29.500Z"
+last_ai_update: "2026-05-31T00:00:00Z"
 needs_review: true
 approved: true
 version: 2
@@ -39,6 +39,9 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
 
 ### Supporting Claims
 - [DRAFT] Reduces onboarding form friction for returning Plaid users — Source: product docs, 2026-03-12
+- [DRAFT] Template-driven field visibility — one integration covers pay-by-bank (name/address/bank account) through strict KYC/CRA (DOB + SSN) without building separate forms
+- [DRAFT] Returned identity is consumer-permissioned and phone-verified; chain Plaid IDV to add full document + selfie verification for KYC compliance
+- [DRAFT] Network effect: the more users verify with Plaid, the better Layer eligibility coverage becomes across all integrated apps
 
 ## Proof Points & ROI Metrics
 <!-- ⚠️ HUMAN-OWNED — every claim requires a Source. AI adds [DRAFT] rows only. -->
@@ -86,14 +89,16 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
      The script generator uses these verbatim before any other source.
      HUMAN-OWNED — AI must not modify approved blocks. -->
 
-<!-- Add narration talk tracks here once Layer demos are finalized -->
+- [DRAFT] Phone entry beat: "She enters her phone number. Plaid checks her eligibility in the network — and recognizes her. Her identity is already on file, ready to review and share."
+- [DRAFT] Prefill review beat: "Her name, address, and linked bank accounts are pre-filled from her Plaid profile. She reviews, confirms, and continues — no form to fill out."
+- [DRAFT] Ineligible fallback beat: "Plaid doesn't recognize this number. She fills in her details manually and links her bank account through standard Plaid Link."
 
 ## Accurate Terminology
 <!-- ⚠️ HUMAN-OWNED — canonical API names, field names, score ranges, Link event names.
      Build agents and script generator must use these exactly. -->
 
 - Product name: "Plaid Layer" (not "Layer Connect" or "Layer Auth")
-- **Session token created via `/session/token/create`** — NOT `/link/token/create`. Layer uses a different endpoint requiring a `user_token` + `template_id`.
+- **Session token created via `/session/token/create`** — NOT `/link/token/create`. Layer uses a different endpoint requiring a `user_token` + `template_id`. **There is NO `products[]` field on `/session/token/create`** — product selection is determined by the Layer Dashboard template, not the API request (AskBill-confirmed 2026-05-31).
 - Completion call: `POST /user_account/session/get` (not `/identity/get`). Returns identity + items[] in one response.
 - Link events: `LAYER_READY`, `LAYER_NOT_AVAILABLE`, `LAYER_AUTOFILL_NOT_AVAILABLE`, `OPEN`, `HANDOFF`
 - Field visibility is template-driven (required vs optional), not globally fixed for all Layer stories
@@ -144,7 +149,7 @@ encoded in the build prompt (`prompt-templates.js`) and the [onboarding skill](.
    - `LAYER_NOT_AVAILABLE` → optional Extended Autofill: `handler.submit({ date_of_birth })` (→ `LAYER_READY` or `LAYER_AUTOFILL_NOT_AVAILABLE`).
    - `LAYER_AUTOFILL_NOT_AVAILABLE` → fall back to the storyboard's manual onboarding step (no Layer identity available).
 5. `onSuccess` fires with `public_token` → backend calls `POST /user_account/session/get` with `public_token`.
-6. Response: `{ user: { legal_name, email_address, phone_number, date_of_birth, address }, items: [{ item_id, access_token, institution_id }] }`.
+6. Response: `{ identity: { name: {first_name, last_name}, address, phone_number, date_of_birth, ssn, ssn_last_4 }, items: [{ item_id, access_token }], identity_edit_history, request_id }`. **Note:** `email_address` is currently NOT returned by `/user_account/session/get` per Plaid docs (AskBill-confirmed 2026-05-31). Do not show email in the API panel for Layer demos.
 7. If `items[]` is present, use the `access_token` directly — **do not** also call `/item/public_token/exchange` (already done by Layer). Only call it explicitly if you need the exchange step visible in a demo API log.
 8. Optionally call `POST /auth/get` with the Item `access_token` to retrieve ACH routing + account numbers.
 
@@ -298,6 +303,17 @@ them in the API/JSON panel (and/or a host "behind the scenes" callout) in this o
 Keep payloads realistic and idealized; never invent fields. The build prompt
 (`prompt-templates.js` real-Layer block) instructs this; see also
 [`plaid-layer-idv-onboarding`](../../.claude/skills/plaid-layer-idv-onboarding/SKILL.md).
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- **No `products[]` on `/session/token/create`** — Layer product configuration is done via the Dashboard template, not the API request field (AskBill-confirmed 2026-05-31)
+- **`email_address` is NOT returned** by `/user_account/session/get` — do not show email in the API panel for Layer demos (AskBill-confirmed 2026-05-31)
+- **Returned identity is unverified** (phone is verified; other fields are user-submitted/editable) — chain IDV to KYC if verification is required
+- **`submit()` before `open()`** — call `handler.submit({ phone_number })` first; only call `handler.open()` after `LAYER_READY` fires. Calling `open()` before submit throws "Please submit Phone Number before opening Link"
+- **Submit after preload** — submit may be dropped if called synchronously right after `Plaid.create()` before the preload iframe initializes; use ~1200ms delay or retry guard
+- **`/user/create` is one-time** — calling it again for an existing `client_user_id` returns 400. Use `getOrCreateLayerUserToken()` cache pattern to reuse `user_token` across runs
+- **Do NOT present Layer vs manual as a user choice** — eligibility is determined automatically by the phone number; the branch is invisible to the user
 
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->

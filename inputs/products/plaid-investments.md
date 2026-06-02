@@ -1,6 +1,7 @@
 ---
 last_vp_research: "2026-05-21"
-last_api_verified: "2026-05-21"
+last_api_verified: "2026-05-31"
+last_ai_update: "2026-05-31T00:00:00Z"
 sources:
   - "AskBill plaid_docs MCP — https://plaid.com/docs/investments/"
   - "Glean: Plaid Investments product one-pager (Tom Donovan, May 2026), Salesforce opps, internal coverage docs"
@@ -11,6 +12,12 @@ sources:
 > **Product family key:** `investments`
 > **Status (May 2026):** **GA**. Per-Item subscription pricing; Holdings and Transactions can be subscribed separately.
 > **Coverage:** 2,500+ US institutions; ~95% of US investment accounts covered. 10 of the top 30 brokerages on the API path; Vanguard + Schwab migrated to API in 2025. **Fidelity Investments is gated** (request access via Plaid Sales).
+
+## Overview
+Plaid Investments provides read-only access to investment account holdings (current positions, securities metadata, values) and up to 24 months of investment transactions (buys, sells, dividends, fees). It powers PFM dashboards, wealth-tracking apps, tax-prep workflows, and portfolio analytics. The `products[]` string is `"investments"` — distinct from `"investments_auth"` (Investments Move / brokerage transfer).
+
+## Where It Fits
+Feature Investments when the demo persona is a PFM, wealth tracker, or tax-prep user connecting their brokerage to see a consolidated portfolio view. Best paired with Transactions (spending) and Liabilities (debts) as the LIT bundle for net-worth dashboards. Also pairs with Investments Move for prospects that want both read-only data and transfer initiation on the same connection.
 
 ## What this product is (and is NOT)
 
@@ -159,6 +166,59 @@ GA — enabled subscription is required (per-Item, separate billing for Holdings
 
 **Other typical buyers:** PFM apps, wealth dashboards, tax-prep workflows, robo-advisors.
 
+## Customer Use Cases
+
+- Portfolio tracking (PFM / wealth dashboard): pull holdings and up to 24 months of transactions from the linked brokerage; Empower replaced Yodlee with Plaid for $1.999M ACV
+- Tax-prep transaction history: `/investments/transactions/get` returns buys, sells, dividends, fees with aggregate cost basis for Schedule D pre-fill
+- Net-worth dashboard (LIT bundle): Investments + Liabilities + Transactions on one Link token → assets minus debts equals net worth in real time
+
+### Portfolio Tracking (PFM / Wealth Dashboard)
+**Persona:** Consumer linking a brokerage to a personal finance or wealth-tracking app
+**Problem:** Fragmented investment accounts with no consolidated view
+**Solution:** Plaid Investments pulls holdings and up to 24 months of transactions from the linked brokerage in one Link session
+**Outcome:** Real-time net-worth and portfolio view; Empower replaced Yodlee with Plaid for $1.999M ACV
+
+### Tax-Prep Transaction History
+**Persona:** Tax-prep software user linking brokerage accounts for capital gains reporting
+**Problem:** Manual export of transaction history is error-prone and incomplete
+**Solution:** `/investments/transactions/get` returns up to 24 months of buys, sells, dividends, and fees with cost basis
+**Outcome:** Automated pre-fill of Schedule D inputs; reduces manual data entry for the user
+
+### Net-Worth Dashboard (LIT Bundle)
+**Persona:** Consumer using a budgeting or savings app that needs a complete financial picture
+**Problem:** Separate systems for spending, investments, and debts mean no unified net worth view
+**Solution:** Plaid Investments (`/investments/holdings/get`) + Liabilities + Transactions on one Link token gives assets, debts, and spending in one session
+**Outcome:** Real-time net-worth calculation; "assets minus debts" rendered immediately after link
+
+## Accurate Terminology
+<!-- ⚠️ HUMAN-OWNED — canonical API names, field names, score ranges, Link event names. -->
+
+- **`products[]` string:** `"investments"` — NOT `"investments_auth"` (that's Investments Move)
+- **Holdings endpoint:** `POST /investments/holdings/get` — response: `accounts[]`, `holdings[]` (quantity, institution_value, cost_basis), `securities[]` (ticker_symbol, cusip, type)
+- **Transactions endpoint:** `POST /investments/transactions/get` — requires `start_date` + `end_date` (YYYY-MM-DD); max 24-month window; paginated via `options.count` + `options.offset`
+- **Webhooks:** `HOLDINGS: DEFAULT_UPDATE` (new/changed positions); `INVESTMENTS_TRANSACTIONS: DEFAULT_UPDATE` (new/canceled txns); `INVESTMENTS_TRANSACTIONS: HISTORICAL_UPDATE` (async first pull complete)
+- **Cost basis:** aggregate only — no per-lot tax data in the documented response
+- **Fidelity:** request-gated — confirm with Plaid Sales before pitching Fidelity coverage
+- **No account numbers or DTC:** those are Investments Move outputs, not Investments
+
+## Competitive Differentiators
+<!-- ⚠️ HUMAN-OWNED -->
+
+- 2,500+ US institutions, ~95% of US investment accounts covered — broader than legacy aggregators (Yodlee FastLink is main competitor)
+- Top brokerages (Vanguard, Schwab) migrated to the modern API path in 2025 — fewer scrape fallbacks, faster refresh cycles
+- Webhook-driven freshness eliminates full re-pulls; `HOLDINGS: DEFAULT_UPDATE` + `INVESTMENTS_TRANSACTIONS: DEFAULT_UPDATE`
+- Empower replaced Yodlee with Plaid Investments at $1.999M ACV (Dec 2025) — the canonical Yodlee-replacement reference
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- Do NOT use `investments_auth` as the Link product — that is Investments Move (brokerage transfer). Use `"investments"` for read-only portfolio data.
+- Do NOT call `/investments/auth/get` — that is Investments Move's endpoint. Holdings uses `/investments/holdings/get`; transactions uses `/investments/transactions/get`.
+- Do NOT show per-lot tax data — cost basis is aggregate only in the documented API response.
+- Do NOT show ACATS / DTC numbers — those are Investments Move outputs.
+- Do NOT make Fidelity coverage claims without Sales confirmation — Fidelity is request-gated.
+- First post-Link call to `/investments/transactions/get` may take 1–2 minutes; use `async_update=true` and listen for `HISTORICAL_UPDATE` webhook for large accounts.
+
 ## Demo guidance — canonical happy path
 
 **Persona:** PFM / wealth-tracking app user linking a brokerage account to see consolidated portfolio + tax-relevant transaction history.
@@ -178,6 +238,27 @@ GA — enabled subscription is required (per-Item, separate billing for Holdings
 - Per-lot tax data — not in the response. Disclose if asked.
 - ACATS / DTC numbers — those are Investments Move outputs.
 - Fidelity coverage claims without confirming Sales enablement.
+
+## Narration Talk Tracks
+
+- Portfolio reveal: "One Plaid Investments connection pulls real-time holdings and up to twenty-four months of investment transactions — the backbone of any PFM or wealth tracker."
+- Holdings beat: "Vanguard Total Stock Market — one hundred shares, twelve thousand four hundred fifty dollars value, eight thousand two hundred cost basis. Refreshed via Plaid overnight."
+
+## Proof Points & ROI Metrics
+
+| Metric | Value | Source | Confidence | Last Verified |
+|--------|-------|--------|------------|---------------|
+| US institutions covered | 2,500+ | Plaid docs | high | 2026-05-31 |
+| US investment account coverage | ~95% | Plaid docs | high | 2026-05-31 |
+| Transaction history available | Up to 24 months | AskBill-confirmed | high | 2026-05-31 |
+| Empower ACV (Yodlee replacement) | $1.999M ACV, closed Dec 2025 | Glean Salesforce | high | 2026-05-21 |
+
+## Objections & Responses
+
+| Objection | Response | Source | Status |
+|-----------|----------|--------|--------|
+| [DRAFT] "We use Yodlee" | "Empower replaced Yodlee with Plaid Investments for $1.999M ACV (Dec 2025). Plaid has 2,500+ institutions and Vanguard + Schwab on the modern API path — fewer scrape fallbacks, faster refresh." | Glean Salesforce | [DRAFT] |
+| [DRAFT] "Does this include Fidelity?" | "Fidelity is request-gated — contact your Plaid account manager before committing Fidelity coverage to a prospect." | Plaid docs | [DRAFT] |
 
 ## Approved talk track (draft)
 

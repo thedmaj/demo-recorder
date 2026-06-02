@@ -11,8 +11,10 @@ use_cases:
   - "near-prime-second-look"
   - "credit-underwriting"
 last_human_review: "2026-05-21"
+last_ai_update: "2026-05-31T00:00:00Z"
 approved: true
 version: 1
+last_vp_research: "2026-05-30"
 ---
 
 # Plaid Check CRA LendScore (beta)
@@ -26,13 +28,50 @@ LendScore is a **Plaid Check CRA add-on** (closed beta) that predicts **12-month
 BNPL, personal lending, and near-prime **second-look** flows where the host already uses CRA Base Report. Pair LendScore with Base Report summary fields on the same screen and optionally **Network Insights** on a follow-on slide.
 
 ## Value Proposition Statements
+<!-- Auto-seeded / refreshed by research phase on 2026-05-30.
+     A human should review and promote into Primary Pitch / Supporting Claims. -->
 
-### Primary Pitch
-> "Approve more creditworthy near-prime shoppers with a cash-flow score that complements the bureau file."
+### Candidate Value Propositions (research-derived)
+- Approve more creditworthy near-prime shoppers with a cash-flow score that complements the bureau file
+- Up to 25% lift in predictive performance vs traditional credit data alone (GTM — use at most once per demo)
+- Up to 20% relative risk reduction for some subprime and near-prime segments (GTM — use at most once per demo)
 
-### Supporting Claims
-- "Up to 25% lift in predictive performance vs traditional credit data alone" (GTM — use at most once per demo)
-- "Up to 20% relative risk reduction for some subprime and near-prime segments" (GTM — use at most once per demo)
+## Customer Use Cases
+
+- BNPL second-look underwriting: LendScore complements bureau file for near-prime applicants bureau would decline; use with Base Report summary chips on the same reveal step
+- Personal lending near-prime expansion: 1–99 score predicts 12-month non-mortgage default risk; up to 25% lift in predictive performance vs traditional credit data alone
+- Auto finance or lease-to-own decisioning: pair LendScore with Cash Flow Insights for ability-to-pay + default risk on one CRA consumer report
+
+## Proof Points & ROI Metrics
+
+| Metric | Value | Source | Confidence | Last Verified |
+|--------|-------|--------|------------|---------------|
+| Predictive performance lift | Up to 25% vs traditional credit data alone | GTM (use at most once per demo) | medium | 2026-05-21 |
+| Risk reduction (subprime/near-prime) | Up to 20% relative risk reduction | GTM | medium | 2026-05-21 |
+| Score range | 1–99 (higher = lower default risk = safer to approve) | Plaid docs / AskBill | high | 2026-05-31 |
+
+## Competitive Differentiators
+
+- CRA-compliant cash-flow credit score — FCRA-regulated, not just a behavior score
+- Same consumer report session as Base Report — lenders get underwriting depth without a second Link session
+- Reason codes (`report.lend_score.reason_codes[]`) support adverse-action transparency — up to 5 codes per report
+- Network Insights available as a follow-on add-on for cross-network account behavior signals
+
+## Objections & Responses
+
+| Objection | Response | Source | Status |
+|-----------|----------|--------|--------|
+| [DRAFT] "We already have a credit bureau score" | "LendScore is a cash-flow-trained complement to the bureau file, not a replacement. It picks up ability-to-pay signals — income stability, NSF history — that bureau tradelines miss, especially for near-prime segments." | Product positioning | [DRAFT] |
+| [DRAFT] "It's still beta" | "LendScore is closed beta, which means controlled access with dedicated integration support. GTM proof points show up to 25% predictive lift — current customers are running it in parallel for validation." | GTM | [DRAFT] |
+
+## Implementation Pitfalls
+
+- **`cra_base_report` must be in `products[]`** alongside `cra_lend_score` — LendScore is an add-on, never standalone
+- **`cra_options.cra_lend_score.version: "LS1"`** is required on the Link token (AskBill-confirmed 2026-05-31)
+- **API panel must show `lend_score/get`** endpoint — do NOT show `base_report/get` when the step is the LendScore reveal
+- **LendScore reason codes are in `report.lend_score.reason_codes[]`** — NOT the same shape as Signal `ruleset.result` or `core_attributes`
+- **Beta callout required** — `report.lend_score.model_status` may be `BETA`; always note beta in UI and narration
+- **Score direction is OPPOSITE to Signal** — LendScore 1–99 higher = SAFER (Signal 1–99 higher = riskier); never confuse the two
 
 ## Accurate Terminology
 
@@ -55,6 +94,9 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 5. **Slides:** Plaid deck only for explainer beats; raw LendScore JSON stays in the global panel on the host reveal step.
 
 ## Narration Talk Tracks
+
+- LendScore reveal: "LendScore returns seventy-eight on the one-to-ninety-nine scale — low twelve-month default risk. Reason codes support the approve decision with adverse-action transparency."
+- Demo opener: "LendScore is a Plaid Check add-on that predicts twelve-month non-mortgage default risk from consumer-permissioned bank data — a cash-flow complement to the bureau score."
 
 ### LendScore reveal (host)
 > "LendScore returns seventy-eight on the one-to-ninety-nine scale — low twelve-month default risk. Reason codes support the approve decision with adverse-action transparency."

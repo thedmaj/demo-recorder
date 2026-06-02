@@ -10,7 +10,7 @@ use_cases:
   - "consumer-report-income-review"
   - "income-stability-assessment"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-05-29T22:56:26.434Z"
+last_ai_update: "2026-05-31T04:41:50.379Z"
 needs_review: true
 approved: true
 version: 1
@@ -55,6 +55,10 @@ Feature this product when the persona needs a consumer-report workflow that adds
 ## Customer Use Cases
 <!-- ⚠️ HUMAN-OWNED — scenario descriptions for demo builders. AI may add [DRAFT] scenarios. -->
 
+- Income context for underwriting: retrieve model-driven income attributes (historical avg monthly income, forecasted income, next payment date, employer name) after the CRA report-ready event
+- Rent-to-income / tenant screening: 13+ categorized income types with ready-made attributes for rent-to-income calculations; FCRA-compliant
+- Ability-to-pay assessment: frequency detection at 95–98% for salary/retirement/LTD streams; income data as part of the underwriting decision
+
 ### Income Context For Underwriting
 **Persona:** Product or underwriting lead at a lender
 **Problem:** The team needs report-based income context as part of a broader consumer-report review
@@ -86,6 +90,9 @@ Feature this product when the persona needs a consumer-report workflow that adds
 <!-- ⚠️ HIGHEST PRIORITY for script generation — word-perfect, max 35 words each.
      The script generator uses these verbatim before any other source.
      HUMAN-OWNED — AI must not modify approved blocks. -->
+
+- Demo opener: Plaid Check Income Insights adds income-focused context to a consumer-report workflow — report-ready earnings signals in the same experience as the rest of the Plaid Check report
+- Income insight beat: Income Insights adds income-oriented context to the report so reviewers can assess earnings-related signals alongside the broader Plaid Check underwriting picture
 
 ### Demo Opening
 > "Today we'll show how Plaid Check Income Insights adds income-focused context to a consumer-report workflow, helping underwriters review report-ready earnings signals in the same experience as the rest of the Plaid Check report." (33 words)
@@ -157,6 +164,31 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-05-31 — Run: 2026-05-31-Dealer-Finance-Desk-Verify-Auth-Identity-Signal-Income-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the finance desk","status":"approved"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). Do not bundle auth, identity, or signal into the income_verification Link token.","status":"approved","source":"AskBill / Plaid docs + brief CRITICAL note"}
+
+### 2026-05-30 — Run: 2026-05-30-Dealer-Finance-Desk-Verify-Auth-Identity-Signal-Income-Statements-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Keep income-oriented report context inside the same Plaid Check consumer-report workflow.","status":"approved"}
+- [high] {"claim":"Avoid blending consumer-report review with separate traditional income-verification product flows.","status":"approved"}
+- [high] {"claim":"Model-driven income insights on ability-to-pay: historical average monthly income (gross & net), forecasted income (next 3 months), predicted next payment date, employer name / income provider, and 13+ income type categories.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Built as an FCRA-compliant upgrade to Bank Income; GTM advises migrating US Bank Income users to CRA Income Insights when using data for underwriting or income verification.","status":"DRAFT","source":"Glean GTM research, Oct 2025"}
+- [high] {"claim":"High-precision salary categorization (~0.90 precision, ~0.92 recall).","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Employer/income provider normalization returns a name on ~64% of income streams.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Frequency detection: 57% across all streams, 83% on streams with 3+ transactions, 95-98% on salary/retirement/LTD streams.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+
+### 2026-05-30 — Run: 2026-05-30-Dealer-Finance-Desk-Verify-Auth-Identity-Signal-Income-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Keep income-oriented report context inside the same Plaid Check consumer-report workflow.","status":"approved"}
+- [high] {"claim":"Avoid blending consumer-report review with separate traditional income-verification product flows.","status":"approved"}
+- [high] {"claim":"Model-driven income insights on ability-to-pay: historical average monthly income (gross & net), forecasted income (next 3 months), predicted next payment date, employer name / income provider, and 13+ income type categories.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Built as an FCRA-compliant upgrade to Bank Income; GTM advises migrating US Bank Income users to CRA Income Insights when using data for underwriting or income verification.","status":"DRAFT","source":"Glean GTM research, Oct 2025"}
+- [high] {"claim":"High-precision salary categorization (~0.90 precision, ~0.92 recall).","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Employer/income provider normalization returns a name on ~64% of income streams.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Frequency detection: 57% across all streams, 83% on streams with 3+ transactions, 95-98% on salary/retirement/LTD streams.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
 
 ### 2026-05-29 — Run: 2026-05-29-Application-Dashboard-With-An-CRA-Identity-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

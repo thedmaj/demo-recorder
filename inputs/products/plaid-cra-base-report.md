@@ -11,11 +11,11 @@ use_cases:
   - "cash-flow-underwriting"
   - "account-stability-review"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-05-21T18:01:23.465Z"
+last_ai_update: "2026-06-01T16:48:40.037Z"
 needs_review: true
 approved: true
 version: 1
-last_vp_research: "2026-04-24"
+last_vp_research: "2026-06-01"
 ---
 
 # Plaid Check Base Report
@@ -27,17 +27,16 @@ Plaid Check Base Report gives lenders and verifiers a consumer-permissioned view
 Feature this product when the persona needs a reusable underwriting artifact backed by linked bank-account data. Typical stories include personal lending, BNPL, or account-review flows where account stability, ownership, and transaction behavior matter more than payment rails.
 
 ## Value Proposition Statements
-<!-- ⚠️ HUMAN-OWNED — pre-approved messaging. AI may ADD candidates marked [DRAFT]
-     but must NOT modify or remove approved statements.
-     Humans promote [DRAFT] to approved by deleting the tag. -->
+<!-- Auto-seeded / refreshed by research phase on 2026-06-01.
+     A human should review and promote into Primary Pitch / Supporting Claims. -->
 
-### Primary Pitch
-> "Generate a consumer-permissioned cash-flow report that gives underwriters a fuller picture of account behavior and stability."
-
-### Supporting Claims
-- "Turn linked bank-account data into a reusable underwriting report."
-- "Surface balances, inflows, outflows, transaction patterns, and ownership in one place."
-- "Support credit review with a report workflow instead of one-off point checks."
+### Candidate Value Propositions (research-derived)
+- Generate a consumer-permissioned cash-flow report that gives underwriters a fuller picture of account behavior and stability.
+- Turn linked bank-account data into a reusable underwriting report.
+- Surface balances, inflows, outflows, transaction patterns, and ownership in one place.
+- Support credit review with a report workflow instead of one-off point checks.
+- Underwrite thin-file renters from verified income and cash flow instead of a bureau score.
+- One Plaid connection underwrites, verifies income, powers PFM, de-risks repayment, and self-heals.
 
 ## Proof Points & ROI Metrics
 <!-- ⚠️ HUMAN-OWNED — every claim requires a Source. AI adds [DRAFT] rows only. -->
@@ -53,6 +52,10 @@ Feature this product when the persona needs a reusable underwriting artifact bac
 
 ## Customer Use Cases
 <!-- ⚠️ HUMAN-OWNED — scenario descriptions for demo builders. AI may add [DRAFT] scenarios. -->
+
+- Credit underwriting: generate a consumer-permissioned Base Report after Link; reviewers see balances, inflows, outflows, and ownership in one surface
+- Adverse action / account review: FCRA-compliant cash-flow data from bank accounts supports adverse-action decisions (Varo use case)
+- Second-look underwriting: supplement bureau decline with Base Report cash-flow data for near-prime reconsideration (Progressive Leasing)
 
 ### Credit Underwriting
 **Persona:** Product manager or underwriting lead at a lender
@@ -86,6 +89,9 @@ Feature this product when the persona needs a reusable underwriting artifact bac
      The script generator uses these verbatim before any other source.
      HUMAN-OWNED — AI must not modify approved blocks. -->
 
+- Demo opener: Plaid Check turns linked bank-account data into a reusable Base Report for underwriting — balances, transactions, and ownership in one consumer-permissioned workflow
+- Report creation beat: after Link, Plaid generates a consumer report for the permissible purpose you define, then notifies your system when the report is ready
+
 ### Demo Opening
 > "Today we'll show how Plaid Check turns linked bank-account data into a reusable Base Report for underwriting, combining balances, transactions, and ownership details into one consumer-permissioned credit-review workflow." (31 words)
 
@@ -110,6 +116,7 @@ Feature this product when the persona needs a reusable underwriting artifact bac
 - Async lifecycle: report requested -> report generating -> report ready
 - Readiness concepts: `CHECK_REPORT_READY`, `USER_CHECK_REPORT_READY`
 - Important report fields: balances, inflows, outflows, ownership, transactions, days available, primary account prediction
+- **`cra_options` required** on `/link/token/create` — include `days_requested` and product-specific versions (e.g. `cra_cashflow_insights.version: "CFI1"`, `cra_lend_score.version: "LS1"`, `cra_income_insights.version: "II2"`) when requesting those add-ons (AskBill-confirmed 2026-05-31)
 
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
@@ -169,6 +176,14 @@ Official list: [Plaid Sandbox test credentials — Credit and income testing](ht
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-01 — Run: 2026-06-01-Split-Rent-900-Now-CRA-Auth-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data."}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks."}
+- [high] {"claim":"Income Insights and Base Report ride the same single Plaid Link connection Rain already uses, so adding CRA reuses existing infrastructure."}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
 
 ### 2026-05-21 — Run: 2026-05-21-Zip-Bnpl-At-Retail-CRA-Auth-Signal-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

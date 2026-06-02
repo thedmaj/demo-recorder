@@ -1,6 +1,7 @@
 ---
 last_vp_research: "2026-05-21"
-last_api_verified: "2026-05-21"
+last_api_verified: "2026-05-31"
+last_ai_update: "2026-05-31T00:00:00Z"
 sources:
   - "AskBill plaid_docs MCP — https://plaid.com/docs/liabilities/"
   - "Glean: Plaid Liabilities One-Pager (Oct 2025), Financial Management Playbook (Mar 2026), Yodlee Battle Card, SoFi Account Plan Q1 2026, Liabilities FAQ Confluence (Aug 2024), customer-comms emails"
@@ -12,6 +13,12 @@ sources:
 > **Status (May 2026):** **GA** in the US. Limited coverage in Canada. Subscription-billed (per-Item per-month).
 > **Solution area:** Personal Finance Insights (alongside Transactions, Investments, Enrich) — NOT lending / underwriting.
 > **Public marketing headline:** *"Credit card and mortgage data"* — student loans deliberately dropped from the headline (see Stop Act caveat below).
+
+## Overview
+Plaid Liabilities provides read-only, consumer-permissioned access to debt-account details: credit cards (including PayPal Credit), private student loans, and mortgages. Data is fetched via `POST /liabilities/get` using the `"liabilities"` Link product and is refreshed approximately once per day (not live). Federal student loans are NOT available since August 2024 (Stop Act). Non-FCRA — not for credit decisioning.
+
+## Where It Fits
+Feature Liabilities for PFM, debt-paydown, loan consolidation, and net-worth dashboard use cases. Best featured in the LIT bundle (Liabilities + Investments + Transactions) for a complete financial picture. Never position Liabilities for underwriting or credit decisions — that requires CRA Base Report. Avoid demoing federal student loan servicer data (Mohela, Nelnet, Aidvantage, EdFinancial, CRI) — not accessible since Aug 2024.
 
 ## What Plaid Liabilities is
 
@@ -188,6 +195,60 @@ The pre-Stop-Act marketing claims (Navient/Nelnet/Great Lakes/FedLoan as core su
 | **Auto loans** | Poor | *"Coverage for auto loans is not as good because they are often sold to servicers that do not make their loans available to open banking providers."* — Tom Donovan, May 2026 |
 | **Region** | US strong; Canada limited | |
 
+## Customer Use Cases
+
+- Net-worth dashboard (LIT bundle): `products: ["liabilities", "transactions", "investments"]` on one Link token; assets − debts = net worth in real time
+- Debt-paydown coaching: APR, minimum payment, and due date from `/liabilities/get`; Avalanche/snowball recommendation based on actual APRs
+- Balance transfer eligibility: credit card balances, APRs, and utilization in a consumer-permissioned flow (non-FCRA, non-underwriting)
+
+### Net-Worth Dashboard (LIT Bundle)
+**Persona:** Consumer using a PFM or wealth app wanting a complete financial picture
+**Problem:** Assets, debts, and spending tracked in separate tools with no unified net-worth view
+**Solution:** LIT bundle — `products: ["liabilities", "transactions", "investments"]` on one Link token; three endpoints for debts, spending, and holdings
+**Outcome:** Real-time net-worth = investments (assets) − liabilities (debts); SoFi, Monarch Money, YNAB, ChatGPT Personal Finance use this pattern
+
+### Debt-Paydown Coaching
+**Persona:** Consumer using a debt-paydown or loan consolidation app
+**Problem:** Users need APR, minimum payments, and due dates for all debts in one place to make payoff decisions
+**Solution:** `/liabilities/get` returns per-account APR, minimum payment, next due date, and last statement balance for credit cards and mortgages
+**Outcome:** Avalanche or snowball payoff recommendation based on actual APRs; "Pay off your Synchrony card first to save $632 in interest"
+
+### Balance Transfer Eligibility
+**Persona:** Consumer evaluating a balance transfer offer
+**Problem:** Lender needs to see existing credit card balances, APRs, and utilization without a formal underwriting step
+**Solution:** Liabilities returns credit card balances, APRs, and payment history in a consumer-permissioned flow (non-FCRA)
+**Outcome:** Pre-qualify users for a balance transfer offer based on actual debt data
+
+## Accurate Terminology
+<!-- ⚠️ HUMAN-OWNED — canonical API names, field names, score ranges, Link event names. -->
+
+- **`products[]` string:** `"liabilities"` — non-FCRA; do NOT mix with `cra_*` products
+- **Retrieval endpoint:** `POST /liabilities/get` — response: `accounts[]`, `liabilities.credit[]`, `liabilities.student[]`, `liabilities.mortgage[]`
+- **Credit card key fields:** `aprs[]` (apr_percentage, apr_type), `minimum_payment_amount`, `next_payment_due_date`, `last_statement_balance`, `is_overdue`
+- **Mortgage key fields:** `interest_rate.percentage`, `loan_term`, `escrow_balance`, `has_pmi`, `next_monthly_payment`, `property_address`
+- **Student loan key fields:** `interest_rate_percentage`, `loan_status.type`, `pslf_status`, `repayment_plan.type`, `outstanding_interest_amount`
+- **Webhook:** `LIABILITIES: DEFAULT_UPDATE` — payload includes `account_ids_with_new_liabilities[]` and `account_ids_with_updated_liabilities` (map of account_id → changed fields)
+- **Refresh model:** cached snapshot, refreshed ~once per day — NOT live; do not promise real-time freshness
+- **Federal student loans:** NOT available since Aug 23, 2024 (Stop Act) — Mohela, Nelnet, Aidvantage, EdFinancial, CRI are gone
+- **Private student loans OK:** Sallie Mae, Discover Student Loans, Wells Fargo Education, PHEAA, CornerStone/UHEAA
+
+## Competitive Differentiators
+<!-- ⚠️ HUMAN-OWNED -->
+
+- Direct-from-servicer fields (APR, escrow, PMI, repayment plan, PSLF status) — richer than bureau-data aggregators (MethodFi, Spinwheel) and richer than user-entered
+- LIT bundle (Liabilities + Investments + Transactions) on one Link token covers the full consumer financial picture — single session, single access_token
+- SoFi ($850k ARR), ChatGPT Personal Finance (May 2026 launch), Copilot, Monarch Money, YNAB — proof points across PFM and wealth-app market
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- **NEVER show federal student loan data** — Mohela, Nelnet, Aidvantage, EdFinancial, Great Lakes, FedLoan, CRI have been gone since Aug 2024. Private servicers only.
+- **Non-FCRA** — do NOT use Liabilities for underwriting or credit decisions. Use CRA Base Report for those flows.
+- **Refresh is daily** — do not claim real-time freshness. If the narrative needs "just paid" detection, source it from Transactions.
+- **Auto loans** — poor coverage; do not feature as a primary.
+- **CRA products cannot mix with `liabilities`** in the same Link token.
+- **Sallie Mae quirk:** `balance.current` includes principal + outstanding interest; `outstanding_interest_amount` returns null.
+
 ## Common bundle patterns
 
 Liabilities is most commonly sold and demo'd as part of the **"LIT" bundle** (Liabilities + Investments + Transactions). Plaid's canonical positioning, repeated verbatim across the Financial Management Playbook, Oct 2025 Solution Positioning, and the PFM Pitch Deck:
@@ -306,6 +367,28 @@ Single-purpose debt-data demos (rare in 2026 — most prospects want at least Tr
 - **Auto loans as a primary** — coverage is weak.
 - **Real-time freshness claims** — Liabilities refreshes ~daily, not live. If the narrative needs "just paid" freshness, source it from Transactions.
 - **Made-up explainability fields** — there are no `reason_codes`; the documented fields are the documented fields.
+
+## Narration Talk Tracks
+
+- Debt reveal: "One Plaid Link, and we see your credit cards' APRs and minimums, your mortgage's interest rate and escrow, and your private student loans' payoff dates — directly from the servicer."
+- Daily refresh disclosure: "Your Chase Sapphire has a twenty-two point four nine percent purchase APR, two hundred seventy-eight dollar minimum, due May twenty-eighth — Plaid refreshed that overnight."
+- LIT bundle closing: "Add Transactions to that connection and you also see the payment land Tuesday. Add Investments and we calculate your net worth in real time."
+
+## Proof Points & ROI Metrics
+
+| Metric | Value | Source | Confidence | Last Verified |
+|--------|-------|--------|------------|---------------|
+| Credit card coverage | ~98% of major US institutions | Plaid docs | high | 2026-05-31 |
+| SoFi ARR on Liabilities | ~$850k ARR | Glean SoFi Account Plan Q1 2026 | high | 2026-05-21 |
+| Refresh cadence | ~once per day (not live) | AskBill-confirmed | high | 2026-05-31 |
+| Federal student loans | Not available since Aug 23, 2024 | Liabilities FAQ / Glean | high | 2026-05-21 |
+
+## Objections & Responses
+
+| Objection | Response | Source | Status |
+|-----------|----------|--------|--------|
+| [DRAFT] "MethodFi has 15,000+ institutions" | "MethodFi and Spinwheel pull from bureaus / card networks — broader but shallower. Plaid pulls directly from the servicer (richer fields: APR by type, PSLF status, PMI, escrow). Different products for different use cases." | Competitive Intel | [DRAFT] |
+| [DRAFT] "Can we use this for underwriting?" | "Liabilities data is non-FCRA — it should not be used for credit decisioning. For FCRA-regulated lending workflows, use CRA Base Report instead." | SE positioning | [DRAFT] |
 
 ## Approved talk track (draft)
 

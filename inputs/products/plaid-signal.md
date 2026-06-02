@@ -9,7 +9,7 @@ use_cases:
   - "ach-risk-assessment"
   - "instant-funding-decisioning"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-03-12T00:00:00Z"
+last_ai_update: "2026-05-31T00:00:00Z"
 needs_review: false
 approved: true
 version: 1
@@ -19,7 +19,7 @@ last_vp_research: "2026-04-24"
 # Plaid Signal
 
 ## Overview
-Plaid Signal evaluates ACH return risk in real time across over 80 actionable risk insights — including balance, account tenure, NSF history, and Plaid network behavior. It returns a risk score (0–99, higher = higher return risk) and actionable risk attributes so you can offer instant funding for low-risk users and step up high-risk transactions before releasing funds.
+Plaid Signal evaluates ACH return risk in real time across over 80 actionable risk insights — including balance, account tenure, NSF history, and Plaid network behavior. It returns a risk score (1–99, higher = higher return risk) and actionable risk attributes so you can offer instant funding for low-risk users and step up high-risk transactions before releasing funds.
 
 ## Where It Fits
 Feature Signal in demos where the persona needs to make a funding or ACH transfer decision: neobanks, investment platforms, or any fintech releasing funds from an external bank account. Pair with Auth + Identity Match in a complete account-funding flow.
@@ -34,7 +34,7 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 
 ### Supporting Claims
 - "Signal delivers a network-powered risk assessment by analyzing behavior of the consumer's linked account across Plaid's network—over 80 actionable risk insights."
-- "Configure risk score thresholds and deploy ACCEPT/REVIEW/REJECT/REROUTE actions from a single dashboard."
+- "Configure risk score thresholds and deploy ACCEPT/REVIEW/REROUTE actions from a single dashboard."
 - "Use Signal with Balance: Balance for funds at initiation, Signal to minimize ACH return loss across the settlement window."
 
 ## Proof Points & ROI Metrics
@@ -53,6 +53,9 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 ## Customer Use Cases
 <!-- ⚠️ HUMAN-OWNED — scenario descriptions for demo builders. AI may add [DRAFT] scenarios. -->
 
+- Account funding risk gate — score each ACH debit before releasing funds; approve low-risk instantly, step up high-risk
+- Repeat transfer fraud prevention — evaluate every transfer over time, not just the first; network signals catch behavioral shifts
+
 ### Account Funding Risk Gate
 **Persona:** Risk engineer at investment platform
 **Problem:** ACH returns — both NSF and unauthorized — erode margins and create compliance burden
@@ -70,6 +73,9 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
      The script generator uses these verbatim before any other source.
      HUMAN-OWNED — AI must not modify approved blocks. -->
 
+- Signal step: "Signal evaluates ACH return risk in real time — score 1–99, higher = higher risk. ACCEPT = low risk, proceed. REVIEW or REROUTE = hold or reroute to slower rail."
+- Closing (Auth+Signal): "Auth verifies, Identity Match confirms ownership, Signal scores the transfer — all powered by Plaid's network. Link and fund in seconds instead of days."
+
 ### Signal step
 > "Signal evaluates ACH return risk in real time—bank-initiated returns like NSF and closed accounts, and customer-initiated returns like unauthorized disputes. It uses 80 actionable risk insights. You get ACCEPT, REVIEW, or REROUTE recommendations." (33 words)
 
@@ -82,12 +88,12 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 
 - API endpoint: `signal/evaluate`
 - Report endpoint: `signal/decision/report`
-- Score range: **0–99** (**higher score = HIGHER return risk**; matches CLAUDE.md)
+- Score range: **1–99** (**higher score = HIGHER return risk**; AskBill-verified — minimum is 1, not 0)
 - Realistic demo values for ACCEPT path: **5–20** (low risk → ACCEPT)
 - Do NOT use scores 82–97 for ACCEPT — those are high-risk and should be REVIEW/REROUTE
 - Do NOT use "Trust Index" — this is NOT a Plaid product name
 - Do NOT use "1,000+ risk factors" — approved language is "80 actionable risk insights"
-- Recommended verdicts: ACCEPT, REVIEW, REJECT, REROUTE
+- Documented `ruleset.result` values: **ACCEPT, REVIEW, REROUTE** — `REJECT` is NOT documented in the API and must never be shown in demos
 - Return types covered: NSF, closed account, unauthorized (R10), administrative
 
 ## Competitive Differentiators
@@ -97,6 +103,16 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 - 80 actionable risk insights vs basic balance-check alternatives
 - No-code threshold tuning via the Plaid Dashboard — risk team can adjust without engineering
 - Covers both bank-initiated (NSF, closed account) and customer-initiated (unauthorized) return types
+
+## Implementation Pitfalls
+<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- **Score range is 1–99** (NOT 0–99) — minimum documented score is 1, not 0 (AskBill-confirmed 2026-05-31)
+- **`REJECT` is NOT a documented `ruleset.result` value** — use `REROUTE` for "reject" narratives; never show `REJECT` in the API panel
+- **Score direction:** higher = HIGHER risk. ACCEPT demos use scores 5–20. Scores 80+ are high risk (REROUTE territory)
+- **Trust Index confusion:** never label Signal `scores.*` values as "Trust Index" — Trust Index is a Protect-only product retrieved via `/protect/event/send`
+- **Signal "warm-up" misconception:** Signal scores on the first call using network signals; no 30-day warming is required
+- **In Transfer flow:** Signal runs INSIDE `/transfer/authorization/create` — do NOT show a standalone `/signal/evaluate` panel for the Transfer pattern unless explicitly adding Pattern B
 
 ## Objections & Responses
 <!-- 🔄 SHARED — AI adds [DRAFT] from Gong; human approves by removing [DRAFT] tag. -->
