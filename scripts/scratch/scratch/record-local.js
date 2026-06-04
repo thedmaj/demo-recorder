@@ -37,6 +37,24 @@ const { inferProductFamily } = require('../utils/product-profiles');
 
 const PROJECT_ROOT      = path.resolve(__dirname, '../../..');
 const OUT_DIR           = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
+
+/**
+ * Mirror the page's browser console to artifacts/browser-console.log so the
+ * live-api `console.log('[live-api]', …)` output (and any other console
+ * messages) is inspectable off-camera. Best-effort; never throws.
+ */
+function attachConsoleCapture(page) {
+  try {
+    const logPath = path.join(OUT_DIR, 'artifacts', 'browser-console.log');
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    page.on('console', (msg) => {
+      try {
+        const line = `[${new Date().toISOString()}] [${msg.type()}] ${msg.text()}\n`;
+        fs.appendFileSync(logPath, line);
+      } catch (_) { /* non-fatal */ }
+    });
+  } catch (_) { /* non-fatal */ }
+}
 const SCRATCH_APP_DIR   = path.join(OUT_DIR, 'scratch-app');
 const PLAYWRIGHT_SCRIPT = path.join(SCRATCH_APP_DIR, 'playwright-script.json');
 const DEMO_SCRIPT_FILE  = path.join(OUT_DIR, 'demo-script.json');
@@ -2198,6 +2216,7 @@ async function manualRecordMain() {
     deviceScaleFactor: 2,
   });
   const page = await context.newPage();
+  attachConsoleCapture(page);
 
   await page.goto(appServer.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
@@ -2526,6 +2545,7 @@ async function main(opts = {}) {
     deviceScaleFactor: 2,
   });
   const page = await context.newPage();
+  attachConsoleCapture(page);
 
   // Navigate to the locally-served app
   console.log(`[Record] Navigating to ${appServer.url}...`);

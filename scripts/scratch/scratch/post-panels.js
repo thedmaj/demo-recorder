@@ -662,9 +662,10 @@ function synthesizeLinkOnSuccessResponse(demoScript) {
   };
 }
 
-function buildPanelPatchScript(responses, endpoints, versionTag) {
+function buildPanelPatchScript(responses, endpoints, versionTag, liveResponses) {
   const respJson = JSON.stringify(responses).replace(/</g, '\\u003c');
   const epsJson = JSON.stringify(endpoints).replace(/</g, '\\u003c');
+  const liveJson = JSON.stringify(liveResponses || {}).replace(/</g, '\\u003c');
   const vTag = (typeof versionTag === 'string' && versionTag) ? versionTag : 'v1';
   return `<script data-post-panels-patch="${vTag}">
 (function() {
@@ -709,6 +710,55 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
     }
   });
   window._stepApiResponses = Object.assign({}, window._stepApiResponses || {}, _wrappedResp);
+  // LIVE sandbox responses captured by the live-api-capture stage (keyed by
+  // stepId). The panel AUGMENTS: a live entry (.live + .response) wins over the
+  // curated mock for that step, tagged " — live"; absent/skipped entries fall
+  // back to the curated mock. Empty {} when capture didn't run (PLAID_LINK_LIVE
+  // off) — panels then behave exactly as before.
+  var _live = ${liveJson};
+  window._liveApiResponses = Object.assign({}, window._liveApiResponses || {}, _live);
+  // Option A: surface every captured live response in the Developer Console
+  // (record-local mirrors page console → artifacts/browser-console.log).
+  try {
+    Object.keys(_live).forEach(function(k) {
+      var e = _live[k];
+      if (e && e.live) console.log('[live-api]', k, e.endpoint, e.response);
+    });
+  } catch (_) {}
+  // Runtime capture (Option A+B): when the app itself fires a real /api/* call,
+  // console.log the response AND upgrade the current step's live entry so the
+  // panel shows the genuinely-live payload. Reliable fallback is the baked map
+  // above; if a runtime call is slow/fails, the panel keeps the curated mock.
+  if (!window.__liveApiFetchWrapped && typeof window.fetch === 'function') {
+    window.__liveApiFetchWrapped = true;
+    var _origFetch = window.fetch.bind(window);
+    window.fetch = function(input, init) {
+      var url = (typeof input === 'string') ? input : (input && input.url) || '';
+      var p = _origFetch(input, init);
+      if (/\\/api\\//.test(String(url))) {
+        p.then(function(res) {
+          try {
+            res.clone().json().then(function(data) {
+              try {
+                console.log('[live-api runtime]', url, data);
+                var cur = (typeof window.getCurrentStep === 'function' ? (window.getCurrentStep() || '') : '').replace(/^step-/, '');
+                if (cur) {
+                  var prev = (window._liveApiResponses && window._liveApiResponses[cur]) || {};
+                  window._liveApiResponses[cur] = { endpoint: prev.endpoint || url, request: prev.request || null, response: data, live: true };
+                  if (!window.__liveApiRerenderGuard && typeof window.goToStep === 'function') {
+                    window.__liveApiRerenderGuard = true;
+                    try { window.goToStep(cur); } catch (_) {}
+                    window.__liveApiRerenderGuard = false;
+                  }
+                }
+              } catch (_) {}
+            }).catch(function(){});
+          } catch (_) {}
+        }).catch(function(){});
+      }
+      return p;
+    };
+  }
   window.__API_PANEL_CONFIG = Object.assign({
     collapsedByDefault: true,
     jsonExpandLevel: ${RENDERJSON_EXPAND_LEVEL_DEFAULT},
@@ -1192,8 +1242,14 @@ function buildPanelPatchScript(responses, endpoints, versionTag) {
       var requestData = stepData.request || null;
       var responseData;
       var liveEndpointSuffix = '';
+      var liveEntry = window._liveApiResponses && window._liveApiResponses[id];
       if (isOnSuccessEndpoint(endpointLabel) && window._plaidLinkOnSuccess) {
         responseData = window._plaidLinkOnSuccess;
+        liveEndpointSuffix = ' — live';
+      } else if (liveEntry && liveEntry.live && liveEntry.response != null) {
+        // AUGMENT: real captured sandbox response wins over the curated mock.
+        responseData = liveEntry.response;
+        if (liveEntry.request != null) requestData = liveEntry.request;
         liveEndpointSuffix = ' — live';
       } else if (stepData && typeof stepData === 'object' && 'response' in stepData) {
         responseData = stepData.response;
@@ -1475,7 +1531,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   //     token-only mode, pre-link manual nav). When live data is present,
   //     the panel header label gets a " — live" suffix so operators can
   //     visually distinguish real vs synthesized in screen recordings.
-  const POST_PANELS_PATCH_VERSION = 'v16';
+  const POST_PANELS_PATCH_VERSION = 'v17';
   const patchMarker = `data-post-panels-patch="${POST_PANELS_PATCH_VERSION}"`;
   const hasCurrentPatch = html.includes(patchMarker);
   const hasAnyPostPanelsPatch = /data-post-panels-patch/.test(html);
@@ -1502,7 +1558,7 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
       html = html.replace(buildAppPatchRegex, '');
       changes.replacedBuildAppLegacyPatch = true;
     }
-    const patch = buildPanelPatchScript(responses, endpoints, POST_PANELS_PATCH_VERSION);
+    const patch = buildPanelPatchScript(responses, endpoints, POST_PANELS_PATCH_VERSION, opts.liveResponses || {});
     html = html.replace('</body>', `${patch}\n</body>`);
     changes.addedPatchScript = true;
     changes.stepsHydrated = Object.keys(responses).length;
@@ -1697,9 +1753,24 @@ async function main() {
     }
   }
 
+  // Live sandbox responses captured by the live-api-capture stage (if it ran).
+  // Baked into the panel patch so the panel AUGMENTS curated mocks with real
+  // data (" — live"); empty/missing → panels use curated mocks as before.
+  let liveResponses = {};
+  try {
+    const livePath = path.join(outDir, 'artifacts', 'live-api-responses.json');
+    if (fs.existsSync(livePath)) {
+      const parsed = JSON.parse(fs.readFileSync(livePath, 'utf8'));
+      liveResponses = (parsed && parsed.responses) || {};
+      const n = Object.values(liveResponses).filter((e) => e && e.live).length;
+      console.log(`[post-panels] live-api: ${n} captured response(s) will augment the panel`);
+    }
+  } catch (e) { console.warn(`[post-panels] live-api load skipped (${e.message})`); }
+
   let { html: updated, changes } = normalizePanelsInHtml(html, demoScript, {
     onlyStepIds: cli.steps || null,
     pipelineAppOnlyHostUi,
+    liveResponses,
   });
 
   // Deterministic Layer/brand hardening (prevents recurring LLM misses before

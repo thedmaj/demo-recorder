@@ -199,6 +199,10 @@ const STAGES = [
   'embed-script-validate',   // narration/visual coherence (Vertex embeddings → Haiku fallback)
   // 'plaid-link-capture',  // DISABLED — using manual Playwright recording of real Plaid Link
   'build',
+  'live-api-capture',        // Deterministic (zero-LLM): call the demo's featured /api/* routes
+                             //   against the sandbox → artifacts/live-api-responses.json so panels
+                             //   augment curated mocks with real responses (" — live"). Self-skips
+                             //   when PLAID_LINK_LIVE!=true.
   'plaid-link-qa',
   'build-qa',
   'post-slides',             // Agent-driven per-slide insertion (runs only when slide-kind steps exist)
@@ -2794,6 +2798,24 @@ async function runScratchPipeline({
           }
         }, timer);
         if (buildError) break;
+      }
+
+      // Stage: live-api-capture — deterministic, zero-LLM. Calls the demo's
+      // featured /api/* routes against the sandbox and writes
+      // artifacts/live-api-responses.json so the inline post-panels pass below
+      // bakes real responses into the panel (augment + " — live"). Self-skips
+      // when PLAID_LINK_LIVE!=true. App phase, first iteration only; not
+      // shouldRun-gated (same as the inline post-panels) so it runs in
+      // resume --from=build --to=build-qa flows before post-panels.
+      if (phaseMode === 'app' && iter === 1) {
+        await runStage('live-api-capture', async () => {
+          try {
+            delete require.cache[require.resolve('./scratch/live-api-capture')];
+            await require('./scratch/live-api-capture').main();
+          } catch (e) {
+            cliWarn(`[Orchestrator] live-api-capture failed (non-fatal): ${e.message}`);
+          }
+        }, timer);
       }
 
       // Stage: plaid-link-qa — run once for app phase only.

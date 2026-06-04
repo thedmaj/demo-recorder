@@ -275,3 +275,24 @@ require a `public_token` to advance.
 **Sandbox:** launch normally with the multi-item `link_token`; add `user_good` / `pass_good` (or
 `user_credit_profile_*` for CRA) at each institution. `SESSION_FINISHED` fires with the
 `public_tokens[]` when the user finishes the session.
+
+## 10. Live API responses in the panel (`live-api-capture` stage)
+
+Deterministic, **zero-LLM** stage (`scripts/scratch/scratch/live-api-capture.js`) that runs after
+`build` (before the inline `post-panels`/`build-qa`). It seeds a real sandbox item server-side
+(`createSandboxItemAccessToken` — no interactive modal) and calls the demo's **featured** `/api/*`
+routes (auth/get, identity/match, signal/evaluate, balance, …), writing the real responses to
+`artifacts/live-api-responses.json` (keyed by step id).
+
+- **Panel AUGMENTS:** `post-panels` bakes the map as `window._liveApiResponses`; the panel shows the
+  **live** payload with a " — live" tag when present, and falls back to the curated mock otherwise.
+- **Developer Console (Option A):** each live response is `console.log('[live-api]', …)`-ed;
+  `record-local` mirrors the page console to `artifacts/browser-console.log`.
+- **Runtime calls:** a `fetch` wrapper also captures any `/api/*` call the app makes live (console +
+  panel refresh).
+- **Best-effort:** endpoints that can't run standalone (async **CRA Consumer Reports** need a
+  `user_token` + report-ready flow) are recorded `skipped` and fall back to the curated mock.
+- **Gated** on `PLAID_LINK_LIVE==='true'`; off → panels behave exactly as before. Per-step opt-out:
+  `step.liveApiCapture === false` keeps a narration-locked panel on its curated value.
+- **No build-prompt cost:** this is post-build plumbing — the build agent is not instructed to do any
+  of it, so per-build LLM context is unchanged.
