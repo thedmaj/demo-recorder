@@ -448,6 +448,19 @@ async function createLinkToken(opts = {}) {
   // Same-Day/Instant Micro-deposits, or Database Auth.
   if (opts.enableMultiItemLink ?? opts.enable_multi_item_link) {
     body.enable_multi_item_link = true;
+    // Several products are NOT supported in the multi-item link flow — Plaid
+    // 400s the whole token (e.g. "products not yet supported in the multi item
+    // link flow: [signal]"). Strip them so multi-item never produces an invalid
+    // token; multi-item is the structural choice here, so it wins over a
+    // ride-along like signal.
+    const MULTI_ITEM_UNSUPPORTED = new Set(['signal']);
+    if (Array.isArray(body.products)) {
+      const dropped = body.products.filter((p) => MULTI_ITEM_UNSUPPORTED.has(String(p)));
+      if (dropped.length) {
+        body.products = body.products.filter((p) => !MULTI_ITEM_UNSUPPORTED.has(String(p)));
+        console.warn(`[plaid-backend] stripped [${dropped.join(', ')}] — not supported in multi-item link flow`);
+      }
+    }
     console.log('[plaid-backend] enable_multi_item_link=true (multi-institution session)');
   }
 
@@ -794,15 +807,17 @@ async function createConsumerReportLinkToken(flat = {}) {
       flat.consumer_report_permissible_purpose ||
       (hasCraProducts(requestedProducts) ? 'EXTENSION_OF_CREDIT' : undefined),
     cra_options: flat.cra_options || (hasCraProducts(requestedProducts) ? { days_requested: 180 } : undefined),
-    // CRA Consumer Reports use MULTI-ITEM LINK by default so a member can
-    // connect accounts at multiple institutions in one session and Plaid Check
-    // builds a single Consumer Report spanning them. Disable with
-    // CRA_MULTI_ITEM_LINK=false. (Multi-item onSuccess fires empty — public
-    // tokens arrive via SESSION_FINISHED / ITEM_ADD_RESULT; see
-    // inputs/plaid-link-sandbox.md §9.)
+    // Multi-item link (one session → multiple institutions → a single Plaid
+    // Check Consumer Report) is OPT-IN: standard (single-item) link is the
+    // default. Enable it only when the prompt explicitly asks for a multi-
+    // institution session (the resolver sets enable_multi_item_link on the
+    // request) or via CRA_MULTI_ITEM_LINK=true. Multi-item is NOT compatible
+    // with `signal` (and a few other products/flows) — see createLinkToken's
+    // strip + inputs/plaid-link-sandbox.md §9. (Multi-item onSuccess fires
+    // empty — tokens arrive via SESSION_FINISHED / ITEM_ADD_RESULT.)
     enableMultiItemLink:
       flat.enableMultiItemLink ?? flat.enable_multi_item_link ??
-      (String(process.env.CRA_MULTI_ITEM_LINK || 'true').trim().toLowerCase() !== 'false'),
+      (String(process.env.CRA_MULTI_ITEM_LINK || 'false').trim().toLowerCase() === 'true'),
     plaidCheckUserId: plaidUserId || undefined,
     userToken: plaidUserId ? undefined : legacyToken || undefined,
     runDir: flat.runDir || undefined,

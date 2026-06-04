@@ -285,13 +285,17 @@ a host card/screenshot.
   launch (fine for non-recorded / build-qa runs). Full reference + sandbox testing:
   `inputs/plaid-link-sandbox.md` §8.
 
-## Multi-item Link (CRA default) — onSuccess fires EMPTY
+## Multi-item Link (OPT-IN) — onSuccess fires EMPTY
 
-CRA Consumer Report demos use **multi-item link** by default (`enable_multi_item_link:true`,
-set by `plaid-backend.createConsumerReportLinkToken`; disable via `CRA_MULTI_ITEM_LINK=false`) so a
-member can connect multiple institutions into one Consumer Report.
+**Multi-item link is OPT-IN; standard single-item link is the default** — including for CRA. Enable
+`enable_multi_item_link:true` ONLY when the prompt explicitly asks to connect **multiple institutions
+in one session** (the link-token resolver detects that and sets the flag; or `CRA_MULTI_ITEM_LINK=true`).
+Most demos connect one institution → standard link. **Never combine multi-item with `signal`** —
+`signal` is not supported in the multi-item flow (Plaid 400s the token); the resolver + backend strip
+it automatically when multi-item is on.
 
-Critical client difference: **`onSuccess` fires EMPTY** (no `public_token`). The app MUST NOT
+The rest of this section applies **only when multi-item is actually enabled**. Critical client
+difference there: **`onSuccess` fires EMPTY** (no `public_token`). The app MUST NOT
 require a public token to advance. Wire completion defensively:
 - In `onSuccess` (may be empty): set `window._plaidLinkComplete = true` and `goToStep(firstPostLink)`.
 - ALSO in `onEvent`: when `eventName === 'HANDOFF'`, set `window._plaidLinkComplete = true`

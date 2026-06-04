@@ -62,6 +62,8 @@ const ALLOWED_CLIENT_REQUEST_KEYS = new Set([
   'country_codes',
   'language',
   'user',
+  'enable_multi_item_link',
+  'enableMultiItemLink',
 ]);
 
 /** AskBill: sole source of truth for Link token fields when demo is Investments Move + /investments/auth/get. */
@@ -169,6 +171,24 @@ function sanitizeProductsForLinkTokenMix(products, intent = 'auto') {
   }
 
   return { products: result, droppedCra, droppedNonCraIncomeIncompatible };
+}
+
+/**
+ * Multi-item link (one Link session that adds Items at multiple institutions)
+ * is OPT-IN: only enable it when the prompt explicitly asks for a multi-
+ * institution / multi-account-across-banks session. Default is a standard
+ * single-item link. signal (and other flows) are NOT supported in multi-item,
+ * so callers must strip them when this is true.
+ * @param {string} promptText
+ * @returns {boolean}
+ */
+function detectMultiItemLinkIntent(promptText = '') {
+  const t = String(promptText || '').toLowerCase();
+  if (/\bmulti[-\s]?item\b/.test(t)) return true;
+  // "multiple institutions / banks / accounts ... (in|one|single) ... session/link"
+  if (/\b(multiple|several|two or more|across)\b[^.]{0,60}\b(institution|bank|account|brokerage)s?\b[^.]{0,80}\b(one|single|same|a)\b[^.]{0,20}\b(session|link|connection)\b/.test(t)) return true;
+  if (/\b(connect|link|add)\b[^.]{0,40}\b(multiple|several|all (?:their|your)?)\b[^.]{0,30}\b(institution|bank|account|brokerage)s?\b[^.]{0,60}\b(one|single|same)\b[^.]{0,20}\b(session|link)\b/.test(t)) return true;
+  return false;
 }
 
 function normalizePathSlashes(text) {
@@ -648,11 +668,30 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   }
   merged.products = sanitizedProducts;
 
+  // Multi-item link is OPT-IN — standard single-item link is the default.
+  // Enable only when the prompt explicitly asks for a multi-institution
+  // session. signal (and other products) are NOT supported in multi-item, so
+  // strip them here too (multi-item wins over a ride-along risk product).
+  const multiItemRequested = detectMultiItemLinkIntent(promptText);
+  if (multiItemRequested) {
+    merged.enable_multi_item_link = true;
+    const MULTI_ITEM_UNSUPPORTED = new Set(['signal']);
+    if (Array.isArray(merged.products) && merged.products.some((p) => MULTI_ITEM_UNSUPPORTED.has(String(p)))) {
+      const droppedMi = merged.products.filter((p) => MULTI_ITEM_UNSUPPORTED.has(String(p)));
+      merged.products = merged.products.filter((p) => !MULTI_ITEM_UNSUPPORTED.has(String(p)));
+      console.warn(
+        `[link-token-create-config] multi-item link requested → stripped [${droppedMi.join(', ')}] (not supported in multi-item link flow) → [${merged.products.join(', ')}]`
+      );
+    }
+    console.warn('[link-token-create-config] enable_multi_item_link=true (prompt explicitly requested a multi-institution session)');
+  }
+
   return {
     products: merged.products,
     suggestedClientRequest: merged,
     inferredFromPrompt: fromPrompt,
     inferredFromApiSignals: fromApis,
+    enableMultiItemLink: multiItemRequested,
     productFamily,
     linkMode: opts.linkMode || null,
     askBillOnlyInvestmentsMoveAuthGet: false,

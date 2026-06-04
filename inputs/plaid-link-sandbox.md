@@ -245,8 +245,16 @@ For **Plaid Check / CRA** it builds a **single Consumer Report spanning all conn
 Check products). (Verified via AskBill, 2026-06-01.)
 
 **Enable** (`/link/token/create`): `enable_multi_item_link: true`. The same token config applies to
-every Item added in the session. In the demo pipeline this is **ON by default for CRA**
-(`plaid-backend.createConsumerReportLinkToken`; disable with `CRA_MULTI_ITEM_LINK=false`).
+every Item added in the session. **Multi-item link is OPT-IN — standard (single-item) link is the
+pipeline default.** Enable it ONLY when the prompt explicitly asks for a multi-institution session
+(the link-token resolver detects that intent and sets the flag) or via `CRA_MULTI_ITEM_LINK=true`.
+Do **not** make CRA (or any family) multi-item by default — most demos connect one institution.
+
+**`signal` is NOT supported in the multi-item link flow** (Plaid 400s the token:
+*"products not yet supported in the multi item link flow: [signal]"*). When multi-item is enabled,
+`signal` (and other unsupported products) must be **stripped** from `products[]` — multi-item is the
+structural choice and wins over a ride-along risk product. The resolver + `createLinkToken` strip it
+automatically; never hand-author a token that combines `enable_multi_item_link` with `signal`.
 
 **Token retrieval is different — `onSuccess` fires EMPTY** (no `public_token`). Public tokens arrive via:
 - **`LINK` / `ITEM_ADD_RESULT`** webhook — one per Item (`public_token`, `link_session_id`, `link_token`).

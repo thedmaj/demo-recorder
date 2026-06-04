@@ -113,6 +113,7 @@ Feature Signal in demos where the persona needs to make a funding or ACH transfe
 - **Trust Index confusion:** never label Signal `scores.*` values as "Trust Index" — Trust Index is a Protect-only product retrieved via `/protect/event/send`
 - **Signal "warm-up" misconception:** Signal scores on the first call using network signals; no 30-day warming is required
 - **In Transfer flow:** Signal runs INSIDE `/transfer/authorization/create` — do NOT show a standalone `/signal/evaluate` panel for the Transfer pattern unless explicitly adding Pattern B
+- **`signal` is NOT supported in the multi-item link flow** — never include `signal` in `products[]` when `enable_multi_item_link: true`. Plaid 400s the token (*"products not yet supported in the multi item link flow: [signal]"*). This commonly bites CRA demos that feature Signal: if the prompt asks for a multi-institution session, multi-item wins and `signal` is stripped; otherwise use a **standard single-item** link (the default) and keep `signal`. See [`inputs/plaid-link-sandbox.md` §9](../plaid-link-sandbox.md).
 
 ## Objections & Responses
 <!-- 🔄 SHARED — AI adds [DRAFT] from Gong; human approves by removing [DRAFT] tag. -->

@@ -113,6 +113,7 @@ Feature this product when the persona needs a reusable underwriting artifact bac
 - Link requirement: real Plaid Link CRA/Check modal (single `plaidPhase: "launch"` step) — no simulated host-only Link flow
 - Passport note: Plaid Passport may be enabled via account template for stronger identity verification; treat as optional by configuration, not as a replacement for core CRA Link/consent
 - Key configuration terms: `consumer_report_permissible_purpose`, `enable_multi_item_link`, `require_identity`
+- **Multi-item link is OPT-IN, not the CRA default.** Default to a **standard single-item** CRA Link. Set `enable_multi_item_link: true` ONLY when the prompt explicitly calls for connecting **multiple institutions in one session** (then Plaid Check builds a single Consumer Report spanning them). And **never combine `enable_multi_item_link` with `signal`** — `signal` is not supported in the multi-item flow (Plaid 400s the token); strip it when multi-item is on. See [`inputs/plaid-link-sandbox.md` §9](../plaid-link-sandbox.md).
 - Async lifecycle: report requested -> report generating -> report ready
 - Readiness concepts: `CHECK_REPORT_READY`, `USER_CHECK_REPORT_READY`
 - Important report fields: balances, inflows, outflows, ownership, transactions, days available, primary account prediction
