@@ -2570,9 +2570,25 @@ async function evaluateResponsiveState(page, stepId) {
   return page.evaluate((id) => {
     if (id && typeof window.goToStep === 'function') window.goToStep(id);
     const active = document.querySelector('.step.active');
+    // goToStep defers its slide-active toggle (syncSlideHostMode runs on
+    // setTimeout 0), so a stale `body.pipeline-slide-active` from the PRIOR
+    // step can still be set during this synchronous measure — which hides this
+    // step's host chrome/logo via the `body.pipeline-slide-active .host-app-chrome
+    // { display:none !important }` contract rule, producing a false
+    // "logo not visible" (seen only on the first responsive viewport, 1280px,
+    // because the deferred toggle fires before the later viewports measure).
+    // Reconcile the class synchronously to the step we're actually measuring.
+    try { document.body.classList.toggle('pipeline-slide-active', !!(active && active.querySelector('.slide-root'))); } catch (_) {}
     const activeRect = active ? active.getBoundingClientRect() : null;
-    const bankLogo = document.querySelector('[data-testid="host-bank-logo-img"], [data-testid="host-bank-icon-img"]');
-    const bankLogoShell = document.querySelector('[data-testid="host-bank-logo-shell"]');
+    // Scope the logo lookup to the ACTIVE step first. Demos render one host
+    // nav (and logo) per host step, so a global querySelector grabs the FIRST
+    // logo in DOM order — which may belong to a non-active (display:none) step
+    // and measure 0x0, falsely reporting "logo not visible" on resize checks
+    // (observed at 1280x800 with 4 per-step KeyBank logos). Fall back to global.
+    const logoSel = '[data-testid="host-bank-logo-img"], [data-testid="host-bank-icon-img"]';
+    const shellSel = '[data-testid="host-bank-logo-shell"]';
+    const bankLogo = (active && active.querySelector(logoSel)) || document.querySelector(logoSel);
+    const bankLogoShell = (active && active.querySelector(shellSel)) || document.querySelector(shellSel);
     const logoStyle = bankLogo ? window.getComputedStyle(bankLogo) : null;
     const logoRect = bankLogo ? bankLogo.getBoundingClientRect() : null;
     const shellStyle = bankLogoShell ? window.getComputedStyle(bankLogoShell) : null;
