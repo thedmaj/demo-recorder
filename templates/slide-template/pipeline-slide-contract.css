@@ -249,8 +249,15 @@ body.pipeline-slide-active {
   font-family: var(--font-sans);
 }
 
-body.pipeline-slide-active .host-app-chrome {
-  display: none;
+/* HARD RULE (2026-06-04): slides are isolated full-screen Plaid surfaces — host
+   app chrome (bank banner/nav/header/footer) must NEVER bleed onto a slide.
+   !important so a host nav's own `display:flex` (higher specificity / inline)
+   cannot override the hide. Scoped to body.pipeline-slide-active → only affects
+   slide steps; host steps render their chrome normally. Enforced by build-qa
+   `slide-host-chrome-leak` (hostChromeOnSlide detector). */
+body.pipeline-slide-active .host-app-chrome,
+body.pipeline-slide-active .host-app-chrome * {
+  display: none !important;
 }
 
 body.pipeline-slide-active main.page,

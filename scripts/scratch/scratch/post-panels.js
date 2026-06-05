@@ -150,7 +150,7 @@ function refreshPipelineSlideContractInHtml(html) {
 }
 
 function buildSlideHostIsolationScript() {
-  return `<script id="pipeline-slide-host-isolation-v3">
+  return `<script id="pipeline-slide-host-isolation-v4">
 (function() {
   if (window.__pipelineSlideHostIsolationApplied) return;
   window.__pipelineSlideHostIsolationApplied = true;
@@ -188,21 +188,14 @@ function buildSlideHostIsolationScript() {
       // clamp (the build LLM sometimes emits .step{max-width:1040px} for host
       // cards, which drags a slide-root below the >=1080px canvas contract and
       // trips slide-canvas-size). Unclamp any step that hosts a slide-root.
+      // CONTRACT (2026-06-04): api-response-panel is a FIXED OVERLAY at full
+      // width. It NEVER reflows the slide — slides stay full-bleed whether the
+      // panel is collapsed (default) or expanded; expanding overlays the slide.
+      // The old gutter approach (narrow panel + slide-stack reserve) was removed
+      // — reserving slide space violated the overlay contract and clipped slide
+      // content. Enforced by build-qa scanPanelOverlayContract.
       'body.pipeline-slide-active .step.active { max-width: none !important; }',
-      '.step:has(> .slide-root) { max-width: none !important; }',
-      'body.pipeline-slide-api-gutter #api-response-panel,',
-      'body.pipeline-slide-api-gutter section#api-response-panel { width: min(440px, 40vw) !important; }',
-      // In the narrow gutter (~440px) the wide-panel white-space:pre overflows
-      // horizontally (build-qa panel-horizontal-scroll). Wrap long JSON lines so
-      // the code reads with vertical scroll only — no horizontal scroll.
-      'body.pipeline-slide-api-gutter #api-response-panel pre.code,',
-      'body.pipeline-slide-api-gutter #api-response-panel .renderjson {',
-      '  white-space: pre-wrap !important; overflow-wrap: anywhere !important; word-break: break-word !important;',
-      '}',
-      'body.pipeline-slide-api-gutter .step.active .slide-root .slide-stack {',
-      '  max-width: calc(100% - 480px) !important; margin-right: auto !important;',
-      '  align-self: flex-start !important;',
-      '}'
+      '.step:has(> .slide-root) { max-width: none !important; }'
     ].join('\\n');
     (document.head || document.documentElement).appendChild(gutterStyle);
   }
@@ -213,13 +206,16 @@ function buildSlideHostIsolationScript() {
   function syncSlideHostMode(stepId) {
     var el = document.querySelector('[data-testid="step-' + stepId + '"]');
     var isSlide = !!(el && el.querySelector('.slide-root'));
+    // Toggle slide-active so host chrome (nav/banner/footer) is hidden on slide
+    // steps — slides are isolated full-screen Plaid surfaces.
     document.body.classList.toggle('pipeline-slide-active', isSlide);
-    var insightSlide = isSlide && stepHasApiPanel(stepId);
-    document.body.classList.toggle('pipeline-slide-api-gutter', insightSlide);
-    if (insightSlide) {
-      var panel = document.getElementById('api-response-panel');
-      if (panel) { panel.classList.remove('is-collapsed', 'api-panel-collapsed'); window.__apiPanelUserOpen = true; }
-    }
+    // NOTE (2026-06-04): the panel is a fixed OVERLAY and stays COLLAPSED by
+    // default on every step (including insight slides). We no longer toggle a
+    // "gutter" class or force-expand the panel on insight slides — that
+    // reflowed/clipped the slide and showed the panel expanded by default,
+    // both against the overlay contract. The presenter expands the overlay
+    // when they want it; the panel data is still validated by build-qa.
+    document.body.classList.remove('pipeline-slide-api-gutter');
     if (window.paintPlaidVars) window.paintPlaidVars();
   }
   var orig = window.goToStep;
@@ -260,7 +256,7 @@ function ensureSlideHostIsolation(html) {
   // Bumped to v3 (2026-06-02): gutter-mode JSON wrap rule + slide-step
   // full-bleed unclamp. Strip any stale older isolation block so the new
   // version's CSS takes effect on existing builds.
-  if (!html.includes('pipeline-slide-host-isolation-v3')) {
+  if (!html.includes('pipeline-slide-host-isolation-v4')) {
     html = html.replace(/<script id="pipeline-slide-host-isolation-v\d+">[\s\S]*?<\/script>\s*/g, '');
     html = html.replace('</body>', `${buildSlideHostIsolationScript()}\n</body>`);
     changes.addedSlideIsolationScript = true;

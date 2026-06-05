@@ -395,16 +395,23 @@ function scanPanelOverlayContract(html, demoScript) {
 
   const reservePatterns = [
     {
-      re: /padding-right:\s*5\d{2}px/i,
-      label: 'padding-right: 5xx px',
+      // 3xx–9xx px reserve (was 5xx-only — missed the 480px gutter the pipeline
+      // itself once emitted; the panel is an overlay and reserves 0 slide space).
+      re: /padding-right:\s*[3-9]\d{2}px/i,
+      label: 'padding-right: ≥300px (panel reserve)',
     },
     {
-      re: /max-width:\s*calc\s*\(\s*100%\s*-\s*5\d{2}px/i,
-      label: 'max-width: calc(100% - 5xx px)',
+      re: /max-width:\s*calc\s*\(\s*100%\s*-\s*[3-9]\d{2}px/i,
+      label: 'max-width: calc(100% - ≥300px) (panel reserve)',
     },
     {
       re: /\.host-api-panel-reserve\b/i,
       label: 'host-api-panel-reserve class',
+    },
+    {
+      // Any explicit slide-stack/slide content reservation tied to the gutter.
+      re: /pipeline-slide-api-gutter[\s\S]{0,200}max-width:\s*calc/i,
+      label: 'pipeline-slide-api-gutter slide-stack reserve',
     },
   ];
 
@@ -859,16 +866,27 @@ function scanSlideCanvasSize(state, step, opts = {}) {
 function scanSlideHostChromeLeak(state, step) {
   const out = [];
   if (!state || !step || !isSlideLikeStep(step)) return out;
-  if (!state.hostNavVisible && state.bodyHasSlideActiveClass) return out;
+  // Broad detector wins when present: any host banner/nav/header/footer visible
+  // and overlapping the slide canvas (covers branded chrome that doesn't use
+  // the 3 legacy nav classes — e.g. a TD bank banner). Falls back to the legacy
+  // hostNavVisible + slide-active signal.
+  const leaked = Array.isArray(state.hostChromeOnSlide) && state.hostChromeOnSlide.length > 0;
+  const legacyLeak = state.hostChromeOnSlide == null && state.hostNavVisible && !state.bodyHasSlideActiveClass;
+  if (!leaked && !legacyLeak) return out;
   out.push({
     stepId: step.id,
     category: 'slide-host-chrome-leak',
     severity: 'critical',
+    deterministicBlocker: true,
     issue:
-      'Host app chrome (nav/banner/footer) is visible on a slide step — slides must be isolated full-screen Plaid deck surfaces.',
+      'Host application chrome (banner/nav/header/footer) is visible on a slide step — slides must be ' +
+      'isolated full-screen Plaid deck surfaces with NO host app content' +
+      (leaked ? ` (offending: ${state.hostChromeOnSlide.join(', ')})` : '') + '.',
     suggestion:
-      'Add class `host-app-chrome` to host-only nodes, refresh pipeline-slide-contract.css, ' +
-      'and run post-panels so `body.pipeline-slide-active` toggles on slide navigation.',
+      'In app-touchup: tag every host-only node (the bank banner/nav/header/footer) with class ' +
+      '`host-app-chrome`, ensure `body.pipeline-slide-active` hides `.host-app-chrome` on slide steps ' +
+      '(post-panels slide-host-isolation), and verify the slide-root is the only visible surface. ' +
+      'Do NOT place host nav/banner markup inside or above a `.slide-root`.',
   });
   return out;
 }
@@ -2093,6 +2111,31 @@ async function evaluateStepState(page, stepId) {
         if (!nav) return false;
         const st = window.getComputedStyle(nav);
         return st.display !== 'none' && st.visibility !== 'hidden' && nav.getBoundingClientRect().height > 0;
+      })(),
+      // Broad host-chrome-on-slide detector: ANY app banner/nav/header/footer
+      // (not just the 3 legacy classes, not just .host-app-chrome) that is
+      // visible and overlaps the slide canvas. Slides are isolated full-screen
+      // Plaid surfaces — no host application content may bleed in. Excludes the
+      // #api-response-panel overlay and anything inside a .slide-root.
+      hostChromeOnSlide: (() => {
+        const root = active ? active.querySelector('.slide-root') : null;
+        if (!root) return null; // not a slide step
+        const sel = 'header, nav, footer, .host-nav, .fdic-bar, .sub-nav, .host-app-chrome,' +
+          '[class*="banner"], [class*="navbar"], [class*="topbar"], [class*="app-header"], [class*="site-header"]';
+        const hits = [];
+        document.querySelectorAll(sel).forEach((el) => {
+          if (el.id === 'api-response-panel' || el.closest('#api-response-panel')) return; // panel overlay is allowed
+          if (el.closest('.slide-root')) return; // legit slide-internal header/nav
+          const st = window.getComputedStyle(el);
+          if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return;
+          const r = el.getBoundingClientRect();
+          if (r.height < 8 || r.width < 8) return;
+          // overlaps the visible viewport (top band where banners live, or anywhere on-canvas)
+          if (r.bottom > 0 && r.top < (window.innerHeight || 900) && r.right > 0 && r.left < (window.innerWidth || 1440)) {
+            hits.push(((el.tagName || '') + '.' + (typeof el.className === 'string' ? el.className : '')).slice(0, 60));
+          }
+        });
+        return hits.length ? hits.slice(0, 5) : false;
       })(),
       activeSlideHasTable: Boolean(slideTable),
       slideTableWidth: slideTableRect ? slideTableRect.width : 0,
@@ -3486,19 +3529,12 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
           suggestion: 'Merge templates/slide-template/pipeline-slide-shell.html edge toggle contract (single icon control + toggleApiPanel()).',
         });
       }
-      // Visible-panel requirement applies to SLIDE-tier insight steps (the rail
-      // is their content). HOST steps keep the panel collapsed by default (a
-      // peek the user can expand) — a present + populated collapsed panel is
-      // valid there, so only require visibility for slide-like steps.
-      if (!state.apiPanelVisible && isSlideLikeStep(step)) {
-        diagnostics.push({
-          stepId: step.id,
-          category: 'panel-visibility',
-          severity: 'critical',
-          issue: 'api-response-panel is not visible after build-QA JSON rail prep — panel must display for apiResponse steps.',
-          suggestion: 'Ensure goToStep or updateApiResponse shows #api-response-panel (display:flex + .visible) for insight steps.',
-        });
-      }
+      // OVERLAY CONTRACT (2026-06-04): #api-response-panel is a fixed overlay
+      // that stays COLLAPSED by default on EVERY step (host and slide alike) and
+      // never reflows the slide. So a present + populated + collapsed panel is
+      // valid everywhere — we no longer require the panel to be visible/expanded
+      // on slide steps. Panel content is still validated below (apiContentLength)
+      // and the panel data is driven by _stepApiResponses / live-api-capture.
       if (state.apiPanelChromeTriplet && !state.hasToggleApiFunction) {
         diagnostics.push({
           stepId: step.id,
@@ -4375,19 +4411,13 @@ async function main(opts = {}) {
       } catch (_) {}
     }
 
-    // Force-open the JSON rail ONLY for slide-tier steps (insight slides whose
-    // layout reserves space for the rail). On HOST steps the panel is a fixed
-    // overlay that covers the host UI — force-opening it buries the step's real
-    // content (e.g. the "Identity verified" success card) behind the panel and
-    // tanks the vision score. Host steps keep the panel collapsed (its default,
-    // and what the recording shows); the panel's content is still validated by
-    // the deterministic panel checks regardless of visual expansion.
-    if (step && stepRequiresGlobalJsonRail(step) && isSlideLikeStep(step)) {
-      try {
-        await prepareGlobalJsonRailForBuildQa(page, stepId);
-        await page.waitForTimeout(160);
-      } catch (_) {}
-    }
+    // OVERLAY CONTRACT (2026-06-04): the panel is a fixed overlay that stays
+    // COLLAPSED by default on EVERY step and never reflows the slide. We no
+    // longer force-open it on slide steps — force-opening buried the slide
+    // behind the panel (and made the panel look "expanded by default"). Slides
+    // are screenshot clean with the panel collapsed; the panel's data is still
+    // validated deterministically (apiContentLength + _stepApiResponses /
+    // live-api-capture). The presenter expands the overlay live when desired.
 
     try {
       const frames = (capturedFramesOverride && capturedFramesOverride.length > 0)
