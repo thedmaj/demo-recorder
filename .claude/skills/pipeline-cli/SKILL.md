@@ -154,6 +154,22 @@ Statuses: `completed | running | failed | pending`. `nextRecoveryCommand` is the
 
 **Anti-pattern:** Listing what the user *could* run without running it when `nextRecoveryCommand` or an equivalent one-liner is already known.
 
+## Default touchup budget + stop point (binding default — overridable by the prompt)
+
+Unless the **initial / prompt instructions say otherwise**, this is the default build procedure after `build-qa`:
+
+1. Read `qa-report-build.json` → `overallScore`, `tierSummary` (`app`, `slide`), `passed`.
+2. **Early exit:** if `overallScore >= 85` → **stop**, do not touch up further.
+3. Otherwise spend the touchup budget, re-reading the score after each iteration and **exiting as soon as `overallScore >= 85`**:
+   - **App tier:** up to **2** `npm run pipe -- app-touchup RUN_ID --non-interactive` iterations.
+   - **Slide tier (only if the build has slides / `buildMode=app+slides`):** up to **2** `npm run pipe -- slide-fix RUN_ID --non-interactive` iterations.
+   - The lanes **no-op on a tier that already passes** ("app/slide tier already passing — nothing to do") — that's expected; it's a ceiling, not a mandate. Don't loop past the budget chasing a passing tier.
+4. **Stop at `build-qa` — do NOT `record` or render** by default. The default build ends here.
+
+**Overrides (honor whatever the prompt states):** different counts ("5 touchups", "no touchups"), a different exit threshold, or an explicit request to record/render (`npm run demo:full`, `--from=record`, "produce the video"). When the prompt requests recording, continue past build-qa per its instructions instead of stopping.
+
+**Why a budget, not unlimited:** touchups have diminishing returns and `slide-fix` regenerates slides each iteration (LLM variance can flip-flop). Two iterations per tier + an 85 floor balances quality against wasted cycles; a passing build below 85 is still shippable — surface the residual rather than grinding.
+
 ## Dashboard after app-only build-qa success
 
 When **all** of these hold (use `pipe status --json` or read `run-manifest.json` + `pipeline-progress.json`):

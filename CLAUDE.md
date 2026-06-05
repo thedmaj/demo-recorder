@@ -162,6 +162,15 @@ npm run demo -- --to=STAGE        # stop earlier than build-qa
 (slide tier) — which **never** call `build-app`. Do **NOT** use `--build-fix-mode=touchup` (full
 HTML regen) for tier-localized failures; it can regress passing tiers. Details in `pipeline-cli`.
 
+**Default touchup budget + stop point (binding default — overridable by the prompt):** unless the
+initial/prompt instructions say otherwise, after `build-qa` the agent runs **up to 2 `app-touchup`
+iterations + up to 2 `slide-fix` iterations** (slide-fix only when the build has slides), checking
+the overall `build-qa` score between iterations and **exiting early as soon as the score ≥ 85**.
+Then **STOP at `build-qa` — do NOT `record` or render by default.** Touchup lanes no-op on a
+tier that already passes, so this is a budget ceiling, not a mandate. The prompt may override the
+counts, the exit threshold, or explicitly request recording/render (e.g. "render the video",
+"5 touchups", "no touchups"). Procedure detail: [`pipeline-cli`](.claude/skills/pipeline-cli/SKILL.md).
+
 Canonical stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`,
 `embed-script-validate`, `build`, `build-qa`, `post-slides`, `post-panels`, `app-touchup`,
 `slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`,
