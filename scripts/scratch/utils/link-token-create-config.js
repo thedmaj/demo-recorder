@@ -184,10 +184,28 @@ function sanitizeProductsForLinkTokenMix(products, intent = 'auto') {
  */
 function detectMultiItemLinkIntent(promptText = '') {
   const t = String(promptText || '').toLowerCase();
-  if (/\bmulti[-\s]?item\b/.test(t)) return true;
+  // Negation-aware: a prompt that says "standard link (NOT multi-item)" must NOT
+  // trip this (mirrors the Protect-intent negation guard). Count a match only
+  // when it sits in a clean (non-negated) ~40-char window. Without this, the
+  // literal phrase "not multi-item link" enabled multi-item and 400'd
+  // /link/token/create (observed on the KeyBank funding build).
+  const collapsed = t.replace(/\s+/g, ' ');
+  const NEG = /\bnot\b|\bnever\b|n['’]t\b|\bwithout\b|\bexclud\w*|\bavoid\b|\bno\b|\bstandard\b|\bsingle[-\s]?item\b/i;
+  const affirmative = (re) => {
+    const gre = new RegExp(re.source, 'gi');
+    let m;
+    while ((m = gre.exec(collapsed))) {
+      const s = Math.max(0, m.index - 40);
+      const e = Math.min(collapsed.length, m.index + m[0].length + 8);
+      if (!NEG.test(collapsed.slice(s, e))) return true;
+      if (gre.lastIndex === m.index) gre.lastIndex++;
+    }
+    return false;
+  };
+  if (affirmative(/\bmulti[-\s]?item\b/)) return true;
   // "multiple institutions / banks / accounts ... (in|one|single) ... session/link"
-  if (/\b(multiple|several|two or more|across)\b[^.]{0,60}\b(institution|bank|account|brokerage)s?\b[^.]{0,80}\b(one|single|same|a)\b[^.]{0,20}\b(session|link|connection)\b/.test(t)) return true;
-  if (/\b(connect|link|add)\b[^.]{0,40}\b(multiple|several|all (?:their|your)?)\b[^.]{0,30}\b(institution|bank|account|brokerage)s?\b[^.]{0,60}\b(one|single|same)\b[^.]{0,20}\b(session|link)\b/.test(t)) return true;
+  if (affirmative(/\b(multiple|several|two or more|across)\b[^.]{0,60}\b(institution|bank|account|brokerage)s?\b[^.]{0,80}\b(one|single|same|a)\b[^.]{0,20}\b(session|link|connection)\b/)) return true;
+  if (affirmative(/\b(connect|link|add)\b[^.]{0,40}\b(multiple|several|all (?:their|your)?)\b[^.]{0,30}\b(institution|bank|account|brokerage)s?\b[^.]{0,60}\b(one|single|same)\b[^.]{0,20}\b(session|link)\b/)) return true;
   return false;
 }
 
