@@ -666,13 +666,20 @@ const PATCHES = [
       const rules = [];
       for (const [stepId, entry] of byStep.entries()) {
         for (const [tag, fs] of entry.tagFsTargets.entries()) {
+          // !important so the targeted fix actually wins over the generated
+          // tight values — slides often set inline `font-size:Npx;line-height:1`
+          // on big stat/score numbers (computed line-height == font-size), which
+          // a plain rule can't override (root cause: the overlap persisted even
+          // after this patch "ran"). Detector-driven + step/tag-scoped, so this
+          // only touches elements that actually overlapped. line-height 1.3
+          // (verified to clear the 60px-number vertical overlap).
           rules.push(
-            `[data-testid="step-${stepId}"] .slide-root ${tag} { font-size: ${fs}px; line-height: 1.25; }`
+            `[data-testid="step-${stepId}"] .slide-root ${tag} { font-size: ${fs}px !important; line-height: 1.3 !important; }`
           );
         }
         // Also widen .slide-stack gap as a belt-and-suspenders measure.
         rules.push(
-          `[data-testid="step-${stepId}"] .slide-root .slide-stack { gap: clamp(28px, 3vw, 40px); }`
+          `[data-testid="step-${stepId}"] .slide-root .slide-stack { gap: clamp(28px, 3vw, 40px) !important; }`
         );
       }
 
