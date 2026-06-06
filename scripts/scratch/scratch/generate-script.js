@@ -1680,6 +1680,7 @@ module.exports = {
   autoFixDemoScript,
   isInsightLikeStep,
   isAmountEntryStep,
+  inferLaunchProduct,
   normalizeSceneType,
   enforceCanonicalLaunchInteraction,
   isPreLinkExplainerStep,

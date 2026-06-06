@@ -21,6 +21,19 @@ const { chromium } = require('playwright');
 const { startServer } = require('../utils/app-server');
 const { resolveMode, getLinkModeAdapter } = require('../utils/link-mode');
 const { requireRunDir, getRunLayout } = require('../utils/run-io');
+const { inferLaunchProduct } = require('./generate-script');
+
+// Map an inferred launch product → the token-create endpoint the generated app
+// must hit for that real session. Multi-launch demos (e.g. a real IDV session
+// AND a separate real bank Link session) each have their own launch step with
+// its own endpoint — IDV uses /api/create-idv-link-token (products:
+// ["identity_verification"] alone), Layer uses /api/create-session-token, and
+// the generic bank/income/cra Link uses /api/create-link-token.
+function tokenEndpointForProduct(product) {
+  if (product === 'idv') return '/api/create-idv-link-token';
+  if (product === 'layer') return '/api/create-session-token';
+  return '/api/create-link-token';
+}
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const OUT_DIR = requireRunDir(PROJECT_ROOT, 'plaid-link-qa');
@@ -285,12 +298,27 @@ async function main(opts = {}) {
   const plaidLinkMode = resolveMode({ demoScript });
   const linkModeAdapter = getLinkModeAdapter(plaidLinkMode);
   const embeddedMode = linkModeAdapter.id === 'embedded';
-  const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  // Multi-launch contract: a demo may have several plaidPhase:"launch" steps —
+  // e.g. a real IDV session AND a separate real bank Link session. Validate the
+  // token-create call for EVERY launch (each against its product-correct
+  // endpoint), not just the first. `launchStep` (first) is kept for reporting +
+  // the legacy single-launch code paths below.
+  const launchSteps = (demoScript.steps || []).filter((s) => s && s.plaidPhase === 'launch');
+  const launchStep = launchSteps[0];
   if (!launchStep) {
     console.log('[plaid-link-qa] No plaidPhase=launch step found — skipping.');
     writeReport({ passed: true, skipped: true, reason: 'No plaidPhase launch step', mode: qaMode });
     return;
   }
+  const launchPlan = launchSteps.map((s) => ({
+    id: s.id,
+    product: inferLaunchProduct(s),
+    endpoint: tokenEndpointForProduct(inferLaunchProduct(s)),
+  }));
+  console.log(
+    `[plaid-link-qa] ${launchPlan.length} launch step(s): ` +
+    launchPlan.map((l) => `${l.id}→${l.product}(${l.endpoint})`).join(', ')
+  );
 
   // ── Plaid Layer activation check (runs whenever Layer is used) ───────────────
   // Layer launches via /session/token/create (not /api/create-link-token), so the
@@ -332,18 +360,32 @@ async function main(opts = {}) {
   }
 
   const rows = playwrightScript.steps || [];
-  let launchIdx = rows.findIndex((r) => (r.stepId || r.id) === launchStep.id && r.action === 'click');
-  if (launchIdx < 0) {
-    launchIdx = rows.findIndex((r) => {
+
+  // Resolve the playwright click-row index for EACH launch step. Each launch is
+  // walked & clicked in order so every real token-create fires.
+  const findLaunchRowIdx = (plan) => {
+    let idx = rows.findIndex((r) => (r.stepId || r.id) === plan.id && r.action === 'click');
+    if (idx >= 0) return idx;
+    // Fallback: product-aware CTA target match.
+    return rows.findIndex((r) => {
       if (!r || r.action !== 'click') return false;
       const target = String(r.target || '').toLowerCase();
+      if (plan.product === 'idv') {
+        return target.includes('idv-launch-btn') || (target.includes('idv') && target.includes('btn'));
+      }
       return (
         target.includes('link-external-account-btn') ||
         (target.includes('link') && (target.includes('bank') || target.includes('account'))) ||
         target.includes('continue with plaid')
       );
     });
+  };
+  for (const plan of launchPlan) {
+    plan.rowIdx = findLaunchRowIdx(plan);
   }
+  // Walk to the LAST launch click row so every launch CTA is exercised.
+  const launchRowIndices = launchPlan.map((p) => p.rowIdx).filter((i) => i >= 0);
+  let launchIdx = launchRowIndices.length ? Math.max(...launchRowIndices) : -1;
   if (launchIdx < 0) {
     if (embeddedMode) {
       // In embedded mode the "launch" is clicking an institution tile inside
@@ -406,25 +448,32 @@ async function main(opts = {}) {
   page.on('pageerror', (err) => {
     pageErrors.push(String(err && err.message ? err.message : err));
   });
+  // Track ALL token-create endpoints (bank Link, IDV, Layer) so multi-launch
+  // demos can be validated per launch. The `endpoint` tag lets us match each
+  // launch step to the token call it triggered.
+  const TOKEN_ENDPOINTS = ['/api/create-link-token', '/api/create-idv-link-token', '/api/create-session-token'];
+  const matchTokenEndpoint = (url) => TOKEN_ENDPOINTS.find((ep) => String(url || '').includes(ep)) || null;
   page.on('request', (req) => {
-    if (req.url().includes('/api/create-link-token')) {
-      let body = null;
-      try {
-        body = req.postDataJSON();
-      } catch (_) {
-        body = req.postData() || null;
-      }
-      tokenRequests.push({ url: req.url(), body });
+    const ep = matchTokenEndpoint(req.url());
+    if (!ep) return;
+    let body = null;
+    try {
+      body = req.postDataJSON();
+    } catch (_) {
+      body = req.postData() || null;
     }
+    tokenRequests.push({ url: req.url(), endpoint: ep, body });
   });
   page.on('response', async (res) => {
-    if (!res.url().includes('/api/create-link-token')) return;
+    const ep = matchTokenEndpoint(res.url());
+    if (!ep) return;
     let body = '';
     try {
       body = await res.text();
     } catch (_) {}
     tokenResponses.push({
       url: res.url(),
+      endpoint: ep,
       status: res.status(),
       body: (body || '').slice(0, 2000),
     });
@@ -451,6 +500,53 @@ async function main(opts = {}) {
     }
 
     const tokenHealth = await waitForTokenHealth(tokenResponses, TOKEN_ONLY_WAIT_MS);
+
+    // Per-launch token assertion (multi-launch). For each launch step, confirm
+    // its product-correct token endpoint returned HTTP 200 with no 4xx/5xx.
+    // This catches an IDV-launch failure (wrong/missing /api/create-idv-link-token)
+    // even when a sibling bank launch succeeds (which waitForTokenHealth alone
+    // would let pass). Embedded launches and Layer-on-load may fire before the
+    // click, so we only require a clean 200 per observed endpoint.
+    const launchTokenResults = launchPlan.map((plan) => {
+      const forEndpoint = tokenResponses.filter((r) => r.endpoint === plan.endpoint);
+      const successes = forEndpoint.filter((r) => Number(r.status) === 200);
+      const failures = forEndpoint.filter((r) => Number(r.status) >= 400);
+      return {
+        launchStepId: plan.id,
+        product: plan.product,
+        endpoint: plan.endpoint,
+        observed: forEndpoint.length,
+        success200: successes.length,
+        failures: failures.map((f) => ({ url: f.url, status: f.status, body: f.body })),
+        passed: successes.length > 0 && failures.length === 0,
+      };
+    });
+    const failedLaunches = launchTokenResults.filter((l) => !l.passed);
+    if (failedLaunches.length > 0) {
+      const detail = {
+        passed: false,
+        launchStepId: launchStep.id,
+        launchRowIndex: launchIdx,
+        expectedServerUrl,
+        tokenRequests,
+        tokenResponses,
+        launchTokenResults,
+        tokenFailures: failedLaunches.flatMap((l) => l.failures),
+        mode: qaMode,
+        consoleErrors: consoleErrors.slice(-20),
+        pageErrors: pageErrors.slice(-20),
+      };
+      writeReport(detail);
+      throw new Error(
+        `CRITICAL: Plaid Link QA — ${failedLaunches.length} launch(es) failed their token-create check: ` +
+        failedLaunches
+          .map((l) => `"${l.launchStepId}" (${l.product}) expected ${l.endpoint} HTTP 200 ` +
+            `[observed=${l.observed}, 200s=${l.success200}, failures=${l.failures.length}]`)
+          .join('; ') +
+        `. See ${REPORT_FILE}.`
+      );
+    }
+
     const tokenReferenceError =
       pageErrors.find((e) => /token is not defined/i.test(String(e || ''))) ||
       consoleErrors.find((e) => /token is not defined/i.test(String((e && e.text) || '')));
@@ -555,13 +651,17 @@ async function main(opts = {}) {
         expectedServerUrl,
         tokenRequests,
         tokenResponses,
+        launchTokenResults,
         mode: qaMode,
         launchSignal: embeddedMode ? linkModeAdapter.launchSignalDescription() : 'token-only-health-check',
         domState: launchResult ? launchResult.domState : undefined,
         consoleErrors: consoleErrors.slice(-10),
         pageErrors: pageErrors.slice(-10),
       });
-      console.log('[plaid-link-qa] Token-only health check passed.');
+      console.log(
+        `[plaid-link-qa] Token-only health check passed for ${launchTokenResults.length} launch(es): ` +
+        launchTokenResults.map((l) => `${l.launchStepId}(${l.product}):${l.success200}x200`).join(', ')
+      );
       return;
     }
 

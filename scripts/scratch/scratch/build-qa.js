@@ -38,6 +38,14 @@ const { loadTimingContract } = require('../../timing-contract');
 const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require('../../validate-narration-sync');
 const { requireRunDir, getRunLayout, readRunManifest } = require('../utils/run-io');
 const { isSlideStep: isSlideStepShared } = require('../utils/step-kind');
+const { inferLaunchProduct } = require('./generate-script');
+
+// Token-create endpoint for an inferred launch product (multi-launch contract).
+function buildQaTokenEndpointForProduct(product) {
+  if (product === 'idv') return '/api/create-idv-link-token';
+  if (product === 'layer') return '/api/create-session-token';
+  return '/api/create-link-token';
+}
 const { isKnownWorkhorseLayout } = require('../utils/slide-template-registry');
 const { getSlideTypographyCeilings } = require('../utils/normalize-slide-typography');
 const {
@@ -187,8 +195,13 @@ function resolveBuildQaPlaidMode(raw) {
   return 'token-only';
 }
 
-function inferTokenProbePayload(demoScript) {
-  const launchStep = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch') || {};
+// Build the create-link-token probe payload for a SPECIFIC launch step (the
+// generic bank/income/cra Link path — IDV/Layer use their own endpoints and
+// minimal payloads). Falls back to the first launch step for back-compat.
+function inferTokenProbePayload(demoScript, launchStepArg) {
+  const launchStep = launchStepArg
+    || (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch')
+    || {};
   const payload = {};
   const stepProducts = Array.isArray(launchStep.products) ? launchStep.products.filter(Boolean) : [];
   const productText = `${demoScript.product || ''} ${launchStep.label || ''} ${launchStep.id || ''}`.toLowerCase();
@@ -208,11 +221,23 @@ function inferTokenProbePayload(demoScript) {
   return payload;
 }
 
-async function runTokenOnlyLinkProbe(page, demoScript) {
-  const payload = inferTokenProbePayload(demoScript);
+// Probe the token-create endpoint for a single launch step using the
+// product-correct endpoint. IDV → /api/create-idv-link-token (no payload
+// needed: the backend pins products:["identity_verification"]); Layer →
+// /api/create-session-token; everything else → /api/create-link-token with the
+// inferred payload. Multi-launch demos call this once per launch step.
+async function runTokenOnlyLinkProbe(page, demoScript, launchStepArg) {
+  const launchStep = launchStepArg
+    || (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch')
+    || {};
+  const product = inferLaunchProduct(launchStep);
+  const endpoint = buildQaTokenEndpointForProduct(product);
+  const payload = product === 'idv' || product === 'layer'
+    ? { client_user_id: `build-qa-${product}-${Date.now()}` }
+    : inferTokenProbePayload(demoScript, launchStep);
   const result = await Promise.race([
-    page.evaluate(async (body) => {
-      const res = await fetch('/api/create-link-token', {
+    page.evaluate(async ({ endpoint, body }) => {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body || {}),
@@ -224,14 +249,14 @@ async function runTokenOnlyLinkProbe(page, demoScript) {
         status: res.status,
         body: String(text || '').slice(0, 2000),
       };
-    }, payload),
+    }, { endpoint, body: payload }),
     new Promise((resolve) => setTimeout(() => resolve({
       ok: false,
       status: 0,
       body: `token-only-timeout-${BUILD_QA_TOKEN_ONLY_WAIT_MS}ms`,
     }), Math.max(500, BUILD_QA_TOKEN_ONLY_WAIT_MS))),
   ]);
-  return { payload, result };
+  return { payload, result, product, endpoint, launchStepId: launchStep.id };
 }
 
 /** build-qa cannot drive the Plaid iframe; fake onSuccess so post-link steps are testable. */
@@ -4264,7 +4289,10 @@ async function main(opts = {}) {
   const launchStepId = getPlaidLaunchStepId(demoScript);
   // Every live-launch step (supports multi-launch demos: Layer + live IDV).
   const launchStepIds = getPlaidLaunchStepIds(demoScript);
-  let tokenOnlyProbe = null;
+  // Multi-launch: probe EACH launch step's product-correct token endpoint, not
+  // just the first. Keyed by launch step id so a launch is probed once.
+  const tokenOnlyProbes = new Map();
+  let tokenOnlyProbe = null; // last probe (back-compat for downstream reads)
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -4338,23 +4366,26 @@ async function main(opts = {}) {
       }
     }
     if (isLaunchRow && plaidQaMode !== 'full') {
-      if (plaidQaMode === 'token-only' && !tokenOnlyProbe) {
+      if (plaidQaMode === 'token-only' && !tokenOnlyProbes.has(stepId)) {
         try {
-          tokenOnlyProbe = await runTokenOnlyLinkProbe(page, demoScript);
+          tokenOnlyProbe = await runTokenOnlyLinkProbe(page, demoScript, step);
+          tokenOnlyProbes.set(stepId, tokenOnlyProbe);
+          const probeEndpoint = tokenOnlyProbe.endpoint || '/api/create-link-token';
           if (!tokenOnlyProbe.result.ok || tokenOnlyProbe.result.status !== 200) {
             diagnostics.push({
               stepId,
               category: 'plaid-link-token-health',
               severity: 'critical',
-              issue: `Token-only probe failed: status=${tokenOnlyProbe.result.status}`,
-              suggestion: 'Ensure /api/create-link-token returns HTTP 200 for build-qa token-only mode.',
+              issue: `Token-only probe failed for launch "${stepId}" (${tokenOnlyProbe.product}): status=${tokenOnlyProbe.result.status} on ${probeEndpoint}`,
+              suggestion: `Ensure ${probeEndpoint} returns HTTP 200 for build-qa token-only mode.`,
             });
           } else {
             const bodyJson = parseJsonFromText(tokenOnlyProbe.result.body);
             // The whole POINT of build-qa in token-only mode is that a VALID
             // link_token is minted. A 200 with no token (e.g. the app-server
             // returning `{ "link_mode": "embedded" }` but no token string) is
-            // just as broken as a 500 — fail it explicitly.
+            // just as broken as a 500 — fail it explicitly. (IDV/Layer tokens
+            // also return a `link_token` string.)
             const rawToken =
               bodyJson && typeof bodyJson.link_token === 'string' && bodyJson.link_token.trim();
             if (!rawToken) {
@@ -4362,8 +4393,8 @@ async function main(opts = {}) {
                 stepId,
                 category: 'plaid-link-token-health',
                 severity: 'critical',
-                issue: 'Token-only probe returned HTTP 200 but the response body has no non-empty `link_token` string.',
-                suggestion: 'Check app-server /api/create-link-token — it must return { link_token: "link-sandbox-..." } on success.',
+                issue: `Token-only probe (${probeEndpoint}) returned HTTP 200 but the response body has no non-empty \`link_token\` string.`,
+                suggestion: `Check app-server ${probeEndpoint} — it must return { link_token: "link-sandbox-..." } on success.`,
               });
             } else {
               // Soft-check token shape (sandbox tokens look like
@@ -4381,9 +4412,11 @@ async function main(opts = {}) {
                 console.log(`[build-qa] Token-only probe: link_token valid (len=${rawToken.length}).`);
               }
             }
+            // Embedded-mode check only applies to the generic bank Link endpoint
+            // (IDV/Layer are always modal sessions).
             const responseMode = normalizeResponseLinkMode(bodyJson);
             const expectedEmbedded = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded';
-            if (expectedEmbedded && responseMode && responseMode !== 'embedded') {
+            if (probeEndpoint === '/api/create-link-token' && expectedEmbedded && responseMode && responseMode !== 'embedded') {
               diagnostics.push({
                 stepId,
                 category: 'plaid-link-token-health',

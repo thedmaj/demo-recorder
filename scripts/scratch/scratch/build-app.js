@@ -112,6 +112,38 @@ const STOCK_LINK_BUTTON_ICON_SVG =
   '<path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.242a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>' +
   '</svg>';
 
+// Infer which distinct Plaid session a plaidPhase:"launch" step launches.
+// Mirrors generate-script.inferLaunchProduct (kept local to avoid a circular
+// require: generate-script → prompt-templates → … ). A demo may have MULTIPLE
+// launch steps (multi-launch contract): a real IDV session AND a separate real
+// bank Plaid Link session. The canonical bank launch CTA
+// (link-external-account-btn) belongs ONLY to the bank/Link launch — the IDV
+// launch has its own CTA (idv-launch-btn) and Layer/CRA have their own wiring.
+function inferLaunchProductLocal(step) {
+  if (!step) return 'link';
+  const text = [step.launchProduct, step.id, step.label, step.visualState, step.narration]
+    .filter(Boolean).join(' ').toLowerCase();
+  if (/\blayer\b/.test(text)) return 'layer';
+  if (/\bidv\b|identity[\s-]?verification/.test(text)) return 'idv';
+  if (/\bcra\b|consumer[\s-]?report|income[\s-]?insights|base[\s-]?report|check[\s-]?report/.test(text)) return 'cra';
+  return 'link';
+}
+
+// The launch step that owns the canonical bank Plaid Link CTA
+// (link-external-account-btn). Among all plaidPhase:"launch" steps, prefer the
+// one whose inferred product is the generic bank "link" (or income/auth-style
+// bank session). IDV / Layer launches use their own CTAs and must NOT be
+// rewritten to the canonical bank CTA. Falls back to the first launch step
+// (single-launch back-compat) when no non-IDV/Layer launch is found.
+function findBankLaunchStep(demoScript) {
+  const launches = (demoScript?.steps || []).filter(
+    (s) => s && String(s.plaidPhase || '').toLowerCase() === 'launch'
+  );
+  if (launches.length === 0) return null;
+  const bank = launches.find((s) => inferLaunchProductLocal(s) === 'link');
+  return bank || launches[0];
+}
+
 const PIPELINE_PLAID_LAUNCH_CTA_STYLE_ATTR = 'data-pipeline-plaid-launch-cta-layout';
 
 /**
@@ -924,21 +956,33 @@ function repairPlaywrightInsightNavigation(playwrightScript, demoScript) {
 function normalizeLaunchPlaywrightRow(playwrightScript, demoScript) {
   const rows = playwrightScript?.steps;
   if (!Array.isArray(rows)) return;
-  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
-  if (!launch) return;
-  const row = rows.find((r) => (r.stepId || r.id) === launch.id);
-  if (!row) return;
-  const embeddedMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ||
-    /plaid-embedded-link-container/i.test(String(launch?.interaction?.target || ''));
-  if (embeddedMode) {
-    // Embedded should auto-mount from container activation; no launch CTA required.
-    row.action = 'goToStep';
-    row.target = launch.id;
-  } else {
-    row.action = 'click';
-    row.target = '[data-testid="link-external-account-btn"]';
+  // Multi-launch contract: a demo may have several plaidPhase:"launch" steps
+  // (e.g. a real IDV session AND a separate real bank Link session). Normalize
+  // the playwright row for EACH, targeting the product-correct launch CTA so
+  // the recorder / QA click the right button:
+  //   - bank Link → data-testid="link-external-account-btn"
+  //   - IDV       → data-testid="idv-launch-btn"
+  //   - Layer     → data-testid="link-external-account-btn" (the onboarding Continue CTA)
+  const launches = (demoScript.steps || []).filter((s) => s && s.plaidPhase === 'launch');
+  if (launches.length === 0) return;
+  for (const launch of launches) {
+    const row = rows.find((r) => (r.stepId || r.id) === launch.id);
+    if (!row) continue;
+    const product = inferLaunchProductLocal(launch);
+    const embeddedMode = String(demoScript?.plaidLinkMode || '').toLowerCase() === 'embedded' ||
+      /plaid-embedded-link-container/i.test(String(launch?.interaction?.target || ''));
+    if (embeddedMode && product !== 'idv') {
+      // Embedded should auto-mount from container activation; no launch CTA required.
+      row.action = 'goToStep';
+      row.target = launch.id;
+    } else {
+      row.action = 'click';
+      row.target = product === 'idv'
+        ? '[data-testid="idv-launch-btn"]'
+        : '[data-testid="link-external-account-btn"]';
+    }
+    if (!row.waitMs || row.waitMs < 120000) row.waitMs = 120000;
   }
-  if (!row.waitMs || row.waitMs < 120000) row.waitMs = 120000;
 }
 
 /**
@@ -1094,7 +1138,12 @@ function validatePlaywrightTargetsAgainstSteps(playwrightScript, demoScript, htm
   if (typeof html !== 'string' || !html) return { fixedCount: 0, warningCount: 0 };
 
   const orderedStepIds = (demoScript.steps || []).map(s => s && s.id).filter(Boolean);
-  const launchId = (demoScript.steps || []).find(s => s && s.plaidPhase === 'launch')?.id || null;
+  // ALL launch step ids — every plaidPhase:"launch" row is owned by
+  // normalizeLaunchPlaywrightRow (which knows the product-correct CTA), so none
+  // of them should be auto-fixed here. (Multi-launch: IDV launch + bank launch.)
+  const launchIds = new Set(
+    (demoScript.steps || []).filter(s => s && s.plaidPhase === 'launch').map(s => s.id)
+  );
 
   // Helper: extract the markup for a given step's container div.
   function extractStepBlock(stepId) {
@@ -1181,7 +1230,7 @@ function validatePlaywrightTargetsAgainstSteps(playwrightScript, demoScript, htm
     // Drift detected. Try auto-fix.
     // Skip the launch step — its CTA is normalized separately by
     // normalizeLaunchPlaywrightRow which knows about live vs token-only mode.
-    if (stepId === launchId) {
+    if (launchIds.has(stepId)) {
       console.warn(
         `[Build] validatePlaywrightTargets: target "${targetTid}" not in launch step "${stepId}" block — ` +
         `leaving alone (launch normalizer owns this row).`
@@ -1233,7 +1282,11 @@ function normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript) {
 
 function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
   if (!PLAID_LINK_LIVE) return { html, injected: false };
-  const launch = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+  // Target the BANK Link launch step — the canonical link-external-account-btn
+  // belongs to the bank session, NOT the IDV launch (which owns idv-launch-btn).
+  // In a multi-launch demo the first launch may be IDV; rewriting that step's
+  // button to link-external-account-btn would clobber the IDV CTA.
+  const launch = findBankLaunchStep(demoScript);
   if (!launch) return { html, injected: false };
   const launchStepRe = new RegExp(
     `<div[^>]+data-testid="step-${launch.id}"[^>]*>[\\s\\S]*?data-testid=["']link-external-account-btn["']`,
@@ -3647,7 +3700,11 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // playwright row — narration for the next step plays over the wrong visual.
   // Detect missing advance and inject a goToStep(firstPostLinkStepId) call.
   {
-    const launchStepForAdvance = (demoScript.steps || []).find((s) => s && s.plaidPhase === 'launch');
+    // _plaidLinkComplete belongs to the BANK Link launch (the IDV launch uses
+    // _idvComplete and is handled by its own onSuccess → goToStep). Key the
+    // post-link advance off the bank launch step so the fallback goToStep lands
+    // on the bank launch's own post-link step, not the IDV launch's.
+    const launchStepForAdvance = findBankLaunchStep(demoScript);
     const launchIdxForAdvance = launchStepForAdvance
       ? (demoScript.steps || []).findIndex((s) => s && s.id === launchStepForAdvance.id)
       : -1;
@@ -3662,6 +3719,29 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
       html = html.replace(/window\._plaidLinkComplete\s*=\s*true;/g, injected);
       if (html !== before) {
         console.log(`[Build] Injected goToStep("${firstPostLinkIdForAdvance}") into onSuccess — screen must advance off the Plaid Link step the moment onSuccess fires, otherwise the next step's narration plays over a stale visual (CLAUDE.md DOM contract).`);
+      }
+    }
+
+    // Same post-link advance guarantee for the IDV launch (sets _idvComplete in
+    // its own onSuccess). Multi-launch demos have a separate IDV launch step;
+    // ensure its onSuccess advances to the IDV success step.
+    const idvLaunchStep = (demoScript.steps || []).find(
+      (s) => s && s.plaidPhase === 'launch' && inferLaunchProductLocal(s) === 'idv'
+    );
+    const idvLaunchIdx = idvLaunchStep
+      ? (demoScript.steps || []).findIndex((s) => s && s.id === idvLaunchStep.id)
+      : -1;
+    const firstPostIdvId =
+      idvLaunchIdx >= 0 && idvLaunchIdx < (demoScript.steps || []).length - 1
+        ? (demoScript.steps[idvLaunchIdx + 1] || {}).id || null
+        : null;
+    const hasGoToStepInIdvOnSuccess = /_idvComplete\s*=\s*true[\s\S]{0,400}?window\.goToStep\s*\(/m.test(html);
+    if (firstPostIdvId && /_idvComplete\s*=\s*true/.test(html) && !hasGoToStepInIdvOnSuccess) {
+      const injected = `window._idvComplete = true;\n        if (typeof window.goToStep === 'function') { try { window.goToStep(${JSON.stringify(firstPostIdvId)}); } catch(e) {} }`;
+      const before = html;
+      html = html.replace(/window\._idvComplete\s*=\s*true;/g, injected);
+      if (html !== before) {
+        console.log(`[Build] Injected goToStep("${firstPostIdvId}") into IDV onSuccess — screen must advance off the IDV launch step when _idvComplete fires.`);
       }
     }
   }

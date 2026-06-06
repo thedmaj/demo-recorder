@@ -1469,6 +1469,29 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     const layerSignaled = product.includes('layer') || flow === 'layer' || flow === 'layer-web-sdk';
     return layerSignaled && hasLaunch;
   })();
+  // Identity Verification (IDV) launch steps. A demo may have MULTIPLE
+  // plaidPhase:"launch" steps (multi-launch contract: e.g. a real IDV session
+  // AND a separate real bank Link session). The IDV launch needs DIFFERENT
+  // wiring than a bank Link launch — its own token endpoint
+  // (/api/create-idv-link-token, products:["identity_verification"] only),
+  // its own CTA testid, and its own completion flag (_idvComplete). The Layer
+  // block above only fires for Layer demos, so IDV-without-Layer launches
+  // (Gringo / Debit / Censiq) would otherwise get no real-launch instruction.
+  const idvLaunchSteps = (() => {
+    if (!Array.isArray(demoScript?.steps)) return [];
+    const inferLaunchProductLocal = (step) => {
+      const text = [step?.launchProduct, step?.id, step?.label, step?.visualState, step?.narration]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (/\blayer\b/.test(text)) return 'layer';
+      if (/\bidv\b|identity[\s-]?verification/.test(text)) return 'idv';
+      if (/\bcra\b|consumer[\s-]?report|income[\s-]?insights|base[\s-]?report|check[\s-]?report/.test(text)) return 'cra';
+      return 'link';
+    };
+    return demoScript.steps.filter(
+      (s) => s && String(s.plaidPhase || '').toLowerCase() === 'launch' && inferLaunchProductLocal(s) === 'idv'
+    );
+  })();
+  const hasIdvLaunch = idvLaunchSteps.length > 0;
   const includeLiveLinkInstructionBlock = shouldIncludeLiveLinkInstructionBlock({
     demoScript,
     promptText,
@@ -2080,6 +2103,72 @@ contract that the next stage knows how to fill.\n` +
   // Mock-Layer template / mobile-skeleton / share-field guardrail blocks REMOVED
   // (2026-05-29). Layer is always the live Plaid Layer Web SDK modal (see the
   // useLayerWebSdk block above) — there is no mobile-mockup path anymore.
+
+  // ── LIVE IDENTITY VERIFICATION (IDV) LAUNCH — multi-launch contract ─────────
+  // Emitted whenever the demo-script has a plaidPhase:"launch" step inferred as
+  // IDV but the demo is NOT a Layer demo (the Layer block above already wires
+  // IDV when Layer is present). A demo may have MULTIPLE real launches — e.g.
+  // a real IDV session AND a separate real bank Plaid Link session. Each launch
+  // is its OWN live Plaid SDK session with its OWN CTA, token endpoint, and
+  // completion flag. This block tells the LLM how to wire the IDV launch so it
+  // does not collapse it into the bank launch or build a simulated IDV screen.
+  if (hasIdvLaunch && !useRealLayerWebSdk) {
+    const idvLaunchIds = idvLaunchSteps.map((s) => s.id).join(', ');
+    const allLaunchIds = (demoScript.steps || [])
+      .filter((s) => s && String(s.plaidPhase || '').toLowerCase() === 'launch')
+      .map((s) => s.id);
+    contentBlocks.push({
+      type: 'text',
+      text:
+        `## LIVE IDENTITY VERIFICATION (IDV) LAUNCH — REAL SDK (multi-launch demo)\n\n` +
+        `This demo has **multiple real Plaid launches** — each \`plaidPhase:"launch"\` step is its OWN ` +
+        `live Plaid SDK session with its OWN launch button inside that step's div, its OWN token ` +
+        `endpoint, and its OWN completion flag. Launch step ids (in order): ${allLaunchIds.map((id) => `\`${id}\``).join(', ')}. ` +
+        `The IDV launch step(s): ${idvLaunchIds ? idvLaunchSteps.map((s) => `\`${s.id}\``).join(', ') : '(none)'}.\n\n` +
+        `**IDV launch step — wire it as a REAL Plaid Identity Verification session (NOT a simulated screen):**\n` +
+        `- The IDV launch step contains its OWN CTA \`data-testid="idv-launch-btn"\` (its own button INSIDE ` +
+        `that step's div). Do **NOT** reuse \`link-external-account-btn\` for the IDV launch — that testid ` +
+        `belongs to the bank Plaid Link launch.\n` +
+        `- On click, fetch the IDV link token from the dedicated endpoint, then open the real SDK:\n` +
+        '```javascript\n' +
+        `let _idvHandler = null;\n` +
+        `async function launchIdv() {\n` +
+        `  const r = await fetch('/api/create-idv-link-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_user_id: window._clientUserId }) });\n` +
+        `  if (!r.ok) { console.error('[create-idv-link-token]', r.status); return; }\n` +
+        `  const { link_token } = await r.json();\n` +
+        `  _idvHandler = Plaid.create({\n` +
+        `    token: link_token,\n` +
+        `    onSuccess: (public_token, metadata) => {\n` +
+        `      // IDV public_token is null; the verification id is metadata.link_session_id.\n` +
+        `      window._idvId = (metadata && metadata.link_session_id) || null;\n` +
+        `      window._idvComplete = true;          // IDV completion flag (NOT _plaidLinkComplete)\n` +
+        `      window.goToStep('<idv-success-step-id>');   // the step AFTER this IDV launch step\n` +
+        `    },\n` +
+        `    onEvent: () => {},\n` +
+        `    onExit: (err) => { console.warn('IDV exited', err); },\n` +
+        `  });\n` +
+        `  window._idvHandler = _idvHandler;\n` +
+        `  _idvHandler.open();\n` +
+        `}\n` +
+        '```\n' +
+        `- Wire the CTA: \`<button data-testid="idv-launch-btn" onclick="launchIdv()">…</button>\`.\n` +
+        `- **IDV token is \`products:["identity_verification"]\` ONLY** — \`/api/create-idv-link-token\` ` +
+        `produces that token on the backend; never combine identity_verification with auth / income / ` +
+        `signal in one token, and never wire IDV through \`/api/create-link-token\`.\n` +
+        `- Treat the returned identity as **submitted, not a pass/fail verdict**. The IDV verdict comes from ` +
+        `\`POST /identity_verification/get\` → \`status:"success"\` (sub-steps documentary_verification / ` +
+        `kyc_check / selfie_check = success). Use that as the IDV-success step's \`apiResponse\`. Never show \`failed\` ` +
+        `or an API error in the main flow.\n\n` +
+        `**Bank launch step (separate session):** the OTHER \`plaidPhase:"launch"\` step keeps the existing ` +
+        `bank Plaid Link wiring — CTA \`data-testid="link-external-account-btn"\`, fetch ` +
+        `\`POST /api/create-link-token\`, \`Plaid.create({ token, onSuccess })\`, set ` +
+        `\`window._plaidLinkComplete = true\` in onSuccess, then \`goToStep\` to its own post-link step. ` +
+        `Do NOT merge the two launches; do NOT set \`_plaidLinkComplete\` from the IDV onSuccess (use \`_idvComplete\`).\n` +
+        `- **NO auto-advance:** neither launch step may auto-advance via setTimeout/onload. Advance ONLY from ` +
+        `the SDK \`onSuccess\` callback (\`_idvComplete\` → goToStep for IDV; \`_plaidLinkComplete\` → goToStep ` +
+        `for the bank). Each launch button must be INSIDE its own step's div so goToStep doesn't hide it.`,
+    });
+  }
   contentBlocks.push({
     type: 'text',
     text:
