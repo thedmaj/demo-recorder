@@ -1,0 +1,89 @@
+================================================================================
+Bright Money — Plaid Layer to cut SSN onboarding friction
+================================================================================
+
+**Host:** **Bright Money** (Bright Capital Inc.)
+**Canonical URL:** https://brightmoney.co/
+**Brand URL:** https://brightmoney.co/
+
+**Opportunity context (Salesforce — open, Evaluation; Glean salescloud + Gong):**
+- Opportunity: `Bright Money - Layer` (`006UV00000PAO5wYAH`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000PAO5wYAH/view
+- Stage: `Evaluation`  •  Close Date: `2026-06-30`
+- Primary product (SFDC): `Layer`
+- Use case: Consumer budgeting, spend management, and financial planning/advice
+- Qualified ACV: `$216,000`  •  Segment: Fintech
+- Pain (verbatim): From app launch to SSN they have a 37% conversion rate but SSN to enrollment they have 67% conversion — SSN capture is a huge friction point where users stop signing up.
+- Situation (SFDC): Bright Money is seeing substantial user drop-offs during onboarding when prompting users for PII and social security number.
+- Impact (SFDC): Following up for LTV values to justify POC; goal is higher signup-to-enrollment conversion via Layer phone-first eligibility.
+- POC reference: `Bright - Layer POC` closed won (`006UV00000PF9z3YAD`) — 20,000 Layer API calls/month cap
+- Stakeholders (Gong): Ishita, Deepak Thakkar (platform product)
+- AE: Matthew Stein  •  Manager: Xander O'Han
+
+**User journey (one sentence):**
+Maya opens Bright Money on her phone, enters eligible test phone `415-555-1111`, confirms Layer-prefilled identity in seconds, and lands on her personalized savings plan without the long manual SSN form.
+
+**Story arc (short prose):**
+Maya downloads Bright Money to automate savings toward debt payoff. She hits signup, enters phone `415-555-1111`, and Layer recognizes her as a returning Plaid user. A bottom-sheet Layer flow confirms name, address, and linked checking — no SSN re-entry on this template. She accepts sharing, lands on Bright Money home with goals prefilled, and sees how Layer cut minutes off onboarding.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Layer**
+
+**Solutions supported:**
+Instant Onboarding & Verification
+
+**Primary product family:**
+`generic` (Layer mobile mock — use LAYER_MOCK_TEMPLATE)
+
+**Primary messaging file:**
+`inputs/products/plaid-layer.md`
+
+**Research depth:** messaging
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Plaid Layer mobile mock** — `LAYER_MOCK_TEMPLATE.md` + layer-mobile-skeleton
+  [x] Eligible phone `415-555-1111` (helper text below frame)
+  [x] Ineligible fallback `415-555-0011` documented but NOT shown in main demo
+  [ ] Standard modal Link-only — not for this demo
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal |
+|---|------|----------------------|-----------------|--------|
+| 1 | host | Mobile Bright Money splash — "Build a brighter financial life" | Maya wants savings without a 20-field signup. | `Get started` |
+| 2 | host | Phone entry — `415-555-1111`, helper routing legend visible | Layer checks Plaid network eligibility. | `Continue` |
+| 3 | link | Layer bottom sheet — returning user, confirm PII, share account | Inside Layer she confirms identity in one tap. | Confirm |
+| 4 | host | Bright Money home — savings plan card, linked account mask | Onboarding complete in under a minute. | — |
+| 5 | slide | `layer-value-slide` — onboarding friction reduction | Layer value for PFM growth teams. | — |
+
+**Layer rules:** eligible path only; no fallback PII collection in main demo.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Chen, 28, marketing coordinator building emergency fund
+**On screen:** phone 415-555-1111, checking ••4821, goal "Pay off card" $200/mo
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Bright Money mobile app: purple/teal fintech aesthetic, light background inside phone frame. Global Layer routing helper under device frame. Viewport 1440×900 (desktop canvas with centered mobile shell).
+
+[[SLIDE_OUTPUT_BEGIN]]
+1 slide: Layer onboarding ROI for PFM. Do not use id `value-summary-slide`.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

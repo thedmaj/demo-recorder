@@ -1,0 +1,138 @@
+================================================================================
+Betterment — Plaid Investments Move for ACATS without the failures
+================================================================================
+
+**Host:** **Betterment** — robo-advisor / wealth management (equity brokerage subvertical)
+**Canonical URL:** https://www.betterment.com/
+**Brand URL** (for `brand-extract`): https://www.betterment.com/
+
+**Opportunity context (Salesforce — closed lost Q2 2025, ripe for re-engagement; Glean salescloud):**
+- Opportunity: `Betterment - Investments Move - Upsell` (`006UV00000IjFdIYAV`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000IjFdIYAV/view
+- Stage at close: `Closed Lost` (previous stage `Evaluation`)  •  Close Date: `2025-06-23`  •  Last Modified: `2026-05-18`
+- Primary product (SFDC): `Investments Move`  •  Upsell type: New Product (mins unchanged)
+- Use case: `Verification of Assets` — sub-vertical `Equity brokerage`, vertical `Wealth`
+- Qualified ACV: `$33,000`  •  Qualified MRR: `$10,000`
+- Pain (verbatim): "high ACATS failures, 25% of submitted ACATS transfers fail, high support ticket volume + manual intervention"
+- Impact (verbatim): "More AUM + Reduce ACATS transfer failures due to account number, account title, account type, or unsupported assets errors; reduce support tickets for Plaid-linked transfers"
+- Decision process: "Reducing user failures, reducing support tickets"
+- Situation: ACATS POC re-engagement on top of Betterment's existing Plaid Investments integration; 30% of Betterment ACATS fail, primarily due to incorrect account number entered by the customer.
+- Loss reason: project temporarily deprioritized after PM change (Chrissy → Vedika); re-evaluate post-tax-season.
+- POC path Plaid + Betterment aligned on (eng review, July 2024): for users with a healthy Plaid Item, pull full account number on the backend via Investments Move — no UI friction added.
+- Stakeholders engaged (Glean SFDC + Gong notes): Chrissy Celaya (Director, Customer Growth — Concierge — previous lead), Vedika (new Money Movement PM — current lead), Liane Pierce (VP of CX), Ashley Curran (Director of Product, Money Movement), Thomas Sutton (PM Money Movement), Thomas Bajis (Engineering Manager), Terrance Koar (Sr SWE).
+- Peer benchmark Plaid already shared with Betterment (Sep 9, 2024 note): Robinhood saw a **~90% drop in ACATS failures and 3× lift in successful transfers** after adopting Investments Move.
+- AE: Stephanie Orser  •  Manager: Xander O'Han  •  Account: Betterment (~484 employees, Strategic Fintech, Wealth)
+
+**User journey (one sentence):**
+A new Betterment customer named Megan Carter onboards to roll her outside brokerage in, taps the in-app "Transfer an existing brokerage" CTA, completes one real Plaid Link session against her current broker, and watches the ACATS transfer form auto-populate with her account number, DTC code, owners, and holdings — no PDFs, no manual entry, no failed transfer.
+
+**Story arc (short prose):**
+Megan just opened a Betterment Investing account and wants to bring her existing Vanguard brokerage in. On Betterment's "Move money in" screen she taps **Transfer an existing brokerage**. A short pre-Link explainer tells her Betterment uses Plaid to pull the details her transfer form needs. Inside Plaid Link she selects Vanguard, signs in, and picks her brokerage account. Betterment shows a brief "Pulling your transfer details" beat, then a Plaid insight slide frames what `/investments/auth/get` returns. On the next host screen, Betterment's ACATS form is already filled — account number, DTC code, account holder, and her three top positions — with a collapsible API panel showing the `numbers.acats` payload. She confirms; transfer is initiated. A short Plaid slide closes with the peer benchmark stat (Robinhood: 90% drop in ACATS failures, 3× lift in successful transfers) and the Betterment retro outcome teed up for product review.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Investments Move** (hero — `products: ["investments_auth"]`, endpoint `POST /investments/auth/get`).
+
+**Solutions supported** (Solutions Master):
+Wealth Onboarding, Brokerage Transfer Initiation (ACATS), Account Funding.
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`investments_move`
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-investments-move.md` (canonical wire format, talk track, value props). Do not duplicate stats from `inputs/plaid-value-props.md`.
+
+**Research depth:** gapfill
+
+**Approved marketing stats (use at most one each in narration/slides):**
+- Robinhood post-Investments-Move: **~90% drop in ACATS failures**, **3× lift in successful transfers** (Plaid marketing-approved; cited in the AE's Sep 2024 ROI note to Betterment).
+- API-first resolution **~14 seconds**; **70–80% of production traffic** resolves via the institution-API path (vs. screen-scrape fallback).
+- **Manual / fallback responses are not billed** (per Plaid Investments Move pricing — say in slides only; do not put $/call rates on screen).
+
+**Product status to disclose (truthful framing):**
+Plaid Investments Move is in **Early Availability** (Sales-gated via LaunchDarkly). The demo shows the documented happy path; do not fabricate Canada ATON support, do not invent webhook names (`/investments/auth/get` has no product-specific webhook — uses generic Item webhooks).
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — single `plaidPhase: "launch"` step; narrate inside modal only
+  [x] **Sandbox institution:** Vanguard (`ins_115616`) per `inputs/products/plaid-investments-move.md`; credentials `user_good` / `pass_good` per `inputs/plaid-link-sandbox.md`
+  [x] **Endpoint after Link onSuccess:** `POST /investments/auth/get` — show `numbers.acats[]`, `owners`, `holdings`, `data_sources`
+  [x] **No `/user/create` bootstrap** — Investments Move uses standard Link flow
+  [x] **Do NOT use** `products: ["investments"]` or `/investments/holdings/get` — those are the data-access product (Plaid Investments), wrong product for this demo
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Plaid deck opener (T1 or T3): "Bring your brokerage in. Without the paper forms." | Frame the wealth-onboarding problem: 25–30% of ACATS transfers fail on account-number errors. | — |
+| 2 | host | Betterment-branded "Move money in" screen with three options (link bank, deposit, **transfer an existing brokerage**). Light neutral background, Betterment teal/green accents from brand-extract. | Megan just funded her account and wants to bring her outside brokerage with her. | `Transfer an existing brokerage` |
+| 3 | host | Pre-Link explainer card on Betterment host: "Connect your current broker so we can pull the details ACATS needs." Plaid Link CTA below. | Brief, end narration on the user's tap action that opens Link. | `Link your brokerage` |
+| 4 | link | Real Plaid Link launch (consent → institution search → Vanguard credentials → account select → success). `products: ["investments_auth"]` Link token. | Narrate only what's visible inside the modal during the linking moment. | Link `onSuccess` |
+| 5 | host | Betterment "Pulling your transfer details" loading state (white/light Betterment chrome). | Set expectation — backend call to Plaid Investments Move, resolves in ~14 seconds. | — |
+| 6 | slide | **Pure marketing slide** (`sceneType: "slide"`, NOT `"insight"` — do NOT attach `apiResponse` here). Plaid dark navy chrome, T3 statement: "One Link → account number, DTC code, owners, holdings." | What `/investments/auth/get` returns conceptually; the actual API JSON appears on host step 7, not on this slide. | — |
+| 7 | host | Betterment **ACATS transfer form** auto-populated: account number `TR5555`, DTC code `1111`, account holder Megan Carter, account type Individual Brokerage, plus a holdings table with 3 positions (e.g. `VTI`, `VXUS`, `BND`). Collapsible `#api-response-panel` shows the live `/investments/auth/get` JSON with `numbers.acats[0]`, `owners[0]`, `data_sources` block. | Hero reveal: form pre-filled from `INSTITUTION` data sources — not user-typed. Call out beta footnote on Betterment microcopy ("Powered by Plaid Investments Move — early access"). | `Continue` |
+| 8 | host | Betterment "Confirm and initiate transfer" review screen: from-broker, to-Betterment, holdings count, est. value, e-sign disclosure. | Megan reviews and confirms — the data she didn't have to type. | `Initiate transfer` |
+| 9 | slide | Plaid stats slide (T4-style): peer benchmark callout — "Robinhood after Plaid Investments Move: ~90% fewer ACATS failures · 3× more successful transfers." | Frame the Betterment retro outcome: this is the lift Plaid showed Chrissy in Sep 2024. | — |
+| 10 | slide | Closing CTA slide (T11-style): "Less paperwork. More AUM. Fewer support tickets." Subtle pointer to next steps (technical review, POC scoping). | Close with the impact statement Stephanie + Sam already used on Betterment's evaluation deck. | — |
+
+**Insight presentation rules:**
+- API JSON on host step 7 uses the global `#api-response-panel` (collapsed by default per panel toggle contract; expanding reveals `numbers.acats[0]`, `owners`, `data_sources`).
+- **Slide steps (#1, #6, #9, #10) are pure marketing slides — `sceneType: "slide"` only. Do NOT use `sceneType: "insight"` on these; no `apiResponse` attached.** Insight (`sceneType: "insight"`) is reserved for Plaid-chrome screens that overlay actual API JSON on `.slide-root`, which this demo does not use — the JSON lives on host step 7's `#api-response-panel`.
+- Do NOT show the `'investments'` product string or `/investments/holdings/get` — wrong product family.
+- Do NOT show the full `dtc_numbers[]` list as a raw dump — narrate one or two codes max.
+- Do NOT fabricate `INVESTMENTS_AUTH_READY` (or similar) webhooks — none exist for this product.
+
+**Compliance / user data:**
+Standard Link consent. No FCRA / CRA permissible-purpose layer (this is wealth onboarding, not credit decisioning). No `/user/create` bootstrap.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Megan Carter — newly onboarded Betterment customer transferring her outside brokerage in
+**Company / context:** Betterment robo-advisor / wealth platform; outside brokerage is Vanguard (sandbox `ins_115616`)
+**Sample fields that must appear on screen:**
+- Account number `TR5555`
+- DTC code `1111` (one — narrate at most two)
+- Account holder name `Megan Carter`
+- Account type `Individual Brokerage`
+- 3 holdings, e.g. `VTI` (Vanguard Total Stock Market ETF), `VXUS` (Vanguard Total International Stock ETF), `BND` (Vanguard Total Bond Market ETF), with realistic share counts and an estimated portfolio value (e.g. `$84,231.07`)
+- `data_sources.numbers: "INSTITUTION"` and `data_sources.owners: "INSTITUTION"` visible in the JSON panel
+- Microcopy footnote on the ACATS form: "Powered by Plaid Investments Move — early access"
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Betterment customer-facing app: top nav with Betterment wordmark, light/white background, Betterment teal/green primary CTAs (from brand-extract). Money-movement screen layout (left-rail account summary + main content area + side panel area where the API panel lives, collapsed by default). Primary Link CTA label: **Link your brokerage**. ACATS form is a single column with the populated fields and a Plaid attribution footer. Confirm screen mirrors Betterment's real "Review and submit" pattern.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Include **4 marketing slides** in `sceneType: "slide"` steps using Plaid Deck Design System (T1/T3 opener, T3 statement for `/investments/auth/get` framing, T4 stats slide for the Robinhood peer benchmark, T11 closing CTA). Use `data-slide-template` attributes T1/T3/T4/T11. Keep `/investments/auth/get` JSON in the host `#api-response-panel`, not on slides.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Stats sourced from `inputs/products/plaid-investments-move.md` (Robinhood 90% / 3×; 14s latency; 70–80% API path) — not duplicated elsewhere
+  [x] Product family `investments_move`; Link product `["investments_auth"]`; endpoint `/investments/auth/get`
+  [x] Live Plaid Link (single `plaidPhase: "launch"`); no simulated Link divs; Vanguard sandbox
+  [x] Slides enabled via SLIDE_OUTPUT block (app+slides build)
+  [x] Beta / Early Availability framing is honest; no fabricated webhooks; no Canada ATON
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

@@ -1,0 +1,88 @@
+{
+  "description": "Batch re-run of pipeline runs ranked 11–20 (skip most recent 10) with story-first prompts + Glean SFDC context",
+  "createdAt": "2026-05-25",
+  "slice": "runs 11-20 by mtime (skip latest 10)",
+  "runs": [
+    {
+      "id": "01-tilt-protect",
+      "sourceRunId": "2026-05-22-Tilt-Cash-Advance-Funnel-Auth-Identity-Signal-Income-Protect-v1",
+      "company": "Tilt",
+      "website": "https://tilt.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/01-tilt-protect/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "02-betterment-investments-move",
+      "sourceRunId": "2026-05-22-Betterment-Robo-advisor-Wealth-Platform-Auth-Assets-Transfer-v1",
+      "company": "Betterment",
+      "website": "https://www.betterment.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/02-betterment-investments-move/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "03-zip-cra-lendscore",
+      "sourceRunId": "2026-05-21-Zip-Bnpl-At-Retail-CRA-Auth-Signal-v1",
+      "company": "Zip",
+      "website": "https://zip.co/",
+      "promptFile": "inputs/batch-rerun-r11-20/03-zip-cra-lendscore/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "04-carmax-cashflow",
+      "sourceRunId": "2026-05-21-Demo-CRA-Signal-v1",
+      "company": "CarMax Auto Finance",
+      "website": "https://www.carmax.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/04-carmax-cashflow/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "05-current-ewa",
+      "sourceRunId": "2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1",
+      "company": "Current",
+      "website": "https://current.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/05-current-ewa/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "06-arvest-income-insights",
+      "sourceRunId": "2026-05-21-Demo-CRA-v2",
+      "company": "Arvest Bank",
+      "website": "https://www.arvest.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/06-arvest-income-insights/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "07-claritypay-auth-identity",
+      "sourceRunId": "2026-05-21-Demo-Auth-Identity-v1",
+      "company": "ClarityPay",
+      "website": "https://claritypay.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/07-claritypay-auth-identity/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "08-macu-cra-base-report",
+      "sourceRunId": "2026-05-21-Demo-CRA-v1",
+      "company": "Mountain America Credit Union",
+      "website": "https://www.macu.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/08-macu-cra-base-report/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "09-bright-money-layer",
+      "sourceRunId": "2026-05-21-Demo-Identity-Layer-v1",
+      "company": "Bright Money",
+      "website": "https://brightmoney.co/",
+      "promptFile": "inputs/batch-rerun-r11-20/09-bright-money-layer/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "10-claritypay-regression",
+      "sourceRunId": "2026-05-21-Demo-Identity-Income-v1",
+      "company": "ClarityPay",
+      "website": "https://claritypay.com/",
+      "promptFile": "inputs/batch-rerun-r11-20/07-claritypay-auth-identity/prompt.txt",
+      "note": "Same company/product as run 07 — regression check for prompt contamination",
+      "research": "messaging"
+    }
+  ]
+}

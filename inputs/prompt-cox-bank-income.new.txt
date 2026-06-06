@@ -1,0 +1,142 @@
+================================================================================
+Cox Automotive — Plaid Bank Income for instant auto-finance income verification
+================================================================================
+
+**Host:** **Cox Automotive** — automotive retail / indirect lending (dealer finance desk)
+**Canonical URL:** https://www.coxautoinc.com/
+**Brand URL:** https://www.coxautoinc.com/
+
+**Opportunity context (Salesforce — open):**
+- Opportunity: `Cox - ENT - Reseller - Income Verification` (`006UV00000YKIBiYAP`)
+- Stage: `Discovery`
+- Primary product (SFDC): `Income` (Bank Income)
+- Use case: Income Verification for auto financing
+- Account: Cox Automotive (dealer / lender workflow, US)
+
+**User journey (one sentence):**
+A dealer finance manager verifies a buyer's income by having them link their checking
+account through Plaid Link — replacing paystub uploads — and Bank Income returns
+verified income streams that clear the buyer for auto financing in seconds.
+
+**Story arc (short prose):**
+At the dealership finance desk, verifying a buyer's income usually means chasing
+paystubs, W-2s, or bank statements — slow, fraud-prone, and a drop-off point in the
+deal. The finance manager offers the buyer a faster path: connect your bank securely
+with Plaid. The buyer taps Link your bank on the pre-Link screen, completes Plaid Link,
+and Bank Income returns verified income — primary employer, monthly income, and a
+consistent deposit history. The finance desk sees confirmed income and clears the buyer
+for financing, closing the deal without a single document upload. Close on faster
+funding decisions, fewer stips, and less income-fraud exposure.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Bank Income**
+
+**Solutions supported:**
+Income Verification, Lending / Underwriting
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`funding`
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-bank-income.md`
+
+**Research depth:** gapfill
+
+**CRITICAL — NOT CRA:** This is **traditional Plaid Bank Income** (`income_verification`),
+NOT Plaid Check / Consumer Report / CRA (`cra_base_report`, `cra_income_insights`,
+LendScore). Endpoint is `POST /credit/bank_income/get`. An `income_verification` Link
+token accepts only `{income_verification, employment}` — do not bundle `auth`,
+`identity`, or `signal` into the same Link token. `products[]` is research-driven; use
+the resolver's `suggestedClientRequest` verbatim.
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, modal mode, single `plaidPhase: "launch"` step
+  [ ] **CRA / Layer / OAuth / IDV** — not in scope
+  [x] **Sandbox / persona** — Bank Income persona `user_bank_income` / password `{}`
+      (literal two-character password — NOT `pass_good`), First Platypus Bank
+      (`ins_109508`, non-OAuth), per `inputs/plaid-link-sandbox.md`. Use
+      `window._plaidInstitutionName/_plaidAccountName/_plaidAccountMask` for labels.
+
+Link narration boundary: the pre-Link step ends on the tap ("…he taps Link your bank.");
+the Link step narrates content inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Title: "Income verification shouldn't stall the deal." Subhead on paystub friction + fraud at the finance desk. | Frame the income-verification problem in auto finance. | — |
+| 2 | host | Cox dealer finance application — buyer, vehicle, requested financing; "Verify income" step with two options: upload documents vs. connect bank (recommended). | Position bank linking as the fast, low-friction path vs. document upload. | `Continue` |
+| 3 | host | Pre-Link explainer — secure connection, what data powers the income check. | Trust + value framing; end narration on the CTA trigger. | `Link your bank` |
+| 4 | link | Real Plaid Link modal — institution search, sign-in, account select (`plaidPhase:"launch"`). | Inside-modal: the buyer connects their checking account. | `onSuccess` → public_token + institution/account metadata |
+| 5 | insight | `POST /credit/bank_income/get` JSON in side panel. Card: verified income summary — primary employer, total monthly income, number of income streams, deposit consistency / historical average. | Reveal: verified income pulled straight from bank data — no paystubs, no manual review. | `Continue to decision` |
+| 6 | host | Cox finance decision screen: "Income verified — buyer cleared for financing," verified monthly income, employer, requested amount approved. | Verified income → fast, confident financing decision. | End on success |
+| 7 | slide | Value-summary slide: "Verified income in seconds · fewer stips · less income-fraud exposure." | Recap, compliance-safe. | — |
+
+**Product-specific reminders:**
+- Bank Income endpoint `POST /credit/bank_income/get`; surface realistic income streams
+  (employer name, monthly income, deposit history) — never fabricate field names; verify
+  exact shapes via AskBill if unsure.
+- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" /
+  "eliminate fraud." Outcomes depend on data availability + Cox's own credit policy.
+- Synchronous demo: a brief processing state then immediate verified-income outcome.
+  No declined / failed / edge-case branches.
+
+**Compliance / user data:** Buyer-consented bank link for income verification; income
+streams shown are representative sandbox data. Factual language only.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Daniel Carter — auto buyer at a Cox-powered dealership, financing a used vehicle.
+**Company / context:** Dealer finance desk; "Verify income to complete financing."
+
+**Sample on-screen fields (use verbatim — no generic placeholders):**
+- buyer Daniel Carter · requested financing $24,600 · used vehicle
+- primary employer (from Bank Income) · total monthly income · income stream count
+- deposit consistency / historical average monthly income
+- decision: income verified → cleared for financing
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Cox Automotive–style light dealer-finance surface: white / light-neutral background,
+dealer-finance application layout, income-verification step with document-vs-bank choice,
+clear "income verified" decision card. Never show raw JSON on host steps; the insight beat
+uses the global `#api-response-panel` (collapsed by default; Response tab default).
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Two Plaid-branded slides: (1) opening problem (paystub-based income verification friction
+at the finance desk), (7) closing value-summary (verified income in seconds, fewer stips,
+less fraud exposure). No JSON rail on slides.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Story order: open slide → dealer income step → pre-Link → Link → Bank Income insight → decision → close slide
+  [x] Traditional Bank Income (`/credit/bank_income/get`), NOT CRA; income_verification token only
+  [x] Sandbox `user_bank_income` / `{}` (literal); First Platypus Bank (non-OAuth)
+  [x] Compliance-safe claims; no absolute guarantees
+  [x] app+slides build
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

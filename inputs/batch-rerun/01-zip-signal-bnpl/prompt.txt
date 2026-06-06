@@ -1,0 +1,110 @@
+================================================================================
+Zip — Plaid Signal: ACH Repayment Routing for BNPL
+================================================================================
+
+**Host:** **Zip** (Zip Co US Inc.) — BNPL / consumer installment lending
+**Canonical URL:** https://zip.co/
+**Brand URL** (for `brand-extract`): https://zip.co/
+
+**Opportunity context (Salesforce — open, Glean salescloud):**
+- Opportunity: `2027 Zip Co US Inc. - Renewal` — open, Negotiation, 78% probability
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000OevJVYAZ/view
+- ACV: $1,179,999.96 first-year  •  TCV: $2,949,999.90
+- Renewal products approved: Balance, Identity, Transactions, Transactions Refresh, Recurring Transactions, Identity Match
+- **Signal expansion:** biggest near-term upsell — moving Signal from shadow mode to live production routing
+- Pain verbatim (account plan): "Zip needs to move Signal from shadow mode to production. Open question on Same Day ACH impact."
+- Signal goal: route low-risk repayments to ACH (cheaper); higher-risk to debit — target ~3% return rate reduction
+- AE: Matthew Stein  •  Manager: Xander O'Han  •  Primary contact: Maimi Niina (Product Management Lead)
+- Account: Zip Co US Inc. (~Strategic Fintech)
+
+**User journey (one sentence):**
+A Zip BNPL borrower's repayment is evaluated in real time by Plaid Signal, routing low-risk payments to cost-efficient ACH and flagging elevated-risk ones for debit — so Zip processes every repayment on the right rail.
+
+**Story arc (short prose):**
+Open with the BNPL repayment challenge: Zip runs millions of repayments monthly, but without real-time bank signal, routing to ACH is a bet — every returned payment costs money and damages customer trust. Enter Plaid Signal. When a repayment is initiated on Zip's platform, a `POST /signal/evaluate` call scores the transaction against 900+ bank signals in milliseconds. A score of 8 (low risk) routes directly to ACH — faster, cheaper. A score of 64 (elevated) recommends debit instead. Close with the quantified outcome: ACH expansion lowers per-payment cost while the Signal production deployment reduces return rates toward Zip's ~3% target.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Signal**
+
+**Solutions supported:**
+Funding, Fraud & Risk Prevention, BNPL Repayment Optimization
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:**
+`inputs/plaid-value-props.md` (Signal stats + ACH fraud/risk messaging)
+
+**Research depth:** gapfill
+
+**Plaid Link mode:** modal (standard — single `plaidPhase: "launch"` step)
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `"plaidPhase": "launch"` step; modal mode
+  [ ] Plaid Layer / OAuth — not in scope
+  [x] **Sandbox** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, Remember Me flow)
+  [x] **Signal products:** `["auth", "signal"]` — Auth required to obtain `account_id` for Signal evaluate
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Opening challenge slide (T3): BNPL return rates — ACH is cheap but risky without signal; debit is safe but expensive. Zip's opportunity: route smarter. | The BNPL repayment problem: every returned ACH costs Zip in fees and customer trust. Plaid Signal is the answer. | — |
+| 2 | host | Zip repayment dashboard — borrower "Taylor Kim" with an upcoming $349 Pay-in-4 installment due today. Light background, Zip branding, repayment card with amount and due date. | Taylor's installment is coming due. Zip needs to choose: ACH or debit? | `Process repayment` |
+| 3 | host | "Connecting to Plaid" / bank-link step — Zip explains it uses Plaid to verify bank account and assess repayment health. Host screen with Zip branding. CTA opens Plaid Link. | Before routing, Zip links Taylor's bank account once via Plaid to get verified ACH credentials and real-time bank signals. | `Link bank account` |
+| 4 | link | Real Plaid Link modal — Taylor connects her checking account (First Platypus Bank, Remember Me flow) | Plaid's secure bank connection captures verified routing and account numbers — the foundation for Signal scoring. | Link `onSuccess` |
+| 5 | host | Signal evaluation loading screen — "Evaluating repayment risk…" brief wait state with Zip branding | Signal is scoring this repayment against 900+ bank signals in real time. | — |
+| 6 | host | Signal result screen — API panel shows `POST /signal/evaluate` response: `scores.bank_initiated_return_risk.score: 8`, `scores.customer_initiated_return_risk.score: 12`, `ruleset.result: "ACCEPT"`, key `core_attributes` (e.g., `plaid_connections_count: 4`, `days_since_first_plaid_connection: 284`). Decision: **Route to ACH** | A score of 8 signals low return risk. Zip's ruleset accepts this repayment on ACH — cheaper and faster than debit. | `Initiate ACH payment` |
+| 7 | host | Payment confirmation screen — ACH payment initiated, $349 scheduled, estimated arrival 1–2 business days. Zip success state with confirmation number. | Repayment routed to ACH. Taylor's installment is on its way — at lower cost and with full visibility into bank health. | — |
+| 8 | slide | Signal value slide (T7 or T8): side-by-side view — score 8 → ACH accepted vs score 64 → debit recommended. Frame the routing logic and business impact. | Signal-driven routing means every repayment lands on the right rail — maximizing ACH efficiency while protecting against returns. | — |
+| 9 | slide | Outcome / value-summary slide (T11): Zip's Signal production impact — return rate target ~3%, ACH cost savings per million repayments, shadow-mode → live deployment path. | This is what Signal production looks like for Zip: lower return rates, lower cost per payment, smarter routing at scale. | — |
+
+**Insight presentation rules:**
+- Signal API panel (`POST /signal/evaluate`) on step 6 (host step). Use `#api-response-panel`.
+- Signal scores for ACCEPT scenario: `bank_initiated_return_risk.score: 8`, `customer_initiated_return_risk.score: 12`. Do NOT use scores above 20 for an ACCEPT decision.
+- `ruleset.result` must be `"ACCEPT"` — never `"REJECT"` (not a documented value); use `"REROUTE"` for high-risk contrast if shown.
+- Include 2–3 `core_attributes` in the API panel: e.g., `plaid_connections_count`, `days_since_first_plaid_connection`, `days_since_last_plaid_connection`.
+- Do NOT add `reason_codes[]` — not a documented Signal field.
+- Slides use Plaid slide design system per `templates/slide-template/`.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Taylor Kim, active Zip BNPL borrower making a Pay-in-4 installment payment
+**Company / context:** Using Zip's buy-now-pay-later plan for a recent electronics purchase ($1,396 total, 4 installments of $349)
+**Sample fields on screen:** borrower name Taylor Kim, repayment amount $349.00, due date today, plan description "Electronics — Pay in 4", ACH routing/account (Plaid-verified), Signal score 8 → ACCEPT
+
+Recommended API data:
+- `client_transaction_id`: `zip-txn-taylor-20260525-001`
+- `amount`: `349.00`
+- `scores.bank_initiated_return_risk.score`: `8`
+- `scores.customer_initiated_return_risk.score`: `12`
+- `ruleset.result`: `"ACCEPT"`
+- `core_attributes.plaid_connections_count`: `4`
+- `core_attributes.days_since_first_plaid_connection`: `284`
+- `core_attributes.days_since_last_plaid_connection`: `3`
+
+-------------------------------------------------------------------------------
+HOST CHROME
+-------------------------------------------------------------------------------
+
+Zip visual identity: purple/violet primary accent (#6E3EE7 or brand purple), white card surfaces on a light gray/white page background, rounded UI components, clean sans-serif typography. Keep the look contemporary and mobile-aware even at 1440px desktop viewport.
+
+For the repayment dashboard and result screens, use a clean card layout — not a full-bleed dark background. Signal result screen should clearly communicate the routing decision (ACH vs debit) with the Plaid Signal score prominently displayed.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+SLIDES
+-------------------------------------------------------------------------------
+
+This is an App + Slides run. Beats 1, 8, and 9 in the storyboard table above are slides (sceneType: "slide") using the Plaid slide design system. Generate them using T3, T7/T8, and T11 templates respectively. Beats 2–7 are host/app/link steps (sceneType: "host" or "link").

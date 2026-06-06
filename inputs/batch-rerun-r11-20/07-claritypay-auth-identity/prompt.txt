@@ -1,0 +1,89 @@
+================================================================================
+ClarityPay — Instant Auth + Identity Match for POS financing auto-pay
+================================================================================
+
+**Host:** **ClarityPay**
+**Canonical URL:** https://claritypay.com/
+**Brand URL:** https://claritypay.com/
+
+**Opportunity context (Salesforce — open, Discovery; Glean salescloud):**
+- Opportunity: `SMB | OB | ClarityPay - Auth, Balance` (`006UV00000XRxllYAD`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000XRxllYAD/view
+- Stage: `Discovery`  •  Forecast: `Best Case`  •  Close Date: `2026-05-31`
+- Primary products (SFDC): Auth, Balance (Identity Match supporting)
+- Use case: Inbound Bank Payments — Billing & Recurring
+- Qualified ACV: `$60,000`  •  Segment: SMB
+- Pain (verbatim): ClarityPay currently collects bank account and routing numbers verifying them via Giact or uses credit/debit cards for auto-pay and initial payments.
+- Situation (SFDC): ClarityPay sees Plaid as a way to streamline auto-pay enrollment by allowing customers to connect their bank accounts directly, replacing manual entry and potentially aiding fraud detection.
+- Impact (SFDC): Replace current manual process to reduce payment failures, enhance fraud detection, and cost savings.
+- AE: Monika Gurnani  • Account: ClarityPay Inc. (~28 employees, SMB)
+
+**User journey (one sentence):**
+A ClarityPay shopper financing a $1,200 purchase links checking via Plaid Link; Identity Match confirms ownership, Auth returns verified routing numbers, and the payment schedule unlocks without manual account entry.
+
+**Story arc (short prose):**
+Berta selects ClarityPay at checkout to split a $1,200 purchase. The host flow explains secure bank linking for auto-pay. She taps Connect bank. Inside Plaid Link she completes the standard sandbox flow. Immediately after Link success, ClarityPay runs Identity Match — name and address scores confirm she owns the account. Then Auth returns verified routing ••1234. Payment schedule unlocks on screen — no Giact micro-deposits, no typo-prone manual entry.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Auth**, **Plaid Identity Match**
+
+**Solutions supported:**
+Account Opening, Inbound Bank Payments
+
+**Primary product family:**
+`funding`
+
+**Primary messaging file:**
+`inputs/products/plaid-auth.md`
+
+**Research depth:** messaging
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — single `plaidPhase: "launch"` step; narrate inside modal only
+  [x] **Sandbox:** First Platypus Bank, `user_good` / `pass_good`
+  [x] **Step order:** Identity Match insight MUST appear immediately after Link success and BEFORE Auth/`/auth/get` insight
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | ClarityPay checkout — finance $1,200 purchase | Berta wants split-pay without retyping routing numbers. | `Finance with ClarityPay` |
+| 2 | host | Pre-Link explainer card | Ends narration on Connect bank CTA. | `Connect bank` |
+| 3 | link | Real Plaid Link modal | Inside modal only. | Link `onSuccess` |
+| 4 | host | **Identity Match** panel — name/address match scores | Ownership confirmed before Auth. | — |
+| 5 | host | **Auth** panel — verified routing ••1234 | Account verified instantly. | — |
+| 6 | host | Payment schedule unlocked — happy path | Auto-pay enrolled without Giact. | `Continue` |
+| 7 | slide | `auth-value-slide` — reduce payment failures | Quantify manual-entry drop-off reduction. | — |
+| 8 | slide | `claritypay-recap-slide` — not `value-summary-slide` id | Close with SFDC impact statement. | — |
+
+**Link narration:** pre-Link step ends on button tap; Link step never says "she taps" or "opens Plaid".
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Berta Charleson — POS financing applicant
+**Sample on screen:** $1,200 purchase, Identity Match scores visible, routing ••1234, payment schedule dates
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+ClarityPay checkout: light neutral background, ClarityPay brand accent on CTAs (from brand-extract). Primary Link CTA: **Connect bank**. Viewport 1440×900.
+
+[[SLIDE_OUTPUT_BEGIN]]
+2 slides: auth value + ClarityPay recap. Do not use id `value-summary-slide`.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

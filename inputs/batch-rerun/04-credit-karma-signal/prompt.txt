@@ -1,0 +1,92 @@
+================================================================================
+Credit Karma — Plaid Signal for CK Money ACH funding
+================================================================================
+
+**Host:** **Credit Karma** (Intuit) — personal finance / neobank (CK Money)
+**Canonical URL:** https://www.creditkarma.com/
+**Brand URL** (for `brand-extract`): https://www.creditkarma.com/
+
+**Opportunity context (Salesforce — open, Glean salescloud May 2026):**
+- Opportunity: `ENT | Credit Karma | Upsell | Signal; IDM` (`006UV00000Loig5YAB`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000Loig5YAB/view
+- Stage: `Evaluation`  •  Close Date: `2026-05-18`
+- Primary product (SFDC): **Signal Transaction Scores**
+- Use case: **Risk & Fraud detection** — re-enable bank transfers while controlling fraud
+- Situation (verbatim): "Credit Karma Money's product lead for Risk & Fraud reached out to Plaid to explore ways we can help control fraud while re-enabling bank transfers through our Signal product."
+- Impact: "CK can leverage Signal to re-enable money movement with bank transfers, making it easier for customers to leverage their CK Money accounts, driving engagement & growth."
+- Prior context: `CK Money - Signal - ACH Debits` (closed lost 2022) — returns concern; 2026 re-engagement leans into faster funds availability with Signal guardrails
+- AE: Anoop Nebhnani  •  Manager: Emma Cunningham Katz  •  Account: Credit Karma (ENT, Strategic)
+
+**User journey (one sentence):**
+Jordan Lee moves $2,500 from an external checking account into her CK Money high-yield savings goal; Credit Karma runs Plaid Signal before releasing ACH funds so low-risk transfers get instant availability.
+
+**Story arc (short prose):**
+Jordan opens Credit Karma Money and wants to fund her high-yield savings goal without worrying about a failed ACH transfer. She taps Move money, links her external bank via Plaid Link, and enters $2,500. Before releasing funds, Credit Karma calls `POST /signal/evaluate` — scoring return risk across balance, tenure, NSF history, and network behavior. Signal returns score **14** with **ACCEPT** — funds show as available immediately. Close with CK's engagement story: Signal lets CK re-enable bank transfers with fraud controls, not blind speed.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Auth**, **Plaid Signal**
+
+**Solutions supported:**
+Funding, Fraud & Risk Prevention, Personal Financial Insights
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:**
+`inputs/plaid-value-props.md`
+
+**Research depth:** messaging
+
+**Plaid Link mode:** modal — single `plaidPhase: "launch"` step
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `"plaidPhase": "launch"` step; modal mode
+  [x] **Sandbox** — First Platypus Bank defaults per `inputs/plaid-link-sandbox.md`
+  [x] **Link products:** `["auth", "signal"]`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | CK Money dashboard — savings goal, credit score module, green accents | Jordan wants to move $2,500 into her,
+without ACH return anxiety. | `Move money` |
+| 2 | host | Transfer setup — $2,500 amount, destination CK High-Yield Savings, pre-Link CTA | Ends narration on **Link your bank**. | `Link your bank` |
+| 3 | link | Real Plaid Link modal — OTP, First Platypus Bank, checking ••0211 | Narrate inside modal only. | Link `onSuccess` |
+| 4 | host | Reviewing transfer — checkmarks for bank connected, account verified | Signal evaluation in progress. | — |
+| 5 | insight | Signal evaluate panel — `POST /signal/evaluate`, score **14**, **ACCEPT** | Low return risk → instant availability. | **14 — ACCEPT** |
+| 6 | host | Success — $2,500 available in CK Money savings | Funds credited without multi-day hold. | `Done` |
+| 7 | slide | Value summary — Signal enables bank transfers + engagement | CK re-enables transfers with fraud guardrails. | CTA |
+
+**Product-specific reminders:**
+- Signal scores for ACCEPT: **5–20** range (`customer_initiated_return_risk.score: 14`, `bank_initiated_return_risk.score: 9`)
+- Pre-Link narration ends on button tap; Link step narrates inside modal only
+- No `reason_codes[]` array — use `core_attributes` + `ruleset`
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Jordan Lee — Credit Karma Money member
+**Sample fields on screen:** $2,500 transfer, CK High-Yield Savings 4.10% APY, Signal score **14**, ruleset **ACCEPT**
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Credit Karma green accent on white/light host canvas; Money dashboard layout; co-branded Plaid Link modal. **Viewport:** 1440×900.
+
+[[SLIDE_OUTPUT_BEGIN]]
+1 closing value-summary slide (T11) — Signal re-enables CK Money bank transfers with fraud controls.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

@@ -1,0 +1,90 @@
+================================================================================
+Mountain America Credit Union — CRA Base Report for consumer lending
+================================================================================
+
+**Host:** **Mountain America Credit Union (MACU)**
+**Canonical URL:** https://www.macu.com/
+**Brand URL:** https://www.macu.com/
+
+**Opportunity context (Salesforce — open, Mutual Alignment; Glean salescloud):**
+- Opportunity: `B&W | New Business | MACU - CRA` (`006UV00000M3TATYA3`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000M3TATYA3/view
+- Stage: `Mutual Alignment`  •  Forecast: `Best Case`  •  Close Date: `2026-09-30`
+- Primary product (SFDC): `Base Report (Consumer Report)`
+- Use case: Credit Scoring & Underwriting
+- Qualified ACV: `$480,000`  •  Segment: Banking and Wealth
+- Pain (verbatim): Lack of cash flow data
+- Situation (SFDC): $21B credit union in Utah with a large consumer lending business
+- Impact (SFDC): Able to better understand their applicants
+- Critical event (SFDC): Experian launch + completion of core conversion
+- Stakeholders (Gong/email): Jonathan Brouse (VP Direct Consumer Lending), Erik Finch, Dan Dougherty (Plaid AE)
+- AE: Ben Kelbaugh • Manager: Chris Roche
+
+**User journey (one sentence):**
+A MACU member applying for a $28K auto loan links via Plaid CRA Link; when the report is ready, the underwriter sees Base Report cash-flow attributes and approves the member faster than bureau-only rules.
+
+**Story arc (short prose):**
+Jordan Ellis starts a MACU auto loan application. The host explains cash-flow verification via Plaid CRA. He taps Link Your Bank on the pre-Link screen. Inside Plaid Link he completes CRA consent, OTP, and selects checking. A report-generating beat sets expectations. Base Report JSON appears in the API panel with key attributes. Underwriting shows APPROVED — quantifying MACU's goal to understand applicants beyond traditional credit files.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link (CRA / Check), **Plaid CRA Base Report**
+
+**Solutions supported:**
+Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family:**
+`cra_base_report`
+
+**Primary messaging file:**
+`inputs/products/plaid-cra-base-report.md`
+
+**Research depth:** messaging
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link CRA** — single `plaidPhase: "launch"` step
+  [x] **Sandbox:** `user_credit_profile_*` / `pass_good` per plaid-link-sandbox.md
+  [x] **Async report-ready** lifecycle before Base Report retrieval
+  [x] **FCRA:** `/user/create` + permissible purpose before Link token
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | MACU loan application — auto pre-qual, $28K | Jordan starts auto loan. | Continue |
+| 2 | host | Pre-Link — verify income & cash flow via CRA | Ends on Link CTA. | `Link your bank` |
+| 3 | link | Real CRA Plaid Link flow | Inside modal only. | Link `onSuccess` |
+| 4 | host | "Generating your report" progress | Async CRA lifecycle. | — |
+| 5 | host | Report ready + API panel Base Report JSON | Reveal 2–3 key attributes. | `View report` |
+| 6 | host | Underwriting decision APPROVED | Happy path. | — |
+| 7 | slide | `cra-value-slide` — underwriting speed | Stat from product KB. | — |
+| 8 | slide | `macu-outcome-slide` — member outcome | No `value-summary-slide` id. | — |
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Jordan Ellis, 34, MACU member
+**On screen:** $28,000 loan amount, report status, 2–3 CRA attribute labels, APPROVED
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+MACU member-facing loan app: light neutral background, MACU red/blue accents from brand-extract. Viewport 1440×900.
+
+[[SLIDE_OUTPUT_BEGIN]]
+2 slides: CRA value + MACU outcome. Do not use id `value-summary-slide`.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

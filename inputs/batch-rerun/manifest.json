@@ -1,0 +1,88 @@
+{
+  "description": "Batch re-run of last 10 pipeline demos with story-first prompts + Glean-enriched SFDC context",
+  "createdAt": "2026-05-25",
+  "runs": [
+    {
+      "id": "01-zip-signal-bnpl",
+      "sourceRunId": "2026-05-25-Using-Zips-Buy-now-pay-later-Plan-Auth-Identity-Signal-v1",
+      "company": "Zip",
+      "website": "https://zip.co/",
+      "promptFile": "inputs/batch-rerun/01-zip-signal-bnpl/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "02-huntington-embedded-funding",
+      "sourceRunId": "2026-05-25-Personal-Banking-Linking-External-Auth-Identity-Signal-Transfer-v1",
+      "company": "Huntington Bank",
+      "website": "https://www.huntington.com/",
+      "promptFile": "inputs/batch-rerun/02-huntington-embedded-funding/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "03-huntington-protect-rerun",
+      "sourceRunId": "2026-05-22-Personal-Banking-Linking-External-Auth-Identity-Signal-Transfer-Protect-v1",
+      "company": "Huntington Bank",
+      "website": "https://www.huntington.com/",
+      "promptFile": "inputs/batch-rerun/03-huntington-protect-rerun/prompt.txt",
+      "note": "Same prompt hash as run 02 — regression check",
+      "research": "messaging"
+    },
+    {
+      "id": "04-credit-karma-signal",
+      "sourceRunId": "2026-05-21-Uses-Ck-For-Credit-Auth-Identity-Signal-Transfer-v1",
+      "company": "Credit Karma",
+      "website": "https://www.creditkarma.com/",
+      "promptFile": "inputs/batch-rerun/04-credit-karma-signal/prompt.txt",
+      "note": "Rebuilt — prior run had Bright Money prompt contamination",
+      "research": "messaging"
+    },
+    {
+      "id": "05-tilt-protect",
+      "sourceRunId": "2026-05-22-Tilt-Cash-Advance-Funnel-Auth-Identity-Signal-Income-Protect-v1",
+      "company": "Tilt",
+      "website": "https://tilt.com/",
+      "promptFile": "inputs/batch-rerun/05-tilt-protect/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "06-betterment-investments-move",
+      "sourceRunId": "2026-05-22-Betterment-Robo-advisor-Wealth-Platform-Auth-Assets-Transfer-v1",
+      "company": "Betterment",
+      "website": "https://www.betterment.com/",
+      "promptFile": "inputs/batch-rerun/06-betterment-investments-move/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "07-zip-cra-lendscore",
+      "sourceRunId": "2026-05-21-Zip-Bnpl-At-Retail-CRA-Auth-Signal-v1",
+      "company": "Zip",
+      "website": "https://zip.co/",
+      "promptFile": "inputs/batch-rerun/07-zip-cra-lendscore/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "08-carmax-cashflow",
+      "sourceRunId": "2026-05-21-Demo-CRA-Signal-v1",
+      "company": "CarMax Auto Finance",
+      "website": "https://www.carmax.com/",
+      "promptFile": "inputs/batch-rerun/08-carmax-cashflow/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "09-current-ewa",
+      "sourceRunId": "2026-05-21-Uses-Current-For-Daily-CRA-Auth-Identity-Signal-Protect-v1",
+      "company": "Current",
+      "website": "https://current.com/",
+      "promptFile": "inputs/batch-rerun/09-current-ewa/prompt.txt",
+      "research": "messaging"
+    },
+    {
+      "id": "10-arvest-income-insights",
+      "sourceRunId": "2026-05-21-Demo-CRA-v2",
+      "company": "Arvest Bank",
+      "website": "https://www.arvest.com/",
+      "promptFile": "inputs/batch-rerun/10-arvest-income-insights/prompt.txt",
+      "research": "messaging"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "label": "bvnk-apponly-validate",
+  "runs": [
+    {
+      "id": "bvnk-apponly",
+      "company": "BVNK",
+      "website": "https://www.bvnk.com/",
+      "promptFile": "inputs/batch-bvnk-apponly/prompt.txt",
+      "sourceRunId": "2026-05-30-Imports-Green-Coffee-From-Auth-Identity-Signal-Transfer-Protect-v1",
+      "buildMode": "app-only"
+    }
+  ]
+}

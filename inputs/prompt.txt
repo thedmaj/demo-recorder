@@ -1,41 +1,29 @@
 ================================================================================
-Rain — Split-rent underwriting + PFM on one Plaid connection (CRA Base Report + Income Insights)
+KeyBank — Small Business Account Funding — Fund a new business checking account from any bank in seconds, post-KYB, with ownership + ACH-risk checks built in
 ================================================================================
 
-**Host:** **Rain** — consumer fintech (earned-wage access → new consumer-lending product); rolling out a "split your rent into two payments" credit feature.
-**Canonical URL:** https://www.rain.us
-**Brand URL:** https://www.rain.us
-
-**Opportunity context (Salesforce — open, Glean):**
-- Opportunity: `Rain - Base Report + Income Insights` (`006UV00000ZsgPXYAZ`)
-- Stage: `Mutual Alignment` • Close: `2026-06-05` • Critical event: launch July 2026
-- Quoted risk products (SFDC): `balance`, `cra_base_report`, `cra_income_insights` (+ Base Report / Income Insights Refresh)
-- Use case (SFDC): Credit Scoring & Underwriting
-- Story: Rain is launching a NEW credit product that lets members split rent into two payments; they need to underwrite ability-to-pay from income + cash-flow data (not a bureau score).
-- Existing Plaid customer (Auth + Identity + Transactions today); reusing the current Link flow + adding `/user/create`, CRA consent, permissible purpose, and webhook-based report retrieval.
-- Stakeholders: Rain — Declan Schweitzer, Jose Lourenço; Plaid — SE "Coin", John, Laraib. (Gong: "Rain / Plaid — CRA technical review".)
+**Host:** **KeyBank** — U.S. business banking (small-business deposit account funding)
+**Canonical URL:** https://www.key.com
+**Brand URL:** https://www.key.com
 
 **User journey (one sentence):**
-A Rain member asks to split this month's rent into two payments; she connects her bank once through Plaid Link (multi-item CRA flow), Rain underwrites ability-to-pay from her CRA Base Report (cash flow) and Income Insights (verified income), approves the split aligned to her payday, screens real-time Balance before each repayment, and — months later — repairs a lapsed connection in seconds via Plaid Link update mode.
+A small-business owner who has just completed KYB at KeyBank funds their new business checking account from the company's external bank by connecting it with Plaid, and KeyBank instantly confirms the account belongs to the business, pulls the ACH rails, and clears the transfer for ACH-return risk before approving the funds.
 
 **Story arc (short prose):**
-Jordan Rivera wants to split her $1,800 rent into $900 now and $900 on payday. Rain can't underwrite that from a thin credit file, so it asks her to connect her bank. In one Plaid Link session (CRA + Auth + Transactions + Balance, multi-item enabled) Rain collects FCRA-permissible consent and the bank connection. Plaid generates the Consumer Report asynchronously; when it's ready, Rain reads the CRA Base Report (365-day cash flow, zero NSFs, healthy balances) and CRA Income Insights (verified biweekly payroll, monthly net income, predicted next payday). Rain approves the rent split on a schedule aligned to her income, and before each debit it pulls a real-time Balance to avoid an insufficient-funds return. Close on the operational reality of lending: months later Jordan's bank connection lapses (item_login_required) — Rain surfaces a "reconnect" prompt and Plaid Link update mode repairs it in seconds with no re-exchange and no lost history. One connection powers underwriting, PFM, repayment, and self-healing. (Compliance-safe: "can help," "typically," "up to"; no guarantees.)
+KYB is done — the business is verified and its details are on file. The friction is now *funding*: slow micro-deposits and the risk of moving money into the wrong account. KeyBank drops in Plaid: the owner links the company's external bank in one tap, and behind the scenes KeyBank confirms the linked account's name matches the business (Identity Match), pulls account + routing rails and sees it's a business account (Auth), captures the amount, and risk-scores that specific transfer (Signal). Low risk → funds approved instantly, no micro-deposits. Close on the value: small businesses funded and transacting on day one, with fewer returns and less fraud.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link, **Plaid Consumer Report (CRA) — Base Report**, **CRA Income Insights**, Plaid Auth, Plaid Transactions, Plaid Balance
+Plaid Link, Plaid Auth, Plaid Identity (Identity Match), Plaid Signal
 
-**Solutions supported:**
-Credit Scoring & Underwriting, Consumer Report Underwriting, Personal Financial Insights
+**Solutions supported:** Account Funding
 
-**Primary product family** (pick one — aligns with pipeline profiles):
-`cra_base_report`
+**Primary product family:** `funding`
 
-**Primary messaging file for this demo:**
-`inputs/products/plaid-cra-base-report.md` (CRA flow + underwriting). Pair with `inputs/products/plaid-income-insights.md` for the CRA Income Insights beat.
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
 
 **Research depth:** gapfill
 
@@ -43,80 +31,79 @@ Credit Scoring & Underwriting, Consumer Report Underwriting, Personal Financial 
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Live Plaid Link CRA** — real SDK, single `plaidPhase:"launch"` step for the primary connection.
-  [x] **Multi-item link mode** — set `enable_multi_item_link: true` on `/link/token/create` (build a Consumer Report spanning institutions). NOTE: in multi-item sessions the `onSuccess` callback fires EMPTY — the public token(s) arrive via the `SESSION_FINISHED` webhook (`public_tokens[]`); optionally `ITEM_ADD_RESULT` per item. This run is NOT recorded, so the empty-onSuccess multi-item behavior is acceptable. `/link/token/get` returns full session data for 6h as a fallback.
-  [x] **CRA setup:** `POST /user/create` with PII (name/phone/email/address; SSN last-4 optional) → `user_id` (prefix `usr_`); then `POST /link/token/create` with `products: ["auth","transactions","balance","cra_base_report","cra_income_insights"]`, `enable_multi_item_link: true`, `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, `cra_options.days_requested: 365`, `transactions.days_requested: 365`, `webhook`.
-  [x] **CRA async:** report-ready beat keyed on `USER_CHECK_REPORT_READY` (`successful_products: ["cra_base_report","cra_income_insights"]`) before retrieving reports. Reports retrieved by `user_id` (NOT access_token); retrievable for 24h.
-  [x] **Sandbox / persona** — CRA persona `user_credit_profile_good` / `pass_good` per `inputs/plaid-link-sandbox.md`, non-OAuth institution.
-
-Link narration boundary: the pre-Link step ends on the tap ("…she taps Connect your bank."); the Link step narrates content inside the modal only.
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase: "launch"` step per `CLAUDE.md`. **Standard Plaid Link** (NOT Layer, NOT multi-item link).
+  [ ] Plaid Layer / OAuth / IDV — N/A
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, `user_good`/`pass_good`); external institution name + account mask come from Link `onSuccess` metadata only — never hardcode them.
 
 -------------------------------------------------------------------------------
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
-|---|------|----------------------|--------------|--------------|
-| 1 | slide | Title: "Splitting rent shouldn't hinge on a thin credit file." Subhead on cash-flow underwriting for a new rent-split product. | — | — |
-| 2 | host | Rain app — Jordan Rivera requests **Split rent: $900 now + $900 on payday** ($1,800 total). Pre-Link consent card: what data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create` (PII → `user_id`); `POST /link/token/create` (`auth, transactions, balance, cra_base_report, cra_income_insights`; `enable_multi_item_link:true`; `EXTENSION_OF_CREDIT`; `cra_options.days_requested:365`) | `Connect your bank` |
-| 3 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select), `plaidPhase:"launch"`, multi-item enabled. | `onSuccess` (empty in multi-item) → `SESSION_FINISHED` webhook `public_tokens[]`; `POST /item/public_token/exchange` | Connected |
-| 4 | host | "Generating your Consumer Report…" async processing state. | Webhook `USER_CHECK_REPORT_READY` (`successful_products`) | Report ready |
-| 5 | insight | **CRA Base Report** card + JSON side panel: 365-day cash flow — total inflow **$15,000.50**, total outflow **$12,000.25**, **nsf_overdraft_transactions_count: 0**, current balance ~$5,000, days_available 365. | `POST /cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
-| 6 | insight | **CRA Income Insights** card + JSON side panel: verified income stream "ACME CORP PAYROLL", **BIWEEKLY**, monthly **gross $4,900 / net $3,825**, projected income, predicted next payday 2026-04-30, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to pay" |
-| 7 | host | **Underwriting decision: Approved.** Rent-split schedule: $900 today + $900 on the predicted payday; decision card cites income + cash flow (not a bureau score). | (decision derived from CRA data) | `Approve split` |
-| 8 | host | **Repayment confidence + PFM.** Before the 2nd debit, Rain pulls a real-time Balance to screen for NSF; a recurring-streams glimpse shows the biweekly payroll inflow Rain is timing repayment to. | `POST /accounts/balance/get` (real-time, pre-debit); `POST /transactions/sync` + `POST /transactions/recurring/get` (PFM/recurring) | "Funds confirmed — repayment timed to payday" |
-| 9 | host | **Update mode — self-healing connections.** Months later Jordan's bank connection lapses (`ITEM_LOGIN_REQUIRED`). Rain shows a "Reconnect your bank" prompt; Plaid Link relaunches in **update mode** (link token minted with the existing `access_token`, **no products**, 30-min expiry) — re-auth only, no re-exchange, no lost history. Connection repaired. Show the side panel with the sandbox mechanics: `POST /sandbox/item/reset_login` forces the state; recovery is confirmed by the `ITEM` / `LOGIN_REPAIRED` webhook. (Render as a Rain host beat with the global `#api-response-panel`; this is an illustrative update-mode experience, NOT a second `plaidPhase:"launch"` recording step.) | `POST /sandbox/item/reset_login` → `ITEM`/`ERROR` (item_login_required); `POST /link/token/create` (`access_token`, no `products`) → update-mode Link → `ITEM`/`LOGIN_REPAIRED` | "Reconnected in seconds — no data loss" |
-| 10 | slide | Value summary: **one Plaid connection → underwrite (CRA Base Report) + verify income (Income Insights) + power PFM + de-risk repayment (Balance) + self-heal (update mode).** More approvals for thin-file renters, fewer NSF returns. | — | — |
+Demo STARTS post-KYB (business already verified; company info prefilled). Backend order after Link is **ownership -> rails -> amount -> risk**: Identity Match, then Auth, then host amount capture, then Signal. Never show Auth before Identity Match.
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | KeyBank post-KYB home (host) | "Business verified" + prefilled company info (Pixel & Paper Co, EIN, owner, address); "Fund your business account" screen | KYB done — now fund the account in one connect | "Link your business bank account" button |
+| 2 | Plaid Link (launch) | Real standard Plaid Link modal | Narrate inside the modal: select bank, log in, choose the business account | account linked |
+| 3 | identity-match-insight | Plaid insight screen (dark navy/teal) | Confirm the linked account belongs to the business; fuzzy match tolerates the legal suffix | form "Pixel & Paper Co" vs bank "Pixel & Paper" -> name score 95 |
+| 3a | identity-match-slide (technical slide) | Plaid technical slide + JSON rail | How name scoring works for businesses AND people | bullets below |
+| 4 | auth-insight | Plaid insight screen | Pull ACH rails; the account is a business account | account + routing retrieved; holder_category business |
+| 4a | auth-slide (technical slide) | Plaid technical slide + JSON rail | The account holder/type values, incl. business | bullets below |
+| 5 | funding-amount (host) | KeyBank UX: enter amount to fund | Owner enters the amount to move into the new account | $7,500.00 entered |
+| 6 | signal-insight | Plaid insight screen | Score ACH-return risk for THIS transfer/amount | low risk -> ACCEPT |
+| 7 | funds-approved (host) | KeyBank UX: funds approved instantly | No micro-deposits; good businesses funded on the spot | "Funds available" |
+| 8 | value-summary-slide | Plaid value slide | Small businesses funded day one, fewer returns, less fraud | CTA |
+
+**Slide content (required):**
+- **identity-match-slide** (JSON rail mirrors `/identity/match`):
+  - Company name: onboarding/KYB form **"Pixel & Paper Co"** vs external bank **"Pixel & Paper"** -> **`legal_name.score` 95** (fuzzy match tolerates the "Co" legal suffix).
+  - The same name-scoring convention works for **company names AND person names** — e.g. **"John B. Henry"** vs **"Johnathan Henry"** still scores as a strong match (middle-initial vs full-middle, abbreviation tolerance).
+  - Takeaway: formatting / suffix / abbreviation differences don't sink the score; ownership is confirmed before funds move.
+- **auth-slide** (JSON rail mirrors `/auth/get`): highlight the account holder/type values — the account object's **`holder_category`** can be **`business`**, `personal`, or `unrecognized` (this account is **`business`**), alongside `type` (depository) / `subtype` (checking) and the ACH `numbers`. Show prospects Plaid distinguishes a business account on the funding rail.
 
 **Product-specific reminders:**
-- CRA reports retrieved by `user_id` (not access_token); Auth/Transactions/Balance use `access_token`. account_ids from `/cra/*` do NOT match non-CRA endpoints — map by mask/type/institution.
-- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" / "eliminate." Outcomes depend on data availability + Rain's own credit policy.
-- Multi-item: `onSuccess` empty → public tokens via `SESSION_FINISHED`. Update mode: no public-token re-exchange; existing `access_token` persists.
-- Happy path only — no declines/errors in the main flow; the update-mode beat shows a recovery, not a failure state.
+- Signal: low score = low ACH return risk; happy path **ACCEPT** with low scores (customer-initiated 12, bank-initiated 10). `ruleset.result` in {ACCEPT, REVIEW, REROUTE} — happy path ACCEPT.
+- Identity Match: scores 0–100; pass the business legal name as `legal_name`; ~70+ is a strong match. Never label scores "Trust Index".
+- Link: the pre-Link step ends on the **button** ("…taps Link your business bank account."); the Link step narrates content **inside** the modal only.
+- Consumer/host KeyBank screens never show raw JSON; JSON belongs only in the global `#api-response-panel` and the technical slides' JSON rail.
 
-**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`); representative sandbox data. Factual language only.
+**Compliance / user data (one line):** N/A — funding flow, demo starts post-KYB (business already verified).
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Jordan Rivera — Rain member, renter splitting an $1,800 rent payment.
-**Company / context:** "Split rent: $900 now + $900 on payday."
-
-**Sample on-screen fields (use verbatim — no generic placeholders):**
-- rent $1,800 → split $900 + $900 · member Jordan Rivera
-- Base Report: total_inflow $15,000.50 · total_outflow $12,000.25 · nsf_overdraft_transactions_count 0 · current balance $5,000 · days_available 365
-- Income Insights: ACME CORP PAYROLL · BIWEEKLY · monthly gross $4,900 / net $3,825 · projected · predicted next payday 2026-04-30 · status ACTIVE
-- Balance (pre-debit): real-time available balance confirmed before the 2nd $900 payment
-- Update mode: ITEM_LOGIN_REQUIRED → reconnect → LOGIN_REPAIRED
+**Name / role:** Jordan Lee — owner of Pixel & Paper Co, funding the company's new KeyBank business checking account
+**Company / context:** Pixel & Paper Co — small design studio (already KYB-verified at KeyBank); external bank = the linked institution (from Link `onSuccess`)
+**Sample fields that must appear on screen:**
+- Identity Match: KYB form business name **"Pixel & Paper Co"** vs external-bank name **"Pixel & Paper"** -> `legal_name.score` **95**; supporting address/phone strong. Person-name convention example on the slide: "John B. Henry" vs "Johnathan Henry".
+- Auth: account `holder_category` **business**; `type` depository / `subtype` checking; ACH account + routing in `numbers.ach[]`.
+- Funding amount: **$7,500.00**
+- Signal: `customer_initiated_return_risk.score` 12, `bank_initiated_return_risk.score` 10, `ruleset.result` ACCEPT.
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Rain-style light consumer-fintech surface (white / light-neutral background; Rain accent on CTAs). Member dashboard + a "Split rent" flow, a report-generating state, an underwriting decision card, a repayment/PFM panel, and an update-mode reconnect prompt. Never show raw JSON on host steps; the insight + update-mode beats use the global `#api-response-panel` (collapsed by default, Response tab default). CRA/FCRA notices on the consent + Link steps only.
+KeyBank-branded business-banking host (KeyBank red accent nav, light/white background) opening on a post-KYB "Business verified — fund your account" screen with prefilled company details and a clear "Link your business bank account" CTA that opens standard Plaid Link. Return to KeyBank chrome for the amount entry and the instant-approval outcome. Plaid insight screens use Plaid dark navy/teal — distinct from KeyBank host chrome.
 
-**Viewport:** 1440×900.
+**Viewport:** 1440x900.
 
 -------------------------------------------------------------------------------
-SLIDE SUPPLEMENT
+OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-Two Plaid-branded slides: (1) opening problem (thin-file underwriting for split-rent credit), (10) closing value-summary (one connection → underwrite + verify income + PFM + repayment + self-heal via update mode). No JSON rail on slides.
+Up to 5 slides: (1) exec value slide (problem/outcome for small-business funding, no JSON); (2) identity-match technical slide with a "Sample API response" JSON rail mirroring `/identity/match` + the company/person name-scoring bullets above; (3) auth technical slide with a JSON rail mirroring `/auth/get` highlighting `holder_category: business`; (4) value-summary slide. Plaid-only styling (dark navy/teal), no KeyBank chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
 [[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] Story order: open slide → split-rent request + consent → Link (multi-item CRA) → generating → Base Report insight → Income Insights insight → approve split → repayment/Balance + PFM → update-mode reconnect → close slide
-  [x] CRA via `/user/create` + permissible purpose + `cra_base_report` + `cra_income_insights`; reports by `user_id`; async `USER_CHECK_REPORT_READY`
-  [x] `enable_multi_item_link:true`; onSuccess empty → `SESSION_FINISHED`
-  [x] Update mode: `/sandbox/item/reset_login` → item_login_required → update-mode link token (access_token, no products) → `LOGIN_REPAIRED`
-  [x] Compliance-safe claims; no guarantees
-  [x] app+slides build, stop at build-qa (not recording)
+  [x] One primary source for stats (`inputs/plaid-value-props.md`)
+  [x] Product names and family match `CLAUDE.md` (funding; Auth, Identity, Signal, Link)
+  [x] Storyboard order matches goToStep flow (post-KYB -> link -> ownership -> rails -> amount -> risk -> approved)
+  [x] Standard Plaid Link (real SDK); sandbox per pipeline env
 
-================================================================================
 END OF SPECIFICATION
-================================================================================
