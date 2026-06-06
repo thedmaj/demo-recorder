@@ -1601,6 +1601,7 @@ contract that the next stage knows how to fill.\n` +
     `- Global functions:\n` +
     `    window.goToStep(id)       — activate a step by id, fire its link events and API panel\n` +
     `    window.getCurrentStep()   — return the data-testid of the currently active step\n` +
+    `- NO AUTO-ADVANCE (HARD): a step must NEVER auto-advance to another step via setTimeout / setInterval / requestAnimationFrame calling goToStep. Every transition is driven ONLY by explicit user action (button click, keyboard nav) or by goToStep invoked externally (QA/recorder). "Loading" / "processing" / "verifying" / "generating report" screens must be the resting state of their OWN step (show a spinner/progress bar that stays) — do NOT schedule a timer that moves to the next step. Auto-advancing makes the expected step inactive at capture time → build-qa "navigation-mismatch" deterministic failure.\n` +
     `- Manual navigation (REQUIRED — add immediately after goToStep/getCurrentStep definitions):\n` +
     `    ArrowRight/ArrowDown = next step. ArrowLeft/ArrowUp = previous step.\n` +
     `    Clicking any non-interactive area of a step also advances to the next step.\n` +

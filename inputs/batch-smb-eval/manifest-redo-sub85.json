@@ -1,0 +1,9 @@
+{
+  "description": "Rebuild sub-85 demos (Arro, Equabli, Swype) after no-auto-advance build rule — fixes navigation-mismatch deterministic blocker on transient processing steps.",
+  "createdAt": "2026-06-06",
+  "runs": [
+    { "id": "01-arro-cra-cashflow", "company": "Arro", "website": "https://www.helloarro.com", "promptFile": "inputs/batch-smb-eval/01-arro-cra-cashflow/prompt.txt", "buildMode": "app-only", "research": "gapfill" },
+    { "id": "09-equabli-collections-balance", "company": "Equabli", "website": "https://www.equabli.com", "promptFile": "inputs/batch-smb-eval/09-equabli-collections-balance/prompt.txt", "buildMode": "app-only", "research": "gapfill" },
+    { "id": "03-swype-crypto-funding", "company": "Swype", "website": "https://www.swype.network", "promptFile": "inputs/batch-smb-eval/03-swype-crypto-funding/prompt.txt", "buildMode": "app-only", "research": "gapfill" }
+  ]
+}
