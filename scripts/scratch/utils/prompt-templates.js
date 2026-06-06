@@ -1126,21 +1126,33 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `problem stated in step 1. Format: "[Product(s)] deliver [metric] — enabling [outcome from\n` +
       `opening hook]." Generic mantras ("faster, safer, more compliant") without scenario-specific\n` +
       `numbers are not acceptable as a closing beat.\n\n` +
-      `PLAID LINK STEP RULE (CRITICAL — non-negotiable):\n` +
-      `When the demo includes Plaid Link, use EXACTLY ONE step for the entire Plaid flow.\n` +
-      `Set "plaidPhase": "launch" on that step. Do NOT create separate sub-steps for\n` +
-      `consent, OTP, institution selection, account selection, or success screens.\n` +
-      `Do NOT create a standalone pre-Link explainer step before launch.\n` +
-      `Any trust/value explainer content must be merged into the SAME launch step screen/state.\n` +
-      `The recording automation handles those internally via CDP iframe automation.\n` +
-      `The single step's narration (≤35 words) must cover all Plaid story beats while matching\n` +
-      `what is visible inside the modal, not the button click that triggers it.\n` +
-      `e.g. "Recognized as a returning user, Berta confirms with a one-time code,\n` +
-      `selects her checking account, and connects in seconds — no credentials required."\n\n` +
+      `PLAID SESSION STEP RULE (CRITICAL — non-negotiable):\n` +
+      `A demo may include ONE OR MORE live Plaid sessions. Each DISTINCT Plaid session is its\n` +
+      `own single step with "plaidPhase":"launch" and sceneType:"link". The distinct sessions are:\n` +
+      `  • Plaid Layer (network prefill onboarding)\n` +
+      `  • Identity Verification / IDV (document + selfie KYC)\n` +
+      `  • Plaid CRA / Consumer Report (cra_base_report / income_insights)\n` +
+      `  • Plaid Link bank connection (auth / identity / balance / transactions / signal / transfer)\n` +
+      `Rules:\n` +
+      `- Use EXACTLY ONE step PER session. Do NOT split a session into separate consent, OTP,\n` +
+      `  institution-selection, account-selection, or success sub-steps — the recording automation\n` +
+      `  handles those internally via CDP iframe automation.\n` +
+      `- When a flow legitimately CHAINS sessions (e.g. Layer → Identity Verification → bank Link,\n` +
+      `  or Identity Verification → bank Link), emit one launch step PER session, in flow order.\n` +
+      `  Do NOT fake one session as a static host screen, and do NOT merge two different products\n` +
+      `  into a single launch step.\n` +
+      `- TOKEN mutual-exclusivity still holds: Identity Verification is its OWN Link token\n` +
+      `  (products:["identity_verification"]) — never combine it with auth/identity/etc. in the\n` +
+      `  same token; it appears as a SEPARATE launch step alongside the bank Link launch.\n` +
+      `- Do NOT create a standalone pre-Link explainer step before a launch; merge trust/value copy\n` +
+      `  into the launch step itself.\n` +
+      `- Each launch step's narration (≤35 words) describes what is visible INSIDE that modal, not\n` +
+      `  the button click that triggers it. e.g. "Recognized as a returning user, Berta confirms with\n` +
+      `  a one-time code, selects her checking account, and connects in seconds."\n\n` +
       `SCENE METADATA RULE (CRITICAL):\n` +
       `Set sceneType for every step and keep it consistent with structure:\n` +
       `- host: customer-branded host UI step\n` +
-      `- link: the single Plaid Link launch step (must also have plaidPhase:"launch")\n` +
+      `- link: a Plaid session launch step (must also have plaidPhase:"launch"); a demo may have one per distinct session (Layer / IDV / CRA / bank Link)\n` +
       `- insight: Plaid insight step using global api-response-panel; optional deck-style layout may use .slide-root shell (see build prompt) but never host UI\n` +
       `- slide: template-driven slide step that uses .slide-root\n` +
       `Do not label insight steps as slide unless they intentionally render .slide-root.\n\n` +

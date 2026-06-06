@@ -292,46 +292,43 @@ function autoFixDemoScript(demoScript) {
     }
   }
 
-  // Collapse mistaken plaidPhase:"launch" on marketing/technical slides — keep one
-  // real Link beat (sceneType link or host embedded container), never a slide.
+  // Multi-launch contract: a demo MAY have more than one real plaidPhase:"launch"
+  // step when each launches a DISTINCT Plaid session — legitimate multi-product
+  // journeys span Plaid Layer (network prefill) → Identity Verification (KYC) →
+  // Plaid Link / CRA (bank connection). Each distinct session is its own real
+  // modal. We only collapse: (a) launches placed on a slide, and (b) duplicate
+  // launches of the SAME product (accidental). Distinct-product launches are kept.
   const launchSteps = steps.filter((s) => s && s.plaidPhase === 'launch');
   if (launchSteps.length > 1) {
-    const scoreLaunchCandidate = (step) => {
-      const scene = String(step?.sceneType || '').toLowerCase();
-      if (scene === 'slide') return -1;
-      if (scene === 'link') return 100;
-      const text = [step.id, step.label, step.visualState].filter(Boolean).join(' ').toLowerCase();
-      if (/plaid-embedded-link-container|embed(?:ded)?\s+plaid\s+link|wf-link/.test(text)) return 90;
-      if (scene === 'host') return 50;
-      return 10;
-    };
-    const keeper = launchSteps.reduce((best, s) =>
-      scoreLaunchCandidate(s) > scoreLaunchCandidate(best) ? s : best
-    );
-    if (scoreLaunchCandidate(keeper) < 0) {
-      for (const step of launchSteps) {
+    const seenProducts = new Set();
+    for (const step of launchSteps) {
+      const scene = String(step.sceneType || '').toLowerCase();
+      if (scene === 'slide') {
         fixes.push({
           stepId: step.id || '(no-id)',
           rule: 'dedupe-plaid-launch-phase',
-          before: 'plaidPhase:"launch" on slide-only set',
-          after: 'plaidPhase removed (infer will re-assign)',
-        });
-        delete step.plaidPhase;
-      }
-    } else {
-      for (const step of launchSteps) {
-        if (step === keeper) continue;
-        fixes.push({
-          stepId: step.id || '(no-id)',
-          rule: 'dedupe-plaid-launch-phase',
-          before: 'plaidPhase:"launch" on non-Link step',
+          before: 'plaidPhase:"launch" on slide',
           after: 'plaidPhase removed',
         });
         delete step.plaidPhase;
+        continue;
       }
-      if (keeper && String(keeper.sceneType || '').toLowerCase() !== 'link') {
-        keeper.sceneType = 'link';
+      const product = inferLaunchProduct(step);
+      if (seenProducts.has(product)) {
+        fixes.push({
+          stepId: step.id || '(no-id)',
+          rule: 'dedupe-plaid-launch-phase',
+          before: `duplicate plaidPhase:"launch" for product "${product}"`,
+          after: 'plaidPhase removed (only one launch per product)',
+        });
+        delete step.plaidPhase;
+        continue;
       }
+      seenProducts.add(product);
+      if (scene !== 'link') step.sceneType = 'link';
+      // Annotate the resolved product so build / build-qa / record-local can wire
+      // the correct token endpoint + completion flag per launch.
+      if (!step.launchProduct) step.launchProduct = product;
     }
   }
 
@@ -419,6 +416,22 @@ function normalizeSceneType(step) {
   if (step?.plaidPhase === 'launch') return 'link';
   if (step?.apiResponse?.endpoint || step?.apiResponse?.response) return 'insight';
   return 'host';
+}
+
+// Infer which distinct Plaid session a plaidPhase:"launch" step launches, so the
+// multi-launch contract can keep one launch PER product (Layer / IDV / CRA / Link)
+// and downstream stages (build wiring, plaid-link-qa token endpoint, record-local
+// modal driver) can pick the right token endpoint + completion flag. Order matters:
+// IDV and CRA are checked before the generic "link" fallback. "identity match" is
+// NOT IDV — it is an /identity/match product carried on a standard Link token.
+function inferLaunchProduct(step) {
+  if (!step) return 'link';
+  const text = [step.launchProduct, step.id, step.label, step.visualState, step.narration]
+    .filter(Boolean).join(' ').toLowerCase();
+  if (/\blayer\b/.test(text)) return 'layer';
+  if (/\bidv\b|identity[\s-]?verification/.test(text)) return 'idv';
+  if (/\bcra\b|consumer[\s-]?report|income[\s-]?insights|base[\s-]?report|check[\s-]?report/.test(text)) return 'cra';
+  return 'link';
 }
 
 function isLayerUseCase(demoScript) {
@@ -1007,13 +1020,29 @@ function validateDemoScript(demoScript, opts = {}) {
   }
 
   const launchSteps = steps.filter(step => step.plaidPhase === 'launch');
+  // Multi-launch allowed for DISTINCT Plaid sessions (Layer / IDV / CRA / Link).
+  // Error only on duplicate launches of the SAME product (an accidental dupe that
+  // would open two identical modals).
   if (launchSteps.length > 1) {
-    errors.push(`Multiple plaidPhase:"launch" steps found (${launchSteps.map(s => s.id).join(', ')}). Use exactly one launch step.`);
+    const byProduct = {};
+    for (const ls of launchSteps) {
+      const p = inferLaunchProduct(ls);
+      (byProduct[p] = byProduct[p] || []).push(ls.id || '(no-id)');
+    }
+    const dupes = Object.entries(byProduct).filter(([, ids]) => ids.length > 1);
+    if (dupes.length) {
+      errors.push(
+        `Duplicate plaidPhase:"launch" steps for the same Plaid product: ` +
+        `${dupes.map(([p, ids]) => `${p} (${ids.join(', ')})`).join('; ')}. ` +
+        `Each launch must be a DISTINCT session (Layer / IDV / CRA / Link).`
+      );
+    }
   }
-  if (launchSteps.length === 1) {
-    const narration = launchSteps[0].narration || '';
+  // Plaid Link narration-boundary rule applies to every launch step.
+  for (const ls of launchSteps) {
+    const narration = ls.narration || '';
     if (/\b(plaid link opens|opens plaid link|clicks .*link|taps .*link|launches plaid link)\b/i.test(narration)) {
-      errors.push(`Launch step "${launchSteps[0].id}" narration violates the Plaid Link boundary rule. Narrate what is visible inside the modal, not the trigger action.`);
+      errors.push(`Launch step "${ls.id}" narration violates the Plaid Link boundary rule. Narrate what is visible inside the modal, not the trigger action.`);
     }
   }
   if (plaidLinkLive && launchSteps.length === 0) {
