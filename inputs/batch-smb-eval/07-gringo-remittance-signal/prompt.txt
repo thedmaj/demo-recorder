@@ -5,10 +5,10 @@ Gringo Coin — Lower-risk cross-border payments to Brazil (Identity Verificatio
 **Host:** **Gringo Coin** — cross-border / P2P-international payments (SMB; US → Brazil)
 
 **User journey (one sentence):**
-A US sender clears Identity Verification, links a bank with one Plaid Link, and Gringo Coin pulls the ACH rails (Plaid Auth) and risk-scores the funding debit with Plaid Signal before releasing a cross-border payment to Brazil.
+A US sender completes a real Plaid Identity Verification session for KYC, then connects their bank in a second real Plaid Link session, and Gringo Coin pulls the ACH rails (Plaid Auth) and risk-scores the funding debit with Plaid Signal before releasing a cross-border payment to Brazil.
 
 **Story arc (short prose):**
-Daniela Costa wants to send money from her US bank to family in Brazil. Gringo Coin needs to know the sender is real and that the ACH pull won't bounce or be fraudulent. Daniela clears Identity Verification for KYC, then links her bank in one Plaid Link connection. Gringo Coin retrieves verified account/routing (Plaid Auth) and runs Plaid Signal on the specific debit — a low return-risk score returns ACCEPT, so the payment to Brazil clears without holds.
+Daniela Costa wants to send money from her US bank to family in Brazil. Gringo Coin needs to know the sender is real and that the ACH pull won't bounce or be fraudulent. Daniela first completes a real Plaid Identity Verification session (document + selfie). Then she opens a second real Plaid Link session to connect her bank. Gringo Coin retrieves verified account/routing (Plaid Auth) and runs Plaid Signal on the specific debit — a low return-risk score returns ACCEPT, so the payment to Brazil clears without holds.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
@@ -29,11 +29,12 @@ Plaid Link, Identity Verification, Plaid Auth, Plaid Signal
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Exactly ONE live Plaid Link launch** — the bank connection (`plaidPhase:"launch"`, single `link` step). **The `/link/token/create` products[] array MUST be exactly `["auth"]` — do NOT add `identity_verification`, `signal`, or `identity` to the Link token.** Identity Verification is a host beat (never in any Link token — it is mutually exclusive and would make Plaid reject the token); Plaid Signal is a server-side `POST /signal/evaluate` host beat (not a Link product). Default First Platypus Bank, `user_good`/`pass_good`.
-  [x] **Identity Verification is a HOST beat** (NOT a separate live Link launch) — a host-chrome "verify your identity" screen resolving to verified. Narration names "Identity Verification".
-  [x] **Plaid Signal is a HOST insight beat** — `POST /signal/evaluate` on the specific debit amount; happy-path **ACCEPT** with LOW scores. Shown in the global `#api-response-panel`.
+  [x] **TWO live Plaid sessions, each its own `plaidPhase:"launch"` step (multi-launch):**
+      1. **Identity Verification session** — real Plaid IDV modal (Document + Data Source + Selfie). Its Link token is `products: ["identity_verification"]` ONLY (IDV is mutually exclusive). Wire via `/api/create-idv-link-token`; completion flag `window._idvComplete`; verdict via `/identity_verification/get`. Sandbox persona: **Leslie Knope**.
+      2. **Bank Plaid Link session** — real Plaid Link modal for the funding account. Its Link token is `products: ["auth"]`. Wire via `/api/create-link-token`; completion flag `window._plaidLinkComplete`. Default First Platypus Bank, `user_good`/`pass_good`.
+  [x] **Plaid Signal is a HOST insight beat** — `POST /signal/evaluate` on the specific debit amount; happy-path **ACCEPT** with LOW scores. Shown in the global `#api-response-panel`. (Signal is NOT a Link product here.)
 
-Link narration boundary: the pre-Link step ends on the button tap; the Link step narrates inside the modal only.
+Link narration boundary: each launch step narrates what is visible INSIDE that modal, never the button tap that opens it.
 
 -------------------------------------------------------------------------------
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
@@ -41,30 +42,30 @@ STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 
 | # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
 |---|------|----------------------|-----------------|--------------|
-| 1 | host | Gringo Coin app — "Send money to Brazil." Verify identity to continue. Ends on tap. | KYC before sending | `Verify identity` |
-| 2 | host | Identity Verification result — document + selfie passed, status verified. | Identity Verification clears KYC | Identity verified |
-| 3 | host | "Link your bank to fund the transfer." Ends on tap. | Connect funding account | `Link your bank` |
-| 4 | link | **Live Plaid Link** (`plaidPhase:"launch"`) — connect bank, choose checking. | Inside the modal: choose the funding account | Account linked |
+| 1 | host | Gringo Coin app — "Send money to Brazil." Prompt to verify identity. Ends on tap. | KYC before sending | `Verify identity` |
+| 2 | link (IDV launch) | **Real Plaid Identity Verification modal** — document capture + selfie/liveness. | Inside the modal: capture ID + selfie to satisfy KYC | Identity verified |
+| 3 | host | "Identity verified — link your bank to fund the transfer." Ends on tap. | Connect funding account | `Link your bank` |
+| 4 | link (bank launch) | **Real Plaid Link modal** — connect bank, choose checking. | Inside the modal: choose the funding account | Account linked |
 | 5 | host | Enter amount — **$285.00** to Brazil (≈ R$). | Capture the transfer | `Review transfer` |
 | 6 | host (insight) | Plaid panel: **Plaid Auth** rails (checking ****5120); **Plaid Signal** scores this debit — `customer_initiated_return_risk.score` **14**, `bank_initiated_return_risk.score` **11**, `ruleset.result` **ACCEPT**. | Verified rails + low return risk | "Low return risk → ACCEPT" |
 | 7 | host | **Sent.** Payment released to Brazil; no hold. | Clears without friction | `Send` |
 
 **Product-specific reminders:**
-- Signal score is 1–99, higher = HIGHER ACH return risk; ACCEPT demos use LOW scores (5–20), never 80s/90s. `ruleset.result` ∈ {ACCEPT, REVIEW, REROUTE}; happy path ACCEPT. Never label Signal scores "Trust Index".
-- Identity Verification + Plaid Signal are host beats here (not live Link launches); each is named in narration.
-- Plaid Auth account mask/institution from Link `onSuccess` metadata only.
+- Two real launch steps (IDV, then bank Auth) — each its own session/token; never combine identity_verification with auth in one token.
+- Signal score is 1–99, higher = HIGHER ACH return risk; ACCEPT demos use LOW scores (5–20). `ruleset.result` ∈ {ACCEPT, REVIEW, REROUTE}; happy path ACCEPT. Never label Signal scores "Trust Index".
+- IDV statuses: show verified/`success`; never API errors. Plaid Auth account mask/institution from Link `onSuccess` metadata only.
 - Happy path only.
 
-**Compliance / user data:** Standard KYC via Identity Verification; representative sandbox data.
+**Compliance / user data:** Standard KYC via real Plaid Identity Verification; representative sandbox persona (Leslie Knope).
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Daniela Costa — US sender remitting to family in Brazil.
+**Name / role:** Daniela Costa — US sender remitting to family in Brazil (IDV sandbox identity resolves to Leslie Knope).
 **Sample fields that must appear on screen (use verbatim — non-round):**
 - transfer amount $285.00 (to Brazil)
-- Identity Verification: status verified
+- Identity Verification: status verified (document + selfie)
 - Plaid Auth: checking ****5120; account + routing in `numbers.ach[]`
 - Plaid Signal: customer_initiated 14 · bank_initiated 11 · `ruleset.result` ACCEPT
 
@@ -72,7 +73,7 @@ PERSONA & SAMPLE DATA
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Gringo Coin-style friendly cross-border payments surface (light background, Brazil-flavored accent — NOT Plaid navy on host screens). A send-money screen, an identity-result step, a bank-link step, an amount-entry screen, and a sent confirmation. The Auth + Signal insight uses Plaid dark navy/teal in the global `#api-response-panel`. Raw JSON only in that panel.
+Gringo Coin-style friendly cross-border payments surface (light background, Brazil-flavored accent — NOT Plaid navy on host screens). A send-money screen, the IDV launch step, an interstitial, the bank-link launch step, an amount-entry screen, the Auth + Signal insight, and a sent confirmation. Plaid insight uses Plaid dark navy/teal in the global `#api-response-panel`. Raw JSON only in that panel.
 
 **Viewport:** 1440×900.
 
@@ -80,8 +81,8 @@ Gringo Coin-style friendly cross-border payments surface (light background, Braz
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] Exactly ONE plaidPhase:"launch" (bank Auth); Identity Verification + Signal are host beats
-  [x] Signal LOW scores → ACCEPT
+  [x] TWO plaidPhase:"launch" steps: Identity Verification (own token) + bank Auth (own token)
+  [x] Signal is a host /signal/evaluate beat; LOW scores → ACCEPT
   [x] Product names/family match `CLAUDE.md`
   [x] app-only build, stop at build-qa
 

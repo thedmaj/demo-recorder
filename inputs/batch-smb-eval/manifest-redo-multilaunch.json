@@ -1,0 +1,9 @@
+{
+  "description": "Multi-launch rebuild: real IDV session + separate real bank/income Link session (Gringo, Debit, Censiq). Validates the multi-launch contract.",
+  "createdAt": "2026-06-06",
+  "runs": [
+    { "id": "07-gringo-remittance-signal", "company": "Gringo Coin", "website": "https://www.gringo.com", "promptFile": "inputs/batch-smb-eval/07-gringo-remittance-signal/prompt.txt", "buildMode": "app-only", "research": "gapfill" },
+    { "id": "02-debit-bnpl-idv", "company": "Debit Technologies", "website": "https://www.loanpro.io", "promptFile": "inputs/batch-smb-eval/02-debit-bnpl-idv/prompt.txt", "buildMode": "app-only", "research": "gapfill" },
+    { "id": "05-censiq-idv-income", "company": "Censiq", "website": "https://www.censiq.com", "promptFile": "inputs/batch-smb-eval/05-censiq-idv-income/prompt.txt", "buildMode": "app-only", "research": "gapfill" }
+  ]
+}
