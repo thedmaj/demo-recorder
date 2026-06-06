@@ -29,7 +29,7 @@ Plaid Link, Plaid Auth, Plaid Identity, Plaid Balance
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Live Plaid Link** — real SDK, single `plaidPhase:"launch"` step: `products: ["auth","identity"]` (Balance via `/accounts/balance/get` on the linked item). Default First Platypus Bank, `user_good`/`pass_good`. **Standard Plaid Link** (no Layer, no IDV, no multi-item).
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase:"launch"` step: `products: ["auth","identity"]` (Balance via `/accounts/balance/get` on the linked item). Default First Platypus Bank, `user_good`/`pass_good`. **Standard single-item Plaid Link** (no embedded onboarding products).
   [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`; account mask + institution from Link `onSuccess` metadata only — never hardcode.
 
 Link narration boundary: pre-Link step ends on the button tap; Link step narrates inside the modal only.

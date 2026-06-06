@@ -285,7 +285,16 @@ function extractPromptEntities(promptText) {
     return false; // all mentions negated, or none found → don't add
   };
   if (mentionedAffirmatively(/\bauth\b|\binstant auth\b/i)) addProduct('Auth');
-  if (mentionedAffirmatively(/\bidentity\s*(?:match|verification)?\b|\bidv\b/i)) addProduct('Identity Match');
+  // Identity Verification (IDV), Identity Match, and bare Identity (ownership)
+  // are DISTINCT products with distinct slugs. The narration uses the specific
+  // product name, so the expected slug must match it — conflating IDV under the
+  // "identity-match" slug emits a false "product-missing" critical (the script
+  // says "Identity Verification", never "Identity Match"). Add the precise one.
+  const _hasIDV = mentionedAffirmatively(/\bidentity\s*verification\b|\bidv\b/i);
+  const _hasIdMatch = mentionedAffirmatively(/\bidentity\s*match\b/i);
+  if (_hasIDV) addProduct('Identity Verification');
+  if (_hasIdMatch) addProduct('Identity Match');
+  if (!_hasIDV && !_hasIdMatch && mentionedAffirmatively(/\bidentity\b/i)) addProduct('Identity');
   // "signal" is also common English ("cash-flow signal", "strong signal") —
   // require the product form ("Plaid Signal") in prose, or a declared mention.
   if ((mentionedAffirmatively(/\bplaid\s+signal\b/i) || /\bsignal\b/.test(declaredText))) addProduct('Signal');
