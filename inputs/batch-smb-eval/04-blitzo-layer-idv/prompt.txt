@@ -1,0 +1,89 @@
+================================================================================
+blitzo — One-tap onboarding for a crypto savings app (Plaid Layer → IDV → Auth + Balance)
+================================================================================
+
+**Host:** **blitzo** — Gen-Z crypto savings / financial-management app (SMB)
+**Brand URL:** https://www.blitzo.xyz
+
+**User journey (one sentence):**
+A new blitzo user breezes through sign-up with Plaid Layer (network prefill), completes KYC with Plaid Identity Verification, then links a bank with Plaid Link so blitzo can confirm the account (Auth) and check balance (Balance) before funding their first crypto savings deposit.
+
+**Story arc (short prose):**
+Sam Okafor is signing up for blitzo and wants to start saving immediately. Instead of a long form, Plaid Layer recognizes Sam from the Plaid network and prefills their details in one tap. blitzo then runs a full Plaid IDV session (document + selfie) to satisfy KYC for its crypto on-ramp. With identity confirmed, a single Plaid Link connection verifies the funding account (Auth) and available balance (Balance), and Sam funds a $100 savings deposit. Onboarding that used to take minutes now takes one tap plus a quick verification.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Layer**, **Plaid Identity Verification (IDV)**, Plaid Auth, Plaid Balance
+
+**Solutions supported:** Account Opening, Account Funding
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Plaid Layer** — Live Plaid Layer Web SDK (`Plaid.create` + `submit(phone)` first → `open()` on `LAYER_READY`); a real modal, no mobile mockup. Sandbox eligible phone **`+14155550011`** (`LAYER_READY`). Layer prefill is unverified → chain IDV for KYC. (See `plaid-layer-idv-onboarding` skill + `inputs/products/plaid-layer.md`.)
+  [x] **Plaid IDV** — `products: ["identity_verification"]` — **mutually exclusive**; its OWN Link session (Document + Data Source + Selfie), joined to Layer by a shared `client_user_id`. Sandbox persona: **Leslie Knope**.
+  [x] **Live Plaid Link** — separate `plaidPhase:"launch"` step: `products: ["auth"]` (+ Balance via `/accounts/balance/get`). Default First Platypus Bank, `user_good`/`pass_good`.
+
+Link/Layer narration boundary: the pre-Layer step ends on the button tap; the Layer/Link steps narrate content inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | blitzo sign-up — "Save in seconds." Enters phone; ends on tap to continue with Plaid. | `POST /link/token/create` (Layer session) | `Continue` |
+| 2 | link (Layer) | Live Plaid Layer modal — recognizes the user, prefills name/email/address in one tap. | `submit(phone)` → `LAYER_READY` → `open()` → `/user_account/session/get` | Details prefilled |
+| 3 | host | "Verify your identity to finish setup." Ends on tap. | `POST /identity_verification create` (shared `client_user_id`) | `Verify identity` |
+| 4 | link (IDV) | Live Plaid IDV session — document + selfie. | `onSuccess` → `/identity_verification/get` → `success` | Identity verified |
+| 5 | host | "Link your bank to fund your savings." Ends on tap. | `POST /link/token/create` (`["auth"]`) | `Link your bank` |
+| 6 | link (Auth) | Live Plaid Link — connect bank, choose checking. | `onSuccess` → `/item/public_token/exchange` | Account linked |
+| 7 | insight | Plaid insight panel: account verified (Auth, checking ****3310), Balance available **$1,540.00**. | `/auth/get`; `/accounts/balance/get` | "Account verified, ready to fund" |
+| 8 | host | **Funded.** First $100.00 savings deposit started. | (funding initiated) | `Start saving` |
+
+**Product-specific reminders:**
+- Layer order: `submit(phone)` first, `open()` only on `LAYER_READY`. Eligible sandbox phone `+14155550011`.
+- IDV statuses: show `success`; never API errors. IDV never shares a token with other products.
+- Happy path only.
+
+**Compliance / user data:** Layer prefill is unverified network data → IDV provides KYC. Representative sandbox persona (Leslie Knope).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Sam Okafor — new blitzo user onboarding + first deposit (IDV sandbox identity resolves to Leslie Knope; Layer eligible phone `+14155550011`).
+**Sample fields (use verbatim):**
+- savings deposit $100.00
+- Layer: prefilled name/email/address (one tap)
+- IDV: status `success`
+- Auth: checking ****3310; Balance available $1,540.00
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+blitzo-style bright, youthful crypto-savings surface (light background, bold Gen-Z accent — NOT Plaid navy on host screens). A sign-up screen, a verification step, a bank-link step, and a "start saving" confirmation. Plaid Layer and Plaid Link are real modals. Plaid insight screen uses Plaid dark navy/teal. Raw JSON only in the global `#api-response-panel`.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Layer → IDV chained by shared `client_user_id`; Auth a separate session
+  [x] Layer submit-before-open; eligible phone `+14155550011`
+  [x] Product names/family match `CLAUDE.md`
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION

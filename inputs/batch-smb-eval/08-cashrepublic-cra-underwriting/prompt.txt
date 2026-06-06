@@ -1,0 +1,88 @@
+================================================================================
+CashRepublic — Verify ownership + underwrite on cash flow (Auth + Identity + Balance + CRA Base Report + Income Insights)
+================================================================================
+
+**Host:** **CashRepublic** — personal lender (SMB; installment / personal loans)
+
+**User journey (one sentence):**
+A borrower applies for a personal loan and connects their bank once through Plaid Link with FCRA-permissible consent, so CashRepublic can confirm account ownership (Auth + Identity), underwrite ability-to-repay from a CRA Base Report and Income Insights, and check a real-time Balance before scheduling ACH repayments.
+
+**Story arc (short prose):**
+Marcus Webb applies for a $2,500 personal loan. CashRepublic loses money to bounced payments and thin-file guesswork, so it asks Marcus to connect his bank. One Plaid Link CRA session collects FCRA consent and the connection; Plaid generates the Consumer Report asynchronously. CashRepublic reads the CRA Base Report (365-day cash flow, zero NSFs) and Income Insights (verified income, next payday), confirms the account belongs to Marcus (Auth + Identity), and checks a real-time Balance before the first debit. The loan is approved with a repayment schedule timed to income. Compliance-safe language only.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Identity, Plaid Balance, **Plaid Consumer Report (CRA) — Base Report**, **CRA Income Insights**
+
+**Solutions supported:** Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family:** `cra_base_report`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-income-insights.md`)
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link CRA** — real SDK, single `plaidPhase:"launch"` step.
+  [x] **CRA setup:** `POST /user/create` (PII → `user_id`); then `POST /link/token/create` with `products: ["auth","identity","cra_base_report","cra_income_insights"]`, `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, `cra_options.days_requested: 365`, `webhook`.
+  [x] **CRA async:** report-ready beat keyed on `USER_CHECK_REPORT_READY` before retrieving reports. CRA reports retrieved by `user_id`; Auth/Identity/Balance use the `access_token`. `account_ids` from `/cra/*` do NOT match non-CRA endpoints — map by mask/type.
+  [x] **Sandbox / persona** — CRA persona `user_credit_profile_good` / `pass_good`, non-OAuth institution.
+
+Link narration boundary: pre-Link step ends on the tap ("…he taps Connect your bank."); Link step narrates inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | CashRepublic — Marcus applies for a **$2,500 loan**. Pre-Link consent card: data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create`; `POST /link/token/create` (`auth, identity, cra_base_report, cra_income_insights`; `EXTENSION_OF_CREDIT`; `days_requested:365`) | `Connect your bank` |
+| 2 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select). | `onSuccess` → `/item/public_token/exchange` | Connected |
+| 3 | host | "Generating your Consumer Report…" async state. | Webhook `USER_CHECK_REPORT_READY` | Report ready |
+| 4 | insight | **CRA Base Report**: 365-day cash flow — inflow **$13,800.00**, outflow **$11,200.00**, **nsf_overdraft_transactions_count 0**, current balance ~$2,640, days_available 365. | `/cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
+| 5 | insight | **CRA Income Insights**: verified stream, **BIWEEKLY**, monthly **net $3,400**, predicted next payday 2026-06-26, status ACTIVE. | `/cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
+| 6 | insight | **Ownership + funds:** Auth account/routing + Identity name match confirm the account is Marcus's; real-time Balance available **$1,920.00** before the first debit. | `/auth/get`; `/identity/get`; `/accounts/balance/get` | "Account verified, funds confirmed" |
+| 7 | host | **Approved.** $2,500 with a repayment schedule timed to payday; cites cash flow + income, not just a bureau score. | (decision) | `Accept loan` |
+
+**Product-specific reminders:**
+- CRA reports by `user_id`; Auth/Identity/Balance by `access_token`; map accounts by mask/type, not id.
+- Compliance-safe claims ("can help," "typically," "up to"); never "guarantee"/"eliminate."
+- Happy path only.
+
+**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`); representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Marcus Webb — applicant for a $2,500 personal loan.
+**Sample fields (use verbatim):**
+- loan $2,500 · applicant Marcus Webb
+- Base Report: total_inflow $13,800.00 · total_outflow $11,200.00 · nsf_overdraft_transactions_count 0 · current balance $2,640 · days_available 365
+- Income Insights: BIWEEKLY · monthly net $3,400 · predicted next payday 2026-06-26 · status ACTIVE
+- Auth/Identity: checking ****7203, name match; Balance available $1,920.00 (pre-debit)
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+CashRepublic-style light lending surface (white background, trustworthy accent on CTAs). A loan-application flow with a consent card, a report-generating state, insight cards, and an approval decision card with a repayment schedule. Never show raw JSON on host steps; insight beats use the global `#api-response-panel` (collapsed by default). FCRA notices on the consent + Link steps only.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] CRA via `/user/create` + permissible purpose + `cra_base_report` + `cra_income_insights`; reports by `user_id`; async `USER_CHECK_REPORT_READY`
+  [x] Auth/Identity/Balance via access_token; accounts mapped by mask/type
+  [x] Compliance-safe claims; no guarantees
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION

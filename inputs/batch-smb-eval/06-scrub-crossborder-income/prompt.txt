@@ -1,0 +1,85 @@
+================================================================================
+Scrub.io — Underwrite diaspora borrowers on US bank data (Plaid IDV + Bank Income + Assets)
+================================================================================
+
+**Host:** **Scrub.io** — cross-border lending infrastructure (SMB; underwriting data provider)
+
+**User journey (one sentence):**
+A diaspora applicant verifies identity with Plaid Identity Verification, then links a US bank so Scrub.io can pull verified income (Bank Income) and assets/balances (Assets) to score loan eligibility for a lender in the applicant's home country.
+
+**Story arc (short prose):**
+Chidi Okafor lives in the US and is applying for a loan from a Nigerian lender that has no visibility into US financial data. On Scrub.io, Chidi completes a Plaid IDV session for KYC, then connects a US bank. Scrub.io reads verified income (Bank Income) and a snapshot of assets and balances (Assets) and produces an eligibility score the home-country lender can trust — turning previously invisible diaspora applicants into underwritable borrowers.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Identity Verification (IDV)**, **Plaid Bank Income**, Plaid Assets
+
+**Solutions supported:** Identity Verification, Income Verification, Credit Scoring & Underwriting
+
+**Primary product family:** `income_insights`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-bank-income.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Plaid IDV** — `products: ["identity_verification"]` — **mutually exclusive**; its OWN Link session (Document + Data Source + Selfie). Sandbox persona: **Leslie Knope**.
+  [x] **Plaid Bank Income + Assets** — `income_verification` Link tokens ONLY accept `{income_verification, employment}`, so run Bank Income as its own `plaidPhase:"launch"` session (persona `user_bank_income`), and surface Assets/balances from that same connection via `/asset_report/*` or `/accounts/balance/get`. Keep Bank Income the hero; show an assets/balance summary alongside.
+  [x] **Distinct Link sessions** — IDV first, then the income/assets bank-link.
+
+Link narration boundary: pre-Link step ends on the button tap; Link step narrates inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Scrub.io eligibility flow — "Check your loan eligibility." Step 1: verify identity. Ends on tap. | `POST /identity_verification create` | `Verify identity` |
+| 2 | link (IDV) | Live Plaid IDV session — document + data source + selfie. | `onSuccess` → `/identity_verification/get` → `success` | Identity verified |
+| 3 | host | "Connect your US bank to verify income and assets." Ends on tap. | `POST /link/token/create` (`["income_verification"]`) | `Connect bank` |
+| 4 | link (Income) | Live Plaid Link — connect US bank. | `onSuccess` → `/item/public_token/exchange` | Connected |
+| 5 | insight | Plaid insight panel: **Bank Income** verified employer "GLOBAL FREIGHT CO", monthly net **$5,200**; **Assets/Balance** snapshot — available **$6,800**, 90-day average healthy. | `/credit/bank_income/get`; `/accounts/balance/get` | "Verified income + assets" |
+| 6 | host | **Eligible.** Scrub.io returns an eligibility score the home-country lender can rely on. | (score derived) | `Share with lender` |
+
+**Product-specific reminders:**
+- IDV statuses: show `success`; never API errors.
+- Bank Income persona `user_bank_income`; income token never combines with non-income products.
+- Compliance-safe claims ("can help," "typically"); happy path only.
+
+**Compliance / user data:** Applicant-consented identity + income/assets verification; representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Chidi Okafor — US-resident diaspora applicant seeking a home-country loan (IDV sandbox identity resolves to Leslie Knope).
+**Sample fields (use verbatim):**
+- IDV: status `success`
+- Bank Income: employer GLOBAL FREIGHT CO · monthly net $5,200 · status ACTIVE
+- Assets/Balance: available $6,800 · 90-day average healthy
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Scrub.io-style clean infrastructure/fintech surface (white background, modern accent). An eligibility flow (identity → bank link), an identity step, a bank-link step, and an eligibility-score summary. Plaid insight screen uses Plaid dark navy/teal — distinct from the host chrome. Raw JSON only in the global `#api-response-panel`.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] IDV its own session; Bank Income (+assets/balance) a separate `income_verification` session
+  [x] Bank Income persona `user_bank_income`
+  [x] Product names/family match `CLAUDE.md`
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION

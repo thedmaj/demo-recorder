@@ -1,0 +1,81 @@
+================================================================================
+Equabli — Friendly digital collections with verified ACH (Plaid Auth + Identity + Balance)
+================================================================================
+
+**Host:** **Equabli** — debt collection & recovery platform (SMB; consumer-facing "EQengage" repayment experience)
+
+**User journey (one sentence):**
+A consumer resolving a past-due balance on Equabli's EQengage connects their bank with Plaid Link, and Equabli confirms account ownership (Auth + Identity) and checks a real-time Balance before scheduling an affordable recovery ACH payment plan.
+
+**Story arc (short prose):**
+Tasha Brooks wants to clear a $1,450 past-due balance without phone calls or surprises. On Equabli's EQengage, she connects her bank in one Plaid Link tap. Equabli verifies the account is hers (Auth + Identity) and checks a real-time Balance so it can schedule a payment she can actually afford — $145/month — debiting only when funds are present. Verified ownership and balance-aware scheduling mean fewer failed payments and a respectful recovery experience.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Identity, Plaid Balance
+
+**Solutions supported:** Account Funding
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase:"launch"` step: `products: ["auth","identity"]` (Balance via `/accounts/balance/get` on the linked item). Default First Platypus Bank, `user_good`/`pass_good`. **Standard Plaid Link** (no Layer, no IDV, no multi-item).
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`; account mask + institution from Link `onSuccess` metadata only — never hardcode.
+
+Link narration boundary: pre-Link step ends on the button tap; Link step narrates inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Equabli / EQengage — balance owed **$1,450**. "Set up an affordable plan." Connect your bank to begin. Ends on tap. | `POST /link/token/create` (`["auth","identity"]`) | `Link your bank` |
+| 2 | link | Live Plaid Link — connect bank, choose checking account. | `onSuccess` → `/item/public_token/exchange` | Account linked |
+| 3 | insight | Plaid insight panel: **Auth + Identity** confirm ownership (checking ****6190, name match); **Balance** available **$620.00**. | `/auth/get`; `/identity/get`; `/accounts/balance/get` | "Ownership confirmed, funds checked" |
+| 4 | host | **Plan set.** $145/month recovery plan; Equabli schedules debits only when a balance check shows funds. First payment confirmed. | (plan scheduled) | `Start plan` |
+
+**Product-specific reminders:**
+- Auth account mask/institution from Link `onSuccess` metadata only.
+- Friendly, respectful collections tone; happy path only — no error/declined flows.
+
+**Compliance / user data:** N/A beyond account verification + consented balance check; representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Tasha Brooks — consumer setting up a recovery payment plan on EQengage.
+**Sample fields (use verbatim):**
+- balance owed $1,450 · plan $145/month
+- Auth/Identity: checking ****6190, name match
+- Balance: available $620.00 (pre-debit)
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Equabli/EQengage-style empathetic, modern consumer surface (white/light background, calm accent — NOT aggressive collections styling). A balance-resolution screen, a bank-link step, and a payment-plan confirmation. Plaid insight screen uses Plaid dark navy/teal — distinct from the host chrome. Raw JSON only in the global `#api-response-panel`.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Standard Plaid Link (Auth + Identity); Balance via access_token
+  [x] Product names/family match `CLAUDE.md`
+  [x] Storyboard order matches goToStep flow
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION

@@ -1,0 +1,96 @@
+{
+  "description": "SMB Evaluation/Mutual-Alignment opportunities (>$30k, Gong, SE-preferred) — Glean-sourced from Salesforce. App-only builds to build-qa.",
+  "createdAt": "2026-06-05",
+  "runs": [
+    {
+      "id": "01-arro-cra-cashflow",
+      "company": "Arro",
+      "website": "https://www.helloarro.com",
+      "promptFile": "inputs/batch-smb-eval/01-arro-cra-cashflow/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000L8E4vYAF"
+    },
+    {
+      "id": "02-debit-bnpl-idv",
+      "company": "Debit Technologies",
+      "website": "https://www.loanpro.io",
+      "promptFile": "inputs/batch-smb-eval/02-debit-bnpl-idv/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000QTl9SYAT"
+    },
+    {
+      "id": "03-swype-crypto-funding",
+      "company": "Swype",
+      "website": "https://www.swype.network",
+      "promptFile": "inputs/batch-smb-eval/03-swype-crypto-funding/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000Y9BBxYAN"
+    },
+    {
+      "id": "04-blitzo-layer-idv",
+      "company": "blitzo",
+      "website": "https://www.blitzo.xyz",
+      "promptFile": "inputs/batch-smb-eval/04-blitzo-layer-idv/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000Uju1aYAB"
+    },
+    {
+      "id": "05-censiq-idv-income",
+      "company": "Censiq",
+      "website": "https://www.censiq.com",
+      "promptFile": "inputs/batch-smb-eval/05-censiq-idv-income/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000aRz14YAC"
+    },
+    {
+      "id": "06-scrub-crossborder-income",
+      "company": "Scrub.io",
+      "website": "https://www.scrub.io",
+      "promptFile": "inputs/batch-smb-eval/06-scrub-crossborder-income/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000d23EgYAI"
+    },
+    {
+      "id": "07-gringo-remittance-signal",
+      "company": "Gringo Coin",
+      "website": "https://www.gringo.com",
+      "promptFile": "inputs/batch-smb-eval/07-gringo-remittance-signal/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000b5hVFYAY"
+    },
+    {
+      "id": "08-cashrepublic-cra-underwriting",
+      "company": "CashRepublic",
+      "website": "https://www.cashrepublic.com",
+      "promptFile": "inputs/batch-smb-eval/08-cashrepublic-cra-underwriting/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000IcpLhYAJ"
+    },
+    {
+      "id": "09-equabli-collections-balance",
+      "company": "Equabli",
+      "website": "https://www.equabli.com",
+      "promptFile": "inputs/batch-smb-eval/09-equabli-collections-balance/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000CRV5eYAH"
+    },
+    {
+      "id": "10-relier-topup-transfer",
+      "company": "Relier",
+      "website": "https://www.relier.us",
+      "promptFile": "inputs/batch-smb-eval/10-relier-topup-transfer/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000XcFizYAF"
+    }
+  ]
+}

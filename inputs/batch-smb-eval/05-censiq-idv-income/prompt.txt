@@ -1,0 +1,85 @@
+================================================================================
+Censiq — Verify candidates during hiring (Plaid IDV + Bank Income)
+================================================================================
+
+**Host:** **Censiq** — AI-native hiring / onboarding / compliance platform (SMB; B2B HR tech)
+**Brand URL:** https://www.censiq.com
+
+**User journey (one sentence):**
+During onboarding, a job candidate verifies their identity with Plaid Identity Verification (document + selfie) and confirms their income history with Plaid Bank Income, giving the employer a verified candidate profile without manual document collection.
+
+**Story arc (short prose):**
+Priya Nair has accepted an offer and needs to clear pre-hire verification on Censiq. Instead of emailing IDs and pay stubs, Priya completes a Plaid IDV session (document + data source + selfie) to confirm identity, then connects a bank so Plaid Bank Income surfaces a verified employer and income history. Censiq presents the hiring team a verified candidate profile in minutes, cutting fraud and onboarding friction.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Identity Verification (IDV)**, **Plaid Bank Income**
+
+**Solutions supported:** Identity Verification, Income Verification
+
+**Primary product family:** `income_insights`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-bank-income.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Plaid IDV** — `products: ["identity_verification"]` — **mutually exclusive**; its OWN Link session (Document + Data Source + Selfie). Verdict via `/identity_verification/get`. Sandbox persona: **Leslie Knope**.
+  [x] **Plaid Bank Income** — separate `plaidPhase:"launch"` step: `income_verification` Link token ONLY accepts `{income_verification, employment}`. Retrieve via `/credit/bank_income/get`. Sandbox persona: **`user_bank_income`** / `pass_good` (NOT `user_credit_profile`).
+  [x] **Two distinct Link sessions** — IDV first (KYC), then Bank Income.
+
+Link narration boundary: the pre-Link step ends on the button tap; the Link step narrates content inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Censiq candidate onboarding — "Complete your verification." Step 1: identity. Ends on tap. | `POST /identity_verification create` | `Verify identity` |
+| 2 | link (IDV) | Live Plaid IDV session — document + data source + selfie. | `onSuccess` → `/identity_verification/get` → `success` | Identity verified |
+| 3 | host | "Step 2: verify your income." Connect a bank to confirm employment + income. Ends on tap. | `POST /link/token/create` (`["income_verification"]`) | `Verify income` |
+| 4 | link (Income) | Live Plaid Link — connect bank for Bank Income. | `onSuccess` → `/item/public_token/exchange` | Connected |
+| 5 | insight | Plaid insight panel: **Bank Income** — verified employer "ACME LOGISTICS", monthly net **$4,100**, pay frequency BIWEEKLY, status ACTIVE. | `POST /credit/bank_income/get` | "Verified employer + income" |
+| 6 | host | **Candidate verified.** Censiq shows the hiring team a verified profile (identity + income), ready to proceed. | (profile assembled) | `Submit to employer` |
+
+**Product-specific reminders:**
+- IDV statuses: show `success`; never API errors.
+- Bank Income persona is `user_bank_income` (not the CRA `user_credit_profile`). `income_verification` token never combines with non-income products.
+- Happy path only.
+
+**Compliance / user data:** Candidate-consented identity + income verification; representative sandbox data (Leslie Knope for IDV; `user_bank_income` for income).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Priya Nair — job candidate completing pre-hire verification (IDV sandbox identity resolves to Leslie Knope).
+**Sample fields (use verbatim):**
+- IDV: status `success` (document + selfie + data source)
+- Bank Income: employer ACME LOGISTICS · monthly net $4,100 · BIWEEKLY · status ACTIVE
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Censiq-style clean B2B HR-tech surface (white background, professional accent). A candidate onboarding checklist (identity → income), an identity step, an income-link step, and a verified-profile summary the employer sees. Plaid insight screen uses Plaid dark navy/teal — distinct from the host chrome. Raw JSON only in the global `#api-response-panel`.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] IDV its own session; Bank Income a separate `income_verification` session
+  [x] Bank Income persona `user_bank_income`
+  [x] Product names/family match `CLAUDE.md`
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION

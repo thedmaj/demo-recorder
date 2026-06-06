@@ -1,0 +1,86 @@
+================================================================================
+Arro — Cash-flow underwriting for cash advances (Plaid Consumer Report — Base Report + Income Insights)
+================================================================================
+
+**Host:** **Arro** — consumer cash-advance / credit-building fintech (SMB lender)
+**Brand URL:** https://www.helloarro.com
+
+**User journey (one sentence):**
+A returning Arro member requests a small cash advance, connects her bank once through Plaid Link with FCRA-permissible consent, and Arro underwrites her ability to repay from a CRA Base Report (365-day cash flow) and CRA Income Insights (verified income), approving the advance on a schedule aligned to her next payday.
+
+**Story arc (short prose):**
+Maya Torres needs a $500 advance to cover a bill before payday. Arro can't lean on a thin bureau file, so it asks her to connect her bank. In one Plaid Link CRA session Arro collects FCRA-permissible consent and the connection; Plaid generates the Consumer Report asynchronously. When it's ready, Arro reads the CRA Base Report (healthy 365-day cash flow, zero NSFs) and CRA Income Insights (verified biweekly payroll, monthly net income, predicted next payday) and approves the advance — repayment timed to her income, not a credit score. Compliance-safe language only ("can help," "typically," "up to").
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Consumer Report (CRA) — Base Report**, **CRA Income Insights**
+
+**Solutions supported:** Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family:** `cra_base_report`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-income-insights.md` for the Income Insights beat)
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link CRA** — real SDK, single `plaidPhase:"launch"` step.
+  [x] **CRA setup:** `POST /user/create` with PII → `user_id` (prefix `usr_`); then `POST /link/token/create` with `products: ["cra_base_report","cra_income_insights"]`, `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, `cra_options.days_requested: 365`, `webhook`.
+  [x] **CRA async:** report-ready beat keyed on `USER_CHECK_REPORT_READY` before retrieving reports. Reports retrieved by `user_id` (NOT access_token).
+  [x] **Sandbox / persona** — CRA persona `user_credit_profile_good` / `pass_good` per `inputs/plaid-link-sandbox.md`, non-OAuth institution.
+
+Link narration boundary: the pre-Link step ends on the tap ("…she taps Connect your bank."); the Link step narrates content inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Arro app — Maya Torres requests a **$500 advance**. Pre-Link consent card: what data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create`; `POST /link/token/create` (`cra_base_report, cra_income_insights`; `EXTENSION_OF_CREDIT`; `days_requested:365`) | `Connect your bank` |
+| 2 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select), `plaidPhase:"launch"`. | `onSuccess` → `POST /item/public_token/exchange` | Connected |
+| 3 | host | "Generating your Consumer Report…" async processing state. | Webhook `USER_CHECK_REPORT_READY` | Report ready |
+| 4 | insight | **CRA Base Report** card + JSON panel: 365-day cash flow — total inflow **$14,200.00**, total outflow **$11,650.00**, **nsf_overdraft_transactions_count: 0**, current balance ~$3,480, days_available 365. | `POST /cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
+| 5 | insight | **CRA Income Insights** card + JSON panel: verified stream "STARBUCKS PAYROLL", **BIWEEKLY**, monthly **net $3,200**, predicted next payday 2026-06-19, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
+| 6 | host | **Approved.** Advance $500 with repayment timed to the predicted payday; decision card cites income + cash flow (not a bureau score). | (decision derived from CRA data) | `Accept advance` |
+
+**Product-specific reminders:**
+- CRA reports retrieved by `user_id` (not access_token); retrievable for 24h.
+- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" / "eliminate."
+- Happy path only — no declines/errors in the main flow.
+
+**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`); representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Torres — Arro member requesting a $500 cash advance.
+**Sample fields (use verbatim — no generic placeholders):**
+- advance $500 · member Maya Torres
+- Base Report: total_inflow $14,200.00 · total_outflow $11,650.00 · nsf_overdraft_transactions_count 0 · current balance $3,480 · days_available 365
+- Income Insights: STARBUCKS PAYROLL · BIWEEKLY · monthly net $3,200 · predicted next payday 2026-06-19 · status ACTIVE
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Arro-style light consumer-fintech surface (white / light-neutral background, Arro accent on CTAs). Member dashboard + an "advance request" flow, a report-generating state, and an approval decision card. Never show raw JSON on host steps; insight beats use the global `#api-response-panel` (collapsed by default). FCRA notices on the consent + Link steps only.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] CRA via `/user/create` + permissible purpose + `cra_base_report` + `cra_income_insights`; reports by `user_id`; async `USER_CHECK_REPORT_READY`
+  [x] Compliance-safe claims; no guarantees
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION

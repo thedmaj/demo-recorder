@@ -1,0 +1,86 @@
+================================================================================
+Relier — Fund prepaid top-ups with lower ACH risk (Plaid Auth + Balance + Transfer + Signal)
+================================================================================
+
+**Host:** **Relier** — diaspora prepaid mobile top-up / bill pay (SMB; US → LatAm recharges)
+
+**User journey (one sentence):**
+A US customer topping up a prepaid phone in Latin America connects their bank with Plaid Link, and Relier verifies the account (Auth) and balance, then funds the recharge with Plaid Transfer — where Plaid Signal scores ACH-return risk inside the transfer authorization before the debit clears.
+
+**Story arc (short prose):**
+Rosa Méndez sends a $30 mobile top-up to family in Latin America and wants it to land instantly without bounced-payment risk. On Relier she links her US bank in one Plaid Link tap. Relier verifies account/routing (Auth) and available balance, then initiates a Plaid Transfer — and Signal runs inside the transfer authorization to score ACH-return risk on this specific debit. A low-risk authorization clears, and the recharge is funded right away. One connection powers verification, risk, and funding.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Balance, **Plaid Transfer**, **Plaid Signal**
+
+**Solutions supported:** Account Funding
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-transfer.md` (Signal proof points from `inputs/products/plaid-signal.md`)
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase:"launch"` step: `products: ["auth","transfer"]` (Balance via `/accounts/balance/get`). Default First Platypus Bank, `user_good`/`pass_good`. **Standard Plaid Link.**
+  [x] **Transfer + Signal:** Signal runs INSIDE `POST /transfer/authorization/create` (NOT a separate `/signal/evaluate` call in production). Happy-path authorization `decision: approved` with LOW return-risk; then `POST /transfer/create`. (See `plaid-transfer` skill.)
+
+Link narration boundary: pre-Link step ends on the button tap; Link step narrates inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Relier app — **$30.00 top-up** to a LatAm mobile number. "Link your bank to pay." Ends on tap. | `POST /link/token/create` (`["auth","transfer"]`) | `Link your bank` |
+| 2 | link | Live Plaid Link — connect bank, choose checking account. | `onSuccess` → `/item/public_token/exchange` | Account linked |
+| 3 | insight | Plaid insight panel: **Auth** account/routing retrieved (checking ****4471); **Balance** available **$540.00** ≥ $30. | `/auth/get`; `/accounts/balance/get` | "Account verified, funds available" |
+| 4 | host | Confirm the $30 recharge. Ends on tap. | (review) | `Pay $30` |
+| 5 | signal-insight | Plaid insight panel: **Transfer authorization** with **Signal inside** — low ACH return risk → `decision: approved`. | `POST /transfer/authorization/create` (Signal scored within) → `POST /transfer/create` | "Low risk → approved" |
+| 6 | host | **Recharge sent.** Top-up funded; phone credited. | (transfer created) | `Done` |
+
+**Product-specific reminders:**
+- Signal runs INSIDE `/transfer/authorization/create` — do NOT show a standalone `/signal/evaluate` call. Happy-path authorization `approved` with LOW return risk.
+- Signal score 1–99, higher = HIGHER risk; never label scores "Trust Index".
+- Auth account mask/institution from Link `onSuccess` metadata only.
+- Happy path only.
+
+**Compliance / user data:** N/A beyond account verification; representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Rosa Méndez — US customer sending a prepaid mobile top-up to LatAm.
+**Sample fields (use verbatim):**
+- top-up $30.00
+- Auth: checking ****4471; account + routing in `numbers.ach[]`
+- Balance: available $540.00
+- Transfer authorization: `decision: approved` (Signal scored inside, low return risk)
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Relier-style friendly remittance/top-up surface (light background, warm LatAm-flavored accent — NOT Plaid navy on host screens). A recharge screen, a bank-link step, a confirm screen, and a "recharge sent" confirmation. Plaid insight screens use Plaid dark navy/teal — distinct from the host chrome. Raw JSON only in the global `#api-response-panel`.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Standard Plaid Link (Auth + Transfer); Signal INSIDE transfer authorization
+  [x] Product names/family match `CLAUDE.md`
+  [x] Storyboard order matches goToStep flow
+  [x] app-only build, stop at build-qa
+
+END OF SPECIFICATION
