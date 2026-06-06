@@ -8,7 +8,7 @@ Equabli — Friendly digital collections with verified ACH (Plaid Auth + Identit
 A consumer resolving a past-due balance on Equabli's EQengage connects their bank with Plaid Link, and Equabli confirms account ownership (Auth + Identity) and checks a real-time Balance before scheduling an affordable recovery ACH payment plan.
 
 **Story arc (short prose):**
-Tasha Brooks wants to clear a $1,450 past-due balance without phone calls or surprises. On Equabli's EQengage, she connects her bank in one Plaid Link tap. Equabli verifies the account is hers (Auth + Identity) and checks a real-time Balance so it can schedule a payment she can actually afford — $145/month — debiting only when funds are present. Verified ownership and balance-aware scheduling mean fewer failed payments and a respectful recovery experience.
+Tasha Brooks wants to clear a $1,447.20 past-due balance without phone calls or surprises. On Equabli's EQengage, she connects her bank in one Plaid Link tap. Equabli verifies the account is hers (Auth + Identity) and checks a real-time Balance so it can schedule a payment she can actually afford — $144.72/month — debiting only when funds are present. Verified ownership and balance-aware scheduling mean fewer failed payments and a respectful recovery experience.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
@@ -40,10 +40,10 @@ STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 
 | # | Beat | What the viewer sees | API sequence | Reveal / CTA |
 |---|------|----------------------|--------------|--------------|
-| 1 | host | Equabli / EQengage — balance owed **$1,450**. "Set up an affordable plan." Connect your bank to begin. Ends on tap. | `POST /link/token/create` (`["auth","identity"]`) | `Link your bank` |
+| 1 | host | Equabli / EQengage — balance owed **$1,447.20**. "Set up an affordable plan." Connect your bank to begin. Ends on tap. | `POST /link/token/create` (`["auth","identity"]`) | `Link your bank` |
 | 2 | link | Live Plaid Link — connect bank, choose checking account. | `onSuccess` → `/item/public_token/exchange` | Account linked |
-| 3 | insight | Plaid insight panel: **Auth + Identity** confirm ownership (checking ****6190, name match); **Balance** available **$620.00**. | `/auth/get`; `/identity/get`; `/accounts/balance/get` | "Ownership confirmed, funds checked" |
-| 4 | host | **Plan set.** $145/month recovery plan; Equabli schedules debits only when a balance check shows funds. First payment confirmed. | (plan scheduled) | `Start plan` |
+| 3 | insight | Plaid insight panel: **Auth + Identity** confirm ownership (checking ****6190, ownership confirmed); **Balance** available **$617.43**. | `/auth/get`; `/identity/get`; `/accounts/balance/get` | "Ownership confirmed, funds checked" |
+| 4 | host | **Plan set.** $144.72/month recovery plan; Equabli schedules debits only when a balance check shows funds. First payment confirmed. | (plan scheduled) | `Start plan` |
 
 **Product-specific reminders:**
 - Auth account mask/institution from Link `onSuccess` metadata only.
@@ -57,9 +57,9 @@ PERSONA & SAMPLE DATA
 
 **Name / role:** Tasha Brooks — consumer setting up a recovery payment plan on EQengage.
 **Sample fields (use verbatim):**
-- balance owed $1,450 · plan $145/month
-- Auth/Identity: checking ****6190, name match
-- Balance: available $620.00 (pre-debit)
+- balance owed $1,447.20 · plan $144.72/month
+- Auth/Identity: checking ****6190, ownership confirmed
+- Balance: available $617.43 (pre-debit)
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)

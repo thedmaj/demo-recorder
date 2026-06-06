@@ -15,7 +15,8 @@ PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link, Plaid Auth, Plaid Identity, Plaid Balance, **Plaid Consumer Report (CRA) — Base Report**, **CRA Income Insights**
+Plaid Link, CRA Base Report, CRA Income Insights, Plaid Auth, Plaid Balance
+(canonical: Plaid Consumer Report — use the contiguous phrases "CRA Base Report" and "CRA Income Insights" verbatim in labels + narration)
 
 **Solutions supported:** Credit Scoring & Underwriting, Consumer Report Underwriting
 
@@ -45,9 +46,9 @@ STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 | 1 | host | CashRepublic — Marcus applies for a **$2,500 loan**. Pre-Link consent card: data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create`; `POST /link/token/create` (`auth, identity, cra_base_report, cra_income_insights`; `EXTENSION_OF_CREDIT`; `days_requested:365`) | `Connect your bank` |
 | 2 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select). | `onSuccess` → `/item/public_token/exchange` | Connected |
 | 3 | host | "Generating your Consumer Report…" async state. | Webhook `USER_CHECK_REPORT_READY` | Report ready |
-| 4 | insight | **CRA Base Report**: 365-day cash flow — inflow **$13,800.00**, outflow **$11,200.00**, **nsf_overdraft_transactions_count 0**, current balance ~$2,640, days_available 365. | `/cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
-| 5 | insight | **CRA Income Insights**: verified stream, **BIWEEKLY**, monthly **net $3,400**, predicted next payday 2026-06-26, status ACTIVE. | `/cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
-| 6 | insight | **Ownership + funds:** Auth account/routing + Identity name match confirm the account is Marcus's; real-time Balance available **$1,920.00** before the first debit. | `/auth/get`; `/identity/get`; `/accounts/balance/get` | "Account verified, funds confirmed" |
+| 4 | insight | **CRA Base Report**: 365-day cash flow — inflow **$13,842.55**, outflow **$11,217.83**, **nsf_overdraft_transactions_count 0**, current balance **$2,638.41**, days_available 365. Example transactions (ALL CAPS merchants, posted dates): KROGER #4471 2026-05-31 −$87.34; CITY OF AUSTIN UTIL 2026-05-28 −$142.60; ACME MFG PAYROLL DIR DEP 2026-05-27 +$1,706.92. | `/cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
+| 5 | insight | **CRA Income Insights**: verified stream, **BIWEEKLY**, monthly **net $3,413.84**, predicted next payday 2026-06-26, status ACTIVE. | `/cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
+| 6 | host | **Ownership + funds:** Plaid Auth account/routing + Plaid Identity confirm the account is Marcus's; real-time Plaid Balance available **$1,918.27** before the first debit. | `/auth/get`; `/identity/get`; `/accounts/balance/get` | "Account verified, funds confirmed" |
 | 7 | host | **Approved.** $2,500 with a repayment schedule timed to payday; cites cash flow + income, not just a bureau score. | (decision) | `Accept loan` |
 
 **Product-specific reminders:**
@@ -62,11 +63,12 @@ PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
 **Name / role:** Marcus Webb — applicant for a $2,500 personal loan.
-**Sample fields (use verbatim):**
+**Sample fields (use verbatim — non-round):**
 - loan $2,500 · applicant Marcus Webb
-- Base Report: total_inflow $13,800.00 · total_outflow $11,200.00 · nsf_overdraft_transactions_count 0 · current balance $2,640 · days_available 365
-- Income Insights: BIWEEKLY · monthly net $3,400 · predicted next payday 2026-06-26 · status ACTIVE
-- Auth/Identity: checking ****7203, name match; Balance available $1,920.00 (pre-debit)
+- CRA Base Report: total_inflow $13,842.55 · total_outflow $11,217.83 · nsf_overdraft_transactions_count 0 · current balance $2,638.41 · days_available 365
+- Example transactions: KROGER #4471 2026-05-31 −$87.34 · CITY OF AUSTIN UTIL 2026-05-28 −$142.60 · ACME MFG PAYROLL DIR DEP 2026-05-27 +$1,706.92
+- CRA Income Insights: BIWEEKLY · monthly net $3,413.84 · predicted next payday 2026-06-26 · status ACTIVE
+- Plaid Auth / Plaid Identity: checking ****7203, ownership confirmed; Plaid Balance available $1,918.27 (pre-debit)
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)

@@ -1,22 +1,22 @@
 ================================================================================
-Swype — Fund a stablecoin wallet from any US bank (Plaid IDV + Auth + Identity Match)
+Swype — Fund a stablecoin wallet from any US bank (Identity Verification + Plaid Auth + Identity Match)
 ================================================================================
 
 **Host:** **Swype** — crypto / blockchain-to-fiat wallet (SMB; stablecoin funding)
 **Brand URL:** https://www.swype.network
 
 **User journey (one sentence):**
-A new Swype user verifies identity with Plaid IDV, links a US bank with Plaid Link, and Swype confirms the linked account belongs to them (Identity Match) and pulls the ACH rails (Auth) before funding their stablecoin wallet with a verified ACH transfer.
+A new Swype user clears KYC with Identity Verification, links a US bank with one Plaid Link, and Swype confirms the linked account belongs to them (Identity Match) and pulls the ACH rails (Plaid Auth) before funding their stablecoin wallet with a verified ACH transfer.
 
 **Story arc (short prose):**
-Alex Rivera wants to fund a stablecoin wallet from a US checking account. Swype needs one-time KYC and assurance the funding account is really theirs — without high-friction onboarding. Alex completes a Plaid IDV session for KYC, then links the bank in one Plaid Link tap. Behind the scenes Swype confirms the account name matches Alex (Identity Match) and retrieves account + routing rails (Auth), then funds the wallet via ACH. Low friction, low fraud, fast funding.
+Alex Rivera wants to fund a stablecoin wallet from a US checking account. Swype needs one-time KYC and assurance the funding account is really theirs — without high-friction onboarding. Alex clears Identity Verification for KYC, then links the bank in one Plaid Link connection. Behind the scenes Swype confirms the account name matches Alex (Identity Match) and retrieves account + routing rails (Plaid Auth), then funds the wallet via ACH. Low friction, low fraud, fast funding.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link, **Plaid Identity Verification (IDV)**, Plaid Auth, Plaid Identity (Identity Match)
+Plaid Link, Identity Verification, Plaid Auth, Identity Match
 
 **Solutions supported:** Account Opening, Account Funding
 
@@ -30,50 +30,49 @@ Plaid Link, **Plaid Identity Verification (IDV)**, Plaid Auth, Plaid Identity (I
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Plaid IDV** — `products: ["identity_verification"]` — **mutually exclusive**; its OWN Link session (Document + Data Source + Selfie). Verdict via `/identity_verification/get`. Sandbox persona: **Leslie Knope**.
-  [x] **Live Plaid Link** — separate `plaidPhase:"launch"` step for the bank connection: `products: ["auth"]` + `["identity"]` (Identity Match via `/identity/match`). Default First Platypus Bank, `user_good`/`pass_good`.
-  [x] **Backend order after Link is ownership → rails:** Identity Match first, then Auth. Two distinct Link sessions (IDV, then Auth+Identity).
+  [x] **Exactly ONE live Plaid Link launch** — the bank connection (`plaidPhase:"launch"`, single `link` step): `products: ["auth","identity"]` (Identity Match via `/identity/match`). Default First Platypus Bank, `user_good`/`pass_good`.
+  [x] **Identity Verification is a HOST beat** (NOT a separate live Link launch) — a host-chrome "verify your identity" screen resolving to a verified status. Narration names "Identity Verification".
+  [x] **Backend order after Link is ownership → rails:** Identity Match first, then Plaid Auth (shown in the insight beat). Account mask/institution from Link `onSuccess` metadata only.
 
-Link narration boundary: the pre-Link step ends on the button tap; the Link step narrates content inside the modal only.
+Link narration boundary: the pre-Link step ends on the button tap; the Link step narrates inside the modal only.
 
 -------------------------------------------------------------------------------
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
-|---|------|----------------------|--------------|--------------|
-| 1 | host | Swype app — "Fund your wallet." New user prompted to verify identity. Ends on tap. | `POST /identity_verification create` | `Verify identity` |
-| 2 | link (IDV) | Live Plaid IDV session — document + data source + selfie. | `onSuccess` → `/identity_verification/get` → `success` | Identity verified |
-| 3 | host | "Link your bank to fund your wallet." Ends on tap. | `POST /link/token/create` (`["auth","identity"]`) | `Link your bank` |
-| 4 | link (Auth) | Live Plaid Link — connect bank, choose checking. | `onSuccess` → `/item/public_token/exchange` | Account linked |
-| 5 | identity-match-insight | Plaid insight panel: linked account name matches the verified user — `legal_name.score` **96**. | `POST /identity/match` | "Ownership confirmed" |
-| 6 | auth-insight | Plaid insight panel: ACH rails retrieved (checking ****8842; account + routing). | `POST /auth/get` | "ACH rails ready" |
-| 7 | host | **Funded.** $250.00 moved into the stablecoin wallet via verified ACH. | (funding initiated) | `Fund wallet` |
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Swype app — "Fund your wallet." New user prompted to verify identity. Ends on tap. | KYC before funding | `Verify identity` |
+| 2 | host | Identity Verification result — document + selfie passed, status verified. | Identity Verification clears KYC | Identity verified |
+| 3 | host | "Link your bank to fund your wallet." Ends on tap. | One connection for ownership + rails | `Link your bank` |
+| 4 | link | **Live Plaid Link** (`plaidPhase:"launch"`) — connect bank, choose checking. | Inside the modal: choose the funding account | Account linked |
+| 5 | host (insight) | Plaid panel: **Identity Match** — linked account name matches the verified user, `legal_name.score` **96**; then **Plaid Auth** rails (checking ****8842, account + routing). | Ownership confirmed, then ACH rails ready | "Ownership confirmed, rails ready" |
+| 6 | host | **Funded.** $247.50 moved into the stablecoin wallet via verified ACH. | Verified, low-fraud funding | `Fund wallet` |
 
 **Product-specific reminders:**
 - Identity Match: scores 0–100; pass the verified name as `legal_name`; ~70+ is a strong match. Never label scores "Trust Index".
-- IDV statuses: show `success`; never API errors.
-- Auth account mask/institution from Link `onSuccess` metadata only.
+- Identity Verification: show verified/`success`; never API errors. It is a host beat, not a live Link launch.
+- Plaid Auth account mask/institution from Link `onSuccess` metadata only.
 - Happy path only.
 
-**Compliance / user data:** Standard KYC via Plaid IDV; representative sandbox persona (Leslie Knope).
+**Compliance / user data:** Standard KYC via Identity Verification; representative sandbox data.
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Alex Rivera — new Swype user funding a stablecoin wallet (IDV sandbox identity resolves to Leslie Knope).
-**Sample fields (use verbatim):**
-- fund amount $250.00 (USDC)
-- IDV: status `success`
+**Name / role:** Alex Rivera — new Swype user funding a stablecoin wallet.
+**Sample fields that must appear on screen (use verbatim — non-round):**
+- fund amount $247.50 (USDC)
+- Identity Verification: status verified
 - Identity Match: `legal_name.score` 96
-- Auth: checking ****8842; account + routing in `numbers.ach[]`
+- Plaid Auth: checking ****8842; account + routing in `numbers.ach[]`
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Swype-style modern crypto-app surface (clean light or light-dark neutral background, crypto-fintech accent — NOT Plaid navy on host screens). A wallet/fund screen, an identity step, a bank-link step, and a funded confirmation. Plaid insight screens use Plaid dark navy/teal — distinct from the host chrome. Raw JSON only in the global `#api-response-panel`.
+Swype-style modern crypto-app surface (clean light neutral background, crypto-fintech accent — NOT Plaid navy on host screens). A wallet/fund screen, an identity-result step, a bank-link step, and a funded confirmation. The bank-link insight uses Plaid dark navy/teal in the global `#api-response-panel`. Raw JSON only in that panel.
 
 **Viewport:** 1440×900.
 
@@ -81,9 +80,9 @@ Swype-style modern crypto-app surface (clean light or light-dark neutral backgro
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] IDV its own session; Auth+Identity a separate session; Identity Match before Auth
+  [x] Exactly ONE plaidPhase:"launch" (bank Auth+Identity); Identity Verification is a host beat
+  [x] Identity Match before Auth in the insight beat
   [x] Product names/family match `CLAUDE.md`
-  [x] Storyboard order matches goToStep flow
   [x] app-only build, stop at build-qa
 
 END OF SPECIFICATION

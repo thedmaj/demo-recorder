@@ -16,7 +16,8 @@ PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link, **Plaid Consumer Report (CRA) — Base Report**, **CRA Income Insights**
+Plaid Link, CRA Base Report, CRA Income Insights
+(canonical: Plaid Consumer Report — use the contiguous phrases "CRA Base Report" and "CRA Income Insights" verbatim in labels + narration)
 
 **Solutions supported:** Credit Scoring & Underwriting, Consumer Report Underwriting
 
@@ -46,8 +47,8 @@ STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 | 1 | host | Arro app — Maya Torres requests a **$500 advance**. Pre-Link consent card: what data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create`; `POST /link/token/create` (`cra_base_report, cra_income_insights`; `EXTENSION_OF_CREDIT`; `days_requested:365`) | `Connect your bank` |
 | 2 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select), `plaidPhase:"launch"`. | `onSuccess` → `POST /item/public_token/exchange` | Connected |
 | 3 | host | "Generating your Consumer Report…" async processing state. | Webhook `USER_CHECK_REPORT_READY` | Report ready |
-| 4 | insight | **CRA Base Report** card + JSON panel: 365-day cash flow — total inflow **$14,200.00**, total outflow **$11,650.00**, **nsf_overdraft_transactions_count: 0**, current balance ~$3,480, days_available 365. | `POST /cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
-| 5 | insight | **CRA Income Insights** card + JSON panel: verified stream "STARBUCKS PAYROLL", **BIWEEKLY**, monthly **net $3,200**, predicted next payday 2026-06-19, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
+| 4 | insight | **CRA Base Report** card + JSON panel: 365-day cash flow — total inflow **$14,237.62**, total outflow **$11,684.18**, **nsf_overdraft_transactions_count: 0**, current balance **$3,481.27**, days_available 365. Show example transactions (ALL CAPS merchants, posted dates): STARBUCKS STORE #1142 2026-05-31 −$6.85; SHELL OIL 57442 2026-05-30 −$48.12; STARBUCKS PAYROLL DIR DEP 2026-05-29 +$1,476.92. | `POST /cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow, zero NSFs" |
+| 5 | insight | **CRA Income Insights** card + JSON panel: verified stream "STARBUCKS PAYROLL", **BIWEEKLY**, monthly **net $3,197.84**, predicted next payday 2026-06-19, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
 | 6 | host | **Approved.** Advance $500 with repayment timed to the predicted payday; decision card cites income + cash flow (not a bureau score). | (decision derived from CRA data) | `Accept advance` |
 
 **Product-specific reminders:**
@@ -62,10 +63,11 @@ PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
 **Name / role:** Maya Torres — Arro member requesting a $500 cash advance.
-**Sample fields (use verbatim — no generic placeholders):**
+**Sample fields (use verbatim — non-round, no generic placeholders):**
 - advance $500 · member Maya Torres
-- Base Report: total_inflow $14,200.00 · total_outflow $11,650.00 · nsf_overdraft_transactions_count 0 · current balance $3,480 · days_available 365
-- Income Insights: STARBUCKS PAYROLL · BIWEEKLY · monthly net $3,200 · predicted next payday 2026-06-19 · status ACTIVE
+- CRA Base Report: total_inflow $14,237.62 · total_outflow $11,684.18 · nsf_overdraft_transactions_count 0 · current balance $3,481.27 · days_available 365
+- Example transactions: STARBUCKS STORE #1142 2026-05-31 −$6.85 · SHELL OIL 57442 2026-05-30 −$48.12 · STARBUCKS PAYROLL DIR DEP 2026-05-29 +$1,476.92
+- CRA Income Insights: STARBUCKS PAYROLL · BIWEEKLY · monthly net $3,197.84 · predicted next payday 2026-06-19 · status ACTIVE
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)

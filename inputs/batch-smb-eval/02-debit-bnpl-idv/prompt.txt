@@ -1,21 +1,21 @@
 ================================================================================
-Debit Technologies — Real-time BNPL underwriting (Plaid IDV + Auth + Balance)
+Debit Technologies — Real-time BNPL underwriting (Identity Verification + Plaid Auth + Balance)
 ================================================================================
 
 **Host:** **Debit Technologies** — payments/BNPL lending (SMB; card processor launching a BNPL division)
 
 **User journey (one sentence):**
-A shopper splitting a purchase into a buy-now-pay-later plan verifies their identity with Plaid Identity Verification (KYC), then connects their bank with Plaid Link so Debit Technologies can confirm account ownership (Auth) and check available balance (Balance) to approve the plan in real time.
+A shopper splitting a purchase into a buy-now-pay-later plan clears KYC with Identity Verification, then connects their bank with one Plaid Link so Debit Technologies can confirm account ownership (Plaid Auth) and check available balance before approving the plan in real time.
 
 **Story arc (short prose):**
-Jordan Blake wants to split a $1,200 purchase into four payments. Debit Technologies needs to know who Jordan is and whether the funding account is real and good for the payments — without slow manual review. First Jordan completes a Plaid IDV session (document + data source + selfie) for KYC. Then a single Plaid Link connection returns verified account/routing numbers (Auth) and a real-time available balance (Balance). With identity confirmed and funds verified, the four-payment plan is approved on the spot.
+Jordan Blake wants to split a $1,199 purchase into four payments. Debit Technologies needs to know who Jordan is and whether the funding account is real and good for the payments — without slow manual review. Jordan first clears Identity Verification (document + selfie) for KYC, then makes one Plaid Link connection that returns verified account/routing numbers (Plaid Auth) and a real-time available balance. With identity confirmed and funds verified, the four-payment plan is approved on the spot.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link, **Plaid Identity Verification (IDV)**, Plaid Auth, Plaid Balance
+Plaid Link, Identity Verification, Plaid Auth, Plaid Balance
 
 **Solutions supported:** Account Opening, Credit Scoring & Underwriting
 
@@ -29,9 +29,9 @@ Plaid Link, **Plaid Identity Verification (IDV)**, Plaid Auth, Plaid Balance
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Plaid IDV** — `products: ["identity_verification"]` — **mutually exclusive**; runs as its OWN Link session/step (template: Document + Data Source + Selfie). `onSuccess` = submitted; verdict via `/identity_verification/get`. Sandbox persona: **Leslie Knope** (see `inputs/plaid-link-sandbox.md § 5`).
-  [x] **Live Plaid Link** — separate `plaidPhase:"launch"` step for the Auth + Balance connection: `products: ["auth"]` (Balance read via `/accounts/balance/get` on the linked item). Default First Platypus Bank, `user_good`/`pass_good`.
-  [x] **Two distinct Link sessions** — IDV first (KYC), then the bank-link for Auth+Balance. Never combine IDV with other products in one token.
+  [x] **Exactly ONE live Plaid Link launch** — the bank connection (`plaidPhase:"launch"`, single `link` step): `products: ["auth"]`; Balance read via `/accounts/balance/get` on the linked item. Default First Platypus Bank, `user_good`/`pass_good`.
+  [x] **Identity Verification is a HOST beat** (NOT a separate live Link launch) — a host-chrome "verify your identity" screen that resolves to a verified status. Narration names "Identity Verification". (IDV is mutually exclusive and cannot share the bank Link token; represent it as a host verification step.)
+  [x] **Sandbox / persona** — account mask + institution from Link `onSuccess` metadata only — never hardcode.
 
 Link narration boundary: the pre-Link step ends on the button tap; the Link step narrates content inside the modal only.
 
@@ -39,38 +39,38 @@ Link narration boundary: the pre-Link step ends on the button tap; the Link step
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
-|---|------|----------------------|--------------|--------------|
-| 1 | host | Debit Technologies checkout — **$1,200** split into **4 payments of $300**. "Verify your identity to continue." Ends on tap. | `POST /identity_verification create` (template) | `Verify my identity` |
-| 2 | link (IDV) | Live Plaid IDV session — document + data source + selfie/liveness. | `onSuccess` (submitted) → `POST /identity_verification/get` → status `success` | Identity verified |
-| 3 | host | "Identity verified — connect your funding account." Ends on tap. | `POST /link/token/create` (`["auth"]`) | `Link your bank` |
-| 4 | link (Auth) | Live Plaid Link — connect bank, choose checking account. | `onSuccess` → `POST /item/public_token/exchange`; `POST /auth/get` | Account linked |
-| 5 | insight | Plaid insight panel: **Auth** account + routing retrieved (checking ****4567); **Balance** available **$2,150.00** ≥ plan obligation. | `POST /auth/get`; `POST /accounts/balance/get` | "Account verified, funds available" |
-| 6 | host | **Plan approved** — 4 payments of $300, first today. No manual review. | (decision) | `Confirm plan` |
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Debit Technologies checkout — **$1,199.00** split into **4 payments of $299.75**. "Verify your identity to continue." Ends on tap. | KYC gate before funding | `Verify my identity` |
+| 2 | host | Identity Verification result — document + selfie checks passed, status verified. | Identity Verification clears KYC | Identity verified |
+| 3 | host | "Connect your funding account." Ends on tap. | One connection for ownership + balance | `Link your bank` |
+| 4 | link | **Live Plaid Link** (`plaidPhase:"launch"`) — connect bank, choose checking. | Inside the modal: choose the funding account | Account linked |
+| 5 | host (insight) | Plaid panel: **Plaid Auth** account + routing (checking ****4567); **Balance** available **$2,148.37** ≥ plan obligation. | Verified rails + funds present | "Account verified, funds available" |
+| 6 | host | **Plan approved** — 4 payments of $299.75, first today. No manual review. | Instant approval | `Confirm plan` |
 
 **Product-specific reminders:**
-- IDV statuses: `active`, `success`, `failed`, `pending_review`. Show `success` in the main flow; never API errors.
-- Auth account mask + institution come from Link `onSuccess` metadata only — never hardcode.
+- Identity Verification statuses: show verified/`success`; never API errors. It is a host beat here, not a live Link launch.
+- Plaid Auth account mask + institution come from Link `onSuccess` metadata only — never hardcode.
 - Happy path only.
 
-**Compliance / user data:** N/A beyond standard KYC (Plaid IDV); representative sandbox persona (Leslie Knope).
+**Compliance / user data:** Standard KYC via Identity Verification; representative sandbox data.
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Jordan Blake — shopper splitting a $1,200 purchase via BNPL (IDV sandbox identity resolves to the Leslie Knope persona).
-**Sample fields (use verbatim):**
-- purchase $1,200 · 4 payments of $300 · first payment today
-- IDV: status `success` (document + selfie + data source)
-- Auth: checking ****4567; account + routing in `numbers.ach[]`
-- Balance: available $2,150.00
+**Name / role:** Jordan Blake — shopper splitting a $1,199 purchase via BNPL.
+**Sample fields that must appear on screen (use verbatim — non-round):**
+- purchase $1,199.00 · 4 payments of $299.75 · first payment today
+- Identity Verification: status verified (document + selfie)
+- Plaid Auth: checking ****4567; account + routing in `numbers.ach[]`
+- Balance: available $2,148.37
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Debit Technologies-style light checkout/BNPL surface (white background, modern fintech accent). A checkout split-payment card, an identity-verification step, a bank-link step, and an approval card. Plaid insight screens use Plaid dark navy/teal — distinct from the host chrome. Raw JSON only in the global `#api-response-panel`.
+Debit Technologies-style light checkout/BNPL surface (white background, modern fintech accent). A checkout split-payment card, an identity-verification result step, a bank-link step, and an approval card. The bank-link insight uses Plaid dark navy/teal in the global `#api-response-panel`. Raw JSON only in that panel.
 
 **Viewport:** 1440×900.
 
@@ -78,9 +78,9 @@ Debit Technologies-style light checkout/BNPL surface (white background, modern f
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] IDV is its own Link session (mutually exclusive); Auth+Balance a separate session
+  [x] Exactly ONE plaidPhase:"launch" (bank Auth); Identity Verification is a host beat
   [x] Product names/family match `CLAUDE.md`
-  [x] Storyboard order matches goToStep flow (checkout → IDV → link → insight → approved)
+  [x] Storyboard order matches goToStep flow (checkout → IDV result → link → insight → approved)
   [x] app-only build, stop at build-qa
 
 END OF SPECIFICATION

@@ -42,7 +42,7 @@ STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 |---|------|----------------------|--------------|--------------|
 | 1 | host | Relier app — **$30.00 top-up** to a LatAm mobile number. "Link your bank to pay." Ends on tap. | `POST /link/token/create` (`["auth","transfer"]`) | `Link your bank` |
 | 2 | link | Live Plaid Link — connect bank, choose checking account. | `onSuccess` → `/item/public_token/exchange` | Account linked |
-| 3 | insight | Plaid insight panel: **Auth** account/routing retrieved (checking ****4471); **Balance** available **$540.00** ≥ $30. | `/auth/get`; `/accounts/balance/get` | "Account verified, funds available" |
+| 3 | insight | Plaid insight panel: **Auth** account/routing retrieved (checking ****4471); **Balance** available **$538.65** ≥ $30. | `/auth/get`; `/accounts/balance/get` | "Account verified, funds available" |
 | 4 | host | Confirm the $30 recharge. Ends on tap. | (review) | `Pay $30` |
 | 5 | signal-insight | Plaid insight panel: **Transfer authorization** with **Signal inside** — low ACH return risk → `decision: approved`. | `POST /transfer/authorization/create` (Signal scored within) → `POST /transfer/create` | "Low risk → approved" |
 | 6 | host | **Recharge sent.** Top-up funded; phone credited. | (transfer created) | `Done` |
@@ -63,7 +63,7 @@ PERSONA & SAMPLE DATA
 **Sample fields (use verbatim):**
 - top-up $30.00
 - Auth: checking ****4471; account + routing in `numbers.ach[]`
-- Balance: available $540.00
+- Balance: available $538.65
 - Transfer authorization: `decision: approved` (Signal scored inside, low return risk)
 
 -------------------------------------------------------------------------------
