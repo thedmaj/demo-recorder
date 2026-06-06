@@ -1239,16 +1239,32 @@ async function main() {
   let demoScript = null;
   let lastReason = '';
   for (let attempt = 1; attempt <= SCRIPT_MAX_ATTEMPTS; attempt++) {
-    const response = await client.messages.create({
-      model:      MODEL,
-      max_tokens: MAX_TOKENS,
-      thinking:   { type: 'adaptive' },
-      output_config: { effort: process.env.SCRIPT_EFFORT || 'high' },
-      system:      systemPrompt,
-      messages:    messagesWithToolDirective,
-      tools:       [GENERATE_DEMO_SCRIPT_TOOL],
-      tool_choice: { type: 'auto' },
-    });
+    let response;
+    try {
+      response = await client.messages.create({
+        model:      MODEL,
+        max_tokens: MAX_TOKENS,
+        thinking:   { type: 'adaptive' },
+        output_config: { effort: process.env.SCRIPT_EFFORT || 'high' },
+        system:      systemPrompt,
+        messages:    messagesWithToolDirective,
+        tools:       [GENERATE_DEMO_SCRIPT_TOOL],
+        tool_choice: { type: 'auto' },
+      });
+    } catch (err) {
+      // The retry loop must also cover THROWN errors, not just incomplete
+      // responses. Transient API conditions (request timeout, overloaded,
+      // rate limit, 5xx, dropped socket) otherwise fail the whole script
+      // stage on the first blip — observed as "Request timed out." ~30s in.
+      lastReason = `API error: ${(err && err.message) || err}`;
+      const transient = /timed out|timeout|overloaded|rate.?limit|too many requests|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|\b(429|500|502|503|529)\b/i.test(lastReason);
+      console.warn(`[Script] Generation attempt ${attempt}/${SCRIPT_MAX_ATTEMPTS} threw (${lastReason})${transient && attempt < SCRIPT_MAX_ATTEMPTS ? ' — backing off and retrying…' : ''}`);
+      if (transient && attempt < SCRIPT_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 2000 * attempt));
+        continue;
+      }
+      throw err;
+    }
 
     // Extract — prefer tool_use block (structured output), fall back to text.
     let candidate = null;
