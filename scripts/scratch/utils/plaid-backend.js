@@ -478,6 +478,33 @@ async function createLinkToken(opts = {}) {
   delete bodyForCreate.linkMode;
   delete bodyForCreate.link_mode;
 
+  // ── Token sanitization (build-agent link-token resolver guards) ──
+  // The generated app's resolver occasionally emits product/field combinations
+  // that Plaid 400s. Repair them at the single backend chokepoint so a stray
+  // resolver choice doesn't fail plaid-link-qa for an otherwise-correct demo.
+  if (Array.isArray(bodyForCreate.products)) {
+    // 1) Identity Verification is mutually exclusive — Plaid: "identity_verification
+    //    should be the only configured product". IDV is represented as its own
+    //    session / host beat, so drop it from any multi-product token.
+    if (bodyForCreate.products.includes('identity_verification') && bodyForCreate.products.length > 1) {
+      const before = bodyForCreate.products.join(', ');
+      bodyForCreate.products = bodyForCreate.products.filter((p) => p !== 'identity_verification');
+      console.warn(`[plaid-backend] stripped [identity_verification] from multi-product token [${before}] — IDV must be the only configured product`);
+    }
+  }
+  // 2) consumer_report_permissible_purpose / cra_options are only valid when a CRA
+  //    product is in the array (Plaid: "consumer_report_permissible_purpose should
+  //    only be set if a CRA Product is passed…"). If they leaked in via passthrough
+  //    without a CRA product, drop them so the token is valid.
+  if (
+    (bodyForCreate.consumer_report_permissible_purpose || bodyForCreate.cra_options) &&
+    !hasCraProducts(bodyForCreate.products)
+  ) {
+    delete bodyForCreate.consumer_report_permissible_purpose;
+    delete bodyForCreate.cra_options;
+    console.warn('[plaid-backend] dropped consumer_report_permissible_purpose / cra_options — no CRA product in token');
+  }
+
   let data;
   try {
     data = await plaidPost('/link/token/create', bodyForCreate, { productFamily, credentialScope });

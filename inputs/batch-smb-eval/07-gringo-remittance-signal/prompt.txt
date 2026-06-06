@@ -29,7 +29,7 @@ Plaid Link, Identity Verification, Plaid Auth, Plaid Signal
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Exactly ONE live Plaid Link launch** — the bank connection (`plaidPhase:"launch"`, single `link` step): `products: ["auth"]`. Default First Platypus Bank, `user_good`/`pass_good`.
+  [x] **Exactly ONE live Plaid Link launch** — the bank connection (`plaidPhase:"launch"`, single `link` step). **The `/link/token/create` products[] array MUST be exactly `["auth"]` — do NOT add `identity_verification`, `signal`, or `identity` to the Link token.** Identity Verification is a host beat (never in any Link token — it is mutually exclusive and would make Plaid reject the token); Plaid Signal is a server-side `POST /signal/evaluate` host beat (not a Link product). Default First Platypus Bank, `user_good`/`pass_good`.
   [x] **Identity Verification is a HOST beat** (NOT a separate live Link launch) — a host-chrome "verify your identity" screen resolving to verified. Narration names "Identity Verification".
   [x] **Plaid Signal is a HOST insight beat** — `POST /signal/evaluate` on the specific debit amount; happy-path **ACCEPT** with LOW scores. Shown in the global `#api-response-panel`.
 
