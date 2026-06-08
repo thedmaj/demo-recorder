@@ -22,6 +22,15 @@ Before generating any pre-Link UI, identify which flow type applies. The design 
 
 ---
 
+## 🚫 NO FABRICATED INSTITUTION / ACCOUNT UI (NON-NEGOTIABLE)
+
+The host pre-Link screen must **never hand-author** bank/institution logo tiles, an institution grid, a "Search for your bank" input, an account picker, or tabs/cards of (fictional) bank accounts. Plaid owns institution discovery and account selection:
+
+- **Standard / modal (default):** the host shows value-prop + a SINGLE launch CTA (`data-testid="link-external-account-btn"`); clicking it opens the **real Plaid Link modal**, which renders institution search + account selection. The host renders none of that.
+- **Embedded (only when `plaidLinkMode` = `embedded`):** mount the **real** Plaid embedded widget (`Plaid.createEmbedded` → `#plaid-embedded-link-container`); the SDK renders the bank tiles/search. Do NOT mirror or fake them in host HTML.
+
+Inventing bank tiles (e.g., "Gingham Bank", "Chase ··· 8538", account-selection tabs) on the host screen is a loose, non-compliant interpretation of Plaid Link and is forbidden. This rule wins over any example below that depicts host-rendered bank tiles.
+
 ## 🚫 SINGLE PRE-LINK SCREEN RULE (NON-NEGOTIABLE)
 
 For any one Plaid Link launch event, build **exactly one** pre-Link explainer screen.
@@ -365,41 +374,25 @@ When building mocked or real Layer confirmation/share screens, field selection m
 
 ## II-1. Two Integration Options
 
-There are two ways to hand off users to Plaid Link in a credit flow. The choice significantly impacts conversion.
+There are two ways to hand off users to Plaid Link in a credit flow. **Which one you build is determined by the run's `plaidLinkMode`, NOT by preference:** standard/modal (Option B) is the **default**; embedded (Option A) is used **only when `plaidLinkMode` is `embedded`**.
 
-### Option A: Embedded UX ✅ Strongly Recommended
+> 🚫 **NEVER hand-author bank/institution tiles, an institution grid, a fake "Search for your bank" input, account tabs, or a list of fictional bank accounts on the host pre-Link screen — in EITHER option.** Institution discovery and account selection are owned by Plaid: the real Plaid modal (standard) or the real Plaid embedded widget (embedded) render them. Fabricating bank tiles (e.g., "Gingham Bank", "Chase ··· 8538", account-picker tabs) in host HTML is a non-compliant loose interpretation of Plaid Link and must not appear.
 
-**What it is:** Plaid's bank selection UI is embedded directly into your product screen. The user never leaves your page — they search for and select their bank right inside your pre-Link pane, and the Plaid flow continues inline.
+### Option A: Embedded UX (ONLY when `plaidLinkMode` = `embedded`)
 
-**Visual layout of the Embedded UX screen:**
-- Your app's header bar at top with your logo/brand name centered
-- Bold heading (e.g., "Add a bank account") — the first thing users see
-- Short subheader (1–2 lines) immediately below
-- A search bar: "Search for your bank"
-- 2-column grid of recognizable bank logo tiles (4–6 banks visible: e.g., Gingham Bank, H&T, Brocade, KilimCredit, iKAT, Twill Financial)
-- At the bottom of the grid: "Manually connect" as a small muted text link
-- Below that: Plaid wordmark + "What is Plaid Passport?" link (small, secondary)
-- Full-width "Next" button anchored to the bottom (rounded, brand fill color — e.g., lavender/light purple)
+**What it is:** Plaid's bank-selection UI is embedded directly into your product screen via the **real Plaid embedded Link widget** (`Plaid.createEmbedded(...)` mounting `#plaid-embedded-link-container`). The user searches for and selects their bank **inside the Plaid-rendered widget**; the flow continues inline.
 
-**Sizing by use case (hard guidance):**
-- E-commerce checkout: prefer small embedded container (about 3 institution tiles visible)
-- Bill pay: prefer medium embedded container (about 4-6 institution tiles visible)
-- Account funding inbound payments: prefer large embedded container (about 6-9 institution tiles visible)
+**The widget is rendered by the Plaid SDK — do NOT hand-author it:**
+- Your host screen provides ONLY: header/brand, a bold heading, a short subheader (1–2 lines), optional trust copy, and the live `#plaid-embedded-link-container` mount point — plus an optional muted "Connect manually" **text link**.
+- Do NOT emit bank logo tiles, a 2-column institution grid, a fake search input, "Recommended · Instant verification" tiles, or account tabs. The live embed draws all of that.
 
-**Why Embedded works better for credit:**
-- Eliminates context switching at the moment of highest commitment
-- Collapses the decision to "which bank?" instead of "how do I proceed?"
-- Bank logos themselves establish trust — less persuasion copy is needed
-- Significantly higher Plaid adoption than Standalone UX
-- Requires minimal subheader copy because the visual UI does the trust-building
-
-**Important constraint:** Embedded UX is NOT supported inside an `<iframe>`.
+**Container sizing:** ~430×390px for `#plaid-embedded-link-container` (single pipeline default; see `skills/plaid-link-embedded-link-skill.md`). Embedded UX is NOT supported inside an `<iframe>`.
 
 ---
 
-### Option B: Standalone UX
+### Option B: Standalone UX (DEFAULT — standard modal Plaid Link)
 
-**What it is:** A custom pre-Link screen your team builds entirely. The user sees your screen, then taps a CTA to launch Plaid Link as a separate modal/flow.
+**What it is:** A custom pre-Link screen your team builds, then a single CTA launches the **real Plaid Link modal** as a separate flow. Institution search + account selection happen **inside the Plaid modal** — the host screen renders none of it.
 
 **Visual layout of the Standalone UX screen:**
 - Back-arrow/chevron (`<`) in the top-left for navigation
@@ -407,10 +400,11 @@ There are two ways to hand off users to Plaid Link in a credit flow. The choice 
 - Bold heading — the primary action statement
 - Short subheader (1–3 lines)
 - Two icon bullet rows (checkmark or shield icon on the left of each)
-- Primary full-width CTA button with lock icon (e.g., "Add instantly 🔒")
+- A SINGLE primary full-width CTA button (`data-testid="link-external-account-btn"`) with lock icon (e.g., "Add instantly 🔒") that opens the Plaid modal
 - Secondary text link directly below (e.g., "Add manually instead")
+- NO bank tiles, NO institution grid, NO account tabs — clicking the CTA opens the real modal which handles all institution/account selection.
 
-**Use Standalone when:** Embedded UX is not possible due to technical or organizational constraints.
+**This is the default for every credit/CRA demo unless the run is explicitly embedded mode.**
 
 ---
 
