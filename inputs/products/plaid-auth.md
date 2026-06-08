@@ -10,7 +10,7 @@ use_cases:
   - "instant-account-verification"
   - "external-account-verification"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-05-31T00:00:00Z"
+last_ai_update: "2026-06-08T14:03:07.492Z"
 needs_review: true
 approved: true
 version: 1
@@ -150,6 +150,84 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-08 — Run: 2026-06-08-Demo-Auth-Identity-v4 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank-held identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so platforms schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-08 — Run: 2026-06-08-Demo-Auth-Identity-v3 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank-held identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so platforms schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-08 — Run: 2026-06-08-Demo-Auth-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank-held identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so platforms schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-08 — Run: 2026-06-08-Demo-Auth-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank-held identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so platforms schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-v8 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so BNPL lenders underwrite/schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"Plaid Identity Verification combines document + selfie/liveness + KYC/watchlist screening in one hosted flow, replacing slow manual BNPL review","source":"IDV docs"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-v5 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so platforms schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-v4 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so apps underwrite/fund against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"Plaid Layer network prefill recognizes returning Plaid-network users and collapses multi-field sign-up forms into a single tap","source":"Layer docs + Integration Skill"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-v3 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so BNPL lenders underwrite/schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3-4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so BNPL lenders underwrite against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"65% conversion uplift vs micro-deposits; 20%+ more accounts funded at origination; 3–4x higher average funding amounts vs alternatives","source":"Plaid internal / Gong calls"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-Layer-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so platforms underwrite/schedule debits against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-Layer-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can marry KYC data with bank-held identity data at the funding source like Plaid does via Identity Match / IDV","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"Database Auth delivers instant verification results embedded directly in Plaid Link with enhanced risk attributes feeding Identity Match and Signal","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"Plaid Layer network prefill recognizes returning Plaid-network users and collapses multi-field sign-up forms into a single tap","source":"Layer docs + Integration Skill","confidence":"high"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so apps underwrite/fund against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs","confidence":"high"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-Auth-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can marry KYC data with bank-held identity data at the funding source like Plaid does via Identity Match / IDV","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"Database Auth delivers instant verification results embedded directly in Plaid Link with enhanced risk attributes feeding Identity Match and Signal","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved","confidence":"high"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and real-time Balance, so BNPL lenders underwrite against actual funds-on-hand at decision time","source":"Integration Skill + Balance docs","confidence":"high"}
 
 ### 2026-05-29 — Run: 2026-05-29-Claim-Lm-48219-Approved-Choose-Auth-Identity-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

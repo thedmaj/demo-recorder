@@ -1,0 +1,15 @@
+{
+  "description": "Gringo rebuild (v3 build stage hung ~52min, no app). Backend guard now strips IDV from token.",
+  "createdAt": "2026-06-06",
+  "runs": [
+    {
+      "id": "07-gringo-remittance-signal",
+      "company": "Gringo Coin",
+      "website": "https://www.gringo.com",
+      "promptFile": "inputs/batch-smb-eval/07-gringo-remittance-signal/prompt.txt",
+      "buildMode": "app-only",
+      "research": "gapfill",
+      "sfdc": "006UV00000b5hVFYAY"
+    }
+  ]
+}

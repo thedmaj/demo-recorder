@@ -1,29 +1,28 @@
 ================================================================================
-KeyBank — Small Business Account Funding — Fund a new business checking account from any bank in seconds, post-KYB, with ownership + ACH-risk checks built in
+Ascend Bank — Verify mortgage income & assets in minutes (Plaid Consumer Report — CRA Base Report + CRA Income Insights)
 ================================================================================
 
-**Host:** **KeyBank** — U.S. business banking (small-business deposit account funding)
-**Canonical URL:** https://www.key.com
-**Brand URL:** https://www.key.com
+**Host:** **Ascend Bank** — digital mortgage lender (home-loan origination)
+(Branding is supplied locally via inputs/brand-references/ascend-bank.md + inputs/brand-assets/ascend-bank-logo.png — do NOT fetch external branding. No Brand URL.)
 
 **User journey (one sentence):**
-A small-business owner who has just completed KYB at KeyBank funds their new business checking account from the company's external bank by connecting it with Plaid, and KeyBank instantly confirms the account belongs to the business, pulls the ACH rails, and clears the transfer for ACH-return risk before approving the funds.
+A borrower applying for a home loan on Ascend Bank connects their bank once through Plaid Link with FCRA-permissible consent, and Ascend verifies income (CRA Income Insights) and assets + cash flow (CRA Base Report) from a Plaid Consumer Report to issue a verified mortgage pre-approval — instead of weeks of uploading bank statements and pay stubs.
 
 **Story arc (short prose):**
-KYB is done — the business is verified and its details are on file. The friction is now *funding*: slow micro-deposits and the risk of moving money into the wrong account. KeyBank drops in Plaid: the owner links the company's external bank in one tap, and behind the scenes KeyBank confirms the linked account's name matches the business (Identity Match), pulls account + routing rails and sees it's a business account (Auth), captures the amount, and risk-scores that specific transfer (Signal). Low risk → funds approved instantly, no micro-deposits. Close on the value: small businesses funded and transacting on day one, with fewer returns and less fraud.
+Daniel Reyes is applying for a $480,000 home loan. The slowest, most painful part of his mortgage application is the document chase: months of bank statements, pay stubs, and asset letters, manually uploaded and manually reviewed. Ascend Bank replaces that with one Plaid Link connection. Daniel grants FCRA-permissible consent and connects his bank; Plaid generates a Consumer Report asynchronously. Ascend reads the CRA Base Report (90-day cash flow, account balances for assets-to-close, zero NSFs) and CRA Income Insights (verified employer, biweekly payroll, monthly net income, predicted next payday), then issues a verified pre-approval with a clear assets + income basis — in minutes, not weeks. Compliance-safe language only ("can help," "typically," "up to"; no guarantees).
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Link, Plaid Auth, Plaid Identity (Identity Match), Plaid Signal
+Plaid Link, CRA Base Report, CRA Income Insights
 
-**Solutions supported:** Account Funding
+**Solutions supported:** Consumer Report Underwriting, Income Verification, Asset Verification
 
-**Primary product family:** `funding`
+**Primary product family:** `cra_base_report`
 
-**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-income-insights.md` for the CRA Income Insights beat)
 
 **Research depth:** gapfill
 
@@ -31,79 +30,80 @@ Plaid Link, Plaid Auth, Plaid Identity (Identity Match), Plaid Signal
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **Live Plaid Link** — real SDK, single `plaidPhase: "launch"` step per `CLAUDE.md`. **Standard Plaid Link** (NOT Layer, NOT multi-item link).
-  [ ] Plaid Layer / OAuth / IDV — N/A
-  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, `user_good`/`pass_good`); external institution name + account mask come from Link `onSuccess` metadata only — never hardcode them.
+  [x] **Live Plaid Link CRA** — real SDK, single `plaidPhase:"launch"` step for the consumer-report connection.
+  [x] **CRA setup:** `POST /user/create` with PII (name/phone/email/address; SSN last-4 optional) → `user_id` (prefix `usr_`); then `POST /link/token/create` with `products: ["cra_base_report","cra_income_insights"]`, `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, `cra_options.days_requested: 90`, `webhook`.
+  [x] **CRA async:** report-ready beat keyed on `USER_CHECK_REPORT_READY` (`successful_products: ["cra_base_report","cra_income_insights"]`) before retrieving reports. Reports retrieved by `user_id` (NOT access_token); retrievable for 24h.
+  [x] **Sandbox / persona** — CRA persona `user_credit_profile_good` / `pass_good` per `inputs/plaid-link-sandbox.md`, non-OAuth institution.
+
+Link narration boundary: the pre-Link step ends on the tap ("…he taps Connect your bank."); the Link step narrates content inside the modal only.
 
 -------------------------------------------------------------------------------
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-Demo STARTS post-KYB (business already verified; company info prefilled). Backend order after Link is **ownership -> rails -> amount -> risk**: Identity Match, then Auth, then host amount capture, then Signal. Never show Auth before Identity Match.
-
-| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
-|---|------|----------------------|-----------------|--------------|
-| 1 | KeyBank post-KYB home (host) | "Business verified" + prefilled company info (Pixel & Paper Co, EIN, owner, address); "Fund your business account" screen | KYB done — now fund the account in one connect | "Link your business bank account" button |
-| 2 | Plaid Link (launch) | Real standard Plaid Link modal | Narrate inside the modal: select bank, log in, choose the business account | account linked |
-| 3 | identity-match-insight | Plaid insight screen (dark navy/teal) | Confirm the linked account belongs to the business; fuzzy match tolerates the legal suffix | form "Pixel & Paper Co" vs bank "Pixel & Paper" -> name score 95 |
-| 3a | identity-match-slide (technical slide) | Plaid technical slide + JSON rail | How name scoring works for businesses AND people | bullets below |
-| 4 | auth-insight | Plaid insight screen | Pull ACH rails; the account is a business account | account + routing retrieved; holder_category business |
-| 4a | auth-slide (technical slide) | Plaid technical slide + JSON rail | The account holder/type values, incl. business | bullets below |
-| 5 | funding-amount (host) | KeyBank UX: enter amount to fund | Owner enters the amount to move into the new account | $7,500.00 entered |
-| 6 | signal-insight | Plaid insight screen | Score ACH-return risk for THIS transfer/amount | low risk -> ACCEPT |
-| 7 | funds-approved (host) | KeyBank UX: funds approved instantly | No micro-deposits; good businesses funded on the spot | "Funds available" |
-| 8 | value-summary-slide | Plaid value slide | Small businesses funded day one, fewer returns, less fraud | CTA |
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | slide | Title slide: "Mortgage verification shouldn't take weeks." Subhead on replacing the document chase with a verified Plaid Consumer Report. | — | — |
+| 2 | host | Ascend Bank application — Daniel Reyes, **home loan $480,000**. Pre-Link consent card: what data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create` (PII → `user_id`); `POST /link/token/create` (`cra_base_report, cra_income_insights`; `EXTENSION_OF_CREDIT`; `days_requested:90`) | `Connect your bank` |
+| 3 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select), `plaidPhase:"launch"`. | `onSuccess` → `POST /item/public_token/exchange` | Connected |
+| 4 | host | "Generating your verification report…" async processing state. | Webhook `USER_CHECK_REPORT_READY` (`successful_products`) | Report ready |
+| 5 | insight | **CRA Income Insights** card + JSON panel: verified employer "NORTHWIND TECHNOLOGIES", **BIWEEKLY**, monthly **gross $9,250 / net $6,840.32**, predicted next payday 2026-06-26, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to pay" |
+| 5a | slide | **CRA Income Insights** technical slide + "Sample API response" JSON rail mirroring `/cra/check_report/income_insights/get` — highlight verified income stream, frequency, monthly net, status. | — | bullets below |
+| 6 | insight | **CRA Base Report** card + JSON panel: 90-day cash flow — total inflow **$19,240.55**, total outflow **$14,610.22**, **nsf_overdraft_transactions_count: 0**, total available balances (assets-to-close) **$42,380.16**, days_available 90. Example transactions (ALL CAPS merchants, posted dates): NORTHWIND TECH PAYROLL DIR DEP 2026-05-29 +$3,420.16; SHELL OIL 57442 2026-05-28 −$52.18; KROGER #318 2026-05-27 −$143.27. | `POST /cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow + assets, zero NSFs" |
+| 6a | slide | **CRA Base Report** technical slide + "Sample API response" JSON rail mirroring `/cra/check_report/base_report/get` — highlight inflow/outflow, nsf_overdraft_transactions_count, account balances, days_available. | — | bullets below |
+| 7 | host | **Verified pre-approval.** Ascend issues a pre-approval up to $480,000; decision card cites verified income + assets + cash flow (not uploaded documents). | (decision derived from CRA data) | `View pre-approval` |
+| 8 | slide | Value summary slide: **one Plaid connection → verified income + assets + cash flow → mortgage pre-approval in minutes.** Faster closings, fewer conditions, less document chasing. | — | CTA |
 
 **Slide content (required):**
-- **identity-match-slide** (JSON rail mirrors `/identity/match`):
-  - Company name: onboarding/KYB form **"Pixel & Paper Co"** vs external bank **"Pixel & Paper"** -> **`legal_name.score` 95** (fuzzy match tolerates the "Co" legal suffix).
-  - The same name-scoring convention works for **company names AND person names** — e.g. **"John B. Henry"** vs **"Johnathan Henry"** still scores as a strong match (middle-initial vs full-middle, abbreviation tolerance).
-  - Takeaway: formatting / suffix / abbreviation differences don't sink the score; ownership is confirmed before funds move.
-- **auth-slide** (JSON rail mirrors `/auth/get`): highlight the account holder/type values — the account object's **`holder_category`** can be **`business`**, `personal`, or `unrecognized` (this account is **`business`**), alongside `type` (depository) / `subtype` (checking) and the ACH `numbers`. Show prospects Plaid distinguishes a business account on the funding rail.
+- **CRA Income Insights slide (5a)** — JSON rail mirrors `/cra/check_report/income_insights/get`: verified income stream NORTHWIND TECHNOLOGIES, BIWEEKLY, monthly net $6,840.32, status ACTIVE, predicted next payday 2026-06-26. Takeaway: lender-grade income verification straight from bank data.
+- **CRA Base Report slide (6a)** — JSON rail mirrors `/cra/check_report/base_report/get`: total_inflow $19,240.55, total_outflow $14,610.22, nsf_overdraft_transactions_count 0, total available balances $42,380.16, days_available 90. Takeaway: assets-to-close + cash-flow health in one report.
 
 **Product-specific reminders:**
-- Signal: low score = low ACH return risk; happy path **ACCEPT** with low scores (customer-initiated 12, bank-initiated 10). `ruleset.result` in {ACCEPT, REVIEW, REROUTE} — happy path ACCEPT.
-- Identity Match: scores 0–100; pass the business legal name as `legal_name`; ~70+ is a strong match. Never label scores "Trust Index".
-- Link: the pre-Link step ends on the **button** ("…taps Link your business bank account."); the Link step narrates content **inside** the modal only.
-- Consumer/host KeyBank screens never show raw JSON; JSON belongs only in the global `#api-response-panel` and the technical slides' JSON rail.
+- CRA reports retrieved by `user_id` (not access_token); retrievable for 24h.
+- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" / "eliminate." Outcomes depend on data availability + Ascend's own credit policy.
+- Happy path only — no declines/errors in the main flow.
+- Consumer/host Ascend screens never show raw JSON; JSON belongs only in the global `#api-response-panel` and the technical slides' JSON rail.
 
-**Compliance / user data (one line):** N/A — funding flow, demo starts post-KYB (business already verified).
+**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`); representative sandbox data. Factual language only.
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Jordan Lee — owner of Pixel & Paper Co, funding the company's new KeyBank business checking account
-**Company / context:** Pixel & Paper Co — small design studio (already KYB-verified at KeyBank); external bank = the linked institution (from Link `onSuccess`)
-**Sample fields that must appear on screen:**
-- Identity Match: KYB form business name **"Pixel & Paper Co"** vs external-bank name **"Pixel & Paper"** -> `legal_name.score` **95**; supporting address/phone strong. Person-name convention example on the slide: "John B. Henry" vs "Johnathan Henry".
-- Auth: account `holder_category` **business**; `type` depository / `subtype` checking; ACH account + routing in `numbers.ach[]`.
-- Funding amount: **$7,500.00**
-- Signal: `customer_initiated_return_risk.score` 12, `bank_initiated_return_risk.score` 10, `ruleset.result` ACCEPT.
+**Name / role:** Daniel Reyes — mortgage applicant seeking a $480,000 home loan.
+**Company / context:** Ascend Bank digital mortgage application.
+
+**Sample on-screen fields (use verbatim — non-round, no generic placeholders):**
+- home loan $480,000 · applicant Daniel Reyes
+- CRA Income Insights: NORTHWIND TECHNOLOGIES · BIWEEKLY · monthly gross $9,250 / net $6,840.32 · predicted next payday 2026-06-26 · status ACTIVE
+- CRA Base Report: total_inflow $19,240.55 · total_outflow $14,610.22 · nsf_overdraft_transactions_count 0 · total available balances $42,380.16 · days_available 90
+- Example transactions: NORTHWIND TECH PAYROLL DIR DEP 2026-05-29 +$3,420.16 · SHELL OIL 57442 2026-05-28 −$52.18 · KROGER #318 2026-05-27 −$143.27
+- Pre-approval: up to $480,000, basis = verified income + assets + cash flow
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-KeyBank-branded business-banking host (KeyBank red accent nav, light/white background) opening on a post-KYB "Business verified — fund your account" screen with prefilled company details and a clear "Link your business bank account" CTA that opens standard Plaid Link. Return to KeyBank chrome for the amount entry and the instant-approval outcome. Plaid insight screens use Plaid dark navy/teal — distinct from KeyBank host chrome.
+Ascend Bank periwinkle/cornflower-blue mortgage-lender surface (white background, #5468FF primary actions, soft #EEF1FF tints; logo = local brand-logo.png in the nav with "Ascend Bank" wordmark). A mortgage application flow with an FCRA consent card, a report-generating state, two verification insight cards (income, then assets/cash flow), and a verified pre-approval decision card. Equal Housing Lender / NMLS footer on the application + consent screens. Never show raw JSON on host steps; insight beats use the global `#api-response-panel` (collapsed by default, Response tab default). Plaid technical slides use Plaid dark navy/teal — distinct from the Ascend host chrome.
 
-**Viewport:** 1440x900.
+**Viewport:** 1440×900.
 
 -------------------------------------------------------------------------------
-OPTIONAL: SLIDE SUPPLEMENT
+SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-Up to 5 slides: (1) exec value slide (problem/outcome for small-business funding, no JSON); (2) identity-match technical slide with a "Sample API response" JSON rail mirroring `/identity/match` + the company/person name-scoring bullets above; (3) auth technical slide with a JSON rail mirroring `/auth/get` highlighting `holder_category: business`; (4) value-summary slide. Plaid-only styling (dark navy/teal), no KeyBank chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
+Four Plaid-branded slides: (1) opening problem (mortgage verification document chase), (5a) CRA Income Insights technical slide with a "Sample API response" JSON rail mirroring `/cra/check_report/income_insights/get`, (6a) CRA Base Report technical slide with a JSON rail mirroring `/cra/check_report/base_report/get`, (8) closing value-summary (one connection → verified income + assets + cash flow → mortgage pre-approval in minutes). Plaid-only styling (dark navy/teal), no Ascend host chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
 [[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] One primary source for stats (`inputs/plaid-value-props.md`)
-  [x] Product names and family match `CLAUDE.md` (funding; Auth, Identity, Signal, Link)
-  [x] Storyboard order matches goToStep flow (post-KYB -> link -> ownership -> rails -> amount -> risk -> approved)
-  [x] Standard Plaid Link (real SDK); sandbox per pipeline env
+  [x] CRA via `/user/create` + permissible purpose + `cra_base_report` + `cra_income_insights`; reports by `user_id`; async `USER_CHECK_REPORT_READY`
+  [x] CRA Income Insights + CRA Base Report named verbatim in narration + slides
+  [x] Branding from inputs/brand-references/ascend-bank.md (no external fetch); local logo
+  [x] Compliance-safe claims; no guarantees
+  [x] full build: app + slides + JSON panels, stop at build-qa
 
 END OF SPECIFICATION
