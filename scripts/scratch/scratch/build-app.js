@@ -357,6 +357,18 @@ function stripEmbeddedLaunchCta(html) {
   return out;
 }
 
+// --no-panels guarantee: even with the build-prompt directive, the LLM may
+// defensively emit an empty, hidden #api-response-panel stub. Strip the empty
+// element so a panels-disabled build ships zero panel DOM chrome. Only removes
+// a content-free element (never a populated panel).
+function stripEmptyApiPanel(html) {
+  if (!html || typeof html !== 'string') return html;
+  return html.replace(
+    /<(div|section|aside)\b[^>]*\bid=["']api-response-panel["'][^>]*>\s*<\/\1>\s*/gi,
+    ''
+  );
+}
+
 function applyEmbeddedContainerSizing(html, sizing) {
   const { width, height } = sizing;
 
@@ -3795,6 +3807,14 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // surfaces the modal via institution-tile click inside the widget itself) and
   // size the container per the use-case profile from CLAUDE.md.
   html = normalizePlaidEmbeddedLinkUx(html, demoScript);
+
+  // Panels axis: on a --no-panels build (post-panels skipped), strip any empty
+  // #api-response-panel stub the LLM emitted so zero panel chrome ships.
+  if (String(process.env.PIPELINE_WITH_PANELS || '').trim().toLowerCase() === 'false') {
+    const before = html;
+    html = stripEmptyApiPanel(html);
+    if (html !== before) console.log('[Build] Stripped empty #api-response-panel stub (panels disabled).');
+  }
 
   // ── Consistency manifest + lint (Phase 2) ─────────────────────────────────
   // Single source of truth stays in demo-script.json. This lint is intentionally
