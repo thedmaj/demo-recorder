@@ -472,6 +472,28 @@ function loadBrandReferenceFile(slug) {
 
   out.motifs = bulletsOf('brand motifs');
 
+  // Optional explicit brand overrides (used when we are NOT fetching real brand
+  // data — e.g. a fictional host). `## Brand Colors` bullets are `key: value`
+  // pairs matching the brand-profile colors schema; `## Logo` supports
+  // `file: <name>` (a local PNG in inputs/brand-assets/); `## Mode` is light|dark.
+  const colorLines = bulletsOf('brand colors');
+  if (colorLines.length > 0) {
+    out.brandColors = {};
+    for (const l of colorLines) {
+      const m = l.match(/^([a-zA-Z][\w]*)\s*[:=]\s*(.+?)\s*$/);
+      if (m) out.brandColors[m[1].trim()] = m[2].trim();
+    }
+  }
+  for (const l of bulletsOf('logo')) {
+    const m = l.match(/^file\s*[:=]\s*(.+?)\s*$/i);
+    if (m) out.logoFile = m[1].trim();
+  }
+  const modeLines = bulletsOf('mode');
+  if (modeLines.length > 0) {
+    const mv = modeLines[0].trim().toLowerCase();
+    if (mv === 'light' || mv === 'dark') out.mode = mv;
+  }
+
   return out;
 }
 
@@ -972,6 +994,29 @@ async function main() {
     }
     if (refFile.masking) profile.masking = refFile.masking;
     if (refFile.motifs && refFile.motifs.length > 0) profile.motifs = refFile.motifs;
+    // Explicit color / logo / mode overrides (fictional or curated brand): these
+    // win over any fetched/auto-crawled values so we don't depend on Brandfetch.
+    if (refFile.brandColors && Object.keys(refFile.brandColors).length > 0) {
+      profile.colors = { ...(profile.colors || {}), ...refFile.brandColors };
+      profile._colorsSource = 'brand-references';
+    }
+    if (refFile.mode) profile.mode = refFile.mode;
+    if (refFile.logoFile) {
+      const absLogo = path.resolve(PROJECT_ROOT, 'inputs', 'brand-assets', refFile.logoFile);
+      if (fs.existsSync(absLogo)) {
+        profile.logo = profile.logo || {};
+        // build-app copies _localSource → scratch-app/brand-logo.png; the host
+        // nav renders <img src="brand-logo.png">.
+        profile.logo.imageUrl = 'brand-logo.png';
+        profile.logo.iconUrl = 'brand-logo.png';
+        profile.logo.wordmark = profile.name || refFile.wordmark || null;
+        profile.logo._localSource = absLogo;
+        profile._logoSource = 'brand-references';
+        console.log(`[BrandExtract] Using local brand logo override: ${refFile.logoFile}`);
+      } else {
+        console.warn(`[BrandExtract] brand-references logo file not found: ${absLogo}`);
+      }
+    }
   }
 
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));

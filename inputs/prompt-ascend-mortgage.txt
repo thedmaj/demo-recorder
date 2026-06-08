@@ -1,0 +1,109 @@
+================================================================================
+Ascend Bank — Verify mortgage income & assets in minutes (Plaid Consumer Report — CRA Base Report + CRA Income Insights)
+================================================================================
+
+**Host:** **Ascend Bank** — digital mortgage lender (home-loan origination)
+(Branding is supplied locally via inputs/brand-references/ascend-bank.md + inputs/brand-assets/ascend-bank-logo.png — do NOT fetch external branding. No Brand URL.)
+
+**User journey (one sentence):**
+A borrower applying for a home loan on Ascend Bank connects their bank once through Plaid Link with FCRA-permissible consent, and Ascend verifies income (CRA Income Insights) and assets + cash flow (CRA Base Report) from a Plaid Consumer Report to issue a verified mortgage pre-approval — instead of weeks of uploading bank statements and pay stubs.
+
+**Story arc (short prose):**
+Daniel Reyes is applying for a $480,000 home loan. The slowest, most painful part of his mortgage application is the document chase: months of bank statements, pay stubs, and asset letters, manually uploaded and manually reviewed. Ascend Bank replaces that with one Plaid Link connection. Daniel grants FCRA-permissible consent and connects his bank; Plaid generates a Consumer Report asynchronously. Ascend reads the CRA Base Report (90-day cash flow, account balances for assets-to-close, zero NSFs) and CRA Income Insights (verified employer, biweekly payroll, monthly net income, predicted next payday), then issues a verified pre-approval with a clear assets + income basis — in minutes, not weeks. Compliance-safe language only ("can help," "typically," "up to"; no guarantees).
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, CRA Base Report, CRA Income Insights
+
+**Solutions supported:** Consumer Report Underwriting, Income Verification, Asset Verification
+
+**Primary product family:** `cra_base_report`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-income-insights.md` for the CRA Income Insights beat)
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link CRA** — real SDK, single `plaidPhase:"launch"` step for the consumer-report connection.
+  [x] **CRA setup:** `POST /user/create` with PII (name/phone/email/address; SSN last-4 optional) → `user_id` (prefix `usr_`); then `POST /link/token/create` with `products: ["cra_base_report","cra_income_insights"]`, `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, `cra_options.days_requested: 90`, `webhook`.
+  [x] **CRA async:** report-ready beat keyed on `USER_CHECK_REPORT_READY` (`successful_products: ["cra_base_report","cra_income_insights"]`) before retrieving reports. Reports retrieved by `user_id` (NOT access_token); retrievable for 24h.
+  [x] **Sandbox / persona** — CRA persona `user_credit_profile_good` / `pass_good` per `inputs/plaid-link-sandbox.md`, non-OAuth institution.
+
+Link narration boundary: the pre-Link step ends on the tap ("…he taps Connect your bank."); the Link step narrates content inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | slide | Title slide: "Mortgage verification shouldn't take weeks." Subhead on replacing the document chase with a verified Plaid Consumer Report. | — | — |
+| 2 | host | Ascend Bank application — Daniel Reyes, **home loan $480,000**. Pre-Link consent card: what data, permissible purpose, FCRA consent. Ends on tap. | `POST /user/create` (PII → `user_id`); `POST /link/token/create` (`cra_base_report, cra_income_insights`; `EXTENSION_OF_CREDIT`; `days_requested:90`) | `Connect your bank` |
+| 3 | link | Live Plaid Link CRA flow (consent → OTP → institution → account select), `plaidPhase:"launch"`. | `onSuccess` → `POST /item/public_token/exchange` | Connected |
+| 4 | host | "Generating your verification report…" async processing state. | Webhook `USER_CHECK_REPORT_READY` (`successful_products`) | Report ready |
+| 5 | insight | **CRA Income Insights** card + JSON panel: verified employer "NORTHWIND TECHNOLOGIES", **BIWEEKLY**, monthly **gross $9,250 / net $6,840.32**, predicted next payday 2026-06-26, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to pay" |
+| 5a | slide | **CRA Income Insights** technical slide + "Sample API response" JSON rail mirroring `/cra/check_report/income_insights/get` — highlight verified income stream, frequency, monthly net, status. | — | bullets below |
+| 6 | insight | **CRA Base Report** card + JSON panel: 90-day cash flow — total inflow **$19,240.55**, total outflow **$14,610.22**, **nsf_overdraft_transactions_count: 0**, total available balances (assets-to-close) **$42,380.16**, days_available 90. Example transactions (ALL CAPS merchants, posted dates): NORTHWIND TECH PAYROLL DIR DEP 2026-05-29 +$3,420.16; SHELL OIL 57442 2026-05-28 −$52.18; KROGER #318 2026-05-27 −$143.27. | `POST /cra/check_report/base_report/get` (`user_id`) | "Healthy cash flow + assets, zero NSFs" |
+| 6a | slide | **CRA Base Report** technical slide + "Sample API response" JSON rail mirroring `/cra/check_report/base_report/get` — highlight inflow/outflow, nsf_overdraft_transactions_count, account balances, days_available. | — | bullets below |
+| 7 | host | **Verified pre-approval.** Ascend issues a pre-approval up to $480,000; decision card cites verified income + assets + cash flow (not uploaded documents). | (decision derived from CRA data) | `View pre-approval` |
+| 8 | slide | Value summary slide: **one Plaid connection → verified income + assets + cash flow → mortgage pre-approval in minutes.** Faster closings, fewer conditions, less document chasing. | — | CTA |
+
+**Slide content (required):**
+- **CRA Income Insights slide (5a)** — JSON rail mirrors `/cra/check_report/income_insights/get`: verified income stream NORTHWIND TECHNOLOGIES, BIWEEKLY, monthly net $6,840.32, status ACTIVE, predicted next payday 2026-06-26. Takeaway: lender-grade income verification straight from bank data.
+- **CRA Base Report slide (6a)** — JSON rail mirrors `/cra/check_report/base_report/get`: total_inflow $19,240.55, total_outflow $14,610.22, nsf_overdraft_transactions_count 0, total available balances $42,380.16, days_available 90. Takeaway: assets-to-close + cash-flow health in one report.
+
+**Product-specific reminders:**
+- CRA reports retrieved by `user_id` (not access_token); retrievable for 24h.
+- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" / "eliminate." Outcomes depend on data availability + Ascend's own credit policy.
+- Happy path only — no declines/errors in the main flow.
+- Consumer/host Ascend screens never show raw JSON; JSON belongs only in the global `#api-response-panel` and the technical slides' JSON rail.
+
+**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`); representative sandbox data. Factual language only.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Daniel Reyes — mortgage applicant seeking a $480,000 home loan.
+**Company / context:** Ascend Bank digital mortgage application.
+
+**Sample on-screen fields (use verbatim — non-round, no generic placeholders):**
+- home loan $480,000 · applicant Daniel Reyes
+- CRA Income Insights: NORTHWIND TECHNOLOGIES · BIWEEKLY · monthly gross $9,250 / net $6,840.32 · predicted next payday 2026-06-26 · status ACTIVE
+- CRA Base Report: total_inflow $19,240.55 · total_outflow $14,610.22 · nsf_overdraft_transactions_count 0 · total available balances $42,380.16 · days_available 90
+- Example transactions: NORTHWIND TECH PAYROLL DIR DEP 2026-05-29 +$3,420.16 · SHELL OIL 57442 2026-05-28 −$52.18 · KROGER #318 2026-05-27 −$143.27
+- Pre-approval: up to $480,000, basis = verified income + assets + cash flow
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Ascend Bank periwinkle/cornflower-blue mortgage-lender surface (white background, #5468FF primary actions, soft #EEF1FF tints; logo = local brand-logo.png in the nav with "Ascend Bank" wordmark). A mortgage application flow with an FCRA consent card, a report-generating state, two verification insight cards (income, then assets/cash flow), and a verified pre-approval decision card. Equal Housing Lender / NMLS footer on the application + consent screens. Never show raw JSON on host steps; insight beats use the global `#api-response-panel` (collapsed by default, Response tab default). Plaid technical slides use Plaid dark navy/teal — distinct from the Ascend host chrome.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Four Plaid-branded slides: (1) opening problem (mortgage verification document chase), (5a) CRA Income Insights technical slide with a "Sample API response" JSON rail mirroring `/cra/check_report/income_insights/get`, (6a) CRA Base Report technical slide with a JSON rail mirroring `/cra/check_report/base_report/get`, (8) closing value-summary (one connection → verified income + assets + cash flow → mortgage pre-approval in minutes). Plaid-only styling (dark navy/teal), no Ascend host chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] CRA via `/user/create` + permissible purpose + `cra_base_report` + `cra_income_insights`; reports by `user_id`; async `USER_CHECK_REPORT_READY`
+  [x] CRA Income Insights + CRA Base Report named verbatim in narration + slides
+  [x] Branding from inputs/brand-references/ascend-bank.md (no external fetch); local logo
+  [x] Compliance-safe claims; no guarantees
+  [x] full build: app + slides + JSON panels, stop at build-qa
+
+END OF SPECIFICATION

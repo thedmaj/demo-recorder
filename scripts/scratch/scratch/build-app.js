@@ -846,6 +846,20 @@ function copyPlaidLogoAssetsToScratchRoot() {
   }
 }
 
+// Copy a local host-brand logo (from a brand-references override) into the app
+// root as brand-logo.png so the host nav <img src="brand-logo.png"> resolves
+// without fetching a remote Brandfetch URL.
+function copyHostBrandLogoToScratchRoot(brand) {
+  try {
+    const src = brand && brand.logo && brand.logo._localSource;
+    if (!src || !fs.existsSync(src)) return;
+    fs.copyFileSync(src, path.join(SCRATCH_APP_DIR, 'brand-logo.png'));
+    console.log('[Build] Copied local host brand logo → scratch-app/brand-logo.png');
+  } catch (err) {
+    console.warn(`[Build] Host brand logo copy failed: ${err.message}`);
+  }
+}
+
 // ── Brand profile loading ─────────────────────────────────────────────────────
 const BRAND_DIR = RUN_LAYOUT.brandDir;
 
@@ -2798,6 +2812,7 @@ async function main(opts = {}) {
 
   fs.mkdirSync(SCRATCH_APP_DIR, { recursive: true });
   copyPlaidLogoAssetsToScratchRoot();
+  copyHostBrandLogoToScratchRoot(brand);
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
