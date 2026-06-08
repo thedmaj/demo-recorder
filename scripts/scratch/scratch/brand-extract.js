@@ -398,6 +398,22 @@ function loadBrandReferenceFile(slug) {
       break;
     }
   }
+  // Robustness: brand slugs drop spaces/hyphens inconsistently ("Ascend Bank" →
+  // "ascendbank"). If no exact file matched, scan the dir for a .md whose
+  // alphanumeric-only basename equals the slug's alphanumeric-only form.
+  if (!refPath) {
+    const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = norm(slug);
+    try {
+      const dir = path.resolve(PROJECT_ROOT, 'inputs', 'brand-references');
+      for (const f of fs.readdirSync(dir)) {
+        if (f.endsWith('.md') && norm(f.slice(0, -3)) === target) {
+          refPath = path.join(dir, f);
+          break;
+        }
+      }
+    } catch (_) { /* ignore */ }
+  }
   if (!refPath) return null;
   let md;
   try { md = fs.readFileSync(refPath, 'utf8'); }
