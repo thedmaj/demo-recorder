@@ -846,6 +846,35 @@ function copyPlaidLogoAssetsToScratchRoot() {
   }
 }
 
+// When a local host-brand logo is supplied, the build agent sometimes draws its
+// own placeholder glyph (inline SVG) in the nav instead of using the image. This
+// deterministically swaps the nav logo "mark" element's inner glyph for the real
+// <img src="brand-logo.png"> so "use this logo" is guaranteed regardless of the
+// LLM's choice. Only runs when a local brand logo exists; leaves the wordmark text.
+function injectLocalBrandLogo(html, brand) {
+  if (!html || typeof html !== 'string') return html;
+  if (!(brand && brand.logo && brand.logo._localSource)) return html;
+  const alt = String((brand.name || 'Bank')).replace(/"/g, '');
+  const img = `<img src="brand-logo.png" alt="${alt}" data-testid="host-bank-logo-img" class="brand-logo-img" style="width:28px;height:28px;min-width:28px;object-fit:contain;border-radius:50%;display:block">`;
+  let out = html;
+  let swapped = 0;
+  // Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
+  out = out.replace(
+    /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
+    (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
+  );
+  // If the app already references brand-logo.png (LLM complied), leave as-is.
+  if (swapped === 0 && !/brand-logo\.png/.test(out)) {
+    // Fallback: inject the image just before the first nav wordmark text node.
+    out = out.replace(
+      /(<(?:span|div)\b[^>]*\bclass="[^"]*\blogo-text\b[^"]*"[^>]*>)/i,
+      (m) => { swapped++; return `${img}${m}`; }
+    );
+  }
+  if (swapped > 0) console.log(`[Build] Injected local brand logo <img> into ${swapped} nav mark(s).`);
+  return out;
+}
+
 // Copy a local host-brand logo (from a brand-references override) into the app
 // root as brand-logo.png so the host nav <img src="brand-logo.png"> resolves
 // without fetching a remote Brandfetch URL.
@@ -3822,6 +3851,10 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // surfaces the modal via institution-tile click inside the widget itself) and
   // size the container per the use-case profile from CLAUDE.md.
   html = normalizePlaidEmbeddedLinkUx(html, demoScript);
+
+  // Local host-brand logo: guarantee the supplied logo image is used in the nav
+  // even if the build agent drew its own placeholder glyph.
+  html = injectLocalBrandLogo(html, brand);
 
   // Panels axis: on a --no-panels build (post-panels skipped), strip any empty
   // #api-response-panel stub the LLM emitted so zero panel chrome ships.
