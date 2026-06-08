@@ -110,6 +110,10 @@ const BUILD_QA_DETERMINISTIC_GATE = process.env.BUILD_QA_DETERMINISTIC_GATE == n
     process.env.BUILD_QA_DETERMINISTIC_GATE === 'false'
   );
 let CURRENT_BUILD_QA_STEP_SCOPE = 'all';
+// Panels axis: when false (--no-panels build), no step expects a JSON/API rail,
+// so all missing-panel / panel-* assertions are suppressed. Set in main() from
+// the run-manifest buildModes.withPanels (default true for legacy runs).
+let CURRENT_BUILD_QA_WITH_PANELS = true;
 const DETERMINISTIC_BLOCKER_CATEGORIES = new Set([
   'missing-panel',
   'panel-chrome-contract',
@@ -3456,6 +3460,8 @@ function isDemoValueSummaryStep(step) {
 }
 
 function stepRequiresGlobalJsonRail(step) {
+  // Panels disabled for this run → no step expects a JSON rail.
+  if (!CURRENT_BUILD_QA_WITH_PANELS) return false;
   if (!step || isDemoValueSummaryStep(step)) return false;
   const r = step.apiResponse?.response;
   if (r == null || typeof r !== 'object' || Array.isArray(r)) return false;
@@ -4197,7 +4203,11 @@ async function main(opts = {}) {
       diagnostics.push(...scanAppOnlyNoSlides(html, demoScript, resolvedBuildMode));
     }
     diagnostics.push(...scanCraHostUnderwritingContracts(html, demoScript));
-    diagnostics.push(...scanPanelOverlayContract(html, demoScript));
+    // Panel overlay-contract scanner only applies when panels are enabled; a
+    // --no-panels build has no #api-response-panel to validate.
+    if (CURRENT_BUILD_QA_WITH_PANELS) {
+      diagnostics.push(...scanPanelOverlayContract(html, demoScript));
+    }
   } catch (_) {}
 
   // Sanity guard: ensure the loaded page actually contains the expected step containers.
@@ -4252,6 +4262,19 @@ async function main(opts = {}) {
   CURRENT_BUILD_QA_STEP_SCOPE = stepScope;
   if (stepScopeRaw !== 'all' && stepScopeRaw !== 'slides' && stepScopeRaw !== 'app') {
     console.warn(`[build-qa] Unknown BUILD_QA_STEP_SCOPE="${stepScopeRaw}" — defaulting to "all"`);
+  }
+  // Resolve the panels axis (env wins, else manifest buildModes.withPanels, else
+  // default true). Gates JSON-rail expectations + the standalone panel scanners.
+  CURRENT_BUILD_QA_WITH_PANELS = (() => {
+    const env = String(process.env.PIPELINE_WITH_PANELS || '').trim().toLowerCase();
+    if (env === 'true') return true;
+    if (env === 'false') return false;
+    const bm = runManifestForMode && runManifestForMode.buildModes;
+    if (bm && typeof bm.withPanels === 'boolean') return bm.withPanels;
+    return true;
+  })();
+  if (!CURRENT_BUILD_QA_WITH_PANELS) {
+    console.log('[build-qa] Panels disabled (--no-panels) — JSON-rail + panel scanners suppressed.');
   }
   const slideStepIds = new Set(
     (demoScript.steps || [])
@@ -5082,6 +5105,12 @@ async function main(opts = {}) {
       const tier = computeTierSummary(report, demoScript, { runDir: OUT_DIR });
       report.buildMode = tier.buildMode;
       report.tierSummary = tier.tierSummary;
+      // Informational panels axis (not a scored tier — panels live in the app
+      // tier). Lets the dashboard / consumers see whether panels were active.
+      report.tierSummary.panels = {
+        active: CURRENT_BUILD_QA_WITH_PANELS,
+        skipped: !CURRENT_BUILD_QA_WITH_PANELS,
+      };
       report.recommendedRecovery = tier.recommendedRecovery;
       report.systemicReasons = tier.systemicReasons;
       const outPath = path.join(OUT_DIR, 'qa-report-build.json');

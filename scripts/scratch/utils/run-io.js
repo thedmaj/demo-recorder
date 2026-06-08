@@ -118,6 +118,11 @@ function ensureRunManifest(runDir, seed = {}) {
     // part of the artifact set). Always one of: 'app-only' | 'app+slides'.
     buildMode: seed.buildMode || existing.buildMode || null,
     buildModeSource: seed.buildModeSource || existing.buildModeSource || null,
+    // Independent build-composition axes. buildMode (string) stays for legacy
+    // readers; buildModes carries the two booleans { withSlides, withPanels }.
+    // withPanels defaults true for old runs lacking this field (consumers read
+    // buildModes.withPanels ?? true).
+    buildModes: seed.buildModes || existing.buildModes || null,
     // Per-user ownership for centralized distribution (set from `gh api user`
     // or `PLAID_DEMO_USER` on first run). Preserved across resumes.
     owner,

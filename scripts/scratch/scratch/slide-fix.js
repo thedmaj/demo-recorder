@@ -112,7 +112,26 @@ async function runPostSlides(runDir, stepIds) {
   }
 }
 
+// Panels axis: env wins, else run-manifest buildModes.withPanels, else true.
+function panelsEnabledForRun(runDir) {
+  const env = String(process.env.PIPELINE_WITH_PANELS || '').trim().toLowerCase();
+  if (env === 'true') return true;
+  if (env === 'false') return false;
+  try {
+    const mfPath = path.join(runDir, 'run-manifest.json');
+    if (fs.existsSync(mfPath)) {
+      const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
+      if (mf && mf.buildModes && typeof mf.buildModes.withPanels === 'boolean') return mf.buildModes.withPanels;
+    }
+  } catch (_) { /* ignore */ }
+  return true;
+}
+
 async function runPostPanels(runDir) {
+  if (!panelsEnabledForRun(runDir)) {
+    console.log('[slide-fix] post-panels skipped — panels disabled (--no-panels).');
+    return;
+  }
   const priorRunDir = process.env.PIPELINE_RUN_DIR;
   process.env.PIPELINE_RUN_DIR = runDir;
   try {

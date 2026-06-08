@@ -8,11 +8,13 @@
  *
  * Sub-commands:
  *   pipe                              interactive menu
- *   pipe new        [--prompt=PATH] [--with-slides|--app-only]
+ *   pipe new        [--prompt=PATH] [--with-slides|--app-only] [--with-panels|--no-panels]
  *                   [--research=gapfill|deep] [--reuse-research] [--to=STAGE] [--qa-threshold=N]
  *                   [--max-refinement-iterations=N] [--build-fix-mode=MODE]
  *                   [--no-touchup]
- *   pipe resume     [RUN_ID] [--from=STAGE] [--to=STAGE] [--override-with-slides]
+ *                   (slides and JSON panels are independent axes; panels default ON,
+ *                    so "build only" = --app-only --no-panels)
+ *   pipe resume     [RUN_ID] [--from=STAGE] [--to=STAGE] [--with-slides|--app-only] [--with-panels|--no-panels]
  *   pipe stage      STAGE [RUN_ID]
  *   pipe status     [RUN_ID] [--json]
  *   pipe monitor    [RUN_ID] [--poll-ms=N]
@@ -559,6 +561,8 @@ async function cmdNew({ flags }) {
   const args = [];
   if (flags['with-slides']) args.push('--with-slides');
   if (flags['app-only']) args.push('--app-only');
+  if (flags['with-panels']) args.push('--with-panels');
+  if (flags['no-panels']) args.push('--no-panels');
   if (flags.to)  args.push(`--to=${flags.to}`);
   if (flags['qa-threshold']) args.push(`--qa-threshold=${flags['qa-threshold']}`);
   if (flags['max-refinement-iterations']) args.push(`--max-refinement-iterations=${flags['max-refinement-iterations']}`);
@@ -599,6 +603,8 @@ async function cmdResume({ positional, flags }) {
   if (flags.to)   args.push(`--to=${flags.to}`);
   if (flags['with-slides']) args.push('--with-slides');
   if (flags['app-only'])    args.push('--app-only');
+  if (flags['with-panels']) args.push('--with-panels');
+  if (flags['no-panels'])   args.push('--no-panels');
   if (flags['qa-threshold']) args.push(`--qa-threshold=${flags['qa-threshold']}`);
   if (flags['max-refinement-iterations']) args.push(`--max-refinement-iterations=${flags['max-refinement-iterations']}`);
   if (flags['build-fix-mode']) {

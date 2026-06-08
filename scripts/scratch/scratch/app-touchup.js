@@ -80,7 +80,27 @@ async function runPatches(runDir, qaReport, failingAppStepIds, iteration) {
   return out;
 }
 
+// Panels axis: env wins, else run-manifest buildModes.withPanels, else default
+// true. A --no-panels build must not re-inject the JSON rail during touchup.
+function panelsEnabledForRun(runDir) {
+  const env = String(process.env.PIPELINE_WITH_PANELS || '').trim().toLowerCase();
+  if (env === 'true') return true;
+  if (env === 'false') return false;
+  try {
+    const mfPath = path.join(runDir, 'run-manifest.json');
+    if (fs.existsSync(mfPath)) {
+      const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
+      if (mf && mf.buildModes && typeof mf.buildModes.withPanels === 'boolean') return mf.buildModes.withPanels;
+    }
+  } catch (_) { /* ignore */ }
+  return true;
+}
+
 async function runPostPanels(runDir) {
+  if (!panelsEnabledForRun(runDir)) {
+    console.log('[app-touchup] post-panels skipped — panels disabled (--no-panels).');
+    return;
+  }
   const priorRunDir = process.env.PIPELINE_RUN_DIR;
   process.env.PIPELINE_RUN_DIR = runDir;
   try {

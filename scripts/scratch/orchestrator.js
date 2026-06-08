@@ -263,6 +263,8 @@ function parseArgs() {
   const noTouchup     = args.includes('--no-touchup');
   const withSlidesFlag = args.includes('--with-slides');
   const appOnlyFlag    = args.includes('--app-only');
+  const withPanelsFlag = args.includes('--with-panels');
+  const noPanelsFlag   = args.includes('--no-panels');
 
   const mode       = modeArg       ? modeArg.replace('--mode=', '').toLowerCase()        : null;
   const fromStage  = fromArg       ? fromArg.replace('--from=', '').toLowerCase()         : null;
@@ -293,6 +295,23 @@ function parseArgs() {
     process.env.PIPELINE_WITH_SLIDES_SOURCE = withSlidesSource;
   }
 
+  // JSON/API panels are an INDEPENDENT axis from slides. --no-panels wins over
+  // --with-panels if both are present. Default (no flag) leaves panels enabled
+  // (resolveBuildModes treats unset PIPELINE_WITH_PANELS as 'true').
+  let withPanelsOverride = null;
+  let withPanelsSource = null;
+  if (noPanelsFlag) {
+    withPanelsOverride = false;
+    withPanelsSource = 'cli --no-panels';
+  } else if (withPanelsFlag) {
+    withPanelsOverride = true;
+    withPanelsSource = 'cli --with-panels';
+  }
+  if (withPanelsOverride != null) {
+    process.env.PIPELINE_WITH_PANELS = withPanelsOverride ? 'true' : 'false';
+    process.env.PIPELINE_WITH_PANELS_SOURCE = withPanelsSource;
+  }
+
   return {
     mode,
     fromStage,
@@ -305,6 +324,8 @@ function parseArgs() {
     buildFixMode,
     withSlidesOverride,
     withSlidesSource,
+    withPanelsOverride,
+    withPanelsSource,
   };
 }
 
@@ -1768,12 +1789,45 @@ function resolveBuildMode() {
   process.env.DEMO_MARKETING_SLIDE = withSlides ? 'true' : 'false';
   process.env.SCRIPT_ZERO_SLIDE = withSlides ? 'false' : 'true';
 
+  // JSON/API panels — INDEPENDENT axis. Default ON (unset env ⇒ true) to
+  // preserve historical always-on panel behavior; opt out with --no-panels.
+  const panelsRaw = process.env.PIPELINE_WITH_PANELS;
+  const withPanels = (panelsRaw == null || String(panelsRaw).trim() === '')
+    ? true
+    : parseBoolEnv(panelsRaw, true);
+  const panelsSource = (panelsRaw == null || String(panelsRaw).trim() === '')
+    ? 'default'
+    : (String(process.env.PIPELINE_WITH_PANELS_SOURCE || '').trim().toLowerCase() || 'env');
+  process.env.PIPELINE_WITH_PANELS = withPanels ? 'true' : 'false';
+
+  const label = `${withSlides ? 'App + Slides' : 'App-only'}${withPanels ? ' + Panels' : ' (no panels)'}`;
   return {
     withSlides,
+    withPanels,
     source,
-    label: withSlides ? 'App + Slides' : 'App-only',
+    panelsSource,
+    label,
     sequence,
   };
+}
+
+// Resolve whether JSON/API panels are enabled for this run. Env wins; else the
+// run-manifest's buildModes.withPanels; else default true (legacy always-on).
+// Used to gate the post-panels stage + the touchup lanes' panel re-injection.
+function isPanelsEnabled(versionedDir) {
+  const env = String(process.env.PIPELINE_WITH_PANELS || '').trim().toLowerCase();
+  if (env === 'true') return true;
+  if (env === 'false') return false;
+  try {
+    const mfPath = path.join(versionedDir, 'run-manifest.json');
+    if (fs.existsSync(mfPath)) {
+      const mf = JSON.parse(fs.readFileSync(mfPath, 'utf8'));
+      if (mf && mf.buildModes && typeof mf.buildModes.withPanels === 'boolean') {
+        return mf.buildModes.withPanels;
+      }
+    }
+  } catch (_) { /* ignore */ }
+  return true; // default ON (back-compat with pre-panels-axis runs)
 }
 
 function resolveBuildPhaseSequence() {
@@ -2870,17 +2924,21 @@ async function runScratchPipeline({
             }, timer);
           }
         }
-        // post-panels is the host-app API panel contract — needed regardless
-        // of slide tier. Always run before build-qa.
-        await runStage('post-panels', async () => {
-          try {
-            delete require.cache[require.resolve('./scratch/post-panels')];
-            const mod = require('./scratch/post-panels');
-            if (typeof mod.main === 'function') await mod.main();
-          } catch (e) {
-            cliWarn(`[Orchestrator] post-panels (inline-pre-buildqa) failed: ${e.message}`);
-          }
-        }, timer);
+        // post-panels is the host-app API panel contract. Gated on the panels
+        // axis: a --no-panels build skips JSON-rail injection entirely.
+        if (isPanelsEnabled(versionedDir)) {
+          await runStage('post-panels', async () => {
+            try {
+              delete require.cache[require.resolve('./scratch/post-panels')];
+              const mod = require('./scratch/post-panels');
+              if (typeof mod.main === 'function') await mod.main();
+            } catch (e) {
+              cliWarn(`[Orchestrator] post-panels (inline-pre-buildqa) failed: ${e.message}`);
+            }
+          }, timer);
+        } else {
+          cliLog('[Orchestrator] post-panels (inline-pre-buildqa) skipped — panels disabled (--no-panels).');
+        }
       }
 
       if (!shouldRun('build-qa')) break;
@@ -3079,7 +3137,7 @@ async function runScratchPipeline({
 
   // ── Deterministic JSON side-panel normalizer (post-panels) ──────────────
   // Runs unconditionally (idempotent); guarantees #api-response-panel contract.
-  if (shouldRun('post-panels')) {
+  if (shouldRun('post-panels') && isPanelsEnabled(versionedDir)) {
     await runStage('post-panels', async () => {
       try {
         delete require.cache[require.resolve('./scratch/post-panels')];
@@ -3089,6 +3147,8 @@ async function runScratchPipeline({
         cliWarn(`[Orchestrator] post-panels stage failed: ${e.message}`);
       }
     }, timer).catch(() => {});
+  } else if (shouldRun('post-panels')) {
+    cliLog('[Orchestrator] post-panels stage skipped — panels disabled (--no-panels).');
   }
 
   // ── Tier-scoped recovery lanes (app-touchup, slide-fix) ─────────────────
@@ -4504,8 +4564,29 @@ async function main() {
       );
     }
   }
+  // Panels axis restart-inheritance (mirrors slides above): on resume without
+  // an explicit --with-panels/--no-panels (or dashboard) override, inherit the
+  // prior run's buildModes.withPanels so a `pipe continue` never silently flips
+  // panels back on.
+  const _panelsSourceTag = String(process.env.PIPELINE_WITH_PANELS_SOURCE || '').trim().toLowerCase();
+  const _panelsFromAuthoritativeOverride =
+    _panelsSourceTag.startsWith('cli') || _panelsSourceTag === 'dashboard';
+  const explicitWithPanelsProvided =
+    process.env.PIPELINE_WITH_PANELS != null &&
+    String(process.env.PIPELINE_WITH_PANELS).trim() !== '' &&
+    _panelsFromAuthoritativeOverride;
+  if (
+    existingManifestForMode &&
+    existingManifestForMode.buildModes &&
+    typeof existingManifestForMode.buildModes.withPanels === 'boolean' &&
+    !explicitWithPanelsProvided
+  ) {
+    process.env.PIPELINE_WITH_PANELS = existingManifestForMode.buildModes.withPanels ? 'true' : 'false';
+    process.env.PIPELINE_WITH_PANELS_SOURCE = 'inherited from run-manifest';
+  }
+
   const buildModeInfo = resolveBuildMode();
-  cliLog(`[Orchestrator] Mode: ${buildModeInfo.label}  (source: ${buildModeInfo.source})`);
+  cliLog(`[Orchestrator] Mode: ${buildModeInfo.label}  (source: ${buildModeInfo.source}, panels: ${buildModeInfo.panelsSource})`);
 
   const runManifest = ensureRunManifest(versionedDir, {
     runId: path.basename(versionedDir),
@@ -4516,6 +4597,7 @@ async function main() {
     sourcePromptHash: promptFingerprint || null,
     buildMode: buildModeInfo.withSlides ? 'app+slides' : 'app-only',
     buildModeSource: buildModeInfo.source,
+    buildModes: { withSlides: buildModeInfo.withSlides, withPanels: buildModeInfo.withPanels },
   });
   snapshotRunInputs(versionedDir, {
     promptText: promptText || '',
