@@ -28,6 +28,10 @@ const PRESERVED_PIPELINE_KEYS = Object.freeze([
   // Build-mode resolution (the bug that motivated this helper).
   'PIPELINE_WITH_SLIDES',
   'PIPELINE_WITH_SLIDES_SOURCE',
+  // Panels axis — same hazard as slides: a stale .env PIPELINE_WITH_PANELS must
+  // never clobber the orchestrator's CLI-flag-derived runtime value mid-run.
+  'PIPELINE_WITH_PANELS',
+  'PIPELINE_WITH_PANELS_SOURCE',
   'BUILD_PHASE_SEQUENCE',
   'BUILD_PHASE_SLIDES_ENABLED',
   'BUILD_PHASE_APP_ENABLED',
