@@ -2582,6 +2582,14 @@ function evaluateApiStoryAlignment(step) {
     return issues;
   }
 
+  // CRA setup / FCRA-consent steps call /user/create and/or /link/token/create
+  // and legitimately reference "consumer report" in consent copy — but they are
+  // NOT report-retrieval beats. Don't apply the story-based alignment (it would
+  // demand a base_report/income_insights endpoint on a consent/token step).
+  if (/\/user\/create\b|\/link\/token\/create\b/.test(endpoint) && !/check_report|\bcra\b/i.test(endpoint)) {
+    return issues;
+  }
+
   const storyCheck = checks.find((c) => c.storyPattern.test(story));
   if (storyCheck) {
     if (!storyCheck.endpointPattern.test(endpoint)) {
