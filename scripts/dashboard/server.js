@@ -4851,13 +4851,30 @@ function applySelectorScopedReplacement(scopeHtml, selector, updatedOuterHtml) {
  */
 function normalizeHtmlForMatch(html) {
   if (!html) return '';
-  return String(html)
-    .replace(/\r\n/g, '\n')
-    // Collapse runs of whitespace INSIDE tags (attribute separators).
-    .replace(/<([^>]+)>/g, (_m, inner) => '<' + inner.replace(/\s+/g, ' ').trim() + '>')
-    // Collapse runs of whitespace BETWEEN tags.
+  let s = String(html).replace(/\r\n/g, '\n');
+  // Normalise each START tag: lowercase tag name, parse + SORT attributes
+  // (browser outerHTML reorders them vs the authored source), normalise quoting,
+  // and drop the void-element trailing slash. Attribute-order-insensitive match
+  // is what makes a DOM-serialised picked element line up with the source HTML.
+  s = s.replace(/<([a-zA-Z][a-zA-Z0-9:-]*)((?:"[^"]*"|'[^']*'|[^>])*?)\s*(\/?)>/g, (full, tag, attrs, _slash) => {
+    if (/^\s*$/.test(attrs)) return `<${tag.toLowerCase()}>`;
+    const parsed = [];
+    const attrRe = /([a-zA-Z_:][-\w:.]*)(\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g;
+    let am;
+    while ((am = attrRe.exec(attrs)) !== null) {
+      const name = am[1].toLowerCase();
+      if (am[3] == null) { parsed.push(name); continue; }
+      const val = am[3].replace(/^["']|["']$/g, '').replace(/\s+/g, ' ').trim();
+      parsed.push(`${name}="${val}"`);
+    }
+    parsed.sort();
+    return `<${tag.toLowerCase()}${parsed.length ? ' ' + parsed.join(' ') : ''}>`;
+  });
+  // Lowercase END tags too (browsers serialise them lowercase).
+  s = s.replace(/<\/([a-zA-Z][a-zA-Z0-9:-]*)\s*>/g, (_m, t) => `</${t.toLowerCase()}>`);
+  // Collapse runs of whitespace BETWEEN tags, then in text content.
+  return s
     .replace(/>\s+</g, '><')
-    // Collapse consecutive whitespace in text content.
     .replace(/[ \t\n\r\f\v]+/g, ' ')
     .trim();
 }
