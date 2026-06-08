@@ -764,6 +764,18 @@ function isAnthropicOverloadedError(err) {
   return /overloaded_error/i.test(msg);
 }
 
+// Broader transient-API check: the big streaming build call also fails on bare
+// connection errors / timeouts / 5xx / rate limits during availability blips
+// (observed "Connection error." after ~19min). These are all retryable.
+function isTransientApiError(err) {
+  if (!err) return false;
+  if (isAnthropicOverloadedError(err)) return true;
+  const status = Number(err?.status);
+  if ([408, 429, 500, 502, 503, 529].includes(status)) return true;
+  const msg = String(err?.message || err?.error?.message || err?.code || '');
+  return /connection error|connection reset|connection refused|timed out|timeout|rate.?limit|too many requests|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|network|fetch failed/i.test(msg);
+}
+
 /**
  * Retry fn on Anthropic overloaded_error only (exponential backoff, capped).
  * @param {string} label - Log context (e.g. "Call 2 full HTML")
@@ -779,7 +791,7 @@ async function withAnthropicOverloadedRetry(label, fn) {
       // the streaming model occasionally opens a stream then stops emitting tokens
       // (observed with claude-opus-4-8 during availability blips), which would
       // otherwise hang the build forever. Both are transient; back off and retry.
-      const retryable = isAnthropicOverloadedError(err) || err.isStreamIdleTimeout;
+      const retryable = isTransientApiError(err) || err.isStreamIdleTimeout;
       if (!retryable || attempt >= BUILD_OVERLOADED_MAX_RETRIES) {
         throw err;
       }
@@ -789,7 +801,7 @@ async function withAnthropicOverloadedRetry(label, fn) {
       );
       attempt += 1;
       console.warn(
-        `[Build] ${label}: Anthropic overloaded_error — retry ${attempt}/${BUILD_OVERLOADED_MAX_RETRIES} in ${Math.round(delayMs / 1000)}s`
+        `[Build] ${label}: transient API error (${String(err?.message || err?.error?.type || '').slice(0, 60)}) — retry ${attempt}/${BUILD_OVERLOADED_MAX_RETRIES} in ${Math.round(delayMs / 1000)}s`
       );
       await sleep(delayMs);
     }
