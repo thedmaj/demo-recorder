@@ -43,6 +43,8 @@ Short demos embedded in the Plaid Demo Pipeline use the same T1–T11 vocabulary
 | Three audience-segment action cards | Three **product value** cards (capabilities unlocked in the demo) |
 | Peer proof as dense table | Two hero stats → **T4 stat-highlight**, not T7 table |
 
+**Value claims (required):** every pipeline demo slide carries **2–3 concrete, outcome-oriented value claims** — what the product *did* and the business outcome — never generic mantras ("faster, safer, smarter"). Tie each claim to the step's data. Good: "Verify earning power from live payroll, not a static pay stub." / "Assets-to-close and cash-flow health from one consumer-permissioned report." Weak/flagged (`slide-value-messaging`): "Powerful insights.", "Streamline your workflow." Lead with the outcome; name the specific capability.
+
 **Spacing:** wrap body in `.slide-stack` with `padding-bottom: 32–48px` so `.chrome-foot` never overlaps body copy (top QA failure: `slide-text-overlap`).
 
 ---
@@ -80,6 +82,7 @@ Short demos embedded in the Plaid Demo Pipeline use the same T1–T11 vocabulary
 
 - **Sentence case**, not Title Case. ("From bank data to financial intelligence." — not "From Bank Data To Financial Intelligence.")
 - **One idea per headline**, max two clauses. If you need a comma, you probably need a `<br/>` and two phrases.
+- **Fit on ONE line at the rendered size — aim for ≤ ~6 words (~40 characters).** A headline that wraps to two lines reads as overflow and is flagged by the `slide-text-wrap` scanner. Keep it a short declarative phrase; push any detail into the body copy. Examples: "Mortgage verification shouldn't take weeks." → **"Skip the document chase."**; "Lender-grade income, verified straight from bank data" → **"Income, lender-verified."**
 - **End with a period.** Periods make a slide feel declarative. Questions weaken the slide.
 - **Italic accent goes on the noun phrase that pays off the sentence.** ("Recording transactions *isn't enough anymore.*" — italic on the operative phrase, not the subject.)
 - **Avoid clever phrasing.** The headline is a load-bearing wall, not a joke. Save cleverness for the speaker notes.

@@ -143,6 +143,8 @@ These patterns caused the most **deterministic** failures in showcase-router rer
 | Failure mode | Prevention |
 |--------------|------------|
 | **`slide-text-overlap`** | Wrap body in `.slide-stack`; do not add `.chrome-foot`. Keep API endpoint labels inside cards, not in a bottom footer row. |
+| **`slide-text-wrap`** | Headline (`.h-title`) must fit **one line** — aim ≤ ~6 words / ~40 chars. A wrapping H2 reads as overflow. Shorten to a declarative phrase; push detail to body. e.g. "Mortgage verification shouldn't take weeks." → "Skip the document chase." |
+| **`slide-value-messaging`** | Every slide carries **2–3 concrete, outcome-oriented value claims** tied to the step's data — never generic mantras. "Verify earning power from live payroll, not a static pay stub." not "Powerful insights." (See DECK_COMPOSITION → Pipeline product demos → Value claims.) |
 | **Peer benchmark misuse** | Two hero stats side-by-side → `stat-highlight` (T4), **not** `data-table` (T7). Tables need ≥3 rows and right-aligned numerics — not a pair of callouts. |
 | **Metric hero buried** | When narration cites a hero stat (+25%, ~90% fewer), put it in `.hero-stat-value` / mint moment — not a small card in a 4-up grid. |
 | **API endpoint placement** | Put `POST /…` in a card column — never in a footer row. |

@@ -93,7 +93,16 @@ SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-Four Plaid-branded slides: (1) opening problem (mortgage verification document chase), (5a) CRA Income Insights technical slide with a "Sample API response" JSON rail mirroring `/cra/check_report/income_insights/get`, (6a) CRA Base Report technical slide with a JSON rail mirroring `/cra/check_report/base_report/get`, (8) closing value-summary (one connection → verified income + assets + cash flow → mortgage pre-approval in minutes). Plaid-only styling (dark navy/teal), no Ascend host chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
+Four Plaid-branded slides (Plaid-only styling — dark navy/teal, NO Ascend host chrome on slides). Each technical slide sits adjacent to its matching insight beat.
+
+**Headlines must fit ONE line (≤ ~6 words / ~40 chars)** — short declarative phrases, sentence case, period. **Each slide carries 2–3 concrete, outcome-oriented value claims** tied to that step's data (no generic mantras). **Background rhythm: alternate — do NOT use navy on all four.**
+
+1. **Opening problem** — background: **navy**. Headline: "Skip the document chase." Value claims: "Turn a borrower document chase into one guided connection." · "Start pre-approval with lender-ready data, not a stack of files." · "Give reviewers a verified report to assess — not uploads to chase."
+5a. **CRA Income Insights** technical slide — background: **light / cream**. Headline: "Income, lender-verified." JSON rail mirrors `/cra/check_report/income_insights/get`. Value claims: "Verify current earning power from live payroll behavior, not a static pay stub." · "Employer, frequency, and net income confirmed from bank data." · "Income verification in minutes, not pay-stub back-and-forth."
+6a. **CRA Base Report** technical slide — background: **navy**. Headline: "Assets + cash flow, one report." JSON rail mirrors `/cra/check_report/base_report/get`. Value claims: "Assets-to-close and 90-day cash-flow health from one consumer-permissioned report." · "Account balances and inflow/outflow stability, zero NSFs, in one place." · "One report replaces statement collection across accounts."
+8. **Closing value-summary** — background: **holo** (or light). Headline: "Verified in minutes." Value claims: "One Plaid connection → verified income + assets + cash flow → pre-approval." · "Faster closings and fewer conditions." · "Less document chasing for borrowers and reviewers."
+
+Use only the Plaid deck palette (+ the JSON rail's own token colors); no invented hexes. Push any longer detail into body copy, not the headline.
 [[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
