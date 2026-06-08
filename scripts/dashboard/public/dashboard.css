@@ -1439,58 +1439,10 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   min-height: 1em;
 }
 
-/* =============================================================================
-   Stage Progress Bar
-   ============================================================================= */
-
-.stage-progress {
-  display: flex;
-  flex-direction: row;
-  gap: 4px;
-  align-items: center;
-}
-
-.stage-pill {
-  border-radius: 3px;
-  height: 6px;
-  flex: 1;
-  background: rgba(255, 255, 255, 0.1);
-  transition: background 0.2s;
-}
-
-.stage-pill.done {
-  background: #00A67E;
-}
-
-.stage-pill.active {
-  background: #fbbf24;
-  animation: pulse-pill 1.2s ease-in-out infinite;
-}
-
+/* pulse-pill keyframes — still used by the overview .pipeline-stage-pill timeline. */
 @keyframes pulse-pill {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
-}
-
-.pipeline-status-badge {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 20px;
-  letter-spacing: 0.03em;
-}
-
-.pipeline-status-badge.running {
-  background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  animation: pulse-pill 1.5s ease-in-out infinite;
-}
-
-.pipeline-status-badge.idle {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* =============================================================================
@@ -3959,50 +3911,10 @@ pre.json-preview {
   background: rgba(0,166,126,0.25);
 }
 
-/* =============================================================================
-   Phase 2 — Persistent Stage Banner
-   ============================================================================= */
-
-#stage-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 20px;
-  height: 36px;
-  background: rgba(251,191,36,0.08);
-  border-bottom: 1px solid rgba(251,191,36,0.2);
-  flex-shrink: 0;
-}
-.stage-banner-icon {
-  color: #fbbf24;
-  animation: pulse-amber 1.5s ease-in-out infinite;
-}
+/* pulse-amber keyframes — still used by the wizard stage-item styling below. */
 @keyframes pulse-amber {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
-}
-#stage-banner-label {
-  font-size: 13px;
-  color: rgba(255,255,255,0.85);
-  flex: 1;
-}
-.stage-banner-elapsed {
-  font-size: 12px;
-  font-family: monospace;
-  color: rgba(255,255,255,0.45);
-}
-.stage-banner-view-btn {
-  font-size: 12px;
-  padding: 3px 10px;
-  border-radius: 4px;
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.15);
-  color: rgba(255,255,255,0.65);
-  cursor: pointer;
-  font-family: inherit;
-}
-.stage-banner-view-btn:hover {
-  background: rgba(255,255,255,0.12);
 }
 
 /* =============================================================================

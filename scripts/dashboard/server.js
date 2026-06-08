@@ -53,7 +53,6 @@ const {
   applyFactOperation,
   parseFactLine,
 } = require(path.join(__dirname, '../scratch/utils/markdown-knowledge.js'));
-const pipelineStageState = require(path.join(__dirname, '../scratch/utils/stage-state.js'));
 
 const PORT = process.env.PORT || 4040;
 
@@ -68,7 +67,7 @@ const ENV_WHITELIST = new Set([
   // Voice / audio (existing)
   'ELEVENLABS_VOICE_ID', 'ELEVENLABS_OUTPUT_FORMAT',
   // Build strategy (2026-04 additions — replace ad-hoc .env edits)
-  'PIPELINE_WITH_SLIDES', 'BUILD_SLIDES_STRATEGY', 'RESEARCH_MODE', 'LAYERED_BUILD_ENABLED',
+  'PIPELINE_WITH_SLIDES', 'PIPELINE_WITH_PANELS', 'BUILD_SLIDES_STRATEGY', 'RESEARCH_MODE', 'LAYERED_BUILD_ENABLED',
   // QA & guardrails
   'PLAID_LINK_QA_MODE', 'BUILD_QA_PLAID_MODE', 'BUILD_QA_DETERMINISTIC_GATE',
   'CLAIM_CHECK_STRICT', 'PRODUCT_KB_MIN_CONFIDENCE',
@@ -103,40 +102,11 @@ function deepMergePatch(stepEntry, patch, action) {
   return result;
 }
 
-// ── Pipeline state ────────────────────────────────────────────────────────────
-let activeProcess = null;
-/** Run ID for the dashboard-spawned orchestrator (for Builds list live badge / current stage). */
-let activePipelineRunId = null;
-
-function isPipelineChildRunning() {
-  if (activeProcess === null) return false;
-  if (activeProcess.exitCode !== null) return false;
-  return true;
-}
-
-/** Merge isRunning + currentStage onto the active run when a pipeline child is alive. */
-function annotateRunsWithLivePipeline(runs) {
-  if (!Array.isArray(runs) || !isPipelineChildRunning() || !activePipelineRunId) return runs;
-  return runs.map((r) => {
-    if (r.runId !== activePipelineRunId) return r;
-    const completed = getCompletedStages(r.runId);
-    const { resumeFromStage } = computePipelineResume(completed);
-    const currentStage = resumeFromStage || PIPELINE_STAGES[0];
-    return { ...r, isRunning: true, currentStage };
-  });
-}
-/** @type {{ text: string, stream: string }[]} */
-let logBuffer = [];
-const logClients = new Set();
-const LOG_BUFFER_MAX = parseInt(process.env.DASHBOARD_LOG_BUFFER_MAX || '5000', 10);
-const PIPELINE_CONSOLE_LOG = 'pipeline-console.log';
-
-/** Incomplete line tails from spawned orchestrator (pipe chunk boundaries). */
-let pipelineOutRem = '';
-let pipelineErrRem = '';
-/** Append session log under the active run dir (same text as terminal would show). */
-let pipelineDiskLogStream = null;
-
+// ── Pipeline stage plan ─────────────────────────────────────────────────────
+// Live pipeline build tracking was removed from the dashboard (pipelines run in
+// agent mode). PIPELINE_STAGES is retained because the static run-metadata
+// routes use it to compute the resume/last-completed stage from disk.
+//
 // Keep in lockstep with scripts/scratch/orchestrator.js STAGES (order matters for resume / --to).
 const PIPELINE_STAGES = [
   'research', 'ingest', 'script', 'brand-extract', 'script-critique',
@@ -913,97 +883,14 @@ function qaScoresForRun(runId) {
   return extractDashboardQaScores(getLatestQaReport(runId));
 }
 
-function closePipelineDiskLog() {
-  if (pipelineDiskLogStream) {
-    try {
-      pipelineDiskLogStream.end();
-    } catch (_) {
-      /* ignore */
-    }
-    pipelineDiskLogStream = null;
-  }
-}
-
 /**
- * @param {string} runDir
- * @param {string[]} orchestratorArgs argv after 'node'
- */
-function openPipelineDiskLog(runDir, orchestratorArgs) {
-  closePipelineDiskLog();
-  try {
-    const p = path.join(runDir, PIPELINE_CONSOLE_LOG);
-    pipelineDiskLogStream = fs.createWriteStream(p, { flags: 'a' });
-    const cmd = ['node', ...(orchestratorArgs || [])].join(' ');
-    const banner =
-      `\n${'='.repeat(72)}\n` +
-      `[${new Date().toISOString()}] Dashboard pipeline session\n` +
-      `CMD: ${cmd}\n` +
-      `RUN_DIR: ${runDir}\n` +
-      `${'='.repeat(72)}\n`;
-    pipelineDiskLogStream.write(banner);
-  } catch (_) {
-    pipelineDiskLogStream = null;
-  }
-}
-
-/**
- * Push one log line to buffer, SSE clients, optional parent terminal mirror, and disk log.
+ * Lightweight dashboard log line. Live SSE log streaming + disk session logs were
+ * removed with the pipeline-build-tracking feature; this now just mirrors to the
+ * dashboard server's stdout so server-side actions remain visible in the terminal.
  * @param {string} line
- * @param {{ stream?: string, fromChild?: boolean }} [opts]
- *   stream: 'stdout' | 'stderr' | 'dashboard'
- *   fromChild: when true, mirror to the dashboard server's stdout/stderr (CLI parity).
  */
-function broadcastLog(line, opts = {}) {
-  const stream = opts.stream || 'dashboard';
-  const fromChild = !!opts.fromChild;
-  const at = new Date().toISOString();
-  const entry = { text: line, stream, at };
-  logBuffer.push(entry);
-  while (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
-  const ssePayload = `data: ${JSON.stringify(entry)}\n\n`;
-  for (const res of logClients) {
-    try {
-      res.write(ssePayload);
-    } catch (_) {
-      logClients.delete(res);
-    }
-  }
-  if (fromChild && process.env.DASHBOARD_MIRROR_PIPELINE_LOG !== '0') {
-    const out = line + '\n';
-    if (stream === 'stderr') process.stderr.write(out);
-    else process.stdout.write(out);
-  }
-  if (pipelineDiskLogStream) {
-    try {
-      const pre = stream === 'dashboard' ? '[dashboard] ' : '';
-      pipelineDiskLogStream.write(`[${at}] ${pre}${line}\n`);
-    } catch (_) {
-      /* ignore */
-    }
-  }
-}
-
-/** Parse one line from pipeline-console.log when written with [ISO] prefix (see broadcastLog). */
-function parsePipelineConsoleLogLine(text) {
-  const m = text.match(/^\[(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\]\s(.*)$/);
-  if (m) return { text: m[2], stream: 'stdout', at: m[1] };
-  return { text, stream: 'stdout' };
-}
-
-/**
- * Reassemble orchestrator stdout/stderr into full lines (matches TTY line breaks).
- */
-function flushPipelineStreamChunk(chunk, isStderr) {
-  let rem = isStderr ? pipelineErrRem : pipelineOutRem;
-  const str = rem + chunk.toString('utf8');
-  const lines = str.split(/\r?\n/);
-  const nextRem = lines.pop();
-  if (isStderr) pipelineErrRem = nextRem;
-  else pipelineOutRem = nextRem;
-  const stream = isStderr ? 'stderr' : 'stdout';
-  for (const line of lines) {
-    broadcastLog(line, { fromChild: true, stream });
-  }
+function broadcastLog(line) {
+  process.stdout.write(line + '\n');
 }
 
 // ── MIME types ────────────────────────────────────────────────────────────────
@@ -1132,7 +1019,7 @@ app.get('/api/runs', (req, res) => {
       _runsCache = buildRunsList();
       _runsCacheAt = now;
     }
-    res.json({ runs: annotateRunsWithLivePipeline(_runsCache) });
+    res.json({ runs: _runsCache });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1761,28 +1648,6 @@ app.post('/api/runs/allocate', (req, res) => {
     res.json({ runId: allocated.runId });
   } catch (err) {
     res.status(500).json({ error: err.message });
-  }
-});
-
-// Persisted orchestrator session log (dashboard). Must be before /api/runs/:runId.
-app.get('/api/runs/:runId/pipeline-console-log', (req, res) => {
-  try {
-    const runId = req.params.runId;
-    const dir = getRunDir(runId);
-    if (!fs.existsSync(dir)) return res.status(404).json({ error: 'Run not found' });
-    const maxLines = Math.min(8000, Math.max(1, parseInt(req.query.maxLines || '4000', 10)));
-    const logPath = path.join(dir, PIPELINE_CONSOLE_LOG);
-    if (!fs.existsSync(logPath)) return res.json({ lines: [] });
-    const maxBytes = Math.min(4 * 1024 * 1024, Math.max(256 * 1024, maxLines * 320));
-    const raw = readTextTailFromFile(logPath, maxBytes);
-    const all = raw.split(/\r?\n/);
-    const slice = all.length > maxLines ? all.slice(-maxLines) : all;
-    const lines = slice.map((text) => parsePipelineConsoleLogLine(text));
-    res.json({ lines });
-  } catch (err) {
-    const msg = err && err.message;
-    if (msg && /invalid runid/i.test(msg)) return res.status(400).json({ error: msg });
-    res.status(500).json({ error: msg || 'Unknown error' });
   }
 });
 
@@ -2803,11 +2668,7 @@ app.get('/api/runs/:runId/studio-status', (req, res) => {
   }
 });
 
-// ── Pipeline runner ───────────────────────────────────────────────────────────
-
-app.get('/api/pipeline/stages', (req, res) => {
-  res.json({ stages: PIPELINE_STAGES });
-});
+// ── Dashboard write gating ────────────────────────────────────────────────────
 
 /**
  * Dashboard write gating.
@@ -2915,270 +2776,6 @@ function stampInsertedStepKindAndMaybeUpgradeBuildMode(runDir, insertedStep) {
     console.warn(`[storyboard] Could not stamp stepKind / upgrade buildMode: ${e.message}`);
   }
 }
-
-app.post('/api/pipeline/run', (req, res) => {
-  if (!DASHBOARD_WRITE_ENABLED) return respondWithCliHint(req, res, 'run');
-  try {
-    // If activeProcess is set but has already exited, clear the stale reference
-    if (activeProcess !== null && activeProcess.exitCode !== null) {
-      activeProcess = null;
-      activePipelineRunId = null;
-    }
-
-    const { force } = req.body || {};
-    if (activeProcess !== null && !force) {
-      return res.status(409).json({ error: 'Already running', pid: activeProcess.pid });
-    }
-    // force=true: kill the existing process and start fresh
-    if (activeProcess !== null && force) {
-      try { activeProcess.kill('SIGTERM'); } catch (_) {}
-      activeProcess = null;
-      activePipelineRunId = null;
-    }
-
-    const {
-      fromStage,
-      toStage,
-      noTouchup,
-      resumeRunId,
-      createNewRun,
-      researchMode,
-      qaThreshold,
-      maxRefinementIterations,
-      buildFixMode,
-      withSlides,
-      overrideWithSlides,
-    } = req.body || {};
-    const args = ['scripts/scratch/orchestrator.js'];
-    if (fromStage) args.push(`--from=${fromStage}`);
-    if (toStage && typeof toStage === 'string' && toStage.trim()) {
-      args.push(`--to=${toStage.trim().toLowerCase()}`);
-    }
-    if (Number.isFinite(Number(qaThreshold)) && Number(qaThreshold) > 0) {
-      args.push(`--qa-threshold=${Math.floor(Number(qaThreshold))}`);
-    }
-    if (Number.isFinite(Number(maxRefinementIterations)) && Number(maxRefinementIterations) > 0) {
-      args.push(`--max-refinement-iterations=${Math.floor(Number(maxRefinementIterations))}`);
-    }
-    if (typeof buildFixMode === 'string' && buildFixMode.trim()) {
-      args.push(`--build-fix-mode=${buildFixMode.trim().toLowerCase()}`);
-    }
-    if (noTouchup) args.push('--no-touchup');
-
-    // Build spawn env — all pipeline launches must be bound to an explicit run directory.
-    const spawnEnv = { ...process.env };
-    let targetRunId = null;
-    let inheritedBuildMode = null;
-    if (resumeRunId) {
-      try {
-        const resumeDir = getRunDir(resumeRunId);
-        if (!fs.existsSync(resumeDir)) {
-          return res.status(404).json({ error: `Run directory not found: ${resumeRunId}` });
-        }
-        spawnEnv.PIPELINE_RUN_DIR = resumeDir;
-        targetRunId = resumeRunId;
-        inheritedBuildMode = readRunBuildModeInfo(resumeRunId);
-        broadcastLog(`[Dashboard] Resuming into run directory: ${resumeDir}`);
-      } catch (e) {
-        return res.status(400).json({ error: e.message });
-      }
-    } else if (createNewRun) {
-      const allocated = allocateDashboardRunDir();
-      spawnEnv.PIPELINE_RUN_DIR = allocated.runDir;
-      targetRunId = allocated.runId;
-      broadcastLog(`[Dashboard] Allocated new run directory: ${allocated.runDir}`);
-    } else {
-      return res.status(400).json({
-        error: 'runId is required. Pass resumeRunId for restart or createNewRun=true for full runs.',
-      });
-    }
-
-    if (researchMode && typeof researchMode === 'string' && researchMode.trim()) {
-      spawnEnv.RESEARCH_MODE = researchMode.trim().toLowerCase();
-      broadcastLog(`[Dashboard] RESEARCH_MODE=${spawnEnv.RESEARCH_MODE}`);
-    }
-
-    // Resolve withSlides for this spawn:
-    //   1. If resuming and the target run has a recorded buildMode, inherit it
-    //      unless the caller explicitly set overrideWithSlides=true.
-    //   2. Otherwise, honor the request body `withSlides` (default false).
-    let resolvedWithSlides;
-    let resolvedSource;
-    if (resumeRunId && inheritedBuildMode && overrideWithSlides !== true) {
-      resolvedWithSlides = inheritedBuildMode.buildMode === 'app+slides';
-      resolvedSource = 'inherited from run-manifest';
-    } else if (typeof withSlides === 'boolean') {
-      resolvedWithSlides = withSlides;
-      resolvedSource = createNewRun ? 'dashboard modal' : 'dashboard quick-action';
-    } else {
-      resolvedWithSlides = false;
-      resolvedSource = 'dashboard default (no payload)';
-    }
-    spawnEnv.PIPELINE_WITH_SLIDES = resolvedWithSlides ? 'true' : 'false';
-    spawnEnv.PIPELINE_WITH_SLIDES_SOURCE = resolvedSource;
-    broadcastLog(
-      `[Dashboard] Mode: ${resolvedWithSlides ? 'App + Slides' : 'App-only'} (source: ${resolvedSource})`
-    );
-
-    logBuffer = [];
-    pipelineOutRem = '';
-    pipelineErrRem = '';
-    closePipelineDiskLog();
-    if (spawnEnv.PIPELINE_RUN_DIR) {
-      openPipelineDiskLog(spawnEnv.PIPELINE_RUN_DIR, args);
-    }
-
-    activeProcess = spawn('node', args, {
-      cwd: PROJECT_ROOT,
-      env: spawnEnv,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: false,
-    });
-    activePipelineRunId = targetRunId;
-
-    activeProcess.stdout.on('data', (data) => {
-      flushPipelineStreamChunk(data, false);
-    });
-    activeProcess.stderr.on('data', (data) => {
-      flushPipelineStreamChunk(data, true);
-    });
-    activeProcess.on('close', (code) => {
-      if (pipelineOutRem !== '') {
-        broadcastLog(pipelineOutRem, { fromChild: true, stream: 'stdout' });
-        pipelineOutRem = '';
-      }
-      if (pipelineErrRem !== '') {
-        broadcastLog(pipelineErrRem, { fromChild: true, stream: 'stderr' });
-        pipelineErrRem = '';
-      }
-      broadcastLog(`[Pipeline exited with code ${code}]`, { stream: 'dashboard' });
-      activeProcess = null;
-      activePipelineRunId = null;
-      closePipelineDiskLog();
-    });
-    activeProcess.on('error', (err) => {
-      broadcastLog(`[Pipeline error: ${err.message}]`, { stream: 'dashboard' });
-      activeProcess = null;
-      activePipelineRunId = null;
-      closePipelineDiskLog();
-    });
-
-    res.json({ pid: activeProcess.pid, runId: targetRunId });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/pipeline/kill', (req, res) => {
-  if (!DASHBOARD_WRITE_ENABLED) return respondWithCliHint(req, res, 'kill');
-  try {
-    if (!activeProcess) return res.status(404).json({ error: 'No active process' });
-
-    activeProcess.kill('SIGTERM');
-    const proc = activeProcess;
-    setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch (_) {}
-    }, 5000);
-
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/pipeline/status', (req, res) => {
-  // Clear stale reference if the process has already exited
-  if (activeProcess !== null && activeProcess.exitCode !== null) {
-    activeProcess = null;
-    activePipelineRunId = null;
-  }
-  const running = isPipelineChildRunning();
-
-  // Also surface CLI-spawned pipelines (started via `npm run pipe`) so the
-  // dashboard header badge reflects activity outside the dashboard child.
-  let cliActive = null;
-  try {
-    for (const name of safeReaddir(DEMOS_DIR)) {
-      const runDir = path.join(DEMOS_DIR, name);
-      try {
-        if (!fs.statSync(runDir).isDirectory()) continue;
-        const status = pipelineStageState.computeStatus(runDir);
-        if (status.activePid) { cliActive = status; break; }
-      } catch (_) { /* ignore */ }
-    }
-  } catch (_) { /* ignore */ }
-
-  res.json({
-    running: running || !!cliActive,
-    source: running ? 'dashboard' : (cliActive ? 'cli' : null),
-    pid: running && activeProcess ? activeProcess.pid : (cliActive ? cliActive.activePid : null),
-    runId: running ? activePipelineRunId : (cliActive ? cliActive.runId : null),
-    runningStage: cliActive ? cliActive.runningStage : null,
-    awaitingContinue: cliActive ? cliActive.awaitingContinue : false,
-    lastHeartbeatAt: cliActive ? cliActive.lastHeartbeatAt : null,
-    lastHeartbeatAgeSec: cliActive ? cliActive.lastHeartbeatAgeSec : null,
-    heartbeatStale: cliActive ? cliActive.heartbeatStale : false,
-    heartbeatIntervalMs: cliActive ? cliActive.heartbeatIntervalMs : null,
-    writesEnabled: DASHBOARD_WRITE_ENABLED,
-  });
-});
-
-/**
- * Read-only, Claude-consumable stage state for a run.
- * Delegates to scripts/scratch/utils/stage-state.js (single source of truth
- * shared with `npm run pipe -- status --json`).
- */
-app.get('/api/runs/:runId/stage-state', (req, res) => {
-  try {
-    const runDir = getRunDir(req.params.runId);
-    if (!fs.existsSync(runDir)) return res.status(404).json({ error: 'Run not found' });
-    const status = pipelineStageState.computeStatus(runDir);
-    res.json(status);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/pipeline/stdin', (req, res) => {
-  if (!DASHBOARD_WRITE_ENABLED) return respondWithCliHint(req, res, 'continue');
-  if (!activeProcess || !activeProcess.stdin) {
-    return res.status(404).json({ error: 'No active process or stdin not available' });
-  }
-  try {
-    const input = (req.body && typeof req.body.input === 'string') ? req.body.input : '\n';
-    activeProcess.stdin.write(input);
-    broadcastLog('[Dashboard] Sent continue signal to pipeline');
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/pipeline/logs', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const replay = req.query.replay !== '0';
-  if (replay) {
-    for (const entry of logBuffer) {
-      res.write(`data: ${JSON.stringify(entry)}\n\n`);
-    }
-  }
-
-  logClients.add(res);
-
-  const keepAlive = setInterval(() => {
-    try { res.write(': keep-alive\n\n'); } catch (_) {}
-  }, 20000);
-
-  req.on('close', () => {
-    logClients.delete(res);
-    clearInterval(keepAlive);
-  });
-});
 
 // ── File-system watcher (SSE) ─────────────────────────────────────────────────
 

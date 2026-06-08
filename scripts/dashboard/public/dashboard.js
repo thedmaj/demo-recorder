@@ -12,15 +12,9 @@
   // Knowledge tab's contents without adding utility). The loadFiles() function
   // is kept so any external bookmark / programmatic call doesn't throw, but
   // the tab is no longer in the sidebar.
-  const VALID_DASHBOARD_TABS = new Set(['overview', 'config', 'storyboard', 'pipeline', 'valueprop', 'demo-apps']);
+  const VALID_DASHBOARD_TABS = new Set(['overview', 'config', 'storyboard', 'valueprop', 'demo-apps']);
   let studioStatusInterval = null;
-  let logSSE = null;
   let fsWatchSSE = null;
-  let _logSSEConnectedAt = 0; // timestamp of last SSE connect — used to skip replayed history
-
-  let buildPanelRefreshTimer = null;
-  let stageBannerTimer = null;
-  let stageBannerStart = null;
 
   // Original narration values keyed by stepId (for Revert)
   let originalNarrations = {};
@@ -248,123 +242,6 @@
     return parts.join(' ');
   }
 
-  // Cached writesEnabled + one-shot probe. Header badge refreshes this.
-  let __writesEnabled = null;
-  async function probeWritesEnabled() {
-    try {
-      const res = await fetch('/api/pipeline/status');
-      const json = await res.json();
-      __writesEnabled = !!json.writesEnabled;
-      return json;
-    } catch (_) {
-      __writesEnabled = null;
-      return null;
-    }
-  }
-  function dashboardWritesEnabled() { return __writesEnabled === true; }
-  window.__dashboardWrites = {
-    isEnabled: dashboardWritesEnabled,
-    refresh: probeWritesEnabled,
-  };
-
-  // ── Header CLI status badge ──────────────────────────────────────────────────
-  //
-  // Reflects the currently active (CLI-spawned) orchestrator via polling
-  // /api/pipeline/status + /api/runs/:runId/stage-state. Also shows the
-  // read-only indicator when DASHBOARD_WRITE is disabled.
-
-  function initCliStatusBadge() {
-    const header = document.getElementById('header');
-    if (!header || document.getElementById('cli-status-badge')) return;
-    const badge = document.createElement('div');
-    badge.id = 'cli-status-badge';
-    badge.style.cssText = [
-      'display:none',
-      'align-items:center',
-      'gap:6px',
-      'padding:3px 10px',
-      'margin-right:8px',
-      'font-size:12px',
-      'font-weight:500',
-      'border-radius:999px',
-      'background:rgba(0,0,0,0.08)',
-      'border:1px solid rgba(0,0,0,0.12)',
-      'color:#333',
-      'cursor:pointer',
-      'user-select:none',
-    ].join(';');
-    badge.title = 'Pipeline is CLI-driven — click to copy command';
-    const spacer = header.querySelector('.header-spacer');
-    if (spacer) header.insertBefore(badge, spacer);
-    else header.appendChild(badge);
-
-    badge.addEventListener('click', () => {
-      const cmd = badge.dataset.cliCommand || 'npm run pipe';
-      copyCliCommand(cmd, { title: 'CLI command' });
-    });
-
-    async function tick() {
-      try {
-        const status = await probeWritesEnabled();
-        if (!status) { badge.style.display = 'none'; return; }
-        const writesOff = status.writesEnabled === false;
-        if (status.source === 'cli' && status.runId) {
-          let stageSummary = '';
-          try {
-            const res = await fetch(`/api/runs/${encodeURIComponent(status.runId)}/stage-state`);
-            if (res.ok) {
-              const s = await res.json();
-              const { completed, total, failed } = s.counts || {};
-              stageSummary = `${completed ?? 0}/${total ?? 0}` +
-                (failed ? ` · ${failed} failed` : '') +
-                (s.runningStage ? ` · ${s.runningStage}` : '');
-              if (s.lastHeartbeatAgeSec != null) {
-                stageSummary += s.heartbeatStale
-                  ? ` · hb ${s.lastHeartbeatAgeSec}s stale`
-                  : ` · hb ${s.lastHeartbeatAgeSec}s ago`;
-              }
-            }
-          } catch (_) { /* ignore */ }
-          const cont = status.awaitingContinue ? ' ⚑' : '';
-          badge.innerHTML = `<span style="color:#0a8">●</span> CLI · ${esc(status.runId)} ${esc(stageSummary)}${cont}`;
-          badge.dataset.cliCommand = status.awaitingContinue
-            ? `npm run pipe -- continue ${status.runId}`
-            : `npm run pipe -- status ${status.runId}`;
-          badge.style.display = 'inline-flex';
-        } else if (writesOff) {
-          badge.innerHTML = `<span style="color:#999">◌</span> CLI mode · <span style="opacity:.7">npm run pipe</span>`;
-          badge.dataset.cliCommand = 'npm run pipe';
-          badge.style.display = 'inline-flex';
-        } else {
-          badge.style.display = 'none';
-        }
-        // Re-label Pipeline tab action buttons in read-only mode so the user
-        // sees that clicks now copy a CLI command rather than start a process.
-        if (writesOff) applyReadOnlyButtonLabels();
-      } catch (_) { /* ignore */ }
-    }
-    tick();
-    setInterval(tick, 3000);
-  }
-
-  function applyReadOnlyButtonLabels() {
-    const mappings = [
-      ['run-btn',                    '▶ Copy Run CLI'],
-      ['run-from-btn',               '▶ Copy Resume CLI'],
-      ['run-refinement-pipeline-btn','✦ Copy Refinement CLI'],
-      ['resync-audio-btn',           '⟳ Copy Resync CLI'],
-      ['kill-btn',                   '■ Copy Stop CLI'],
-      ['pipeline-continue-btn',      '▶ Copy Continue CLI'],
-    ];
-    for (const [id, label] of mappings) {
-      const btn = document.getElementById(id);
-      if (!btn || btn.dataset.roLabeled === '1') continue;
-      if (!btn._originalLabel) btn._originalLabel = btn.textContent;
-      btn.textContent = label;
-      btn.title = (btn.title ? btn.title + '\n' : '') + 'Dashboard is read-only — click to copy the CLI command';
-      btn.dataset.roLabeled = '1';
-    }
-  }
 
   /**
    * Start a pipeline run, handling the "already running" 409 gracefully.
@@ -406,75 +283,29 @@
     storageKey: WITH_SLIDES_DEFAULT_KEY,
   };
 
+  /**
+   * The dashboard no longer spawns pipeline runs (live build tracking was
+   * removed — pipelines run in agent mode / the CLI). This now persists the
+   * prompt editor (if mounted) and copies the equivalent `npm run pipe`
+   * command to the clipboard so the operator can run it in their terminal.
+   * Resolves (never throws on the happy path) so existing call sites keep
+   * working without a live process to track.
+   */
   async function runPipeline(opts = {}) {
     const applyUiToStage = !!opts.applyUiToStage;
     const payload = { ...opts };
     delete payload.applyUiToStage;
 
-    if (applyUiToStage) {
-      const toSel = document.getElementById('pipeline-to-stage-select');
-      if (toSel && toSel.value) payload.toStage = toSel.value;
-    }
-
-    // Inject withSlides if the caller did not specify one explicitly.
-    // Resume actions (those passing resumeRunId) let the server inherit from
-    // the run-manifest unless the caller also sets overrideWithSlides=true,
-    // so we only need to provide a default for new runs.
     if (typeof payload.withSlides !== 'boolean') {
       payload.withSlides = getDashboardWithSlidesDefault();
     }
-
     const rm = document.getElementById('research-mode-select')?.value;
     if (rm) payload.researchMode = rm;
 
-    // CLI-first path: when the server has writes disabled, skip the fetch
-    // round-trip and hand the user a ready-to-paste command. Still persist
-    // the prompt editor content so the CLI picks up the latest text.
-    // We resolve (do not throw) so pre-existing `.catch(showToast.error)`
-    // call sites don't double-toast — the info toast copy is enough.
-    if (__writesEnabled === false) {
-      await ensurePipelinePromptSaved().catch(() => { /* non-fatal */ });
-      const cmd = buildPipeCliCommand(payload);
-      await copyCliCommand(cmd, { title: 'Run from CLI' });
-      return { cliGated: true, cliCommand: cmd };
-    }
-
-    await ensurePipelinePromptSaved().catch(err => {
-      throw new Error(err.message || String(err));
-    });
-    const res = await fetch('/api/pipeline/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.status === 409) {
-      const confirmed = window.confirm(
-        'A pipeline run is already in progress.\n\nForce-stop it and start this run instead?'
-      );
-      if (!confirmed) throw new Error('Cancelled — pipeline already running');
-      // Retry with force flag (preserve the same withSlides decision)
-      const payload2 = { ...payload, force: true };
-      const rm2 = document.getElementById('research-mode-select')?.value;
-      if (rm2) payload2.researchMode = rm2;
-      if (typeof payload2.withSlides !== 'boolean') {
-        payload2.withSlides = getDashboardWithSlidesDefault();
-      }
-      const res2 = await fetch('/api/pipeline/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload2),
-      });
-      if (!res2.ok) {
-        const text = await res2.text().catch(() => res2.statusText);
-        throw new Error(text || res2.statusText);
-      }
-      return res2.json();
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(text || res.statusText);
-    }
-    return res.json();
+    await ensurePipelinePromptSaved().catch(() => { /* non-fatal */ });
+    const cmd = buildPipeCliCommand(payload);
+    await copyCliCommand(cmd, { title: 'Run from CLI' });
+    return { cliGated: true, cliCommand: cmd };
   }
 
   /** Format bytes → "1.4 MB" */
@@ -575,14 +406,8 @@
     document.getElementById('build-panel-overlay')?.addEventListener('click', toggleBuildPanel);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeBuildPanel(); });
 
-    // Stage banner view-logs button
-    document.getElementById('stage-banner-view-btn')?.addEventListener('click', () => switchTab('pipeline'));
-
     // Load runs (non-blocking — page chrome is already visible)
     loadRuns();
-
-    // Pipeline CLI status badge (reflects CLI-spawned builds + read-only mode)
-    initCliStatusBadge();
 
     // Identity for "All / Mine" demo-app filter.
     try {
@@ -596,9 +421,8 @@
       }
     } catch (_) {}
 
-    // FS watch and log SSE (don't depend on currentRunId)
+    // FS watch (doesn't depend on currentRunId)
     connectFSWatch();
-    connectLogSSE();
 
     // Studio status polling
     updateStudioStatus();
@@ -644,12 +468,6 @@
       if (label) label.textContent = currentRun.displayName || currentRunId;
       // Render panel content
       renderBuildPanel(data.runs);
-      // Set up 10s panel refresh timer
-      if (buildPanelRefreshTimer) clearInterval(buildPanelRefreshTimer);
-      buildPanelRefreshTimer = setInterval(() => {
-        const panel = document.getElementById('build-panel');
-        if (panel && panel.classList.contains('open')) refreshBuildPanel();
-      }, 10000);
       loadCurrentRun();
       if (_urlInitialTab) {
         switchTab(_urlInitialTab);
@@ -668,28 +486,17 @@
     } catch (_) {}
   }
 
-  /** Stop pipeline if running (ignore errors). */
-  async function killPipelineSilently() {
-    try {
-      await apiPost('/api/pipeline/kill', {});
-    } catch (_) {
-      /* 404 = nothing running */
-    }
-  }
-
   /**
-   * Allocate a new empty run, select it, refresh the list, and open Pipeline to edit prompt.
-   * Optionally stops an in-flight pipeline so the dashboard matches the new run.
+   * Allocate a new empty run, select it, and refresh the list. Pipeline builds
+   * are run from the CLI (`npm run pipe`); the dashboard no longer spawns them.
    */
   async function createNewBuildAbandonCurrent() {
     const msg =
       'Create a new empty build and switch to it?\n\n' +
-      'If a pipeline is running, it will be stopped. Previous builds stay in Recent Builds.';
+      'Previous builds stay in Recent Builds. Run the pipeline from the CLI ' +
+      '(`npm run pipe`) once the prompt is ready.';
     if (!window.confirm(msg)) return;
     try {
-      await killPipelineSilently();
-      setPipelineRunning(false);
-      hideStageBanner();
       const data = await apiPost('/api/runs/allocate', {});
       const runId = data && data.runId;
       if (!runId) throw new Error('No runId returned');
@@ -701,8 +508,8 @@
       if (label) label.textContent = runId;
       await loadRuns();
       closeBuildPanel();
-      switchTab('pipeline');
-      showToast('New build created — edit the prompt in Pipeline, then Run Pipeline.', 'success');
+      switchTab('overview');
+      showToast('New build created — run the pipeline from the CLI when ready.', 'success');
     } catch (e) {
       showToast('Could not create build: ' + (e.message || String(e)), 'error');
     }
@@ -713,19 +520,11 @@
     if (!content) return;
     const list = Array.isArray(runs) ? runs : [];
 
-    // Find currently running run (has a currentStage or isRunning)
-    const liveRuns = list.filter(r => r.isRunning || r.currentStage);
-
     let html =
       '<div class="build-panel-new-wrap">' +
       '<button type="button" id="build-panel-new-btn" class="build-panel-new-btn">+ Create new build</button>' +
-      '<p class="build-panel-new-hint">Stops a running pipeline if needed. Opens Pipeline to edit <code>inputs/prompt.txt</code>.</p>' +
+      '<p class="build-panel-new-hint">Allocates an empty run. Run the pipeline from the CLI (<code>npm run pipe</code>).</p>' +
       '</div>';
-
-    if (liveRuns.length > 0) {
-      html += `<div class="build-panel-section-title">Current Build</div>`;
-      liveRuns.forEach(r => { html += buildCardHtml(r, true); });
-    }
 
     html += `<div class="build-panel-section-title">Recent Builds</div>`;
     if (list.length === 0) {
@@ -781,16 +580,13 @@
     });
   }
 
-  function buildCardHtml(r, isLiveSection) {
+  function buildCardHtml(r) {
     const runId = r.runId;
     const displayName = r.displayName || runId;
     const isActive = runId === currentRunId;
-    const isLive = !!(r.isRunning || r.currentStage);
-    const completedCount = (r.completedStages || []).length;
-    const totalStages = STAGES.length;
     const isComplete = !!(r.artifacts && (r.artifacts.mp4 || r.artifacts.pptx));
-    const badgeClass = isLive ? 'live' : isComplete ? 'complete' : 'partial';
-    const badgeText = isLive ? 'Live' : isComplete ? 'Complete' : 'Partial';
+    const badgeClass = isComplete ? 'complete' : 'partial';
+    const badgeText = isComplete ? 'Complete' : 'Partial';
 
     // Build mode badge — shows whether this run was produced as app-only or
     // app+slides. Sourced from run-manifest.buildMode (legacy runs without the
@@ -807,8 +603,7 @@
     const completedSet = new Set(r.completedStages || []);
     const pipsHtml = STAGES.map(s => {
       const isDone = completedSet.has(s);
-      const isActivePip = r.currentStage === s;
-      return `<div class="build-progress-pip ${isDone ? 'done' : isActivePip ? 'active' : ''}"></div>`;
+      return `<div class="build-progress-pip ${isDone ? 'done' : ''}"></div>`;
     }).join('');
 
     const product = r.script ? r.script.product : extractProduct(runId);
@@ -817,13 +612,12 @@
     const metaText = [company, product, persona].filter(Boolean).join(' · ');
 
     const qaText = _qaScoreLabel(r);
-    const stageText = isLive && r.currentStage ? `Stage: ${r.currentStage}` : '';
     const loadBtn = !isActive
       ? `<button class="build-card-load-btn" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">Load</button>`
       : `<span style="font-size:11px;color:#00A67E">Current</span>`;
 
     return `
-      <div class="build-card ${isActive ? 'active' : ''} ${isLive ? 'live' : ''}" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">
+      <div class="build-card ${isActive ? 'active' : ''}" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">
         <div class="build-card-header">
           <span class="build-card-id">${esc(displayName)}</span>
           <span class="build-card-badges">
@@ -835,7 +629,7 @@
         ${metaText ? `<div class="build-card-meta">${esc(metaText)}</div>` : ''}
         <div class="build-progress-bar">${pipsHtml}</div>
         <div class="build-card-footer">
-          <span>${[qaText, stageText].filter(Boolean).join(' · ')}</span>
+          <span>${qaText}</span>
           ${loadBtn}
         </div>
       </div>`;
@@ -865,7 +659,6 @@
 
   function loadCurrentRun() {
     loadOverview();
-    updateStageDropdown();
     if (currentTab === 'storyboard') loadStoryboard();
   }
 
@@ -893,7 +686,6 @@
       switchStoryboardSubtab(sub);
     }
     if (tabName === 'config') loadConfig();
-    if (tabName === 'pipeline') loadPipeline();
     if (tabName === 'valueprop') loadValueProps();
     // Always refetch demo-apps when entering the tab; otherwise a prior #demo-apps-list
     // causes loadDemoApps() to no-op and renamed display names appear to "revert".
@@ -1290,24 +1082,6 @@
         });
       });
 
-      // Wire pipeline timeline pill clicks → jump to Pipeline tab with stage pre-selected
-      const timeline = el.querySelector('.pipeline-timeline');
-      if (timeline) {
-        timeline.addEventListener('click', (e) => {
-          const pill = e.target.closest('.timeline-item[role="button"]');
-          if (!pill) return;
-          const stageName = pill.dataset.stage;
-          switchTab('pipeline');
-          setTimeout(() => {
-            const sel = document.getElementById('stage-select');
-            if (sel) {
-              const opt = sel.querySelector(`option[value="${CSS.escape(stageName)}"]:not([disabled])`);
-              if (opt) sel.value = stageName;
-            }
-          }, 150);
-        });
-      }
-
       // Wire up audio resync button (overview warning card)
       const overviewOpenTimelineBtn = document.getElementById('overview-open-timeline-btn');
       if (overviewOpenTimelineBtn) {
@@ -1324,11 +1098,10 @@
           overviewResyncBtn.textContent = 'Starting…';
           try {
             await runPipeline( { fromStage: 'resync-audio', resumeRunId: currentRunId });
-            showToast('Resync audio started', 'success');
-            switchTab('pipeline');
-            setPipelineRunning(true);
+            showToast('Resync CLI command copied — run it in your terminal', 'success');
           } catch (e) {
             showToast('Failed: ' + e.message, 'error');
+          } finally {
             overviewResyncBtn.disabled = false;
             overviewResyncBtn.textContent = '⟳ Resync Audio Now';
           }
@@ -1345,12 +1118,11 @@
             await runPipeline({
               fromStage: nextStage,
               resumeRunId: currentRunId,
-              applyUiToStage: true,
             });
-            showToast(`Pipeline resumed from ${nextStage}`, 'success');
-            switchTab('pipeline');
+            showToast(`Resume CLI command copied — run it in your terminal`, 'success');
           } catch (e) {
             showToast('Resume failed: ' + e.message, 'error');
+          } finally {
             resumeBtn.disabled = false;
             resumeBtn.innerHTML = `Resume from <strong style="margin-left:4px">${esc(nextStage)}</strong>`;
           }
@@ -1394,6 +1166,7 @@
           <div class="card">
             <div class="card-title">Build Strategy</div>
             ${renderCheckbox('PIPELINE_WITH_SLIDES', cfg, 'MASTER SWITCH. When OFF (default), the pipeline runs in app-only mode — host product UI only, no Plaid-branded insight/slide interstitials. When ON, the pipeline also produces slide scenes (insights, final value-summary slide). Pairs with the --with-slides / --app-only CLI flags.')}
+            ${renderCheckbox('PIPELINE_WITH_PANELS', cfg, 'JSON API-response panels axis. When ON (default), the post-panels stage adds the live Plaid API request/response panel + link-events overlays to the host app. When OFF, the app is built without those JSON panels. Pairs with the --with-panels / --no-panels CLI flags.')}
             ${renderSelect('BUILD_SLIDES_STRATEGY', cfg, 'How slide scenes are produced when PIPELINE_WITH_SLIDES is on. post-agent (default) runs a dedicated per-slide insertion stage AFTER build-qa, so each slide gets focused LLM context (higher quality). inline is the legacy one-shot build where slides share the prompt with the app (cheaper, lower quality).', [
               { value: 'post-agent', label: 'post-agent (default — per-slide insertion after app build)' },
               { value: 'inline', label: 'inline (legacy — slides built in the same prompt as the app)' },
@@ -2275,8 +2048,6 @@
             ${launchAppBtn}
           </div>
           <div class="sb-action-bar-right">
-            <button id="sb-continue-btn" class="btn btn-sm sb-continue-btn" style="display:none"
-              title="Pipeline is waiting — click to send ENTER and proceed to recording">▶ Continue</button>
             <a id="sb-timeline-btn" class="btn btn-sm btn-secondary" href="/timeline?run=${encodeURIComponent(currentRunId)}" target="_blank"
               title="Open the visual drag-and-resize timeline editor for this run" style="text-decoration:none">
               ◫ Timeline Editor
@@ -2684,68 +2455,46 @@
 
         try {
           await apiPost('/api/runs/' + currentRunId + '/auto-gap-overrides', { overrides });
-          if (statusEl) statusEl.textContent = '✓ Saved — restarting auto-gap…';
+          if (statusEl) statusEl.textContent = '✓ Saved — copying auto-gap CLI command…';
           await runPipeline( { fromStage: 'auto-gap', resumeRunId: currentRunId });
-          showToast('Gap overrides saved — pipeline restarting from auto-gap', 'success');
-          setPipelineRunning(true);
-          switchTab('pipeline');
+          showToast('Gap overrides saved — auto-gap CLI command copied', 'success');
         } catch (e) {
           showToast('Failed: ' + e.message, 'error');
           if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+        } finally {
           setBtnLoading(btn, false);
         }
       });
 
-      // Storyboard action bar: Record
+      // Storyboard action bar: Record (copies the equivalent CLI command)
       document.getElementById('sb-record-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('sb-record-btn');
-        setBtnLoading(btn, true, 'Starting…');
+        setBtnLoading(btn, true, 'Copying CLI…');
         try {
           await runPipeline( { fromStage: 'record', resumeRunId: currentRunId });
-          showToast('Recording started', 'success');
-          setPipelineRunning(true);
-          switchTab('pipeline');
+          showToast('Record CLI command copied — run it in your terminal', 'success');
         } catch (e) {
-          showToast('Failed to start recording: ' + e.message, 'error');
+          showToast('Failed: ' + e.message, 'error');
+        } finally {
           setBtnLoading(btn, false);
         }
       });
 
-      // Storyboard action bar: Rebuild + Record
+      // Storyboard action bar: Rebuild + Record (copies the equivalent CLI command)
       document.getElementById('sb-rebuild-record-btn')?.addEventListener('click', async () => {
         const btn = document.getElementById('sb-rebuild-record-btn');
         setBtnLoading(btn, true, 'Exporting feedback…');
-        const exported = await exportFeedback(true);
-        setBtnLoading(btn, true, 'Starting build…');
+        await exportFeedback(true);
+        setBtnLoading(btn, true, 'Copying CLI…');
         try {
           await runPipeline( { fromStage: 'build', resumeRunId: currentRunId });
-          showToast('Rebuild + record pipeline started', 'success');
-          setPipelineRunning(true);
-          switchTab('pipeline');
+          showToast('Rebuild + record CLI command copied — run it in your terminal', 'success');
         } catch (e) {
-          showToast('Failed to start: ' + e.message, 'error');
+          showToast('Failed: ' + e.message, 'error');
+        } finally {
           setBtnLoading(btn, false);
         }
       });
-
-      // Storyboard action bar: Continue (sends ENTER to blocked pipeline)
-      document.getElementById('sb-continue-btn')?.addEventListener('click', async () => {
-        try {
-          await apiPost('/api/pipeline/stdin', { input: '\n' });
-          showContinueButton(false);
-          showToast('Continue signal sent to pipeline', 'success');
-        } catch (e) {
-          showToast('Failed: ' + e.message, 'error');
-        }
-      });
-
-      // Reflect current pipeline/recording state into the action bar
-      api('/api/pipeline/status').then(s => {
-        if (s.running) {
-          setPipelineRunning(true);
-          startRecordingStatusPolling();
-        }
-      }).catch(() => {});
 
       // Auto-resize helper — collapses height to fit content
       function autoResizeTextarea(ta) {
@@ -4181,11 +3930,10 @@
         runBtn.textContent = 'Running…';
         try {
           await runPipeline( { fromStage: 'ai-suggest-overlays', resumeRunId: currentRunId });
-          showToast('Suggestion stage started — check Pipeline tab for progress', 'success');
-          switchTab('pipeline');
-          setPipelineRunning(true);
+          showToast('Suggestion-stage CLI command copied — run it in your terminal', 'success');
         } catch (e) {
-          showToast('Failed to start: ' + e.message, 'error');
+          showToast('Failed: ' + e.message, 'error');
+        } finally {
           runBtn.disabled = false;
           runBtn.textContent = 'Run Now';
         }
@@ -4247,683 +3995,6 @@
     });
   }
 
-  // ── Wizard Stage Tracker ────────────────────────────────────────────────────
-
-  let _wizardSelectedStage = null;
-  // Store log lines per stage for wizard log panel
-  const _wizardStageLogs = {};
-
-  function renderWizard(completedStages, activeStage) {
-    const completedSet = new Set(completedStages || []);
-
-    // Left: stage list
-    const listItems = STAGES.map(s => {
-      let stateClass = 'pending';
-      let icon = '○';
-      if (completedSet.has(s)) { stateClass = 'done'; icon = '✓'; }
-      else if (s === activeStage) { stateClass = 'active'; icon = '◎'; }
-      return `
-        <div class="wizard-stage-item ${stateClass} ${_wizardSelectedStage === s ? 'selected' : ''}" data-stage="${esc(s)}">
-          <span class="ws-icon">${icon}</span>
-          <span class="ws-label">${esc(s)}</span>
-        </div>`;
-    }).join('');
-
-    // Right: detail panel for selected stage
-    const sel = _wizardSelectedStage || activeStage || STAGES[0];
-    const meta = STAGE_META[sel] || {};
-    let stateLabel = 'Pending';
-    let stateColor = 'rgba(255,255,255,0.35)';
-    if (completedSet.has(sel)) { stateLabel = 'Complete'; stateColor = '#00A67E'; }
-    else if (sel === activeStage) { stateLabel = 'Running…'; stateColor = '#fbbf24'; }
-
-    const readsHtml = (meta.reads || []).map(f => `<div class="wizard-io-item">${esc(f)}</div>`).join('');
-    const writesHtml = (meta.writes || []).map(f => `<div class="wizard-io-item">${esc(f)}</div>`).join('');
-    const logLines = (_wizardStageLogs[sel] || []).slice(-30).join('\n');
-
-    const detailHtml = `
-      <div class="wizard-detail">
-        <div class="wizard-detail-name">${esc(sel)}</div>
-        <div class="wizard-detail-status" style="color:${stateColor}">${stateLabel}</div>
-        ${meta.desc ? `<div class="wizard-detail-desc">${esc(meta.desc)}</div>` : ''}
-        <div class="wizard-io-row">
-          <div class="wizard-io-col">
-            <div class="wizard-io-label">Reads</div>
-            ${readsHtml || '<div class="wizard-io-item" style="color:rgba(255,255,255,0.25)">—</div>'}
-          </div>
-          <div class="wizard-io-col">
-            <div class="wizard-io-label">Writes</div>
-            ${writesHtml || '<div class="wizard-io-item" style="color:rgba(255,255,255,0.25)">—</div>'}
-          </div>
-        </div>
-        <div class="wizard-actions">
-          <button class="btn btn-sm btn-secondary wizard-run-from-btn" data-stage="${esc(sel)}"
-            title="Run pipeline from this stage">▶ Run from here</button>
-        </div>
-        ${logLines ? `<div class="wizard-log">${esc(logLines)}</div>` : ''}
-      </div>`;
-
-    const html = `
-      <div class="wizard-layout" id="wizard-layout">
-        <div class="wizard-stage-list">${listItems}</div>
-        ${detailHtml}
-      </div>`;
-
-    return html;
-  }
-
-  // ── Pipeline Tab ───────────────────────────────────────────────────────────
-
-  async function loadPipeline() {
-    const el = document.getElementById('pipeline-content');
-
-    // Load stages and prompt in parallel
-    const [stagesData, promptData] = await Promise.allSettled([
-      api('/api/pipeline/stages'),
-      api('/api/config/prompt'),
-    ]);
-
-    const stages = stagesData.status === 'fulfilled' ? (stagesData.value.stages || STAGES) : STAGES;
-    const promptText = promptData.status === 'fulfilled' ? (promptData.value.content || '') : '';
-
-    const stageOptions = stages.map((s, i) =>
-      `<option value="${esc(s)}">${i + 1}. ${esc(s)}</option>`
-    ).join('');
-
-    const stagePills = stages.map(s =>
-      `<div class="stage-pill" id="stage-pill-${esc(s)}" data-stage="${esc(s)}">${esc(s)}</div>`
-    ).join('');
-
-    // Wizard section (injected before main controls)
-    let wizardHtml = '';
-    if (currentRunId) {
-      try {
-        const runInfo = await api('/api/runs/' + currentRunId);
-        const completedStages = runInfo.completedStages || [];
-        wizardHtml = renderWizard(completedStages, null);
-      } catch (_) {
-        wizardHtml = renderWizard([], null);
-      }
-    }
-
-    el.innerHTML = wizardHtml + `
-      <div class="card">
-        <div class="card-title">Prompt</div>
-        <p class="config-desc" style="margin:0 0 8px">Written to <code>inputs/prompt.txt</code>. Starting a run from this tab saves the editor first.</p>
-        <textarea id="pipeline-prompt-editor" style="width:100%;min-height:150px;box-sizing:border-box">${esc(promptText)}</textarea>
-        <button type="button" id="pipeline-save-prompt-btn" class="btn btn-secondary btn-sm" style="margin-top:8px">Save Prompt</button>
-      </div>
-
-      <div class="card">
-        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
-          <span>Run Pipeline</span>
-          <span id="pipeline-status-badge" class="pipeline-status-badge idle">○ Idle</span>
-        </div>
-        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-          <label>From stage: <select id="stage-select">${stageOptions}</select></label>
-          <label title="Stop after this stage (orchestrator --to). Leave default to run through touchup.">To stage: <select id="pipeline-to-stage-select">
-            <option value="">Through end</option>
-            ${stageOptions}
-          </select></label>
-          <label title="Passed as RESEARCH_MODE for the research stage (empty = use prompt line or default gapfill)">Research: <select id="research-mode-select">
-            <option value="">Default (gapfill) / prompt</option>
-            <option value="gapfill">gapfill</option>
-            <option value="broad">broad (maps to full)</option>
-            <option value="deep">deep (maps to full)</option>
-            <option value="full">full</option>
-            <option value="messaging">messaging</option>
-            <option value="skip">skip</option>
-          </select></label>
-          <label><input type="checkbox" id="no-touchup-check"> Skip touchup</label>
-          <label title="Off (default) = app-only build, no slide steps. On = include the slides build phase and final value-summary slide. Toggling here also updates your dashboard default."><input type="checkbox" id="with-slides-check"> Include slides phase</label>
-          <button id="run-btn" class="btn btn-primary">Run Pipeline</button>
-          <button id="run-from-btn" class="btn btn-secondary">Run from Stage</button>
-          <button id="run-refinement-pipeline-btn" class="btn btn-secondary" title="Export storyboard feedback then re-run from build stage">✦ Run Refinement</button>
-          <button id="resync-audio-btn" class="btn btn-secondary" title="Re-stitch voiceover audio at composition-space timings (no TTS calls)">⟳ Resync Audio</button>
-          <button id="open-studio-btn" class="btn btn-secondary" title="Open Remotion Studio pre-loaded with this run's props (requires render stage to have completed)">▶ Open in Studio</button>
-          <button id="kill-btn" class="btn btn-danger">Kill</button>
-        </div>
-        <div style="margin-top:12px">
-          <button id="pipeline-continue-btn" class="btn btn-primary" style="display:none;background:#fbbf24;border-color:#fbbf24;color:#000">
-            ▶ Continue — send ENTER to pipeline
-          </button>
-        </div>
-        <div class="stage-progress" style="margin-top:16px" id="stage-progress-bar">${stagePills}</div>
-        <div style="font-size:11px;color:rgba(255,255,255,0.35);margin-top:4px" id="stage-label"></div>
-        <div id="studio-status-panel" style="display:none;margin-top:12px;padding:10px 14px;background:rgba(0,166,126,0.10);border:1px solid rgba(0,166,126,0.35);border-radius:6px;font-size:13px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-            <span style="width:8px;height:8px;border-radius:50%;background:#00A67E;display:inline-block;animation:pulse 1.4s infinite"></span>
-            <strong style="color:#00A67E">Studio Recording</strong>
-            <span id="studio-phase-badge" style="font-size:11px;color:rgba(255,255,255,0.5)"></span>
-          </div>
-          <div id="studio-status-message" style="color:rgba(255,255,255,0.8);margin-bottom:4px"></div>
-          <div id="studio-step-counter" style="color:rgba(255,255,255,0.5);font-size:11px"></div>
-        </div>
-      </div>
-
-      <div class="card" id="stdin-card">
-        <div class="card-title">Pipeline Input</div>
-        <p class="config-desc" style="margin-bottom:10px">
-          Send text to the running pipeline (touchup requests, <code>render</code>, <code>skip</code>, or ENTER to continue a paused stage).
-        </p>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="text" id="stdin-input" class="config-input" placeholder='e.g. "reduce zoom on step 8" or render or skip' style="flex:1">
-          <button type="button" id="stdin-send-btn" class="btn btn-primary btn-sm">Send</button>
-        </div>
-        <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-          <button type="button" class="btn btn-sm btn-secondary stdin-shortcut" data-value="render">render</button>
-          <button type="button" class="btn btn-sm btn-secondary stdin-shortcut" data-value="skip">skip</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
-          <span>Live Logs</span>
-          <button class="btn btn-sm btn-secondary" id="clear-logs-btn">Clear</button>
-        </div>
-        <div id="log-viewer"></div>
-      </div>`;
-
-    // Check initial running state and update button states
-    api('/api/pipeline/status').then(s => setPipelineRunning(s.running)).catch(() => {});
-
-    // Populate stage dropdown based on current run's completed stages
-    updateStageDropdown();
-
-    // Initialize the "Include slides phase" checkbox from the dashboard-wide
-    // localStorage default. Toggling it also persists the new default — that
-    // way users can flip per run, but their preference sticks for next time.
-    const withSlidesCheck = document.getElementById('with-slides-check');
-    if (withSlidesCheck) {
-      withSlidesCheck.checked = getDashboardWithSlidesDefault();
-      withSlidesCheck.addEventListener('change', () => {
-        setDashboardWithSlidesDefault(!!withSlidesCheck.checked);
-      });
-    }
-
-    // Wizard stage item clicks
-    el.addEventListener('click', (e) => {
-      const item = e.target.closest('.wizard-stage-item');
-      if (item) {
-        _wizardSelectedStage = item.dataset.stage;
-        // Re-render wizard section only
-        const wizardLayout = document.getElementById('wizard-layout');
-        if (wizardLayout && currentRunId) {
-          api('/api/runs/' + currentRunId).then(runInfo => {
-            const wizardEl = document.createElement('div');
-            wizardEl.innerHTML = renderWizard(runInfo.completedStages || [], null);
-            const newLayout = wizardEl.querySelector('#wizard-layout');
-            if (newLayout) wizardLayout.replaceWith(newLayout);
-            // Re-wire wizard clicks
-          }).catch(() => {});
-        }
-      }
-      const runFromBtn = e.target.closest('.wizard-run-from-btn');
-      if (runFromBtn) {
-        const stage = runFromBtn.dataset.stage;
-        const stageSelect = document.getElementById('stage-select');
-        if (stageSelect) {
-          const opt = stageSelect.querySelector(`option[value="${CSS.escape(stage)}"]:not([disabled])`);
-          if (opt) stageSelect.value = stage;
-        }
-        showToast(`Stage set to ${stage} — click Run from Stage`, 'success');
-      }
-    });
-
-    // Continue button — sends '\n' to the blocked pipeline stdin
-    document.getElementById('pipeline-continue-btn').addEventListener('click', async () => {
-      try {
-        await apiPost('/api/pipeline/stdin', { input: '\n' });
-        showContinueButton(false);
-        showToast('Continue signal sent', 'success');
-      } catch (e) {
-        showToast('Failed: ' + e.message, 'error');
-      }
-    });
-
-    // Save prompt
-    document.getElementById('pipeline-save-prompt-btn').addEventListener('click', async () => {
-      const ta = document.getElementById('pipeline-prompt-editor');
-      if (!ta) return;
-      try {
-        await apiPost('/api/config/prompt', { content: ta.value });
-        showToast('Prompt saved', 'success');
-        // Sync to config tab editor if present
-        const configTa = document.getElementById('prompt-editor');
-        if (configTa) configTa.value = ta.value;
-      } catch (e) {
-        showToast('Save failed: ' + e.message, 'error');
-      }
-    });
-
-    // Run pipeline (full): new directory if current run already has a script; otherwise resume
-    // into the selected run (e.g. empty run from Builds → Create new build).
-    document.getElementById('run-btn').addEventListener('click', async () => {
-      const btn = document.getElementById('run-btn');
-      const noTouchup = document.getElementById('no-touchup-check').checked;
-      const withSlidesEl = document.getElementById('with-slides-check');
-      const withSlidesChoice = !!(withSlidesEl && withSlidesEl.checked);
-      setBtnLoading(btn, true, 'Starting…');
-      try {
-        // The checkbox is the per-run override; send overrideWithSlides=true
-        // so the server uses this value even for resumes that have a recorded
-        // build mode in their run-manifest.
-        const payload = {
-          noTouchup,
-          applyUiToStage: true,
-          withSlides: withSlidesChoice,
-          overrideWithSlides: true,
-        };
-        if (currentRunId) {
-          try {
-            const meta = await api('/api/runs/' + currentRunId);
-            if (meta.artifacts && meta.artifacts.script) {
-              payload.createNewRun = true;
-            } else {
-              payload.resumeRunId = currentRunId;
-            }
-          } catch (_) {
-            payload.createNewRun = true;
-          }
-        } else {
-          payload.createNewRun = true;
-        }
-        const started = await runPipeline(payload);
-        if (started && started.runId) {
-          currentRunId = started.runId;
-          localStorage.setItem('lastRunId', currentRunId);
-          await loadRuns();
-        }
-        showToast('Pipeline started', 'success');
-        setPipelineRunning(true);
-      } catch (e) {
-        showToast('Failed to start: ' + e.message, 'error');
-      } finally {
-        setBtnLoading(btn, false);
-      }
-    });
-
-    // Run from stage
-    document.getElementById('run-from-btn').addEventListener('click', async () => {
-      const btn = document.getElementById('run-from-btn');
-      const fromStage = document.getElementById('stage-select').value;
-      const noTouchup = document.getElementById('no-touchup-check').checked;
-      setBtnLoading(btn, true, 'Starting…');
-      try {
-        await runPipeline({ fromStage, noTouchup, resumeRunId: currentRunId, applyUiToStage: true });
-        showToast(`Pipeline started from ${fromStage}`, 'success');
-        setPipelineRunning(true);
-      } catch (e) {
-        showToast('Failed to start: ' + e.message, 'error');
-      } finally {
-        setBtnLoading(btn, false);
-      }
-    });
-
-    // Run Refinement (pipeline tab shortcut — exports feedback then runs from build)
-    document.getElementById('run-refinement-pipeline-btn')?.addEventListener('click', async () => {
-      const noTouchup = document.getElementById('no-touchup-check').checked;
-      try {
-        await runPipeline({ fromStage: 'build', noTouchup, resumeRunId: currentRunId, applyUiToStage: true });
-        showToast('Refinement started from build stage', 'success');
-        setPipelineRunning(true);
-      } catch (e) {
-        showToast('Failed: ' + e.message, 'error');
-      }
-    });
-
-    // Open in Studio — launches Remotion Studio pre-loaded with this run's remotion-props.json (B4)
-    document.getElementById('open-studio-btn')?.addEventListener('click', async () => {
-      const btn = document.getElementById('open-studio-btn');
-      if (!currentRunId) { showToast('No run selected', 'error'); return; }
-      setBtnLoading(btn, true, 'Opening…');
-      try {
-        const result = await apiPost(`/api/runs/${currentRunId}/open-studio`, {});
-        showToast('Remotion Studio launching at http://localhost:3000', 'success');
-        // Open the Studio URL in a new tab after a short delay for it to start
-        setTimeout(() => window.open('http://localhost:3000', '_blank'), 2500);
-      } catch (e) {
-        showToast('Failed: ' + e.message, 'error');
-      } finally {
-        setBtnLoading(btn, false);
-      }
-    });
-
-    // Resync Audio — runs resync-audio stage only (re-stitches voiceover.mp3 at comp-space timings)
-    document.getElementById('resync-audio-btn')?.addEventListener('click', async () => {
-      const btn = document.getElementById('resync-audio-btn');
-      setBtnLoading(btn, true, 'Resyncing…');
-      try {
-        await runPipeline( { fromStage: 'resync-audio', resumeRunId: currentRunId });
-        showToast('Resync audio started', 'success');
-        setPipelineRunning(true);
-      } catch (e) {
-        showToast('Failed: ' + e.message, 'error');
-        setBtnLoading(btn, false);
-      }
-    });
-
-    // Kill
-    document.getElementById('kill-btn').addEventListener('click', async () => {
-      try {
-        await apiPost('/api/pipeline/kill', {});
-        showToast('Kill signal sent', 'warn');
-      } catch (e) {
-        showToast('Kill failed: ' + e.message, 'error');
-      }
-    });
-
-    // Pipeline stdin input (touchup requests / render / skip / continue)
-    async function sendStdin(value) {
-      const text = (value || '').trim();
-      try {
-        await apiPost('/api/pipeline/stdin', { input: text + '\n' });
-        showContinueButton(false);
-        if (text) showToast('Sent: ' + text, 'success');
-      } catch (e) {
-        showToast('Failed: ' + e.message, 'error');
-      }
-    }
-
-    document.getElementById('stdin-send-btn').addEventListener('click', () => {
-      const inp = document.getElementById('stdin-input');
-      sendStdin(inp.value);
-      inp.value = '';
-    });
-
-    document.getElementById('stdin-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const inp = document.getElementById('stdin-input');
-        sendStdin(inp.value);
-        inp.value = '';
-      }
-    });
-
-    document.querySelectorAll('.stdin-shortcut').forEach(btn => {
-      btn.addEventListener('click', () => sendStdin(btn.dataset.value));
-    });
-
-    // Clear logs
-    document.getElementById('clear-logs-btn').addEventListener('click', () => {
-      const viewer = document.getElementById('log-viewer');
-      if (viewer) viewer.innerHTML = '';
-    });
-
-    // Restore persisted orchestrator log when pipeline is idle (parity with CLI + resume).
-    const viewerPre = document.getElementById('log-viewer');
-    let skipLogReplay = false;
-    if (viewerPre) {
-      viewerPre.innerHTML = '';
-      try {
-        const st = await api('/api/pipeline/status');
-        if (!st.running && currentRunId) {
-          const hist = await api(
-            '/api/runs/' + encodeURIComponent(currentRunId) + '/pipeline-console-log?maxLines=4000'
-          );
-          if (hist && Array.isArray(hist.lines) && hist.lines.length > 0) {
-            hist.lines.forEach((row) => {
-              const entry =
-                typeof row === 'object' && row !== null && typeof row.text === 'string'
-                  ? row
-                  : { text: String(row), stream: 'stdout' };
-              appendLogEntry(entry);
-            });
-            skipLogReplay = true;
-          }
-        }
-      } catch (_) {
-        /* no file yet */
-      }
-    }
-
-    // Re-connect log SSE so new messages flow into the newly rendered #log-viewer
-    connectLogSSE({ skipReplay: skipLogReplay });
-  }
-
-  // ── Stage Banner ────────────────────────────────────────────────────────────
-
-  function updateStageBanner(stageName, stageIndex) {
-    const banner = document.getElementById('stage-banner');
-    if (!banner) return;
-    const total = STAGES.length;
-    const labelEl = document.getElementById('stage-banner-label');
-    if (labelEl) labelEl.textContent = `Stage ${stageIndex + 1}/${total} · ${stageName}`;
-    banner.style.display = 'flex';
-    if (!stageBannerStart) stageBannerStart = Date.now();
-    if (stageBannerTimer) clearInterval(stageBannerTimer);
-    stageBannerTimer = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - stageBannerStart) / 1000);
-      const m = Math.floor(elapsed / 60);
-      const s = elapsed % 60;
-      const el = document.getElementById('stage-banner-elapsed');
-      if (el) el.textContent = `${m}m ${s < 10 ? '0' : ''}${s}s`;
-    }, 1000);
-  }
-
-  function hideStageBanner() {
-    const banner = document.getElementById('stage-banner');
-    if (banner) banner.style.display = 'none';
-    if (stageBannerTimer) { clearInterval(stageBannerTimer); stageBannerTimer = null; }
-    stageBannerStart = null;
-  }
-
-  // ── Log SSE ────────────────────────────────────────────────────────────────
-
-  /**
-   * @param {{ skipReplay?: boolean }} [opts] skipReplay: true when log body was loaded from pipeline-console.log (avoid duplicating in-memory replay).
-   */
-  function connectLogSSE(opts = {}) {
-    if (logSSE) { logSSE.close(); logSSE = null; }
-    _logSSEConnectedAt = Date.now();
-    const q = opts.skipReplay ? '?replay=0' : '';
-    logSSE = new EventSource('/api/pipeline/logs' + q);
-    logSSE.onmessage = (e) => {
-      let entry;
-      try {
-        entry = JSON.parse(e.data);
-        if (!entry || typeof entry.text !== 'string') throw new Error('bad entry');
-      } catch (_) {
-        entry = { text: e.data, stream: 'dashboard' };
-      }
-      appendLogEntry(entry);
-    };
-    logSSE.onerror = () => {
-      // SSE may not be available; fail silently
-    };
-  }
-
-  /** Local time + ms for live log prefix (entry.at is ISO from server when present). */
-  function formatLogTimestamp(iso) {
-    if (!iso || typeof iso !== 'string') return '';
-    try {
-      const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return iso;
-      const t = d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const ms = String(d.getMilliseconds()).padStart(3, '0');
-      return `${t}.${ms}`;
-    } catch (_) {
-      return iso;
-    }
-  }
-
-  /** One console line from orchestrator (stdout/stderr) or dashboard wrapper. */
-  function appendLogEntry(entry) {
-    const line = entry?.text != null ? String(entry.text) : '';
-    const stream = typeof entry?.stream === 'string' && entry.stream ? entry.stream : 'stdout';
-    const at = typeof entry?.at === 'string' && entry.at ? entry.at : '';
-    const viewer = document.getElementById('log-viewer');
-    if (!viewer) return;
-    const div = document.createElement('div');
-    const lower = line.toLowerCase();
-    let cls = 'log-default';
-    if (lower.includes('[stage:') || lower.includes('stage:')) cls = 'log-stage';
-    else if (lower.includes('error')) cls = 'log-error';
-    else if (lower.includes('warn')) cls = 'log-warn';
-    else if (stream === 'stderr') cls = 'log-stderr';
-    else if (stream === 'dashboard') cls = 'log-dashboard';
-    div.className = 'log-line' + (line === '' ? ' log-line-empty' : '');
-
-    const ts = formatLogTimestamp(at);
-    if (ts) {
-      const tsSpan = document.createElement('span');
-      tsSpan.className = 'log-timestamp';
-      tsSpan.textContent = '[' + ts + '] ';
-      div.appendChild(tsSpan);
-    }
-    const msg = document.createElement('span');
-    msg.className = 'log-message ' + cls;
-    if (line === '') msg.innerHTML = '&nbsp;';
-    else msg.textContent = line;
-    div.appendChild(msg);
-
-    viewer.appendChild(div);
-    viewer.scrollTop = viewer.scrollHeight;
-    updateStageProgress(line);
-
-    // Detect when orchestrator is waiting for ENTER — show Continue button
-    const needsEnter = lower.includes('press enter') || lower.includes('waiting for continue signal') ||
-                       lower.includes('click "▶ continue"') ||
-                       lower.includes('[studio: awaiting-input]');
-    const pipelineDone = lower.includes('pipeline exited') || lower.includes('[pipeline error');
-    if (needsEnter) showContinueButton(true);
-    if (pipelineDone) {
-      showContinueButton(false);
-      setPipelineRunning(false);
-      hideStageBanner();
-      stopStudioStatusPolling();
-      // Refresh overview timeline after a brief delay so pipeline-progress.json is written
-      setTimeout(() => { if (currentTab === 'overview') loadOverview(); }, 1500);
-    }
-
-    // When auto-capture completes, switch to storyboard tab automatically.
-    // Guard: skip replayed SSE history (replay arrives within ~200ms of connection).
-    if (lower.includes('auto-captured') && lower.includes('build screenshots')) {
-      if (Date.now() - _logSSEConnectedAt > 2000) {
-        loadRuns().then(() => {
-          if (currentTab === 'pipeline') switchTab('storyboard');
-        });
-      }
-    }
-  }
-
-  function showContinueButton(show) {
-    const btn   = document.getElementById('pipeline-continue-btn');
-    const sbBtn = document.getElementById('sb-continue-btn');
-    if (btn)   btn.style.display   = show ? 'inline-flex' : 'none';
-    if (sbBtn) sbBtn.style.display = show ? 'inline-flex' : 'none';
-  }
-
-  async function updateStageDropdown() {
-    const sel = document.getElementById('stage-select');
-    if (!sel) return;
-
-    let completedStages = [], nextStage = null;
-
-    if (currentRunId) {
-      try {
-        const run = await api('/api/runs/' + currentRunId);
-        completedStages = run.completedStages || [];
-        nextStage = run.resumeFromStage || null;
-        // Backward compat: if no completedStages but has lastCompletedStage, infer
-        if (completedStages.length === 0 && run.lastCompletedStage) {
-          const lastIdx = STAGES.indexOf(run.lastCompletedStage);
-          if (lastIdx >= 0) completedStages = STAGES.slice(0, lastIdx + 1);
-        }
-      } catch (_) {
-        // Run data unavailable — show all stages as selectable
-      }
-    }
-
-    const completedSet = new Set(completedStages);
-    const nextIdx = nextStage ? STAGES.indexOf(nextStage) : -1;
-    const currentVal = sel.value;
-
-    sel.innerHTML = STAGES.map((s, i) => {
-      const isDone   = completedSet.has(s);
-      const isNext   = s === nextStage;
-      // Locked = hasn't run AND isn't the next stage AND there IS a known next stage
-      const isLocked = !isDone && !isNext && nextIdx !== -1 && i > nextIdx;
-      let label;
-      if (isDone)        label = `[✓] ${i + 1}. ${s}`;
-      else if (isNext)   label = `[▶] ${i + 1}. ${s} ← next`;
-      else if (isLocked) label = `[🔒] ${i + 1}. ${s}`;
-      else               label = `${i + 1}. ${s}`;
-      return `<option value="${esc(s)}" ${isLocked ? 'disabled' : ''}>${esc(label)}</option>`;
-    }).join('');
-
-    // Re-select previous value if still available (not disabled)
-    const prevOpt = currentVal && sel.querySelector(`option[value="${CSS.escape(currentVal)}"]:not([disabled])`);
-    if (prevOpt) {
-      sel.value = currentVal;
-    } else if (nextStage) {
-      const nOpt = sel.querySelector(`option[value="${CSS.escape(nextStage)}"]:not([disabled])`);
-      if (nOpt) sel.value = nextStage;
-    }
-  }
-
-  function setPipelineRunning(running) {
-    const runBtn      = document.getElementById('run-btn');
-    const runFromBtn  = document.getElementById('run-from-btn');
-    const refineBtn   = document.getElementById('run-refinement-pipeline-btn');
-    const resyncBtn   = document.getElementById('resync-audio-btn');
-    const studioBtn   = document.getElementById('open-studio-btn');
-    const killBtn     = document.getElementById('kill-btn');
-    if (studioBtn) studioBtn.disabled = running;
-    const statusBadge = document.getElementById('pipeline-status-badge');
-    if (runBtn)     runBtn.disabled     = running;
-    if (runFromBtn) runFromBtn.disabled = running;
-    if (refineBtn)  refineBtn.disabled  = running;
-    if (resyncBtn)  resyncBtn.disabled  = running;
-    if (killBtn)    killBtn.disabled    = !running;
-    if (statusBadge) {
-      statusBadge.textContent  = running ? '● Running' : '○ Idle';
-      statusBadge.className    = 'pipeline-status-badge ' + (running ? 'running' : 'idle');
-    }
-    // Start recording status polling while pipeline runs; stop when done
-    if (running) startRecordingStatusPolling();
-    else stopRecordingStatusPolling();
-
-    // Disable/enable storyboard action buttons
-    const sbRecordBtn = document.getElementById('sb-record-btn');
-    const sbRebuildBtn = document.getElementById('sb-rebuild-record-btn');
-    if (sbRecordBtn)  sbRecordBtn.disabled  = running;
-    if (sbRebuildBtn) sbRebuildBtn.disabled = running;
-  }
-
-  // Parse "[Stage: build]" patterns to update the stage progress pills
-  let _activeStageIndex = -1;
-  function updateStageProgress(line) {
-    const m = line.match(/\[stage:\s*([a-z-]+)\]/i) || line.match(/stage:\s*([a-z-]+)/i);
-    if (!m) return;
-    const stageName = m[1].toLowerCase();
-    const idx = STAGES.indexOf(stageName);
-    if (idx === -1) return;
-
-    // Mark all previous as done, current as active
-    STAGES.forEach((s, i) => {
-      const pill = document.getElementById('stage-pill-' + s);
-      if (!pill) return;
-      if (i < idx) { pill.className = 'stage-pill done'; }
-      else if (i === idx) { pill.className = 'stage-pill active'; }
-      else { pill.className = 'stage-pill'; }
-    });
-
-    const label = document.getElementById('stage-label');
-    if (label) label.textContent = 'Running: ' + stageName;
-    _activeStageIndex = idx;
-
-    // Update stage banner
-    updateStageBanner(stageName, idx);
-
-    // Show studio status panel when record+qa stage becomes active
-    const isRecordStage = stageName === 'record+qa' || stageName === 'record';
-    if (isRecordStage && currentRunId) {
-      startStudioStatusPolling();
-    } else {
-      stopStudioStatusPolling();
-    }
-  }
 
   // ── Studio recording status panel ──────────────────────────────────────────
 
