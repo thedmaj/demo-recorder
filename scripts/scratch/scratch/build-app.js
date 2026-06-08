@@ -856,22 +856,53 @@ function injectLocalBrandLogo(html, brand) {
   if (!(brand && brand.logo && brand.logo._localSource)) return html;
   const alt = String((brand.name || 'Bank')).replace(/"/g, '');
   const img = `<img src="brand-logo.png" alt="${alt}" data-testid="host-bank-logo-img" class="brand-logo-img" style="width:28px;height:28px;min-width:28px;object-fit:contain;border-radius:50%;display:block">`;
+  const textColor = (brand.colors && brand.colors.textPrimary) || '#1B1F3B';
   let out = html;
   let swapped = 0;
-  // Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
+  // 1) Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
   out = out.replace(
     /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
     (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
   );
-  // If the app already references brand-logo.png (LLM complied), leave as-is.
+  // 2) Else inject before a nav wordmark text node (.logo-text / .brand-name).
   if (swapped === 0 && !/brand-logo\.png/.test(out)) {
-    // Fallback: inject the image just before the first nav wordmark text node.
     out = out.replace(
-      /(<(?:span|div)\b[^>]*\bclass="[^"]*\blogo-text\b[^"]*"[^>]*>)/i,
+      /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text)\b[^"]*"[^>]*>)/i,
       (m) => { swapped++; return `${img}${m}`; }
     );
   }
-  if (swapped > 0) console.log(`[Build] Injected local brand logo <img> into ${swapped} nav mark(s).`);
+  // 3) Last-resort guarantee: the LLM produced a nav with NO brand/logo slot at
+  //    all. Inject a brand lockup (logo + wordmark) right after each <nav> /
+  //    <header> opening tag that doesn't already carry the logo. Ensures the
+  //    supplied logo is always present on host chrome.
+  if (swapped === 0 && !/brand-logo\.png/.test(out)) {
+    const lockup =
+      `<div class="brand-logo-lockup" data-testid="host-bank-logo-shell" ` +
+      `style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto">` +
+      `${img}<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span></div>`;
+    out = out.replace(/(<(?:nav|header)\b[^>]*>)/gi, (openTag) => {
+      swapped++;
+      return `${openTag}${lockup}`;
+    });
+  }
+  if (swapped > 0) console.log(`[Build] Injected local brand logo into ${swapped} host nav/mark slot(s).`);
+  else console.warn('[Build] Local brand logo: no nav/header or logo slot found to inject into.');
+  return out;
+}
+
+// Backstop for the CRA "Demo UI Guidance": raw permissible-purpose enums must not
+// appear in consumer copy. Strip the parenthetical raw enum from visible text
+// (e.g. "…extension of credit (EXTENSION_OF_CREDIT)" → "…extension of credit").
+// The quoted JSON value ("EXTENSION_OF_CREDIT") in the #api-response-panel is
+// preserved (only the visible-copy parenthetical is removed).
+function normalizeRawEnumDisplay(html) {
+  if (!html || typeof html !== 'string') return html;
+  const before = html;
+  const out = html.replace(
+    /\s*\((?:EXTENSION_OF_CREDIT|ACCOUNT_REVIEW_CREDIT|TENANT_SCREENING|EMPLOYMENT|RISK_ASSESSMENT)\)/g,
+    ''
+  );
+  if (out !== before) console.log('[Build] Normalized raw permissible-purpose enum in consumer copy.');
   return out;
 }
 
@@ -3855,6 +3886,10 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // Local host-brand logo: guarantee the supplied logo image is used in the nav
   // even if the build agent drew its own placeholder glyph.
   html = injectLocalBrandLogo(html, brand);
+
+  // CRA Demo UI Guidance backstop: strip raw permissible-purpose enums from
+  // consumer copy (the JSON panel keeps the raw value).
+  html = normalizeRawEnumDisplay(html);
 
   // Panels axis: on a --no-panels build (post-panels skipped), strip any empty
   // #api-response-panel stub the LLM emitted so zero panel chrome ships.
