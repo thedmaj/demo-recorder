@@ -117,7 +117,8 @@ Feature Cash Flow Insights when the persona is a lender or credit platform that 
 - [DRAFT] Single integration delivers Base Report + Cash Flow Insights + optional LendScore under one consumer report contract.
 
 ## Implementation Pitfalls
-<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+<!-- demo-UI guidance -->
+- **Consumer/host screens stay realistic — no behind-the-scenes leakage.** Never show webhook/event names (e.g. `USER_CHECK_REPORT_READY`, `SESSION_FINISHED`), raw API endpoints/field names, raw report JSON, `report_id`/`user_id`, or the raw `EXTENSION_OF_CREDIT` enum on host screens. Normalize permissible purpose for humans (e.g. "Extension of credit"). Move technical detail / raw report data to Plaid **slides**, the JSON **`#api-response-panel`**, or a clearly labeled **"Underwriter Internal view"** step. (Full guidance: see the "Demo UI Guidance" section in `inputs/products/plaid-cra-base-report.md`.)
 
 - **Always pair `cra_cashflow_insights` with `cra_base_report`** in `products[]` — Cash Flow Insights is an add-on, not standalone.
 - **`report.attributes` is a key/value map** — do not treat it as an array of `{name, value}` objects.

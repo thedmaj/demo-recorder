@@ -65,6 +65,8 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 | [DRAFT] "It's still beta" | "LendScore is closed beta, which means controlled access with dedicated integration support. GTM proof points show up to 25% predictive lift — current customers are running it in parallel for validation." | GTM | [DRAFT] |
 
 ## Implementation Pitfalls
+<!-- demo-UI guidance -->
+- **Consumer/host screens stay realistic — no behind-the-scenes leakage.** Never show webhook/event names (e.g. `USER_CHECK_REPORT_READY`, `SESSION_FINISHED`), raw API endpoints/field names, raw report JSON, `report_id`/`user_id`, or the raw `EXTENSION_OF_CREDIT` enum on host screens. Normalize permissible purpose for humans (e.g. "Extension of credit"). Move technical detail / raw report data to Plaid **slides**, the JSON **`#api-response-panel`**, or a clearly labeled **"Underwriter Internal view"** step. (Full guidance: see the "Demo UI Guidance" section in `inputs/products/plaid-cra-base-report.md`.)
 
 - **`cra_base_report` must be in `products[]`** alongside `cra_lend_score` — LendScore is an add-on, never standalone
 - **`cra_options.cra_lend_score.version: "LS1"`** is required on the Link token (AskBill-confirmed 2026-05-31)

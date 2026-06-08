@@ -10,7 +10,7 @@ use_cases:
   - "consumer-report-income-review"
   - "income-stability-assessment"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-05-31T04:41:50.379Z"
+last_ai_update: "2026-06-06T18:06:18.360Z"
 needs_review: true
 approved: true
 version: 1
@@ -134,7 +134,8 @@ Same rules as **CRA Base Report**: non-OAuth institution (**First Platypus Bank*
 Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-credentials/#credit-and-income-testing-credentials).
 
 ## Implementation Pitfalls
-<!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+<!-- demo-UI guidance -->
+- **Consumer/host screens stay realistic — no behind-the-scenes leakage.** Never show webhook/event names (e.g. `USER_CHECK_REPORT_READY`, `SESSION_FINISHED`), raw API endpoints/field names, raw report JSON, `report_id`/`user_id`, or the raw `EXTENSION_OF_CREDIT` enum on host screens. Normalize permissible purpose for humans (e.g. "Extension of credit"). Move technical detail / raw report data to Plaid **slides**, the JSON **`#api-response-panel`**, or a clearly labeled **"Underwriter Internal view"** step. (Full guidance: see the "Demo UI Guidance" section in `inputs/products/plaid-cra-base-report.md`.)
 
 - Do not use `income_verification` as the Link product for CRA Income Insights demos.
 - Do not retrieve CRA Income Insights with `/credit/bank_income/get` or `/credit/payroll_income/get`.
@@ -164,6 +165,38 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Identity-v3 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the onboarding desk.","status":"approved","source":"AskBill / Plaid docs + per-product KB"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). The income_verification Link token ONLY accepts {income_verification, employment}; do not bundle other products into it.","status":"approved","source":"AskBill / Plaid docs + brief CRITICAL note"}
+- [high] {"claim":"Plaid IDV runs as its own mutually-exclusive Link session (document + data source + selfie) and verifies identity without manual ID emailing.","status":"approved","source":"AskBill / Plaid IDV docs"}
+- [high] {"claim":"A single Item used for Bank Income can also serve an assets/balance snapshot via /accounts/balance/get — income + balances from one connection.","status":"approved","source":"AskBill / Plaid Balance docs"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Identity-Assets-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). The income_verification Link token ONLY accepts {income_verification, employment}; do not bundle other products into it.","status":"approved","source":"AskBill / Plaid docs + brief CRITICAL note"}
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the underwriting desk.","status":"approved","source":"AskBill / Plaid docs + per-product KB"}
+- [high] {"claim":"Plaid IDV runs as its own flow (document + selfie) and verifies identity without manual ID emailing.","status":"approved","source":"AskBill / Plaid IDV docs"}
+- [high] {"claim":"A single Item used for Bank Income can also serve an assets/balance snapshot via /accounts/balance/get — income + balances from one connection.","status":"approved","source":"AskBill / Plaid Balance docs"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the desk.","status":"approved","source":"AskBill / Plaid docs + per-product KB"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). Do not bundle other products into the income_verification Link token.","status":"approved","source":"AskBill / Plaid docs + brief CRITICAL note"}
+- [high] {"claim":"Plaid IDV runs as its own mutually-exclusive Link session (document + selfie) and verifies identity without manual ID emailing.","status":"approved","source":"AskBill / Plaid IDV docs"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Identity-Assets-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the finance desk","status":"approved"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). Do not bundle other products into the income_verification Link token.","status":"approved","source":"AskBill / Plaid docs + brief CRITICAL note"}
+- [high] {"claim":"Plaid IDV runs as its own mutually-exclusive Link session (document + data source + selfie) and verifies identity without manual ID emailing.","status":"approved","source":"AskBill / Plaid IDV docs"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the finance desk","status":"approved"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). Do not bundle other products into the income_verification Link token.","status":"approved","source":"AskBill / Plaid docs + brief CRITICAL note"}
+- [high] {"claim":"Plaid IDV runs as its own mutually-exclusive Link session (document + data source + selfie) and verifies identity without manual ID emailing.","status":"approved","source":"AskBill / Plaid IDV docs"}
 
 ### 2026-05-31 — Run: 2026-05-31-Dealer-Finance-Desk-Verify-Auth-Identity-Signal-Income-Statements-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

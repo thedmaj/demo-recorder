@@ -11,7 +11,7 @@ use_cases:
   - "cash-flow-underwriting"
   - "account-stability-review"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-01T16:48:40.037Z"
+last_ai_update: "2026-06-08T14:36:25.974Z"
 needs_review: true
 approved: true
 version: 1
@@ -146,8 +146,31 @@ Do **not** document **`user_bank_income`** here — that sandbox login is for **
 
 Official list: [Plaid Sandbox test credentials — Credit and income testing](https://plaid.com/docs/sandbox/test-credentials/#credit-and-income-testing-credentials).
 
+## Demo UI Guidance — Realistic Front-End vs. Behind-the-Scenes (CRITICAL)
+<!-- 🔄 SHARED — applies to the whole CRA / Consumer Report family. -->
+
+Host/consumer screens must read like a real product a borrower/applicant uses. They must NOT leak developer or back-office artifacts. Move behind-the-scenes data and logic to one of: (a) Plaid technical **slides**, (b) the global **JSON `#api-response-panel`**, or (c) a clearly labeled **"Underwriter Internal view"** step that is visually distinct from the consumer app.
+
+**Keep OFF consumer/host screens → move to slides / JSON panel / Underwriter view:**
+- Webhook & event names / readiness messages — e.g. `USER_CHECK_REPORT_READY`, `SESSION_FINISHED`, `ITEM_ADD_RESULT`. The borrower sees a plain status ("Verifying your information…" → "Verification complete"), never the webhook/event name.
+- Raw API endpoints (`/cra/check_report/base_report/get`), field names, raw report JSON, `report_id`, `user_id` (`usr_…`), request IDs.
+- Over-detailed report internals: full transaction dumps, every line item, internal/model attributes, raw `nsf_overdraft_transactions_count` / `days_available` field labels, scoring math, thresholds. Host shows a clean human summary; the detailed report lives in the JSON panel, a slide, or the Underwriter view.
+
+**OK on consumer/host screens (human-normalized):**
+- Consent + permissible purpose — but **normalized for humans**, e.g. "to review your application for credit" or "Extension of credit". NEVER render the raw enum `EXTENSION_OF_CREDIT` (uppercase + underscores) in consumer UI. The raw enum is fine in the JSON panel / technical slide.
+- A plain verification status and a clean outcome (e.g. "Income & assets verified", "Pre-approved up to $X").
+
+**Where behind-the-scenes content goes:**
+- **Slides:** the technical "how it works" — endpoint, response shape, highlighted fields, scoring/decision logic.
+- **JSON `#api-response-panel`:** the raw request/response for that step (raw enums and field names are expected here).
+- **"Underwriter Internal view" step (optional):** when the story needs lender-side detail (full report, attributes, decision rationale), render it as a DISTINCT, clearly-labeled internal/underwriter console step — never mixed into the borrower's consumer screens.
+
+**Rule of thumb:** if a real borrower would never see it in a polished consumer app, it does not belong on the host screen — put it in a slide, the JSON panel, or a labeled Underwriter Internal view.
+
 ## Implementation Pitfalls
 <!-- ⚠️ HUMAN-OWNED — product-specific mistakes to avoid in prompts, scripts, and demos. -->
+
+- Host/consumer screens never show webhook/event names (e.g. `USER_CHECK_REPORT_READY`), raw API field names, raw report JSON, or the raw `EXTENSION_OF_CREDIT` enum — see "Demo UI Guidance" above; move those to slides / JSON panel / a labeled Underwriter Internal view, and normalize permissible purpose for humans.
 
 - Do not skip the user-creation / identity-setup beat when the flow depends on CRA user data.
 - Do not present Base Report retrieval as the same thing as Auth, Signal, or payment-rails retrieval.
@@ -177,6 +200,71 @@ Official list: [Plaid Sandbox test credentials — Credit and income testing](ht
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-08 — Run: 2026-06-08-Ascend-Bank-Digital-Mortgage-CRA-Assets-Statements-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"CRA Base Report and CRA Income Insights ride the same single Plaid Link connection, so layering verified income on top of cash-flow/asset underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Mortgage-specific: Plaid CRA VOA enables lenders to qualify for Fannie Mae Day 1 Certainty reps-and-warrants relief — less fallback, more automation.","source":"GTM Guide: Home Lending Report, 2026-03-26","status":"DRAFT"}
+
+### 2026-06-08 — Run: 2026-06-08-Ascend-Bank-Digital-Mortgage-CRA-Assets-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"CRA Base Report and CRA Income Insights ride the same single Plaid Link connection, so layering verified income on top of cash-flow/asset underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Mortgage-specific: Plaid CRA VOA enables lenders to qualify for Fannie Mae Day 1 Certainty reps-and-warrants relief — less fallback, more automation.","source":"GTM Guide: Home Lending Report, 2026-03-26","status":"DRAFT"}
+
+### 2026-06-08 — Run: 2026-06-08-Demo-CRA-Auth-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Auth, Identity, CRA Base Report, and CRA Income Insights ride the same single Plaid Link connection, so layering underwriting on top of ownership verification reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
+
+### 2026-06-08 — Run: 2026-06-08-Demo-CRA-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"CRA Base Report and CRA Income Insights ride the same single Plaid Link connection, so layering verified income on top of cash-flow underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Auth-Identity-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Auth, Identity, CRA Base Report, and CRA Income Insights ride the same single Plaid Link connection, so layering underwriting on top of verification reuses existing infrastructure."}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
+- [high] {"claim":"Nubank chose Plaid CRA over Prism, Experian, and Nova Credit for best UX, comprehensive products under one contract, and competitive pricing.","source":"Nubank SFDC opp, 2026-03-10","status":"DRAFT"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data."}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks."}
+- [high] {"claim":"Income Insights and Base Report ride the same single Plaid Link connection, so adding CRA reuses existing infrastructure."}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-Auth-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data."}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks."}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
+- [high] {"claim":"Nubank chose Plaid CRA over Prism, Experian, and Nova Credit for best UX (existing US bank flow), comprehensive products under one contract, and competitive pricing.","source":"Nubank SFDC opp, 2026-03-10","status":"DRAFT"}
+
+### 2026-06-06 — Run: 2026-06-06-Demo-CRA-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data."}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks."}
+- [high] {"claim":"Income Insights and Base Report ride the same single Plaid Link connection, so adding CRA reuses existing infrastructure."}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Plaid transforms raw bank data into a consumer report with derived calculations, cashflow categorizations, and insights.","source":"PNC CRA FAQ Slack thread, 2026-02-12","status":"DRAFT"}
 
 ### 2026-06-01 — Run: 2026-06-01-Split-Rent-900-Now-CRA-Auth-Identity-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**
