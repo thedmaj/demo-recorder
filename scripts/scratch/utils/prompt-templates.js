@@ -1411,6 +1411,30 @@ function buildAppFrameworkPlanPrompt(demoScript, architectureBrief, opts = {}) {
  */
 function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null, opts = {}) {
   const brand = opts.brand || PLAID_DEFAULT_BRAND;
+  // JSON/API panels axis. When disabled (--no-panels), the post-panels stage is
+  // skipped, so the build agent must NOT author any #api-response-panel chrome
+  // or the placeholder — otherwise the no-panels app ships an empty panel shell.
+  const withPanels = opts.withPanels != null
+    ? opts.withPanels !== false
+    : String(process.env.PIPELINE_WITH_PANELS || '').trim().toLowerCase() !== 'false';
+  const sidePanelInstruction = withPanels
+    ? `- Side panels — do NOT hand-author these. The post-panels stage owns the\n` +
+      `  canonical Claude Design v12 API panel (section.panel + Request/Response tabs +\n` +
+      `  renderjson pretty-printer) and injects it into the HTML after build. Just leave\n` +
+      `  this placeholder before </body> and post-panels will fill it in:\n` +
+      `    <!-- API_PANEL_AND_LINK_EVENTS — injected by post-panels post-build -->\n` +
+      `  If you absolutely must reference panel IDs from your JS, the v12 stable IDs are:\n` +
+      `    #api-response-panel (the wrapping section), #api-panel-method, #api-panel-path,\n` +
+      `    #api-pane-request, #api-pane-response, #api-panel-toggle. Do NOT use the legacy\n` +
+      `    .side-panel / .side-panel-header / .side-panel-body / .api-panel-edge-toggle /\n` +
+      `    #api-response-content / #api-panel-endpoint — those were removed.\n` +
+      `  link-events-panel: developer artifact — NEVER shown in any step. Always display:none.\n`
+    : `- JSON/API PANELS DISABLED (--no-panels): do NOT author ANY API/JSON side panel.\n` +
+      `  Emit NO #api-response-panel section, no JSON rail, no api-panel-* elements, no\n` +
+      `  api-panel config constant, and NOT the <!-- API_PANEL_AND_LINK_EVENTS --> placeholder.\n` +
+      `  Insight/host steps present their content WITHOUT any raw-JSON side panel (no inline\n` +
+      `  JSON blocks either). Do not reference #api-response-panel from JS.\n` +
+      `  link-events-panel: still NEVER shown — display:none if present at all.\n`;
   const slideTemplateRules = typeof opts.slideTemplateRules === 'string' ? opts.slideTemplateRules : '';
   const slideTemplateCss = typeof opts.slideTemplateCss === 'string' ? opts.slideTemplateCss : '';
   const slideTemplateShellHtml = typeof opts.slideTemplateShellHtml === 'string' ? opts.slideTemplateShellHtml : '';
@@ -1648,17 +1672,7 @@ contract that the next stage knows how to fill.\n` +
     `      document.addEventListener('keydown',function(e){if(e.key==='ArrowRight'||e.key==='ArrowDown')_nav(1);else if(e.key==='ArrowLeft'||e.key==='ArrowUp')_nav(-1);});\n` +
     `      document.addEventListener('click',function(e){if(e.target.closest('button,input,select,textarea,a,[role="button"],[role="link"]'))return;if(e.target.closest('.panel,.toggle,.card[onclick*="goToStep"]'))return;_nav(1);});\n` +
     `    })();\n` +
-    `- Side panels — do NOT hand-author these. The post-panels stage owns the\n` +
-    `  canonical Claude Design v12 API panel (section.panel + Request/Response tabs +\n` +
-    `  renderjson pretty-printer) and injects it into the HTML after build. Just leave\n` +
-    `  this placeholder before </body> and post-panels will fill it in:\n` +
-    `    <!-- API_PANEL_AND_LINK_EVENTS — injected by post-panels post-build -->\n` +
-    `  If you absolutely must reference panel IDs from your JS, the v12 stable IDs are:\n` +
-    `    #api-response-panel (the wrapping section), #api-panel-method, #api-panel-path,\n` +
-    `    #api-pane-request, #api-pane-response, #api-panel-toggle. Do NOT use the legacy\n` +
-    `    .side-panel / .side-panel-header / .side-panel-body / .api-panel-edge-toggle /\n` +
-    `    #api-response-content / #api-panel-endpoint — those were removed.\n` +
-    `  link-events-panel: developer artifact — NEVER shown in any step. Always display:none.\n` +
+    sidePanelInstruction +
     `ICONS — ABSOLUTE RULE:\n` +
     `  - Zero emoji anywhere in the HTML. No Unicode emoji, no Markdown-style symbols.\n` +
     `    Not ✅ ❌ 🔒 → ✓ 🏦 💰 🎯 ⚡ ✨ or any other emoji/symbol character.\n` +
