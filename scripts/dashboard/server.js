@@ -4592,6 +4592,14 @@ app.post('/api/demo-apps/:runId/stop', async (req, res) => {
 
 const CSS_KEYWORDS = /\b(font|color|background|border|radius|padding|margin|size|spacing|shadow|opacity|weight|button|icon|badge|card|text|heading|label|link|hover|gradient|gap|flex|align|justify|width|height|display|transition|animation|cursor|outline|ring|accent|teal|dark|light|bright|bold|italic|rounded|pill|style)\b/i;
 const STRUCTURAL_KEYWORDS = /\b(add|remove|delete|insert|create|new step|new screen|move|reorder|rename|duplicate|hide|show step)\b/i;
+// "apply/remove this everywhere" intent. Used (with a picked element) to route a
+// pure remove/hide/modify of the selected element to 'element' mode so the
+// multi-instance detector runs instead of a full-document rewrite.
+const ALL_INSTANCES_KEYWORDS = /\b(all|every|each|everywhere|throughout|across|all (the )?(screens|steps|pages|instances))\b/i;
+// A pure remove/hide of the *selected* element (no add/insert/new content).
+const REMOVE_HIDE_KEYWORDS = /\b(remove|delete|hide|get rid of|take out|drop)\b/i;
+// Things that add/insert structure — must NOT be routed to deterministic element edit.
+const ADD_STRUCTURE_KEYWORDS = /\b(add|insert|create|new step|new screen|move|reorder|rename|duplicate|show step)\b/i;
 
 function readEnvInt(name, fallback, opts = {}) {
   const raw = process.env[name];
@@ -4902,6 +4910,153 @@ function findNormalizedSingleMatch(scopeHtml, selectedElementHtml) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
+/**
+ * Multi-match sibling of findNormalizedSingleMatch: collect EVERY occurrence of
+ * `selectedElementHtml` in `scopeHtml`, comparing whitespace/attribute-order
+ * normalised forms, and return each match's {start,end} byte range in the
+ * ORIGINAL scopeHtml (ascending, non-overlapping). Returns [].
+ */
+function findNormalizedAllMatches(scopeHtml, selectedElementHtml) {
+  const needle = normalizeHtmlForMatch(selectedElementHtml);
+  if (!needle || needle.length < 8) return [];
+  const needleTag = needle.match(/^<([a-zA-Z][a-zA-Z0-9:-]*)/);
+  if (!needleTag) return [];
+  const ranges = [];
+  const tagStartRe = /<[a-zA-Z]/g;
+  let m;
+  let lastEnd = -1;
+  while ((m = tagStartRe.exec(scopeHtml)) !== null) {
+    if (m.index < lastEnd) continue; // don't start inside an already-matched range
+    const approxLen = Math.min(scopeHtml.length - m.index, selectedElementHtml.length * 3 + 256);
+    const candidate = scopeHtml.slice(m.index, m.index + approxLen);
+    const candTag = candidate.match(/^<([a-zA-Z][a-zA-Z0-9:-]*)/);
+    if (!candTag || needleTag[1].toLowerCase() !== candTag[1].toLowerCase()) continue;
+    const normalised = normalizeHtmlForMatch(candidate);
+    if (!normalised.startsWith(needle)) continue;
+    for (let end = Math.min(scopeHtml.length, m.index + Math.ceil(needle.length * 0.9)); end <= m.index + approxLen; end++) {
+      const window = scopeHtml.slice(m.index, end);
+      const norm = normalizeHtmlForMatch(window);
+      if (norm === needle) {
+        ranges.push({ start: m.index, end });
+        lastEnd = end;
+        break;
+      }
+      if (norm.length > needle.length + 8) break;
+    }
+  }
+  return ranges;
+}
+
+/**
+ * Detect whether the picked element is a repeated item across multiple step
+ * divs. Counts occurrences across the full HTML (exact first, normalised
+ * fallback), maps each match to its enclosing step-* id, and classifies the
+ * intent ('remove' for a pure remove/hide of the selected element with no
+ * replacement target, else 'modify'). If every match falls within the current
+ * step only, this is treated as single-instance (instanceCount = matches in
+ * that step, which collapses to <=1 from the caller's perspective only when
+ * there's genuinely one item).
+ *
+ * Returns { instanceCount, stepIds, intent, ranges } where ranges are full-HTML
+ * byte ranges (ascending). instanceCount is the number of distinct STEPS the
+ * element appears in (so two copies inside one step still counts toward that
+ * step). ranges still carries every individual occurrence so apply-to-all can
+ * splice them all.
+ */
+function detectMultiInstance(appIndex, input, mode) {
+  const fullHtml = appIndex.html;
+  const selectedElementHtml = String(input.selectedElementHtml || '');
+  const message = String(input.message || '');
+  const currentStepId = String(input.currentStepId || '').trim();
+  const empty = { instanceCount: 0, stepIds: [], intent: 'modify', ranges: [] };
+  if (mode !== 'element' || !selectedElementHtml) return empty;
+
+  // Collect occurrence ranges in full-HTML coordinates.
+  let ranges = [];
+  if (countExactOccurrences(fullHtml, selectedElementHtml) > 0) {
+    let idx = 0;
+    while (true) {
+      idx = fullHtml.indexOf(selectedElementHtml, idx);
+      if (idx === -1) break;
+      ranges.push({ start: idx, end: idx + selectedElementHtml.length });
+      idx += Math.max(1, selectedElementHtml.length);
+    }
+  } else {
+    ranges = findNormalizedAllMatches(fullHtml, selectedElementHtml);
+  }
+  if (!ranges.length) return empty;
+
+  // Map each match to its enclosing step-* id by finding the nearest preceding
+  // step marker and confirming the match falls inside that step div's range.
+  const stepEntries = [];
+  for (const stepId of Object.keys(appIndex.steps || {})) {
+    const stepHtml = appIndex.steps[stepId];
+    const sIdx = stepHtml ? fullHtml.indexOf(stepHtml) : -1;
+    if (sIdx === -1) continue;
+    stepEntries.push({ stepId, start: sIdx, end: sIdx + stepHtml.length });
+  }
+  const stepIdSet = new Set();
+  for (const r of ranges) {
+    const owner = stepEntries.find((s) => r.start >= s.start && r.end <= s.end);
+    if (owner) stepIdSet.add(owner.stepId);
+  }
+  const stepIds = Array.from(stepIdSet);
+
+  // If all matches are confined to the current step, treat as single-instance:
+  // there's no cross-screen apply to confirm. Report the raw count so the caller
+  // can still choose single-replace (count may be 1, or 2 within one step).
+  if (currentStepId && stepIds.length === 1 && stepIds[0] === currentStepId) {
+    return { instanceCount: 1, stepIds, intent: classifyIntent(message), ranges };
+  }
+
+  return {
+    instanceCount: stepIds.length,
+    stepIds,
+    intent: classifyIntent(message),
+    ranges,
+  };
+}
+
+/** Classify the multi-instance intent from the user message. */
+function classifyIntent(message) {
+  const msg = String(message || '');
+  // 'remove' only when it's a pure remove/hide with no add/replace target.
+  if (REMOVE_HIDE_KEYWORDS.test(msg) && !ADD_STRUCTURE_KEYWORDS.test(msg)) return 'remove';
+  return 'modify';
+}
+
+/**
+ * Apply a replacement to every range in `ranges`, splicing in DESCENDING start
+ * order so earlier offsets remain valid. `replacement` is '' for remove, or the
+ * canonical updated element outerHTML for modify. Returns the new full HTML plus
+ * how many ranges were applied.
+ */
+function applyToAllInstances(fullHtml, ranges, replacement, stepIds) {
+  if (!Array.isArray(ranges) || !ranges.length) {
+    return { html: fullHtml, appliedCount: 0, stepIds: stepIds || [] };
+  }
+  const sorted = ranges.slice().sort((a, b) => b.start - a.start);
+  let html = fullHtml;
+  let appliedCount = 0;
+  for (const r of sorted) {
+    html = html.slice(0, r.start) + (replacement || '') + html.slice(r.end);
+    appliedCount++;
+  }
+  return { html, appliedCount, stepIds: stepIds || [] };
+}
+
+/** Stable confirmation token = hash of {normalized needle, intent, runId, file mtime}. */
+function buildConfirmationToken(selectedElementHtml, intent, runId, mtime) {
+  const crypto = require('crypto');
+  const payload = JSON.stringify({
+    needle: normalizeHtmlForMatch(selectedElementHtml),
+    intent,
+    runId,
+    mtime,
+  });
+  return crypto.createHash('sha256').update(payload).digest('hex').slice(0, 24);
+}
+
 function replaceSelectedElementDeterministically(fullHtml, input, updatedOuterHtml) {
   const selectedElementHtml = String(input.selectedElementHtml || '');
   const selectedElementSelector = String(input.selectedElementSelector || '');
@@ -5051,8 +5206,23 @@ function extractRelevantCSS(allCss, classNames, elementId) {
 
 /** Detect which edit mode to use based on message + context. */
 function detectEditMode(message, selectedElementHtml) {
-  if (STRUCTURAL_KEYWORDS.test(message)) return 'full';
-  if (CSS_KEYWORDS.test(message) && !STRUCTURAL_KEYWORDS.test(message)) {
+  const msg = String(message || '');
+  // With a picked element, a pure remove/hide/modify of THAT element should run
+  // the deterministic element path (which feeds the multi-instance detector),
+  // even though "remove/delete/hide" are STRUCTURAL_KEYWORDS. We only divert to
+  // 'full' for genuine structural changes (add/insert/new step/reorder/…).
+  if (selectedElementHtml) {
+    const addsStructure = ADD_STRUCTURE_KEYWORDS.test(msg);
+    if (!addsStructure) {
+      // Pure remove/hide of the selected element → element mode (deterministic).
+      if (REMOVE_HIDE_KEYWORDS.test(msg)) return 'element';
+      // Modify-everywhere intent ("make every logo larger") → element mode so
+      // the multi-instance detector classifies it as a 'modify' multi-apply.
+      if (ALL_INSTANCES_KEYWORDS.test(msg) && !STRUCTURAL_KEYWORDS.test(msg)) return 'element';
+    }
+  }
+  if (STRUCTURAL_KEYWORDS.test(msg)) return 'full';
+  if (CSS_KEYWORDS.test(msg) && !STRUCTURAL_KEYWORDS.test(msg)) {
     return selectedElementHtml ? 'element-css' : 'css';
   }
   return selectedElementHtml ? 'element' : 'full';
@@ -5231,6 +5401,8 @@ app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
       domPath,
       conversationHistory,
       currentStepId,
+      applyScope,
+      confirmationToken,
     } = req.body || {};
     const appHtmlPath = path.join(DEMOS_DIR, runId, 'scratch-app/index.html');
     if (!fs.existsSync(appHtmlPath)) return res.status(404).json({ error: 'App HTML not found' });
@@ -5245,6 +5417,137 @@ app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
 
     const mode = detectEditMode(message, selectedElementHtml);
     const cfg = getAiEditRuntimeConfig();
+
+    // Shared commit path: validate → backup → write → invalidate cache → SSE
+    // broadcast. Reused by both the single-edit path and the multi-instance
+    // apply-to-all path so there's exactly ONE write + reload broadcast.
+    const commitHtml = (newHtml, commitMode, extra = {}) => {
+      const validation = validateAiEditHtml(newHtml, currentHtml, commitMode, currentStepId);
+      if (!validation.ok) {
+        res.status(500).json({ error: `AI edit validation failed: ${validation.reason}`, mode: commitMode });
+        return false;
+      }
+      fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
+      fs.writeFileSync(appHtmlPath, newHtml, 'utf8');
+      _appCache.delete(runId);
+      const notify = demoAppReload.notifyReload(runId, { reason: 'ai-edit', mode: commitMode });
+      if (notify.notified > 0) {
+        console.log(`[AI Edit] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
+      }
+      res.json({ ok: true, notifiedTabs: notify.notified, ...extra });
+      return true;
+    };
+
+    // ── Multi-instance (apply/remove across screens) ──────────────────────────
+    // When an element was picked and the edit is a pure remove/hide/modify of it,
+    // detect whether it's a repeated item across multiple step screens. If so,
+    // either confirm first (no applyScope) or fan the edit out to every instance.
+    if (mode === 'element' && selectedElementHtml) {
+      const mtime = appIndex.mtime;
+      // Always re-derive from CURRENT html. This is both the confirm-time count
+      // and (when applyScope==='all') the apply-time count we splice against.
+      const fresh = detectMultiInstance(appIndex, { selectedElementHtml, message, currentStepId }, mode);
+      const intent = fresh.intent;
+      const previewSrc = String(selectedElementHtml).replace(/\s+/g, ' ').trim();
+      const preview = previewSrc.slice(0, 220) + (previewSrc.length > 220 ? '…' : '');
+
+      // Explicit apply-to-all: handle regardless of how many instances the FIRST
+      // detection found, because we must verify the token + current count.
+      if (applyScope === 'all') {
+        const expectedToken = buildConfirmationToken(selectedElementHtml, intent, runId, mtime);
+        if (confirmationToken && confirmationToken !== expectedToken) {
+          return res.status(409).json({
+            error: 'The app changed since you confirmed — re-pick the element and try again.',
+            reason: 'stale-confirmation-token',
+          });
+        }
+        if (fresh.instanceCount <= 1 || !fresh.ranges.length) {
+          return res.status(409).json({
+            error: 'The app changed since you confirmed — the element is no longer repeated. Re-pick and try again.',
+            reason: 'instance-count-changed',
+          });
+        }
+
+        {
+          if (intent === 'remove') {
+            // No LLM call: splice every range out.
+            const out = applyToAllInstances(currentHtml, fresh.ranges, '', fresh.stepIds);
+            commitHtml(out.html, 'element', {
+              reply: `Removed the element on ${out.appliedCount} screens (${fresh.stepIds.join(', ')}).`,
+              assistantMessage: `Removed ${out.appliedCount} instance(s).`,
+              appliedCount: out.appliedCount,
+              stepIds: fresh.stepIds,
+              scope: 'all',
+            });
+            return;
+          }
+
+          // Multi-instance modify: ask the LLM for ONE canonical element, then
+          // apply it to every instance.
+          const Anthropic2 = require('@anthropic-ai/sdk');
+          const client2 = new Anthropic2({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const classNames = (selectedElementHtml.match(/class="([^"]+)"/g) || [])
+            .flatMap(m => m.replace(/class="/, '').replace(/"$/, '').split(/\s+/));
+          const relevantCss = extractRelevantCSS(allCss, classNames, null);
+          const sys = `You are editing a specific HTML element in a Plaid demo app.
+This element appears IDENTICALLY on ${fresh.instanceCount} screens. Return ONE canonical
+outerHTML to apply to all of them. Keep it generic — no screen-specific text or state.
+Preserve all data-testid attributes and event handlers (onclick etc).
+Respond with ONLY the updated outerHTML of the element — no surrounding tags, no explanation.
+Design system: background #0d1117, accent #00A67E (teal), text #ffffff.`;
+          const usr = [
+            `Element to edit (appears on ${fresh.instanceCount} screens):\n${clampSnippet(selectedElementHtml, cfg.selectedHtmlMaxChars)}`,
+            selectedElementSelector ? `Selector: ${selectedElementSelector}` : '',
+            `Request: ${message}`,
+            `\nRelevant CSS for context:\n${relevantCss}`,
+          ].filter(Boolean).join('\n\n');
+          const model = cfg.models.element;
+          console.log(`[AI Edit] multi-instance modify n=${fresh.instanceCount} model=${model} run=${runId}`);
+          const resp = await aiEditMessagesCreate(client2, {
+            model,
+            max_tokens: cfg.maxTokens.element,
+            system: sys,
+            messages: [{ role: 'user', content: usr }],
+          });
+          if (resp.stop_reason === 'max_tokens') {
+            return res.status(500).json({ error: `Response was truncated (hit max_tokens). File not modified.` });
+          }
+          const updated = String(resp.content[0].text || '').trim();
+          if (!updated) {
+            return res.status(500).json({ error: 'AI returned an empty element.' });
+          }
+          const out = applyToAllInstances(currentHtml, fresh.ranges, updated, fresh.stepIds);
+          commitHtml(out.html, 'element', {
+            reply: `Updated the element on ${out.appliedCount} screens (${fresh.stepIds.join(', ')}).`,
+            assistantMessage: `Updated ${out.appliedCount} instance(s).`,
+            appliedCount: out.appliedCount,
+            stepIds: fresh.stepIds,
+            scope: 'all',
+          });
+          return;
+        }
+      }
+
+      // No scope chosen yet and the element repeats across >1 screen → confirm
+      // first. No LLM, no write.
+      if (applyScope !== 'one' && fresh.instanceCount > 1) {
+        const token = buildConfirmationToken(selectedElementHtml, intent, runId, mtime);
+        const verb = intent === 'remove' ? 'Remove' : 'Update';
+        return res.json({
+          ok: false,
+          requiresConfirmation: true,
+          intent,
+          instanceCount: fresh.instanceCount,
+          stepIds: fresh.stepIds,
+          preview,
+          confirmationToken: token,
+          reply: `That ${intent === 'remove' ? 'element' : 'change'} appears on ${fresh.instanceCount} screens (${fresh.stepIds.join(', ')}). ${verb} it on all ${fresh.instanceCount}, or just this one?`,
+        });
+      }
+      // applyScope === 'one', or single-instance → fall through to the normal
+      // single-replace path below.
+    }
+
     const modeModel = {
       css: cfg.models.css,
       'element-css': cfg.models.elementCss,
@@ -5465,33 +5768,16 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
       });
     }
 
-    const validation = validateAiEditHtml(newHtml, currentHtml, mode, currentStepId);
-    if (!validation.ok) {
-      return res.status(500).json({
-        error: `AI edit validation failed: ${validation.reason}`,
-        mode,
-      });
-    }
-
-    // Backup before overwriting; invalidate cache so next request re-parses
-    fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
-    fs.writeFileSync(appHtmlPath, newHtml, 'utf8');
-    _appCache.delete(runId);
-
-    // Push a hot-reload event to any open browser tab for this run.
-    const notify = demoAppReload.notifyReload(runId, {
-      reason: 'ai-edit',
-      mode,
-    });
-    if (notify.notified > 0) {
-      console.log(`[AI Edit] Notified ${notify.notified} browser tab(s) to reload (seq=${notify.seq})`);
-    }
-
-    res.json({
-      ok: true,
+    // Single-instance edit: reuse the shared commit path (validate → backup →
+    // write → cache invalidate → SSE broadcast). scope='one' reflects that this
+    // touched a single instance (the picked element / step / css scope).
+    const scopedStepIds = (mode === 'element' || mode === 'step') && currentStepId ? [currentStepId] : [];
+    commitHtml(newHtml, mode, {
       reply: `Done (${mode} mode) — changes written.`,
       assistantMessage: `Applied ${mode} edit${multiPassPlan ? ' with multi-pass planning' : ''}.`,
-      notifiedTabs: notify.notified,
+      appliedCount: 1,
+      stepIds: scopedStepIds,
+      scope: 'one',
     });
   } catch (err) {
     console.error('[AI Edit]', err);

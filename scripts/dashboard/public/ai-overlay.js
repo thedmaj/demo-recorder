@@ -746,6 +746,68 @@
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────────
+  function buildEditBody(message, extra) {
+    return Object.assign({
+      message,
+      selectedElementHtml: pickedHtml || null,
+      selectedElementSelector: pickedSelector || null,
+      selectedElementParentHtml: pickedParentHtml || null,
+      selectedElementContainerHtml: pickedContainerHtml || null,
+      selectedElementAttributes: pickedAttributes || null,
+      selectedElementTextPreview: pickedTextPreview || null,
+      domPath: pickedDomPath || null,
+      conversationHistory: boundedHistory(conversationHistory),
+      // Send the active step ID so the server can scope edits to just this step's div
+      currentStepId: typeof window.getCurrentStep === 'function'
+        ? (window.getCurrentStep() || '').replace(/^step-/, '')
+        : null,
+    }, extra || {});
+  }
+
+  // POST to the ai-edit endpoint. On a normal success applies + reloads; on a
+  // multi-instance confirmation request shows the confirm modal. Returns true
+  // when an edit was written (so callers can stop spinning).
+  async function submitEdit(body) {
+    const resp = await fetch(`${DASHBOARD}/api/demo-apps/${RUN_ID}/ai-edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      // Surface the server's reason/hint so the user knows what to try next.
+      const parts = [`Error: ${data.error || resp.statusText}`];
+      if (data.hint) parts.push(data.hint);
+      else if (data.reason) parts.push(`(reason: ${data.reason})`);
+      addMessage('system', parts.join(' — '));
+      return false;
+    }
+
+    // Multi-instance confirmation needed — present Apply-to-all / Just-this-one.
+    if (data.requiresConfirmation) {
+      showMultiInstanceModal(data, body.message);
+      return false;
+    }
+
+    // Track conversation history (use summary as assistant reply)
+    conversationHistory.push({ role: 'user', content: body.message });
+    conversationHistory.push({ role: 'assistant', content: data.reply || data.assistantMessage || 'Changes applied.' });
+
+    addMessage('assistant', data.reply || 'Changes applied.');
+
+    // Save step, then reload
+    const currentStep = typeof window.getCurrentStep === 'function'
+      ? window.getCurrentStep()
+      : null;
+    if (currentStep) {
+      sessionStorage.setItem(SESSION_KEY, currentStep.replace(/^step-/, ''));
+    }
+
+    showReloadBanner();
+    return true;
+  }
+
   async function send() {
     const message = inputEl.value.trim();
     if (!message) return;
@@ -757,60 +819,97 @@
     inputEl.value = '';
 
     try {
-      const body = {
-        message,
-        selectedElementHtml: pickedHtml || null,
-        selectedElementSelector: pickedSelector || null,
-        selectedElementParentHtml: pickedParentHtml || null,
-        selectedElementContainerHtml: pickedContainerHtml || null,
-        selectedElementAttributes: pickedAttributes || null,
-        selectedElementTextPreview: pickedTextPreview || null,
-        domPath: pickedDomPath || null,
-        conversationHistory: boundedHistory(conversationHistory),
-        // Send the active step ID so the server can scope edits to just this step's div
-        currentStepId: typeof window.getCurrentStep === 'function'
-          ? (window.getCurrentStep() || '').replace(/^step-/, '')
-          : null,
-      };
-
-      const resp = await fetch(`${DASHBOARD}/api/demo-apps/${RUN_ID}/ai-edit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const data = await resp.json();
-
-      if (!resp.ok) {
-        // Surface the server's reason/hint so the user knows what to try next.
-        const parts = [`Error: ${data.error || resp.statusText}`];
-        if (data.hint) parts.push(data.hint);
-        else if (data.reason) parts.push(`(reason: ${data.reason})`);
-        addMessage('system', parts.join(' — '));
-        return;
-      }
-
-      // Track conversation history (use summary as assistant reply)
-      conversationHistory.push({ role: 'user', content: message });
-      conversationHistory.push({ role: 'assistant', content: data.reply || data.assistantMessage || 'Changes applied.' });
-
-      addMessage('assistant', data.reply || 'Changes applied.');
-
-      // Save step, then reload
-      const currentStep = typeof window.getCurrentStep === 'function'
-        ? window.getCurrentStep()
-        : null;
-      if (currentStep) {
-        sessionStorage.setItem(SESSION_KEY, currentStep.replace(/^step-/, ''));
-      }
-
-      showReloadBanner();
+      await submitEdit(buildEditBody(message));
     } catch (err) {
       addMessage('system', `Network error: ${err.message}`);
     } finally {
       sendBtn.disabled = false;
       sendBtn.textContent = 'Send';
     }
+  }
+
+  // ── Multi-instance confirmation modal ─────────────────────────────────────────
+  // Reuses the in-chat message styling. Renders "Found on N screens", a preview,
+  // and three actions: Apply to all N / Just this one / Cancel.
+  function showMultiInstanceModal(data, originalMessage) {
+    const n = data.instanceCount || 0;
+    const stepIds = Array.isArray(data.stepIds) ? data.stepIds : [];
+    const intent = data.intent === 'remove' ? 'Remove' : 'Update';
+
+    const card = document.createElement('div');
+    card.className = '__ai-msg assistant';
+    card.style.maxWidth = '100%';
+    card.style.alignSelf = 'stretch';
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;margin-bottom:6px;color:#fff;';
+    title.textContent = `Found on ${n} screen${n === 1 ? '' : 's'}: ${stepIds.join(', ')}`;
+    card.appendChild(title);
+
+    if (data.preview) {
+      const pre = document.createElement('div');
+      pre.style.cssText = 'font-family:ui-monospace,monospace;font-size:10px;color:rgba(255,255,255,0.55);background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 8px;margin-bottom:8px;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;';
+      pre.textContent = data.preview;
+      card.appendChild(pre);
+    }
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+
+    const mkBtn = (label, primary) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = primary
+        ? 'flex:1 1 auto;padding:6px 10px;background:rgba(0,166,126,0.25);border:1px solid rgba(0,166,126,0.5);border-radius:6px;color:#fff;font-size:11px;cursor:pointer;'
+        : 'flex:0 0 auto;padding:6px 10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:rgba(255,255,255,0.75);font-size:11px;cursor:pointer;';
+      return b;
+    };
+
+    const applyAllBtn = mkBtn(`${intent} all ${n}`, true);
+    const justOneBtn = mkBtn('Just this one', false);
+    const cancelBtn = mkBtn('Cancel', false);
+
+    const lock = (disabled) => { [applyAllBtn, justOneBtn, cancelBtn].forEach(b => { b.disabled = disabled; }); };
+
+    applyAllBtn.addEventListener('click', async () => {
+      lock(true);
+      applyAllBtn.textContent = 'Applying…';
+      try {
+        await submitEdit(buildEditBody(originalMessage, {
+          applyScope: 'all',
+          confirmationToken: data.confirmationToken || null,
+        }));
+      } catch (err) {
+        addMessage('system', `Network error: ${err.message}`);
+      } finally {
+        card.remove();
+      }
+    });
+
+    justOneBtn.addEventListener('click', async () => {
+      lock(true);
+      justOneBtn.textContent = 'Applying…';
+      try {
+        await submitEdit(buildEditBody(originalMessage, { applyScope: 'one' }));
+      } catch (err) {
+        addMessage('system', `Network error: ${err.message}`);
+      } finally {
+        card.remove();
+      }
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      card.remove();
+      addMessage('system', 'Cancelled — nothing changed.');
+    });
+
+    row.appendChild(applyAllBtn);
+    row.appendChild(justOneBtn);
+    row.appendChild(cancelBtn);
+    card.appendChild(row);
+
+    messagesEl.appendChild(card);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   async function submitCurrentStepToLibrary() {
