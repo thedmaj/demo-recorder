@@ -124,7 +124,7 @@ function findResumableRunId({ promptContent, resumeRunId, sourceRunId }) {
   return null;
 }
 
-function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promptContent, buildMode }) {
+function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promptContent, buildMode, panels }) {
   const resumableRunId = findResumableRunId({
     promptContent,
     resumeRunId,
@@ -141,10 +141,18 @@ function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promp
   const slidesFlag = appOnly ? ['--app-only'] : ['--with-slides'];
   if (appOnly) console.log('[batch] buildMode=app-only — passing --app-only');
 
+  // Independent JSON-panels axis. entry.panels === false → --no-panels;
+  // === true → --with-panels; undefined → omit (pipeline default = panels on).
+  const panelsFlag = panels === false ? ['--no-panels']
+    : panels === true ? ['--with-panels']
+    : [];
+  if (panelsFlag.length) console.log(`[batch] panels=${panels} — passing ${panelsFlag[0]}`);
+
   const args = resumableRunId
     ? [
         'run', 'pipe', '--', 'resume', resumableRunId,
         ...slidesFlag,
+        ...panelsFlag,
         '--non-interactive',
         '--from=ingest',
         `--to=${to}`,
@@ -153,6 +161,7 @@ function runPipeline({ promptPath, to, research, resumeRunId, sourceRunId, promp
         'run', 'pipe', '--', 'new',
         `--prompt=${promptPath}`,
         ...slidesFlag,
+        ...panelsFlag,
         '--non-interactive',
         `--to=${to}`,
         `--research=${research || 'messaging'}`,
@@ -249,6 +258,7 @@ function main() {
         sourceRunId: entry.sourceRunId || null,
         promptContent,
         buildMode: entry.buildMode || null,
+        panels: (typeof entry.panels === 'boolean') ? entry.panels : undefined,
       });
       result.researchSkipped = Boolean(resumableRunId);
       result.resumedFromRunId = resumableRunId || null;

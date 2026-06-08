@@ -1,0 +1,66 @@
+{
+  "description": "Random-mode rerun of 6 SMB-eval demos across the 3 build compositions (build-only / full slides+panels / app+JSON). Tests the panels/slides axes + multilaunch end-to-end. Default touchups applied after.",
+  "createdAt": "2026-06-08",
+  "runs": [
+    {
+      "id": "05-censiq-idv-income",
+      "company": "Censiq",
+      "website": "https://www.censiq.com",
+      "promptFile": "inputs/batch-smb-eval/05-censiq-idv-income/prompt.txt",
+      "buildMode": "app-only",
+      "panels": false,
+      "research": "gapfill",
+      "_mode": "build-only (app, no panels)"
+    },
+    {
+      "id": "10-relier-topup-transfer",
+      "company": "Relier",
+      "website": "https://www.relier.us",
+      "promptFile": "inputs/batch-smb-eval/10-relier-topup-transfer/prompt.txt",
+      "buildMode": "app-only",
+      "panels": false,
+      "research": "gapfill",
+      "_mode": "build-only (app, no panels)"
+    },
+    {
+      "id": "01-arro-cra-cashflow",
+      "company": "Arro",
+      "website": "https://www.helloarro.com",
+      "promptFile": "inputs/batch-smb-eval/01-arro-cra-cashflow/prompt.txt",
+      "buildMode": "app+slides",
+      "panels": true,
+      "research": "gapfill",
+      "_mode": "full (slides + panels)"
+    },
+    {
+      "id": "07-gringo-remittance-signal",
+      "company": "Gringo Coin",
+      "website": "https://www.gringo.com",
+      "promptFile": "inputs/batch-smb-eval/07-gringo-remittance-signal/prompt.txt",
+      "buildMode": "app+slides",
+      "panels": true,
+      "research": "gapfill",
+      "_mode": "full (slides + panels)"
+    },
+    {
+      "id": "02-debit-bnpl-idv",
+      "company": "Debit Technologies",
+      "website": "https://www.loanpro.io",
+      "promptFile": "inputs/batch-smb-eval/02-debit-bnpl-idv/prompt.txt",
+      "buildMode": "app-only",
+      "panels": true,
+      "research": "gapfill",
+      "_mode": "app + JSON panels"
+    },
+    {
+      "id": "09-equabli-collections-balance",
+      "company": "Equabli",
+      "website": "https://www.equabli.com",
+      "promptFile": "inputs/batch-smb-eval/09-equabli-collections-balance/prompt.txt",
+      "buildMode": "app-only",
+      "panels": true,
+      "research": "gapfill",
+      "_mode": "app + JSON panels"
+    }
+  ]
+}
