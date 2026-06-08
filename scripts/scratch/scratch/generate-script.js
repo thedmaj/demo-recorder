@@ -1257,7 +1257,7 @@ async function main() {
       // rate limit, 5xx, dropped socket) otherwise fail the whole script
       // stage on the first blip — observed as "Request timed out." ~30s in.
       lastReason = `API error: ${(err && err.message) || err}`;
-      const transient = /timed out|timeout|overloaded|rate.?limit|too many requests|ECONNRESET|ETIMEDOUT|EPIPE|socket hang up|\b(429|500|502|503|529)\b/i.test(lastReason);
+      const transient = /timed out|timeout|overloaded|rate.?limit|too many requests|connection error|connection reset|connection refused|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|network|fetch failed|\b(408|429|500|502|503|529)\b/i.test(lastReason);
       console.warn(`[Script] Generation attempt ${attempt}/${SCRIPT_MAX_ATTEMPTS} threw (${lastReason})${transient && attempt < SCRIPT_MAX_ATTEMPTS ? ' — backing off and retrying…' : ''}`);
       if (transient && attempt < SCRIPT_MAX_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, 2000 * attempt));
