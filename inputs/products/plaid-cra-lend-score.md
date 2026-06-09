@@ -83,6 +83,7 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 | Retrieval | `POST /cra/check_report/lend_score/get` |
 | Report readiness | `USER_CHECK_REPORT_READY` / `CHECK_REPORT_READY` webhook (async) |
 | Score field | `report.lend_score.score` (1–99, higher = lower default risk) |
+| What the score predicts | Probability of going **90+ days past due (90+ DPD) in the first 12 months of book**; higher = less likely to default. It is a **general consumer (non-mortgage) default score**. (Glean: John Wiederin Gong calls, canonical definition) |
 | Reason codes | `report.lend_score.reason_codes[]` (up to 5, e.g. `PCS0221`) — **not** a top-level `reason_codes[] on Signal |
 | Beta | `report.lend_score.model_status` may be `BETA`; call out beta in UI microcopy |
 | Base Report pairing | Same `report_id`; may show Base Report **summary** chips (inflow, `days_available`) beside LendScore — does **not** mean the API panel should show `/base_report/get` when the step declares `lend_score/get` |
@@ -109,3 +110,4 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 - Label the API panel as Base Report when the step endpoint is `lend_score/get`
 - Present LendScore as GA without beta callout
 - Use federal student loan / Mohela liabilities tropes (wrong product family)
+- **Position LendScore as a mortgage underwriting score** — it predicts general consumer 90+DPD default, not mortgage performance. Mortgage / HELOC demos should feature **asset + income verification (VOA/VOI)** via [Base Report](plaid-cra-base-report.md) + [Income Insights](plaid-cra-income-insights.md), NOT a LendScore decision. (Glean: John Wiederin Gong calls, 2026 — cash-flow *underwriting* for mortgage is early; asset/income *verification* is the mature mortgage use case.)

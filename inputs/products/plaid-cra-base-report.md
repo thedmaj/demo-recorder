@@ -6,10 +6,14 @@ api_endpoints:
   - "/link/token/create"
   - "/cra/check_report/create"
   - "/cra/check_report/base_report/get"
+  - "/cra/check_report/verification/get"
+  - "/cra/check_report/verification/pdf/get"
 use_cases:
   - "credit-underwriting"
   - "cash-flow-underwriting"
   - "account-stability-review"
+  - "mortgage-voa"
+  - "mortgage-employment-refresh"
 last_human_review: "2026-03-26"
 last_ai_update: "2026-06-09T01:04:28.647Z"
 needs_review: true
@@ -23,8 +27,12 @@ last_vp_research: "2026-06-01"
 ## Overview
 Plaid Check Base Report gives lenders and verifiers a consumer-permissioned view of bank account history, balances, ownership, inflows, outflows, and transaction behavior. It is best framed as a report-generation product for underwriting and cash-flow review, not as an instant-auth or ACH-funding flow.
 
+The Base Report is also the foundation for the **Home Lending Report** (mortgage VOA) — a distinct product variant, retrieved via `/cra/check_report/verification/get`, that is GSE-certified for Fannie Mae Day 1 Certainty and Freddie Mac LPA AIM. For mortgage demos, lead with the Home Lending Report framing; the Base Report is the general-purpose consumer-lending framing.
+
 ## Where It Fits
 Feature this product when the persona needs a reusable underwriting artifact backed by linked bank-account data. Typical stories include personal lending, BNPL, or account-review flows where account stability, ownership, and transaction behavior matter more than payment rails.
+
+**Mortgage / home lending:** feature the Home Lending Report variant when the persona is a mortgage lender, loan officer, or LOS operator. The core Link integration is identical (`products: ["cra_base_report"]`), but the retrieval endpoint, GSE options, and framing differ materially — see the `## Mortgage / Home Lending Use Cases` section below.
 
 ## Value Proposition Statements
 <!-- Auto-seeded / refreshed by research phase on 2026-06-01.
@@ -164,6 +172,18 @@ Layer eligibility**:
   `additional_consented_products` and call `/transactions/sync` only after `USER_CHECK_REPORT_READY`.
 
 Full architecture + demo/multilaunch mapping: [`plaid-layer.md` → Layer × CRA / Consumer Report interaction](plaid-layer.md#layer--cra--consumer-report-interaction-plaid-check).
+
+## CRA field framing (Glean Gong calls, 2026 — qualitative)
+<!-- 🔄 SHARED framing for the CRA family. Specific customer/retro NUMBERS are held pending human sign-off; only qualitative positioning is captured here. -->
+
+Consistent positioning from the field for accurate, compelling CRA demos:
+
+- **Ability to pay vs. willingness to pay.** Bureau scores reflect historical *willingness* to repay; CRA cash-flow data shows present *ability* to pay. This is the canonical reason CRA data approves applicants a bureau-only view would decline.
+- **The report is modular — pick components by use case.** Base Report (required) + Income Insights + Cash Flow Insights/Attributes + Network Insights + a score (LendScore / Prism / Experian / UltraFICO). The use case drives which modules matter; don't show every component in every demo.
+- **Adoption journey: start at verification, then move to underwriting.** New CRA customers typically begin by tightening their *verification* flow (assets/income), then expand into cash-flow *underwriting* (second-look, then broader). A demo can mirror this arc.
+- **Network Insights = network behavior, not cash flow.** It reflects how a user behaves across Plaid's app network. Illustrative framing: a connection to a PFM app (e.g. Rocket Money) can indicate lower risk; many connections to cash-advance apps can indicate higher risk. (Use as qualitative illustration — do not assert specific app lists or counts.)
+- **Mortgage / home lending is asset + income VERIFICATION, not a cash-flow score.** First-lien / GSE = **asset verification** (Home Lending Report — balances, large deposits, ownership, historical balances, structured for GSE loans); HELOC / second-lien = **income + asset verification**. One bank connection serves both — no second consent. Do **not** position LendScore as a mortgage underwriting score (see [`plaid-cra-lend-score.md` → Do Not](plaid-cra-lend-score.md)). For a HELOC applicant, a *recent cash-advance connection* in their network history is a qualitative risk signal.
+- **Soft-pull / linkless CRA is roadmap, not current state.** Today the user must still go through Plaid Link to permission data; a "soft-pull equivalent" using previously-permissioned CRA profiles is a near-term roadmap item. Don't demo linkless CRA as generally available.
 
 ## Demo UI Guidance — Realistic Front-End vs. Behind-the-Scenes (CRITICAL)
 <!-- 🔄 SHARED — applies to the whole CRA / Consumer Report family. -->
@@ -387,5 +407,6 @@ Added [DRAFT] proof points, customer stories, competitive differentiators, and o
 
 ## Change Log
 
+- 2026-06-09: Added "CRA field framing" section (qualitative, from John Wiederin Gong calls) [AI] — ability-to-pay vs willingness, modular report, verification→underwriting adoption journey, Network Insights = network behavior (PFM lower / cash-advance higher, illustrative), mortgage = asset+income VERIFICATION not a cash-flow score (one connection serves both; LendScore≠mortgage underwriting), soft-pull/linkless is roadmap. **Customer/retro NUMBERS (10–25% lift, 15%, 18% Prism, 2.6x, $2–4M, 95/85%, 800K, 1,600 attrs) intentionally HELD pending human sign-off** — not added. Mirror guard added to plaid-cra-lend-score.md (Do Not + target definition).
 - 2026-03-26: File created for CRA Base Report prompt scaffolding [human]
 - 2026-03-27: Enriched with Glean sales content (value props, customer stories, proof points, objections) [AI]
