@@ -966,26 +966,39 @@ function writeLayerUserCache(cache) {
  *
  * @returns {Promise<{userToken:string, clientUserId:string, reused:boolean}>}
  */
-async function getOrCreateLayerUserToken(clientUserId) {
+async function getOrCreateLayerUserToken(clientUserId, opts = {}) {
+  // CRA demos create the Plaid user under CRA credentials (the CRA Layer template
+  // lives on the CRA account). Scope the cache key so a default-account user is
+  // never reused for a CRA session (different Plaid account) or vice-versa.
+  const credentialScope = opts.credentialScope || null;
+  const scopeOpts = credentialScope ? { credentialScope } : {};
+  const keyFor = (id) => (credentialScope ? `${credentialScope}:${id}` : id);
   const cache = readLayerUserCache();
-  if (cache[clientUserId] && cache[clientUserId].user_token) {
-    return { userToken: cache[clientUserId].user_token, clientUserId, reused: true };
+  const cacheKey = keyFor(clientUserId);
+  if (cache[cacheKey] && cache[cacheKey].user_token) {
+    return { userToken: cache[cacheKey].user_token, clientUserId, reused: true };
   }
+  // The session's user reference is the legacy user_token (non-CRA Layer accounts)
+  // or the Plaid user_id (usr_… — returned by CRA /user/create, which has no
+  // user_token). Either is valid in /session/token/create user.user_id.
+  const userRef = (r) => r.user_token || r.user_id || null;
   try {
-    const r = await plaidPost('/user/create', { client_user_id: clientUserId });
-    if (!r.user_token) throw new Error(`/user/create returned no user_token: ${JSON.stringify(r)}`);
-    cache[clientUserId] = { user_token: r.user_token, created_at: new Date().toISOString() };
+    const r = await plaidPost('/user/create', { client_user_id: clientUserId }, scopeOpts);
+    const ref = userRef(r);
+    if (!ref) throw new Error(`/user/create returned no user_token or user_id: ${JSON.stringify(r)}`);
+    cache[cacheKey] = { user_token: ref, created_at: new Date().toISOString() };
     writeLayerUserCache(cache);
-    return { userToken: r.user_token, clientUserId, reused: false };
+    return { userToken: ref, clientUserId, reused: false };
   } catch (e) {
     if (/already exists/i.test(String(e && e.message))) {
       const freshId = `${clientUserId}-${Date.now()}`;
-      const r = await plaidPost('/user/create', { client_user_id: freshId });
-      if (!r.user_token) throw new Error(`/user/create (fresh id) returned no user_token: ${JSON.stringify(r)}`);
-      cache[freshId] = { user_token: r.user_token, created_at: new Date().toISOString(), alias_of: clientUserId };
+      const r = await plaidPost('/user/create', { client_user_id: freshId }, scopeOpts);
+      const ref = userRef(r);
+      if (!ref) throw new Error(`/user/create (fresh id) returned no user_token or user_id: ${JSON.stringify(r)}`);
+      cache[keyFor(freshId)] = { user_token: ref, created_at: new Date().toISOString(), alias_of: clientUserId };
       writeLayerUserCache(cache);
       console.log(`[plaid-backend] Layer user "${clientUserId}" already existed without a cached token — created fresh user "${freshId}" for this session.`);
-      return { userToken: r.user_token, clientUserId: freshId, reused: false };
+      return { userToken: ref, clientUserId: freshId, reused: false };
     }
     throw e;
   }
@@ -1017,32 +1030,44 @@ function runIsCraDemo() {
 }
 
 async function createSessionToken(opts = {}) {
-  // Layer template selection: CRA demos use CRA_LAYER_TEMPLATE (alias
-  // CRA_EWA_LAYER_TEMPLATE_ID); every other use case uses PLAID_LAYER_TEMPLATE_ID.
-  // An explicit caller-supplied template_id always wins.
+  // Layer template selection:
+  //   • CRA demos → CRA_LAYER_TEMPLATE (alias CRA_EWA_LAYER_TEMPLATE_ID) under CRA
+  //     credentials (the CRA Layer template lives on the CRA account).
+  //   • everything else → PLAID_LAYER_TEMPLATE_ID under default credentials.
+  //   • an explicit caller-supplied template_id always wins.
+  // If the CRA Layer template can't mint a session for this account's users (e.g.
+  // it's a legacy-only template that rejects the new usr_ user_id), fall back to
+  // the default template so the demo still completes — and log why.
   const craTemplate = process.env.CRA_LAYER_TEMPLATE || process.env.CRA_EWA_LAYER_TEMPLATE_ID || null;
   const defaultTemplate = process.env.PLAID_LAYER_TEMPLATE_ID || 'template_n31w56t6o9a7';
   const isCra = opts.cra === true || hasCraProducts(opts.products) || runIsCraDemo();
-  const templateId =
-    opts.template_id || opts.templateId ||
-    ((isCra && craTemplate) ? craTemplate : defaultTemplate);
+  const explicitTemplate = opts.template_id || opts.templateId || null;
   const requestedClientUserId = opts.client_user_id || opts.clientUserId || `onboarding-${Date.now()}`;
 
-  // Create the Plaid user once (cached), then mint a fresh Layer session each run.
-  const { userToken, clientUserId, reused } = await getOrCreateLayerUserToken(requestedClientUserId);
+  async function mint(templateId, scope) {
+    const scopeOpts = scope ? { credentialScope: scope } : {};
+    const { userToken, clientUserId, reused } = await getOrCreateLayerUserToken(requestedClientUserId, scopeOpts);
+    const sessionResult = await plaidPost('/session/token/create', {
+      template_id: templateId,
+      user: { client_user_id: clientUserId, user_id: userToken },
+    }, scopeOpts);
+    const linkToken = sessionResult.link?.link_token || sessionResult.link_token;
+    if (!linkToken) throw new Error(`/session/token/create failed: ${JSON.stringify(sessionResult)}`);
+    console.log(`[plaid-backend] Layer session token created (template=${templateId}, cra=${isCra}, scope=${scope || 'default'}, user=${reused ? 'reused' : 'created'})`);
+    return { link_token: linkToken, user_token: userToken, template_id: templateId };
+  }
 
-  const sessionResult = await plaidPost('/session/token/create', {
-    template_id: templateId,
-    user: {
-      client_user_id: clientUserId,
-      user_id: userToken,
-    },
-  });
-  const linkToken = sessionResult.link?.link_token || sessionResult.link_token;
-  if (!linkToken) throw new Error(`/session/token/create failed: ${JSON.stringify(sessionResult)}`);
+  if (explicitTemplate) return mint(explicitTemplate, isCra ? 'cra' : null);
 
-  console.log(`[plaid-backend] Layer session token created (template=${templateId}, cra=${isCra}, user=${reused ? 'reused' : 'created'})`);
-  return { link_token: linkToken, user_token: userToken };
+  if (isCra && craTemplate) {
+    try {
+      return await mint(craTemplate, 'cra');
+    } catch (e) {
+      console.warn(`[plaid-backend] CRA Layer template ${craTemplate} not usable for this account (${e && e.message ? e.message : e}); falling back to PLAID_LAYER_TEMPLATE_ID.`);
+      return mint(defaultTemplate, null);
+    }
+  }
+  return mint(defaultTemplate, null);
 }
 
 /**
@@ -1073,24 +1098,29 @@ async function userAccountSessionGet(publicToken) {
  * @returns {Promise<{ok:boolean, linkToken:(string|null), templateId:string, error:(string|null)}>}
  */
 async function verifyLayerActivation(opts = {}) {
-  const templateId = opts.templateId || opts.template_id || process.env.PLAID_LAYER_TEMPLATE_ID || null;
+  // Verify the template the demo will ACTUALLY use: createSessionToken selects
+  // CRA_LAYER_TEMPLATE for CRA demos, else PLAID_LAYER_TEMPLATE_ID. Only force a
+  // template when the caller explicitly passes one — otherwise let the CRA-aware
+  // selection decide so the activation check matches the recorded session.
+  const explicitTemplate = opts.templateId || opts.template_id || null;
   try {
     const result = await createSessionToken({
-      template_id: templateId,
+      ...(explicitTemplate ? { template_id: explicitTemplate } : {}),
       client_user_id: opts.clientUserId || opts.client_user_id || null,
     });
     const linkToken = result && result.link_token ? result.link_token : null;
+    const resolvedTemplate = (result && result.template_id) || explicitTemplate || '(resolved)';
     return {
       ok: !!(linkToken && String(linkToken).length > 0),
       linkToken,
-      templateId: templateId || '(default)',
+      templateId: resolvedTemplate,
       error: linkToken ? null : 'no link_token in /session/token/create response',
     };
   } catch (e) {
     return {
       ok: false,
       linkToken: null,
-      templateId: templateId || '(default)',
+      templateId: explicitTemplate || '(resolved)',
       error: (e && e.message) ? e.message : String(e),
     };
   }
