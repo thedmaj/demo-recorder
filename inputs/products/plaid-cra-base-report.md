@@ -11,7 +11,7 @@ use_cases:
   - "cash-flow-underwriting"
   - "account-stability-review"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-08T15:40:47.810Z"
+last_ai_update: "2026-06-09T01:04:28.647Z"
 needs_review: true
 approved: true
 version: 1
@@ -219,6 +219,13 @@ Host/consumer screens must read like a real product a borrower/applicant uses. T
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-09 — Run: 2026-06-09-Demo-CRA-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"CRA Base Report and CRA Income Insights ride the same single Plaid Link connection, so layering verified income on top of cash-flow underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
 
 ### 2026-06-08 — Run: 2026-06-08-Ascend-Bank-Digital-Mortgage-CRA-Assets-Statements-v3 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**
