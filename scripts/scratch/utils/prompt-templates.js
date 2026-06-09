@@ -2488,6 +2488,19 @@ contract that the next stage knows how to fill.\n` +
           `     credentialScope: 'cra'\n` +
           `   If CRA_LAYER_TEMPLATE is configured server-side, the backend will use it automatically\n` +
           `   with CRA credentials to initialize the CRA/Layer session token path.\n\n` +
+          `   CRA CONSUMER-UI RULE (the host app is what a borrower sees — keep it clean):\n` +
+          `   - NEVER render webhook/event names, raw enums, API field names, endpoints, or IDs on the\n` +
+          `     consumer host screens — not as text and NOT as a status badge/pill/chip/tag. This\n` +
+          `     specifically includes \`USER_CHECK_REPORT_READY\`, \`SESSION_FINISHED\`, \`ITEM_ADD_RESULT\`,\n` +
+          `     and the raw \`EXTENSION_OF_CREDIT\` enum. Any UPPER_SNAKE_CASE token is a tell it does not\n` +
+          `     belong in the UI.\n` +
+          `   - ANTI-PATTERN (do NOT do this): a "Generating your Consumer Report…" loading screen with a\n` +
+          `     green \`USER_CHECK_REPORT_READY\` pill above a "View Consumer Report" button. Convey the\n` +
+          `     async ready-state with the loading→done transition + the CTA enabling itself — no token.\n` +
+          `   - Human status copy only ("Generating your report…" → enabled "View report"); normalize\n` +
+          `     permissible purpose for humans ("to review your application for credit").\n` +
+          `   - The raw webhook/enum/field belongs in the JSON #api-response-panel or a technical slide,\n` +
+          `     or a clearly-labeled Underwriter/Internal-view step — never the borrower's screens.\n\n` +
           `${plaidLinkMode === 'embedded'
             ? `3. EMBEDDED LAUNCH (NO BUTTON): Do NOT add "Connect Bank Account", "Link Bank Account", or similar CTA button.\n` +
               `   Embedded mode starts from activating the in-page container (data-testid="plaid-embedded-link-container").\n` +

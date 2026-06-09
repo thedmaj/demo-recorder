@@ -68,6 +68,7 @@ Problem → returning user friction → layer_ready event → pre-filled flow �
 - Prohibited filler words: "simply", "just", "unfortunately", "robust", "seamless"
 - "Trust Index" is **scoped, not prohibited**: allowed in Plaid Protect demos only; never use it to label a Signal `scores.*` value (see Signal note above)
 - Host **Plaid Link launch** CTAs with a normal inline icon scale (the icon supports the label; it must not read as a hero graphic filling the button)
+- **Webhook / event / enum names in the consumer UX** — never render developer tokens like `USER_CHECK_REPORT_READY`, `STATUS_UPDATED`, `HANDOFF`, `SESSION_FINISHED`, `EXTENSION_OF_CREDIT` as on-screen text, status badges, pills, chips, or tags (see "Host UX — No Developer Artifacts" below)
 
 ## Slide UX Guardrails
 
@@ -93,6 +94,30 @@ Problem → returning user friction → layer_ready event → pre-filled flow �
   maintaining accessible contrast.
 - Keep Plaid-dark surfaces for Plaid-specific contexts (e.g. dedicated Plaid insight scenes),
   not as the default host canvas. (Plaid-branded slides follow `plaid-slide-design` instead.)
+
+## Host UX — No Developer Artifacts (webhook / event / enum names)
+
+Host/customer-branded screens must read like a real product an end user uses — they must **never
+surface webhook names, event names, raw enums, API field names, endpoints, or IDs**. This applies to
+**all products**, not just CRA. A reliable tell: any `UPPER_SNAKE_CASE` token (e.g.
+`USER_CHECK_REPORT_READY`, `STATUS_UPDATED`, `IDENTITY_VERIFICATION_PASS_SESSION`, `HANDOFF`,
+`SESSION_FINISHED`, `ITEM_ADD_RESULT`, `EXTENSION_OF_CREDIT`) does not belong in the consumer UI.
+
+- **Not as text, and not as chrome.** This explicitly includes **status badges / pills / chips /
+  tags / labels**. Rendering the webhook name as a decorative status chip is the most common version
+  of this mistake.
+- **Canonical anti-pattern (do NOT do this):** a "Generating your Consumer Report…" loading screen
+  with a green `USER_CHECK_REPORT_READY` pill above a "View Consumer Report" button. The async
+  ready-state is conveyed by the **loading → done transition** and the CTA enabling itself — no event
+  token on screen.
+- **What the end user sees instead:** plain, human status copy — "Verifying your information…" →
+  "Verification complete", "Generating your report…" → enabled "View report" CTA. Consent/permissible
+  purpose is human-normalized ("to review your application for credit"), never the raw enum.
+- **Where the developer artifact goes (if the story needs it):** the **JSON `#api-response-panel`**
+  (raw `{"webhook_code":"USER_CHECK_REPORT_READY"}`, field names, enums — expected here), a **technical
+  slide** (the "how it works" beat), or a clearly-labeled **Underwriter/Internal-view** step that is
+  visually distinct from the consumer app. Per-product detail: the product KB's "Demo UI Guidance"
+  section (e.g. [`plaid-cra-base-report.md`](../../../inputs/products/plaid-cra-base-report.md)).
 
 ## Plaid Link Narration Boundary Rule
 

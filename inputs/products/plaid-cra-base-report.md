@@ -172,6 +172,7 @@ Host/consumer screens must read like a real product a borrower/applicant uses. T
 
 **Keep OFF consumer/host screens → move to slides / JSON panel / Underwriter view:**
 - Webhook & event names / readiness messages — e.g. `USER_CHECK_REPORT_READY`, `SESSION_FINISHED`, `ITEM_ADD_RESULT`. The borrower sees a plain status ("Verifying your information…" → "Verification complete"), never the webhook/event name.
+  - **This includes status badges / pills / chips / tags.** Do NOT render the webhook name as a decorative status chip on a loading/"Generating your Consumer Report" screen (a common mistake — see the canonical anti-pattern: a green `USER_CHECK_REPORT_READY` pill above a "View Consumer Report" button). The async report-ready beat is conveyed by the loading→done transition and the CTA enabling itself; if you want to show the webhook fired, that belongs in the **JSON panel** (raw `{"webhook_code":"USER_CHECK_REPORT_READY"}`) or a **technical slide**, never as on-screen UI chrome. Any `UPPER_SNAKE_CASE` event/enum token is a tell that it doesn't belong in the consumer UI.
 - Raw API endpoints (`/cra/check_report/base_report/get`), field names, raw report JSON, `report_id`, `user_id` (`usr_…`), request IDs.
 - Over-detailed report internals: full transaction dumps, every line item, internal/model attributes, raw `nsf_overdraft_transactions_count` / `days_available` field labels, scoring math, thresholds. Host shows a clean human summary; the detailed report lives in the JSON panel, a slide, or the Underwriter view.
 
