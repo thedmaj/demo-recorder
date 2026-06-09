@@ -525,6 +525,17 @@ function normalizeCompanyToken(raw) {
 
 function extractCompanyToken(promptText) {
   if (!promptText) return 'Demo';
+
+  // Primary: the **Host:** line names the host app/company, e.g.
+  // "**Host:** **Bright Money** — consumer fintech". Take the name before the
+  // em-dash / dash separator so description words don't leak into the slug.
+  const hostMatch = promptText.match(/\*{0,2}Host:\*{0,2}\s*([^\n]+)/i);
+  if (hostMatch && hostMatch[1]) {
+    const namePart = hostMatch[1].split(/\s+[—–-]\s+/)[0];
+    const token = normalizeCompanyToken(namePart);
+    if (token && token !== 'Demo') return token;
+  }
+
   const linePatterns = [
     /\*\*Company\s*\/\s*context:\*\*\s*([^\n]+)/i,
     /\bCompany\s*\/\s*context:\s*([^\n]+)/i,
@@ -539,8 +550,10 @@ function extractCompanyToken(promptText) {
     }
   }
 
-  // Fallback to Brand URL domain host label.
-  const brandUrl = promptText.match(/\bBrand URL:\s*(https?:\/\/[^\s]+)/i)?.[1];
+  // Fallback to Brand URL domain host label. Tolerate markdown bold and an
+  // "(optional)" qualifier, e.g. "**Brand URL:** https://…" or
+  // "**Brand URL** (optional): https://…".
+  const brandUrl = promptText.match(/Brand URL\b[^\n]*?(https?:\/\/[^\s)]+)/i)?.[1];
   if (brandUrl) {
     try {
       const host = new URL(brandUrl).hostname.replace(/^www\./i, '');
