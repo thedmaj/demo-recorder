@@ -791,8 +791,8 @@ async function createConsumerReportLinkToken(flat = {}) {
   const craLayerTemplate =
     flat.craLayerTemplate ??
     flat.cra_layer_template ??
-    process.env.CRA_EWA_LAYER_TEMPLATE_ID ??   // canonical name for the CRA Layer template
-    process.env.CRA_LAYER_TEMPLATE ??           // legacy alias (same value)
+    process.env.CRA_LAYER_TEMPLATE ??           // canonical CRA Layer template
+    process.env.CRA_EWA_LAYER_TEMPLATE_ID ??    // accepted alias (same value)
     null;
   const requestedProducts = Array.isArray(flat.products) ? flat.products : [];
 
@@ -991,8 +991,41 @@ async function getOrCreateLayerUserToken(clientUserId) {
   }
 }
 
+// Detect whether the CURRENT run is a CRA / Consumer Report demo so the Layer
+// session uses the CRA Layer template (CRA_LAYER_TEMPLATE — a Layer template with
+// CRA products enabled) instead of the default PLAID_LAYER_TEMPLATE_ID. Reads the
+// run's demo-script / run-context (or the prompt) once, then caches.
+let _runCraDemoCache;
+function runIsCraDemo() {
+  if (_runCraDemoCache !== undefined) return _runCraDemoCache;
+  _runCraDemoCache = false;
+  try {
+    const projectRoot = path.resolve(__dirname, '../../..');
+    const runDir = process.env.PIPELINE_RUN_DIR || null;
+    const files = [
+      runDir ? path.join(runDir, 'demo-script.json') : null,
+      runDir ? path.join(runDir, 'pipeline-run-context.json') : null,
+      path.join(projectRoot, 'inputs', 'prompt.txt'),
+    ].filter(Boolean);
+    const craRe = /cra_base_report|cra_cashflow_insights|cra_income_insights|cra_partner_insights|\/cra\/check_report|lend_score|lendscore/i;
+    for (const f of files) {
+      if (!fs.existsSync(f)) continue;
+      if (craRe.test(fs.readFileSync(f, 'utf8'))) { _runCraDemoCache = true; break; }
+    }
+  } catch (_) {}
+  return _runCraDemoCache;
+}
+
 async function createSessionToken(opts = {}) {
-  const templateId = opts.template_id || opts.templateId || process.env.PLAID_LAYER_TEMPLATE_ID || 'template_n31w56t6o9a7';
+  // Layer template selection: CRA demos use CRA_LAYER_TEMPLATE (alias
+  // CRA_EWA_LAYER_TEMPLATE_ID); every other use case uses PLAID_LAYER_TEMPLATE_ID.
+  // An explicit caller-supplied template_id always wins.
+  const craTemplate = process.env.CRA_LAYER_TEMPLATE || process.env.CRA_EWA_LAYER_TEMPLATE_ID || null;
+  const defaultTemplate = process.env.PLAID_LAYER_TEMPLATE_ID || 'template_n31w56t6o9a7';
+  const isCra = opts.cra === true || hasCraProducts(opts.products) || runIsCraDemo();
+  const templateId =
+    opts.template_id || opts.templateId ||
+    ((isCra && craTemplate) ? craTemplate : defaultTemplate);
   const requestedClientUserId = opts.client_user_id || opts.clientUserId || `onboarding-${Date.now()}`;
 
   // Create the Plaid user once (cached), then mint a fresh Layer session each run.
@@ -1008,7 +1041,7 @@ async function createSessionToken(opts = {}) {
   const linkToken = sessionResult.link?.link_token || sessionResult.link_token;
   if (!linkToken) throw new Error(`/session/token/create failed: ${JSON.stringify(sessionResult)}`);
 
-  console.log(`[plaid-backend] Layer session token created (template=${templateId}, user=${reused ? 'reused' : 'created'})`);
+  console.log(`[plaid-backend] Layer session token created (template=${templateId}, cra=${isCra}, user=${reused ? 'reused' : 'created'})`);
   return { link_token: linkToken, user_token: userToken };
 }
 

@@ -437,7 +437,7 @@ completes Layer → `/user_account/session/get` → `/user/update` (populate `na
 recommended) → `/cra/check_report/create` (Base Report eagerly generated) →
 `USER_CHECK_REPORT_READY` → `/cra/check_report/<report>/get` (by `user_id`).
 
-**Config:** the Layer session uses **`CRA_EWA_LAYER_TEMPLATE_ID`** (a Layer template with
+**Config:** the Layer session uses **`CRA_LAYER_TEMPLATE`** (a Layer template with
 CRA products enabled; legacy alias `CRA_LAYER_TEMPLATE`). All CRA/Check API calls
 initialize with **`CRA_CLIENT_ID` / `CRA_SECRET`**. Non-CRA Layer use cases (payments,
 faster onboarding) use `PLAID_LAYER_TEMPLATE_ID` instead — never the CRA template.

@@ -1,6 +1,6 @@
 ---
 name: plaid-layer-cra-onboarding
-description: Canonical flow for onboarding users with Plaid Layer + Plaid Consumer Report (CRA). Layer permissions accounts AND collects identity in ONE session — there is NO separate CRA Plaid Link session. The CRA report is generated server-side from the updated user record. Load when a demo or integration pairs Plaid Layer with CRA Base Report / Cash Flow Insights / Income Insights / LendScore, or mentions CRA_EWA_LAYER_TEMPLATE_ID, /session/token/create with CRA products, /user/update from Layer identity, or /cra/check_report/create. NOT for Layer→IDV (see plaid-layer-idv-onboarding) or for non-CRA Layer onboarding (use PLAID_LAYER_TEMPLATE_ID).
+description: Canonical flow for onboarding users with Plaid Layer + Plaid Consumer Report (CRA). Layer permissions accounts AND collects identity in ONE session — there is NO separate CRA Plaid Link session. The CRA report is generated server-side from the updated user record. Load when a demo or integration pairs Plaid Layer with CRA Base Report / Cash Flow Insights / Income Insights / LendScore, or mentions CRA_LAYER_TEMPLATE, /session/token/create with CRA products, /user/update from Layer identity, or /cra/check_report/create. NOT for Layer→IDV (see plaid-layer-idv-onboarding) or for non-CRA Layer onboarding (use PLAID_LAYER_TEMPLATE_ID).
 ---
 
 # Plaid Layer + CRA (Consumer Report) onboarding — canonical flow
@@ -23,12 +23,12 @@ Consumer Report **server-side**. There is **NO second Plaid Link session** for C
 
 | Concern | Variable | Value / note |
 |---|---|---|
-| CRA Layer template (Layer session with **CRA products enabled**) | **`CRA_EWA_LAYER_TEMPLATE_ID`** | `template_3fvao27ap3bp` (legacy alias: `CRA_LAYER_TEMPLATE`, same value) |
+| CRA Layer template (Layer session with **CRA products enabled**) | **`CRA_LAYER_TEMPLATE`** | `template_3fvao27ap3bp` |
 | CRA API credentials | **`CRA_CLIENT_ID`** / **`CRA_SECRET`** | All CRA / Check API calls initialize with these (separate from `PLAID_CLIENT_ID`/`PLAID_SECRET`). Already wired in `plaid-backend.js` (CRA-scoped client when set). |
 | Non-CRA Layer (payments, faster onboarding) | **`PLAID_LAYER_TEMPLATE_ID`** | Use this template for any **non-CRA** Layer use case. Do NOT use the CRA template for non-CRA flows. |
 
 Pipeline plumbing: `plaid-backend.js` resolves the CRA Layer template from
-`CRA_EWA_LAYER_TEMPLATE_ID ?? CRA_LAYER_TEMPLATE`. When that template is set **and**
+`CRA_LAYER_TEMPLATE`. When that template is set **and**
 the request has CRA products, the backend creates a single `/session/token/create`
 (passing the legacy user_token in `user.user_id`) instead of a separate CRA link token.
 
@@ -108,7 +108,7 @@ extraction too early can cause CRA report generation to fail.
   → `/cra/check_report/create` → `USER_CHECK_REPORT_READY`) → CRA insight reveal(s)
   (`base_report/get`, plus `cashflow_insights/get` / `lend_score/get` as applicable) →
   decision card.
-- The Layer session uses `CRA_EWA_LAYER_TEMPLATE_ID`; CRA API calls use
+- The Layer session uses `CRA_LAYER_TEMPLATE`; CRA API calls use
   `CRA_CLIENT_ID`/`CRA_SECRET` (both already resolved by `plaid-backend.js`).
 - Frame Layer identity as **user-permissioned** (it is permissioned, and for CRA it is
   written into the user record before report generation). KYC document/selfie is a

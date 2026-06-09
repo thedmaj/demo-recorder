@@ -61,8 +61,8 @@ These are the highest-blast-radius mistakes; the owning file has the full rules.
 - **Layer + CRA = ONE Layer session, NO separate CRA Link launch.** Layer permissions
   accounts AND collects identity in a single launch; the Consumer Report is generated
   server-side (`/user/update` → `/cra/check_report/create` → `USER_CHECK_REPORT_READY` →
-  `…/base_report/get`). CRA Layer demos use **`CRA_EWA_LAYER_TEMPLATE_ID`** (alias
-  `CRA_LAYER_TEMPLATE`) + **`CRA_CLIENT_ID`/`CRA_SECRET`**; **non-CRA** Layer uses
+  `…/base_report/get`). CRA Layer demos use **`CRA_LAYER_TEMPLATE`**
+  (= `template_3fvao27ap3bp`) + **`CRA_CLIENT_ID`/`CRA_SECRET`**; **non-CRA** Layer uses
   `PLAID_LAYER_TEMPLATE_ID`. → [`plaid-layer-cra-onboarding`](.claude/skills/plaid-layer-cra-onboarding/SKILL.md)
 - **Main demo = happy path only.** No error / declined / edge-case flows. Active voice; avoid
   filler ("simply", "just", "unfortunately", "robust", "seamless"). → [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md)
@@ -105,7 +105,7 @@ referenced by path; new skills go in `.claude/skills/`.)
 | Concern | Owning file |
 |---------|-------------|
 | Onboarding: Plaid Layer prefill → Identity Verification (IDV) KYC, joined by shared `client_user_id` (cross-product flow) | [`plaid-layer-idv-onboarding`](.claude/skills/plaid-layer-idv-onboarding/SKILL.md) |
-| Onboarding: Plaid Layer → CRA (Consumer Report) — ONE Layer session (no separate CRA Link), server-side report gen; `CRA_EWA_LAYER_TEMPLATE_ID` + `CRA_CLIENT_ID`/`CRA_SECRET` | [`plaid-layer-cra-onboarding`](.claude/skills/plaid-layer-cra-onboarding/SKILL.md) |
+| Onboarding: Plaid Layer → CRA (Consumer Report) — ONE Layer session (no separate CRA Link), server-side report gen; `CRA_LAYER_TEMPLATE` + `CRA_CLIENT_ID`/`CRA_SECRET` | [`plaid-layer-cra-onboarding`](.claude/skills/plaid-layer-cra-onboarding/SKILL.md) |
 | Build the host app: DOM contract, `goToStep`, `data-testid`, API panel / link-events contracts, manual nav, Plaid Link real-SDK recording, Link event names, `Plaid.create` callback, `products[]` resolution, onSuccess panel | [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md) |
 | Script / narration / persona / pacing / brand voice / prohibited words / reveal moments / host background | [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md) |
 | Slides (`.slide-root`): Deck Design System, canvas contract, chrome/logo, build-qa slide scanners, app-only invariant, drift checkpoint, slide-fix recovery | [`plaid-slide-design`](.claude/skills/plaid-slide-design/SKILL.md) + [`plaid-workhorse-slides`](.claude/skills/plaid-workhorse-slides/SKILL.md) |
@@ -127,7 +127,7 @@ referenced by path; new skills go in `.claude/skills/`.)
 | [EWA / Cash Advance Score](inputs/products/plaid-ewa-score.md) | Protect family. Link `["auth","signal"]`; `scores.cash_advance.score` (1–99, higher=riskier). Never route to `funding`. |
 | [CRA Base Report](inputs/products/plaid-cra-base-report.md) / [LendScore](inputs/products/plaid-cra-lend-score.md) / [Cashflow Insights](inputs/products/plaid-cra-cashflow-insights.md) | Real-SDK CRA Link (`plaidPhase:"launch"`); `/user/create` + permissible purpose; async report-ready beat. |
 | [Bank Income](inputs/products/plaid-bank-income.md) / [Income Insights](inputs/products/plaid-income-insights.md) | `income_verification` only accepts `{income_verification, employment}` in a Link token. |
-| [Layer](inputs/products/plaid-layer.md) | **Live Plaid Layer Web SDK** (`Plaid.create`+`submit`/`open`) — a real modal that loads, exactly like Plaid Link; **no mobile mockup**. Sandbox eligible phone **`+14155550011`** (`LAYER_READY`), ineligible `+14155550000`. Order: `submit(phone)` first → `open()` on `LAYER_READY`. Prefill only (unverified) → chain [IDV](inputs/products/plaid-identity-verification.md) to KYC. **With CRA: ONE Layer session (no separate CRA Link) — `CRA_EWA_LAYER_TEMPLATE_ID` + `CRA_CLIENT_ID`/`CRA_SECRET`, report generated server-side.** → [`plaid-layer-cra-onboarding`](.claude/skills/plaid-layer-cra-onboarding/SKILL.md) |
+| [Layer](inputs/products/plaid-layer.md) | **Live Plaid Layer Web SDK** (`Plaid.create`+`submit`/`open`) — a real modal that loads, exactly like Plaid Link; **no mobile mockup**. Sandbox eligible phone **`+14155550011`** (`LAYER_READY`), ineligible `+14155550000`. Order: `submit(phone)` first → `open()` on `LAYER_READY`. Prefill only (unverified) → chain [IDV](inputs/products/plaid-identity-verification.md) to KYC. **With CRA: ONE Layer session (no separate CRA Link) — `CRA_LAYER_TEMPLATE` + `CRA_CLIENT_ID`/`CRA_SECRET`, report generated server-side.** → [`plaid-layer-cra-onboarding`](.claude/skills/plaid-layer-cra-onboarding/SKILL.md) |
 | [Identity Verification (IDV)](inputs/products/plaid-identity-verification.md) | `products: ["identity_verification"]` — **mutually exclusive** with all other products. Template-driven (Document + Data Source + Selfie). `onSuccess` = submitted, not passed; verdict via `/identity_verification/get`. Sandbox persona: Leslie Knope. |
 | [Auth](inputs/products/plaid-auth.md) / [Transfer](inputs/products/plaid-transfer.md) | See files. Transfer: Signal runs INSIDE `/transfer/authorization/create`. |
 

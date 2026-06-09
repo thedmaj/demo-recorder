@@ -34,7 +34,7 @@ CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
   [x] **EXACTLY ONE launch — the Plaid Layer session.** `plaidPhase:"launch"` appears on the Layer step ONLY. Do NOT author a separate CRA Plaid Link launch; the single Layer session both shares identity AND permissions accounts.
-  [x] **Layer session (CRA-enabled):** `POST /user/create` → `POST /session/token/create` with the **CRA Layer template** (`CRA_EWA_LAYER_TEMPLATE_ID`, resolved server-side) and `user.user_id` = the Plaid `user_id`; `Plaid.create` → `submit(phone)` first → `open()` on `LAYER_READY`. Sandbox eligible phone **+14155550011**. CRA API calls use `CRA_CLIENT_ID`/`CRA_SECRET` (resolved server-side).
+  [x] **Layer session (CRA-enabled):** `POST /user/create` → `POST /session/token/create` with the **CRA Layer template** (`CRA_LAYER_TEMPLATE`, resolved server-side) and `user.user_id` = the Plaid `user_id`; `Plaid.create` → `submit(phone)` first → `open()` on `LAYER_READY`. Sandbox eligible phone **+14155550011**. CRA API calls use `CRA_CLIENT_ID`/`CRA_SECRET` (resolved server-side).
   [x] **Server-side report generation (NOT a launch):** after Layer, `POST /user_account/session/get` → `POST /user/update` (populate `name`, `date_of_birth`, `emails`, `phone_numbers`, `addresses`; partial SSN in `id_numbers` recommended) → `POST /cra/check_report/create` (Base Report eagerly generated) → wait `USER_CHECK_REPORT_READY`.
   [x] **Reports retrieved by `user_id`** (NOT access_token): `POST /cra/check_report/base_report/get`; **LendScore is NOT a products[] string** — retrieve via `POST /cra/check_report/lend_score/get` after report-ready.
   [x] **Sandbox / persona** — Layer eligible phone +14155550011; identity prefilled by Layer.
@@ -98,7 +98,7 @@ PRE-FLIGHT
   [x] EXACTLY ONE launch (Layer); NO separate CRA Plaid Link launch
   [x] CRA report generated server-side (`/user/update` → `/cra/check_report/create` → `USER_CHECK_REPORT_READY` → `…/get` by `user_id`)
   [x] LendScore via `/cra/check_report/lend_score/get` (add-on, not a product string); direction correct (1–99, higher = safer)
-  [x] CRA Layer template (`CRA_EWA_LAYER_TEMPLATE_ID`) + `CRA_CLIENT_ID`/`CRA_SECRET` (server-side)
+  [x] CRA Layer template (`CRA_LAYER_TEMPLATE`) + `CRA_CLIENT_ID`/`CRA_SECRET` (server-side)
   [x] NMLS #1464945 footer on host underwriting screens
   [x] app+slides build, stop at build-qa
 
