@@ -188,7 +188,13 @@
 /* Long-title auto-condense (2026-05-29): titles of ~7+ words look better one
    notch smaller so they fit on one line. The `.is-long` class is applied
    deterministically at render time (post-slides title-fit runtime) — no LLM
-   prompt burden, soft (only when the word count warrants). Scoped to titles. */
+   prompt burden, soft (only when the word count warrants). Scoped to titles.
+
+   Shrink floor (2026-06-09): the post-slides title-fit runtime shrinks a
+   heading on-wrap down to a floor — T1/T3/T6 (hero / statement / before-after)
+   headlines floor at 0.80 (cap the reduction at 20%, then accept a wrap rather
+   than go smaller); all other templates floor at 0.70. See
+   scripts/scratch/scratch/post-slides.js (data-slide-title-fit). */
 .slide-root .h-title.is-long {
   font-size: calc(var(--type-title) * 0.8);
 }

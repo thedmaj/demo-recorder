@@ -417,3 +417,23 @@ Added [DRAFT] proof points, customer stories, competitive differentiators, and o
 - 2026-06-09: Added "CRA field framing" section (qualitative, from John Wiederin Gong calls) [AI] — ability-to-pay vs willingness, modular report, verification→underwriting adoption journey, Network Insights = network behavior (PFM lower / cash-advance higher, illustrative), mortgage = asset+income VERIFICATION not a cash-flow score (one connection serves both; LendScore≠mortgage underwriting), soft-pull/linkless is roadmap. **Customer/retro NUMBERS (10–25% lift, 15%, 18% Prism, 2.6x, $2–4M, 95/85%, 800K, 1,600 attrs) intentionally HELD pending human sign-off** — not added. Mirror guard added to plaid-cra-lend-score.md (Do Not + target definition).
 - 2026-03-26: File created for CRA Base Report prompt scaffolding [human]
 - 2026-03-27: Enriched with Glean sales content (value props, customer stories, proof points, objections) [AI]
+
+## Layer + CRA onboarding (canonical) — no separate CRA Link session
+
+When delivered through **Plaid Layer**, the Layer session both permissions the user's
+accounts AND returns user-permissioned identity in **ONE launch** — there is **NO
+separate CRA Plaid Link session**. The Consumer Report is generated server-side:
+
+`/user/create` → `/session/token/create` (CRA Layer template + `user.user_id`) → user
+completes Layer → `/user_account/session/get` → `/user/update` (populate `name`,
+`date_of_birth`, `emails`, `phone_numbers`, `addresses`; partial SSN in `id_numbers`
+recommended) → `/cra/check_report/create` (Base Report eagerly generated) →
+`USER_CHECK_REPORT_READY` → `/cra/check_report/<report>/get` (by `user_id`).
+
+**Config:** the Layer session uses **`CRA_EWA_LAYER_TEMPLATE_ID`** (a Layer template with
+CRA products enabled; legacy alias `CRA_LAYER_TEMPLATE`). All CRA/Check API calls
+initialize with **`CRA_CLIENT_ID` / `CRA_SECRET`**. Non-CRA Layer use cases (payments,
+faster onboarding) use `PLAID_LAYER_TEMPLATE_ID` instead — never the CRA template.
+
+Full playbook: `.claude/skills/plaid-layer-cra-onboarding/SKILL.md`.
+Docs: https://plaid.com/docs/check/onboard-users-with-layer/

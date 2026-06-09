@@ -172,3 +172,23 @@ Feature Cash Flow Insights when the persona is a lender or credit platform that 
 
 - 2026-05-21: Original stub created (partial — missing full template structure) [ai]
 - 2026-05-31: Expanded to full template structure with product overview, use cases, value props, accurate terminology, implementation pitfalls. AskBill-verified endpoints and API shape [ai]
+
+## Layer + CRA onboarding (canonical) — no separate CRA Link session
+
+When delivered through **Plaid Layer**, the Layer session both permissions the user's
+accounts AND returns user-permissioned identity in **ONE launch** — there is **NO
+separate CRA Plaid Link session**. The Consumer Report is generated server-side:
+
+`/user/create` → `/session/token/create` (CRA Layer template + `user.user_id`) → user
+completes Layer → `/user_account/session/get` → `/user/update` (populate `name`,
+`date_of_birth`, `emails`, `phone_numbers`, `addresses`; partial SSN in `id_numbers`
+recommended) → `/cra/check_report/create` (Base Report eagerly generated) →
+`USER_CHECK_REPORT_READY` → `/cra/check_report/<report>/get` (by `user_id`).
+
+**Config:** the Layer session uses **`CRA_EWA_LAYER_TEMPLATE_ID`** (a Layer template with
+CRA products enabled; legacy alias `CRA_LAYER_TEMPLATE`). All CRA/Check API calls
+initialize with **`CRA_CLIENT_ID` / `CRA_SECRET`**. Non-CRA Layer use cases (payments,
+faster onboarding) use `PLAID_LAYER_TEMPLATE_ID` instead — never the CRA template.
+
+Full playbook: `.claude/skills/plaid-layer-cra-onboarding/SKILL.md`.
+Docs: https://plaid.com/docs/check/onboard-users-with-layer/

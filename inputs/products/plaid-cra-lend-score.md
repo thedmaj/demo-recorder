@@ -111,3 +111,23 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 - Present LendScore as GA without beta callout
 - Use federal student loan / Mohela liabilities tropes (wrong product family)
 - **Position LendScore as a mortgage underwriting score** — it predicts general consumer 90+DPD default, not mortgage performance. Mortgage / HELOC demos should feature **asset + income verification (VOA/VOI)** via [Base Report](plaid-cra-base-report.md) + [Income Insights](plaid-cra-income-insights.md), NOT a LendScore decision. (Glean: John Wiederin Gong calls, 2026 — cash-flow *underwriting* for mortgage is early; asset/income *verification* is the mature mortgage use case.)
+
+## Layer + CRA onboarding (canonical) — no separate CRA Link session
+
+When delivered through **Plaid Layer**, the Layer session both permissions the user's
+accounts AND returns user-permissioned identity in **ONE launch** — there is **NO
+separate CRA Plaid Link session**. The Consumer Report is generated server-side:
+
+`/user/create` → `/session/token/create` (CRA Layer template + `user.user_id`) → user
+completes Layer → `/user_account/session/get` → `/user/update` (populate `name`,
+`date_of_birth`, `emails`, `phone_numbers`, `addresses`; partial SSN in `id_numbers`
+recommended) → `/cra/check_report/create` (Base Report eagerly generated) →
+`USER_CHECK_REPORT_READY` → `/cra/check_report/<report>/get` (by `user_id`).
+
+**Config:** the Layer session uses **`CRA_EWA_LAYER_TEMPLATE_ID`** (a Layer template with
+CRA products enabled; legacy alias `CRA_LAYER_TEMPLATE`). All CRA/Check API calls
+initialize with **`CRA_CLIENT_ID` / `CRA_SECRET`**. Non-CRA Layer use cases (payments,
+faster onboarding) use `PLAID_LAYER_TEMPLATE_ID` instead — never the CRA template.
+
+Full playbook: `.claude/skills/plaid-layer-cra-onboarding/SKILL.md`.
+Docs: https://plaid.com/docs/check/onboard-users-with-layer/

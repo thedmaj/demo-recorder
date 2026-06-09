@@ -127,6 +127,7 @@ assets/textures/         ← optional holo gradients (we use CSS instead)
 - Body / eyebrow text minimum: **24px**. Below that, only decorative UI mockup chrome (avatar letters, confidence pills, status bars) inside mockup cards.
 - Slide titles: 64–84px. Section starters 96–140px.
 - Hero numbers: 140–200px in Bowery Street weight 500, letter-spacing −0.02 to −0.03em, line-height 0.9.
+- **Long-heading shrink (on-wrap):** when a `.h-title` / `.h-display` wraps, the post-slides title-fit runtime shrinks it to fit one line. For **T1, T3, T6** (hero / statement / before-after) the shrink floors at **0.80 — a 20% cap**, then the headline is allowed to wrap rather than go smaller; all other templates floor at 0.70. Authors should keep headlines short; do not hand-size `.h-title`.
 
 ### 1.5 Background variants
 

@@ -461,3 +461,25 @@ Empty scaffold for Layer product. To be populated by pipeline research runs.
 
 - 2026-03-12: Scaffold created [human]
 - 2026-04-09: Added prototype-fidelity and eligibility/fallback branching guidance [ai]
+
+## Layer + CRA (Consumer Report) — canonical pairing
+
+When Layer fronts a **CRA / Consumer Report** flow, the **single Layer session** both
+permissions accounts and returns user-permissioned identity — there is **NO separate CRA
+Plaid Link session**. Identity from Layer is written to the Plaid user record, then the
+report is generated server-side:
+
+`/user/create` → `/session/token/create` (CRA Layer template + `user.user_id`) → user
+completes Layer → `/user_account/session/get` → `/user/update` (`name`, `date_of_birth`,
+`emails`, `phone_numbers`, `addresses`; partial SSN recommended) → `/cra/check_report/create`
+(Base Report eagerly generated) → `USER_CHECK_REPORT_READY` → `/cra/check_report/<report>/get`.
+
+**Template selection (env):**
+- **CRA** Layer demos use **`CRA_EWA_LAYER_TEMPLATE_ID`** (Layer template with CRA products
+  enabled; legacy alias `CRA_LAYER_TEMPLATE`) + CRA API credentials `CRA_CLIENT_ID` / `CRA_SECRET`.
+- **Non-CRA** Layer use cases (payments, faster onboarding) use **`PLAID_LAYER_TEMPLATE_ID`**.
+
+Full playbook: `.claude/skills/plaid-layer-cra-onboarding/SKILL.md`.
+For KYC document/selfie verification chained after Layer, see
+`.claude/skills/plaid-layer-idv-onboarding/SKILL.md`.
+Docs: https://plaid.com/docs/check/onboard-users-with-layer/

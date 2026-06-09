@@ -791,7 +791,8 @@ async function createConsumerReportLinkToken(flat = {}) {
   const craLayerTemplate =
     flat.craLayerTemplate ??
     flat.cra_layer_template ??
-    process.env.CRA_LAYER_TEMPLATE ??
+    process.env.CRA_EWA_LAYER_TEMPLATE_ID ??   // canonical name for the CRA Layer template
+    process.env.CRA_LAYER_TEMPLATE ??           // legacy alias (same value)
     null;
   const requestedProducts = Array.isArray(flat.products) ? flat.products : [];
 

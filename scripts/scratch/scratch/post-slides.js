@@ -476,13 +476,17 @@ function ensureSlideDesignStylesInHead(html, templates) {
     `  // If one line can't be reached within the floor (a genuine multi-line\n` +
     `  // display headline, e.g. \"Account opening / shouldn't end in / abandonment.\"),\n` +
     `  // REVERT to the designed size — never leave a title shrunk-but-still-wrapped.\n` +
-    `  var MIN = 0.70;   // don't shrink past ~30%; below this it's a real multi-line headline\n` +
+    `  var FLOOR_DEFAULT = 0.70; // generic titles: don't shrink past ~30%\n` +
+    `  var FLOOR_HERO = 0.80;    // T1/T3/T6 hero/statement/comparison headlines: cap shrink at 20% (floor 0.8), then accept a wrap\n` +
+    `  var HERO_TPL = { T1: 1, T3: 1, T6: 1 };\n` +
+    `  function floorFor(t){ var r = t.closest && t.closest('.slide-root'); var tpl = r ? (r.getAttribute('data-slide-template') || '') : ''; return HERO_TPL[tpl] ? FLOOR_HERO : FLOOR_DEFAULT; }\n` +
     `  function oneLine(t, lh){ return t.getBoundingClientRect().height <= lh * 1.4; }\n` +
     `  function fitOne(t){\n` +
     `    if (t.hasAttribute('data-titlefit-skip')) return;\n` +
     `    t.style.fontSize = '';                                  // reset prior fit (idempotent)\n` +
     `    var base = parseFloat(getComputedStyle(t).fontSize) || 0;\n` +
     `    if (!base) return;\n` +
+    `    var MIN = floorFor(t);                                  // T1/T3/T6 floor 0.8 (20% cap); other templates 0.7\n` +
     `    var lh = parseFloat(getComputedStyle(t).lineHeight) || base * 1.1;\n` +
     `    if (oneLine(t, lh)) return;                             // already one line\n` +
     `    var scale = 1, fitted = false;\n` +
