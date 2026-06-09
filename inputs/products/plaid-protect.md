@@ -507,6 +507,8 @@ Feature Protect in demos where the persona is a fintech, lender, neobank, or EWA
 | `protect_sdk_session_id` | The frontend device session ID from Protect SDK — pass to backend event send |
 | First-party fraud | The real user is the fraud (bust-out, default-never-pay, dispute abuse) |
 | Third-party fraud | Someone else using the user's identity (ATO, stolen identity, synthetic) |
+| Trust Index = **onboarding score** | A top-of-funnel / new-to-ecosystem user-risk score evaluated when a user joins. It is **not** an ongoing/continuous score — ongoing ACH & transaction risk is **Signal's** job. Don't narrate TI as a per-transaction or always-on score. (Glean: Wise call framing, 2026) |
+| step-up = **escalation** | The risk action a host takes on a low-trust score. Frame it as "escalation"/a parallel path the *customer* chooses — and it can be **invisible to the user** (lower an advance amount, extend a probation period, reduce a limit) as well as visible (MFA, doc, selfie). Plaid returns the score; the host decides the action. (Glean: Klover call framing, 2026) |
 
 ---
 
@@ -547,6 +549,12 @@ Feature Protect in demos where the persona is a fintech, lender, neobank, or EWA
 **Competitive positioning (generic — for Alloy / Unit21 or in-house models):** "Protect is not meant to run standalone. Return Trust Index + attributes, then measure incremental lift inside your existing models. The differentiation is the open-banking network metadata no other provider can access." Source: GTM Playbook 2026.
 
 **Native iOS/Android Protect SDKs:** Available May 2026.
+
+**Field framing (Glean Gong calls, 2026 — qualitative, use for narration; specific retro numbers are held pending human sign-off):**
+- **First-party fraud is the gap.** Most teams feel they have third-party fraud reasonably controlled; first-party fraud is where existing tools are weakest. Protect's differentiator is the open-banking network history that surfaces it. (Consistent across EarnIn / Klover / Gemini retro calls.)
+- **Loan-stacking is the canonical network-signal example.** A user connecting their bank to many cash-advance / BNPL services within a few days is a hungry loan-stacking pattern that a single-tenant fraud stack can't see — only Plaid's cross-app network reveals it. (Illustrative; do not assert a specific app count.)
+- **Margin hook for EWA/lending stories:** a single delinquent / charged-off customer can erase the profit from several good ones — so screening risk *before* onboarding completes is high-leverage. (Generalized; the exact ratio is held.)
+- **Position Protect as additive, never standalone.** Retro lift is illustrative of what Protect contributes *on its own*; the real value is the incremental lift when its score + attributes feed the customer's existing in-house models. Always show the host app owning the decision.
 
 **Internal resources:** GTM Playbook (pl/protect-gtm), Protect Megadoc, Ti2 Deep Dive deck, Protect Overview (Slite).
 
@@ -590,6 +598,7 @@ Feature Protect in demos where the persona is a fintech, lender, neobank, or EWA
 - Thresholding requires calibration — teams need help defining safe/step-up/block bands. Live Protect customers use the Reports API for continuous tuning; demo thresholds should be realistic (not 0/50/80 clean round numbers).
 - Sandbox and prod permissions are provisioned separately — provision both early; Credit Genie was blocked by sandbox/prod mismatch during onboarding.
 - [DRAFT] Block on malformed request fields — strict payload validation and known-good sample payloads reduce the #1 engineering integration issue.
+- **Don't conflate retro lift with the live API score.** Retro analyses are trained on a customer's own historical fraud labels and are *illustrative of Protect's standalone contribution*; the live Trust Index from `/protect/event/send` is Plaid's network model and is meant to feed (not replace) in-house models. Present any retro figure as illustrative + incremental, never as a guaranteed production result. (Glean: consistent retro-call disclaimer, 2026)
 
 ---
 
@@ -629,6 +638,7 @@ Key verified facts:
 
 ## Change Log
 
+- 2026-06-09: Added qualitative field framing from Adam Bieda Gong calls (2026) [AI] — terminology rows ("Trust Index = onboarding score, not ongoing — Signal owns ongoing risk"; "step-up = escalation, customer-chosen, can be invisible"), GTM field-framing notes (first-party-fraud-is-the-gap, loan-stacking illustration, margin hook, position-as-additive), and a retro-vs-live-score accuracy guard. **Numeric Gong retro stats (Gemini/EarnIn/Klover dollar & % figures, CAi vs Pave 17% uplift, TI score thresholds) were intentionally HELD pending human sign-off** — not added. CAi 17%-uplift stat, when approved, belongs in [`plaid-ewa-score.md`](plaid-ewa-score.md), not the Protect TI proof points.
 - 2026-06-08: Full KB enhancement [AI — Plaid Product KB Enhancer]. Added: Fraud Type Mapping section (first-party vs third-party, with component mapping), Onboarding Flow Placement section (three-stage funnel, event-driven model, `/protect/event/send` event objects, demo UI guidance, IDV/Signal composition diagram), corrected subscore names (Ti1 `device/identity/transaction_graph` → Ti2 `device_and_connection`/`bank_account_insights`), corrected event object casing (`user_sign_up` vs `LINK_SESSION_END`), upgraded Proof Points table to template format with sources/confidence, added Customer Use Cases with onboarding-fraud personas, added Accurate Terminology section, added Narration Talk Tracks for onboarding-fraud story, fixed GTM references (removed Tilt/Cash App as approved customers; Gemini/Credit Genie/Benny/Albert approved), added Competitive Differentiators table, added Framework QA Learnings.
 - 2026-05-31: Proof Points & ROI Metrics, Objections & Responses, Implementation Pitfalls, Where It Fits auto-built [AI]
 - 2026-05-25: Initial KB built from AskBill + Glean Megadoc [AI]
