@@ -4364,6 +4364,25 @@ async function launchDemoAppServer(runId) {
     demoApp.post('/api/user-account-session-get', async (req, res) => {
       try { res.json(await getPlaid().userAccountSessionGet(req.body.public_token)); } catch (e) { res.status(500).json({ error: e.message }); }
     });
+    // IDV multilaunch (parity with app-server.js): demos that launch a real
+    // Identity Verification session call these. Their absence here 404'd the
+    // preview (e.g. Censiq/Debit/Gringo). Keep in sync with app-server.js.
+    demoApp.post('/api/create-idv-link-token', async (req, res) => {
+      try {
+        res.json(await getPlaid().createIdvLinkToken({
+          client_user_id: req.body.client_user_id || req.body.clientUserId || null,
+          template_id:    req.body.template_id || req.body.templateId || null,
+          client_name:    req.body.client_name || req.body.clientName || null,
+        }));
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+    demoApp.post('/api/identity-verification-get', async (req, res) => {
+      try {
+        res.json(await getPlaid().getIdentityVerification(
+          req.body.identity_verification_id || req.body.identityVerificationId
+        ));
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
   }
 
   // Root — inject overlay globals + script tag
