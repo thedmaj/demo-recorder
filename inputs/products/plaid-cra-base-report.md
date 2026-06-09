@@ -11,7 +11,7 @@ use_cases:
   - "cash-flow-underwriting"
   - "account-stability-review"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-08T14:36:25.974Z"
+last_ai_update: "2026-06-08T15:40:47.810Z"
 needs_review: true
 approved: true
 version: 1
@@ -146,6 +146,25 @@ Do **not** document **`user_bank_income`** here — that sandbox login is for **
 
 Official list: [Plaid Sandbox test credentials — Credit and income testing](https://plaid.com/docs/sandbox/test-credentials/#credit-and-income-testing-credentials).
 
+## Combining with Plaid Layer (eligible vs. ineligible users)
+<!-- 🔄 SHARED — applies to the whole CRA / Consumer Report family. -->
+
+When a build pairs **Plaid Layer** with CRA, do NOT model it as two unconditional Link launches. Per
+[Using Plaid Layer with Plaid Check Consumer Report](https://plaid.com/docs/check/onboard-users-with-layer/)
+(AskBill + Glean confirmed 2026-06-08), both tie to one Plaid user (`/user/create`) and **branch on
+Layer eligibility**:
+- **Layer-eligible (`LAYER_READY`):** one Layer session → `/user_account/session/get` → `/user/update`
+  (write identity) → **`/cra/check_report/create`** → `USER_CHECK_REPORT_READY` → report `…/get`.
+  **No second CRA Link** — the Layer-linked bank feeds the report.
+- **Layer-ineligible (`LAYER_AUTOFILL_NOT_AVAILABLE`):** fall back to a **standard CRA Consumer Report
+  Link** (`/link/token/create` with `cra_base_report` + `cra_options.days_requested` +
+  `consumer_report_permissible_purpose` + `webhook`).
+- Identity must exist on the user **before** `/cra/check_report/create` (that's the purpose of the
+  eligible-path `/user/update`). If also using Transactions, pass it in
+  `additional_consented_products` and call `/transactions/sync` only after `USER_CHECK_REPORT_READY`.
+
+Full architecture + demo/multilaunch mapping: [`plaid-layer.md` → Layer × CRA / Consumer Report interaction](plaid-layer.md#layer--cra--consumer-report-interaction-plaid-check).
+
 ## Demo UI Guidance — Realistic Front-End vs. Behind-the-Scenes (CRITICAL)
 <!-- 🔄 SHARED — applies to the whole CRA / Consumer Report family. -->
 
@@ -200,6 +219,14 @@ Host/consumer screens must read like a real product a borrower/applicant uses. T
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-08 — Run: 2026-06-08-Ascend-Bank-Digital-Mortgage-CRA-Assets-Statements-v3 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"CRA Base Report and CRA Income Insights ride the same single Plaid Link connection, so layering verified income on top of cash-flow/asset underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+- [high] {"claim":"Mortgage-specific: Plaid CRA VOA enables lenders to qualify for Fannie Mae Day 1 Certainty reps-and-warrants relief — less fallback, more automation.","source":"GTM Guide: Home Lending Report, 2026-03-26","status":"DRAFT"}
 
 ### 2026-06-08 — Run: 2026-06-08-Ascend-Bank-Digital-Mortgage-CRA-Assets-Statements-v2 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

@@ -83,6 +83,7 @@ Feature Layer when the demo persona is a fintech, lender, or neobank facing high
 **Problem:** Credit/report workflows require strict identity collection and consent context
 **Solution:** Layer template requires identity fields (name, address, DOB, SSN) and routes ineligible users to fallback
 **Outcome:** Higher confidence that CRA-required data is collected before report retrieval
+**Architecture (canonical):** see [`Layer × CRA / Consumer Report interaction`](#layer--cra--consumer-report-interaction-plaid-check) — Layer-eligible users feed CRA via `/user/update` → `/cra/check_report/create` (no second Link); ineligible users fall back to a standard CRA Consumer Report Link.
 
 ## Narration Talk Tracks
 <!-- ⚠️ HIGHEST PRIORITY for script generation — word-perfect, max 35 words each.
@@ -207,6 +208,58 @@ session (Document + Data Source + Selfie/liveness). Key facts:
 
 IDV facts (endpoints, statuses, webhooks, sandbox persona): [`inputs/products/plaid-identity-verification.md`](plaid-identity-verification.md).
 Full sequencing playbook: [`plaid-layer-idv-onboarding`](../../.claude/skills/plaid-layer-idv-onboarding/SKILL.md) skill.
+
+### Layer × CRA / Consumer Report interaction (Plaid Check)
+
+When a build uses **both Layer and CRA** (`cra_base_report` / `cra_income_insights` /
+`cra_partner_insights`), the two are NOT two independent Link launches for eligible users. Plaid's
+documented pattern ([Using Plaid Layer with Plaid Check Consumer Report](https://plaid.com/docs/check/onboard-users-with-layer/),
+AskBill + Glean confirmed 2026-06-08) ties both to **one Plaid user** (`/user/create`) and **branches
+on Layer eligibility**. CRA always requires identity on the Plaid user record *before* report
+creation, so the architecture is identity-first:
+
+**Common setup (both branches):** `POST /user/create` → keep the returned `user_id` / `user_token`.
+
+**Branch A — Layer-eligible (`LAYER_READY`): one Layer session, NO second CRA Link.**
+1. `POST /session/token/create` with the same `user.user_id` **and a Layer template that has CRA
+   products enabled** (CRA products come from the template, not a `products[]` field).
+2. Run the Layer Link flow → `onSuccess`.
+3. `POST /user_account/session/get` → retrieve user-permissioned identity (+ `items[]`).
+4. `POST /user/update` to write the required identity onto the Plaid user
+   (`name`, `date_of_birth`, `emails`, `phone_numbers`, `addresses`; `id_numbers`/SSN recommended).
+5. `POST /cra/check_report/create` (with `user_id`).
+6. Wait for the **`USER_CHECK_REPORT_READY`** webhook, then fetch
+   `/cra/check_report/base_report/get` (+ `…/income_insights/get`, `…/partner_insights/get`).
+   → The Layer-linked bank connection feeds the report; the user does **not** re-link inside a CRA
+   Link flow.
+
+**Branch B — Layer-ineligible (`LAYER_AUTOFILL_NOT_AVAILABLE`): standard CRA Link fallback.**
+This is exactly the [`eligibility routing → fallback`](#eligibility-routing--use-case-specific-fallback-required)
+contract with the fallback step being a **CRA Consumer Report Link** session:
+1. Ensure identity on the user via `/user/create` / `/user/update`.
+2. `POST /link/token/create` with `products` including `cra_base_report` (+ insights), the same
+   `user.user_id`, `cra_options.days_requested`, `consumer_report_permissible_purpose` (normalized,
+   e.g. `"EXTENSION_OF_CREDIT"` — display-normalize the underscore enum in any UI), and `webhook`.
+3. Run CRA Link → wait `USER_CHECK_REPORT_READY` → fetch the report endpoints.
+
+**Key facts & gotchas:**
+- **Same `user_id` joins both** — there is no separate "attach Layer `access_token` to the CRA user"
+  step. (Standard CRA Link *does* support adding Consumer Report to an existing Item via
+  `options.access_token`, but reusing a *Layer*-linked Item that way is not a documented pattern —
+  prefer the Branch-A `/cra/check_report/create` path for eligible users.)
+- **Identity-before-report is mandatory** — `/cra/check_report/create` fails without the identity
+  fields populated; Branch A's `/user/update` step exists to satisfy this from Layer's data.
+- **Transactions + (CRA & Layer):** pass `transactions` in `additional_consented_products` on
+  `/link/token/create`, and call `/transactions/sync` **only after** `USER_CHECK_REPORT_READY`
+  (avoids a known Chase failure where early transaction extraction breaks report generation).
+- **Demo / multilaunch mapping:** an eligible-user happy path is a **single `plaidPhase:"launch"`
+  Layer step** (CRA report generation is behind-the-scenes server calls shown in slides / JSON panel /
+  Underwriter Internal view — see [`plaid-cra-base-report`](plaid-cra-base-report.md) Demo UI Guidance).
+  Only a storyboard that demonstrates the **ineligible fallback** has a second `plaidPhase:"launch"`
+  (the CRA Link session) — consistent with the [`multi-launch contract`](../../.claude/skills/plaid-demo-app-build/SKILL.md).
+
+CRA facts (endpoints, permissible purpose, async report-ready, day windows):
+[`plaid-cra-base-report.md`](plaid-cra-base-report.md) and siblings.
 
 ### Onboarding entry contract (REQUIRED)
 
