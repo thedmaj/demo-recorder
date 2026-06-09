@@ -1047,9 +1047,15 @@ async function createSessionToken(opts = {}) {
   async function mint(templateId, scope) {
     const scopeOpts = scope ? { credentialScope: scope } : {};
     const { userToken, clientUserId, reused } = await getOrCreateLayerUserToken(requestedClientUserId, scopeOpts);
+    // New User API shape: pass the Plaid user identifier (new usr_… id OR a legacy
+    // user_token) in the ROOT-level user_id; only client_user_id goes under `user`.
+    // CRA Layer templates reject a usr_ id placed in the legacy nested user.user_id
+    // slot ("must be a Legacy CRA user token type"); root-level works for both the
+    // CRA template (usr_) and the default template (legacy user_token).
     const sessionResult = await plaidPost('/session/token/create', {
       template_id: templateId,
-      user: { client_user_id: clientUserId, user_id: userToken },
+      user_id: userToken,
+      user: { client_user_id: clientUserId },
     }, scopeOpts);
     const linkToken = sessionResult.link?.link_token || sessionResult.link_token;
     if (!linkToken) throw new Error(`/session/token/create failed: ${JSON.stringify(sessionResult)}`);
