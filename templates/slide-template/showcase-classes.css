@@ -96,6 +96,23 @@
   gap: 20px;
 }
 
+/* Density tier: 4-up KPI grid is the tightest card layout (~250px/card), where
+ * the default .sc-stat / .sc-eyebrow / .sc-stat-label sizes crowd (value kisses
+ * label, two-word labels wrap, captions run long). Scale card text down ONLY in
+ * the 4-up grid; 1–3-up layouts keep the larger sizing. Mirror of the
+ * authoritative rule in pipeline-slide-contract.css — keep the two in sync. */
+.sc-grid-4 .sc-stat {
+  font-size: clamp(28px, 3.0vw, 44px);
+}
+.sc-grid-4 .sc-eyebrow {
+  font-size: 19px;
+  letter-spacing: 0.10em;
+}
+.sc-grid-4 .sc-stat-label {
+  font-size: 19px;
+  line-height: 1.35;
+}
+
 .sc-row {
   display: flex;
   gap: 24px;

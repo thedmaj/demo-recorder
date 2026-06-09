@@ -194,6 +194,36 @@
   line-height: 1.0;
 }
 
+/* ── Density tier: 4-up KPI grid (the deck's tightest card layout) ──────────
+ * The shared .sc-stat / .sc-eyebrow / .sc-stat-label sizes above are tuned for
+ * roomy 1–3-card layouts (cover / statement / tech / 3-up stat-highlight are
+ * actually UNDER-filled, so they keep the larger sizing). In a 4-up grid each
+ * card is only ~250px wide, where those sizes crowd: the ~62px value kisses the
+ * label, two-word eyebrows ("AVAILABLE BALANCE", "NSF / OVERDRAFTS") wrap to two
+ * lines, and captions run 2–3 lines. Scale the card text down ONLY in the 4-up
+ * grid. Evidence: 2026-06-09-Demo-CRA-v1 + 2026-06-08-Demo-CRA-Auth-Identity-v2
+ * base-report KPI grids. Placed after the .sc-stat rule above so the equal-
+ * specificity value override wins by source order; injected after showcase-
+ * classes.css so it is authoritative for built slides. NOTE: this is a root
+ * template token change (not a per-slide patch). */
+.slide-root[data-workhorse-layout="kpi-grid"] .sc-grid-4 .sc-stat,
+.slide-root .sc-grid-4 .sc-stat {
+  /* was ~62px @1440 → ~43px; frees vertical room, value no longer crowds label */
+  font-size: clamp(28px, 3.0vw, 44px);
+}
+.slide-root[data-workhorse-layout="kpi-grid"] .sc-grid-4 .sc-eyebrow,
+.slide-root .sc-grid-4 .sc-eyebrow {
+  /* was 24px / 0.14em → 19px / 0.10em so two-word labels fit on one line */
+  font-size: 19px;
+  letter-spacing: 0.10em;
+}
+.slide-root[data-workhorse-layout="kpi-grid"] .sc-grid-4 .sc-stat-label,
+.slide-root .sc-grid-4 .sc-stat-label {
+  /* was 24px → 19px so captions stay ≤2 lines in a narrow card */
+  font-size: 19px;
+  line-height: 1.35;
+}
+
 .slide-root .slide-body-text,
 .slide-root .body-text,
 .slide-root .body-large {
