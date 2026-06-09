@@ -307,6 +307,43 @@ require a public token to advance. Wire completion defensively:
 Not compatible with Embedded Institution Search, Same-Day/Instant Micro-deposits, or Database Auth.
 Full reference: `inputs/plaid-link-sandbox.md` §9.
 
+## Identity Verification (IDV) launch wiring — DISTINCT endpoint / flag / CTA
+
+An IDV `plaidPhase:"launch"` step is **NOT a bank-link launch**. It uses the real Plaid Link SDK
+the same way, but every glue identifier diverges from the bank-link contract above. Wiring an IDV
+step like a bank link is the #1 cause of a broken IDV demo (404 on the token call, or a launch that
+never completes). Use this contract verbatim; full facts in
+[`inputs/products/plaid-identity-verification.md`](../../inputs/products/plaid-identity-verification.md).
+
+| Concern | Bank link | **IDV** |
+|---|---|---|
+| Token endpoint | `POST /api/create-link-token` | **`POST /api/create-idv-link-token`** |
+| Launch CTA | `data-testid="link-external-account-btn"` | **`data-testid="idv-launch-btn"`** (or `onclick="launchIdv()"`) |
+| Completion flag (set in `onSuccess` ONLY) | `window._plaidLinkComplete` | **`window._idvComplete`** |
+| `products[]` | research-driven | **`["identity_verification"]` only** (mutually exclusive — never mixed) |
+| `onSuccess` payload | `public_token` present | **`public_token` is `null`** — onSuccess = *submitted*, not *passed* |
+
+- **Token fetch:** `fetch('/api/create-idv-link-token', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ client_user_id, client_name }) })`.
+  Do **NOT** send `template_id` from the client — the backend resolves it from
+  `IDV_TEMPLATE_IDENTITY_BANK_OPTIONAL` / `PLAID_IDV_TEMPLATE_ID` and adds `gave_consent:true`. Do
+  NOT call `/api/create-link-token` for IDV (it builds a bank token, not an IDV token).
+- **Launch handler** (`launchIdv()`): fetch the token → `Plaid.create({ token, onSuccess, onExit, onEvent })`
+  → `handler.open()`. Same SDK, same callback shape as the bank launch.
+- **Completion:** in `onSuccess(public_token, metadata)` set `window._idvComplete = true` and
+  `goToStep(firstPostIdvStep)` — NEVER set the flag in a `goToStep` handler. `public_token` is
+  `null`; do NOT call `/api/exchange-public-token`. The session id arrives in `metadata` (and the
+  `IDENTITY_VERIFICATION_*` `onEvent` names above).
+- **Verdict (behind-the-scenes only):** retrieve via `POST /api/identity-verification-get`
+  (`{ identity_verification_id }`). Pass/fail is decided by `/identity_verification/get` after the
+  `STATUS_UPDATED` webhook — never inferred from `onSuccess`. Surface the verdict in slides / the
+  JSON panel / a clearly-labeled Underwriter Internal view; the host happy path shows `success` /
+  `pending_review`, never `failed` or raw API errors.
+- **Recording:** `record-local.js` (`executeLayerOrIdvLaunch`) clicks `[data-testid="idv-launch-btn"]`
+  / `button[onclick*="launchIdv"]`, verifies the live modal loads, then waits on `_idvComplete`.
+- **Multi-launch:** IDV is a distinct launch product — a demo may have an IDV launch step AND a
+  separate bank/Layer/CRA launch step (each its own `plaidPhase:"launch"`). Wire each with ITS OWN
+  endpoint + completion flag; never share `_plaidLinkComplete`/`_idvComplete` across products.
+
 ## Related skills / references
 
 - Embedded Link UX: `skills/plaid-link-embedded-link-skill.md`

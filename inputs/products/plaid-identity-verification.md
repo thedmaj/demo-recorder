@@ -227,6 +227,19 @@ version, and clears PII for the reset steps. In **Sandbox**, `selfie_check` is s
 - IDV runs through the **real Plaid Link SDK** — build a single `plaidPhase: "launch"` step (no
   simulated KYC step divs), per the [`plaid-demo-app-build`](../../.claude/skills/plaid-demo-app-build/SKILL.md)
   contract. Post-link host beats show the `/identity_verification/get` result in the API panel.
+- **Host-app wiring (DISTINCT from bank link — see the IDV launch-wiring table in
+  [`plaid-demo-app-build`](../../.claude/skills/plaid-demo-app-build/SKILL.md)):** the IDV launch CTA
+  uses `data-testid="idv-launch-btn"` / `onclick="launchIdv()"`; the token comes from
+  **`POST /api/create-idv-link-token`** (NOT `/api/create-link-token`); completion is
+  **`window._idvComplete = true`** set in `onSuccess` only. `onSuccess` returns `public_token: null`
+  (submitted, not passed) — never call `/api/exchange-public-token`. The backend resolves the
+  `template_id` from env (`IDV_TEMPLATE_IDENTITY_BANK_OPTIONAL` / `PLAID_IDV_TEMPLATE_ID`) and adds
+  `gave_consent:true`, so the client must NOT send `template_id`. Verdict (behind-the-scenes only)
+  via `POST /api/identity-verification-get`.
+- **Sandbox-access prerequisite:** IDV is **not enabled in Sandbox by default** — the account must
+  have IDV access (Production access grants Sandbox) and a valid `template_id`. If `/link/token/create`
+  for IDV 400s with a product-access / invalid-template error, IDV isn't enabled for the configured
+  credentials/template — not a code bug.
 - **Sandbox:** the canonical passing identity is **Leslie Knope** (see `inputs/plaid-link-sandbox.md § 5`).
   Document step treats any upload as genuine and matching Leslie Knope; the step passes only when the
   user-provided name + DOB match Leslie Knope (3 attempts before failure). Selfie does not run in Sandbox.
