@@ -983,14 +983,33 @@ function readRunBuildModeInfo(runId) {
   }
 }
 
+// Resolve a run's creation time (ms). Prefer the run-manifest's `createdAt`
+// (set once when the run dir is allocated); fall back to the directory's
+// filesystem birthtime, then mtime. NOTE: don't sort on mtime alone — it bumps
+// whenever a stage is re-run on an older run, which would wrongly float it up.
+function runCreatedAtMs(runId) {
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(DEMOS_DIR, runId, 'run-manifest.json'), 'utf8'));
+    const t = Date.parse(m.createdAt);
+    if (Number.isFinite(t)) return t;
+  } catch (_) { /* no manifest / unparseable */ }
+  try {
+    const st = fs.statSync(path.join(DEMOS_DIR, runId));
+    return st.birthtimeMs || st.mtimeMs || 0;
+  } catch (_) { return 0; }
+}
+
 function buildRunsList() {
   const namesMap = readDemoAppNames();
   const dirs = safeReaddir(DEMOS_DIR)
     .filter(name => {
       try { return fs.statSync(path.join(DEMOS_DIR, name)).isDirectory(); } catch (_) { return false; }
     })
-    .sort()
-    .reverse();
+    // Most recently CREATED first (by run-manifest createdAt / dir birthtime),
+    // with the date-prefixed runId as a stable tiebreaker for equal timestamps.
+    .map(name => ({ name, createdAtMs: runCreatedAtMs(name) }))
+    .sort((a, b) => (b.createdAtMs - a.createdAtMs) || b.name.localeCompare(a.name))
+    .map(d => d.name);
 
   return dirs.map(runId => {
     const artifacts = getRunArtifacts(runId);
@@ -1001,6 +1020,7 @@ function buildRunsList() {
     return {
       runId,
       displayName: resolveDemoDisplayName(runId, namesMap),
+      createdAt: new Date(runCreatedAtMs(runId)).toISOString(),
       artifacts,
       ...qaScores,
       completedStages,
