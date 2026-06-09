@@ -11,7 +11,7 @@ use_cases:
   - "near-prime-credit-expansion"
   - "ability-to-pay-assessment"
 last_human_review: ""
-last_ai_update: "2026-05-31T00:00:00Z"
+last_ai_update: "2026-06-09T11:18:24.511Z"
 needs_review: true
 approved: false
 version: 1
@@ -144,6 +144,12 @@ Feature Cash Flow Insights when the persona is a lender or credit platform that 
 
 ## AI Research Notes
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run. -->
+
+### 2026-06-09 — Run: 2026-06-09-Demo-CRA-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"FCRA-compliant cash-flow attributes purpose-built for credit models — not raw transaction dumps.","status":"DRAFT"}
+- [high] {"claim":"Single integration delivers Base Report + Cash Flow Insights + optional LendScore under one consumer report contract.","status":"DRAFT"}
+- [high] {"claim":"vs. Transactions: Transactions gives raw data; Cash Flow Insights gives model-ready FCRA-compliant attributes (income volatility, NSF counts, spending burden) designed to plug directly into underwriting models.","status":"DRAFT"}
 
 ### 2026-05-31 — AskBill + Glean research [ai]
 - Confirmed endpoint: `POST /cra/check_report/cashflow_insights/get`

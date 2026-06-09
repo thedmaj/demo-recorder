@@ -479,15 +479,19 @@ function scanCraHostUnderwritingContracts(html, demoScript) {
     const kind = String(s?.stepKind || s?.sceneType || '').toLowerCase();
     return kind !== 'slide' && !/slide-root/i.test(String(s?.visualState || ''));
   });
-  if (hostSteps.length && !/nmls\s*id\s*1963958/i.test(html || '')) {
+  // Brand-generic: CRA underwriting host screens should carry an NMLS footer
+  // disclosure, but accept whatever NMLS the demo's own brand actually uses
+  // (e.g. "NMLS #1464945") rather than a hardcoded single-customer value.
+  const hasNmlsDisclosure = /nmls\s*#?\s*(id\s*)?:?\s*\d{3,}/i.test(html || '');
+  if (hostSteps.length && !hasNmlsDisclosure) {
     out.push({
       stepId: 'host-app',
       category: 'brand-disclosure-missing',
       severity: 'critical',
       deterministicBlocker: true,
-      issue: 'Zip CRA host app is missing verbatim footer disclosure: "NMLS ID 1963958".',
+      issue: 'CRA underwriting host app is missing an NMLS footer disclosure (e.g. "NMLS #<id>").',
       suggestion:
-        'Add a host footer on checkout/underwriting screens with exactly: NMLS ID 1963958 (see inputs/brand-references/zip.md).',
+        'Add a host footer on underwriting screens with the lender\'s verbatim NMLS disclosure (use the brand profile footer.disclosures when available).',
     });
   }
 
@@ -504,24 +508,28 @@ function scanCraHostUnderwritingContracts(html, demoScript) {
       });
       continue;
     }
-    if (!/approve-plan-cta|data-testid=['"]approve-plan-cta['"]/i.test(block)) {
+    // A CTA is demo-specific (some LendScore reveals are slides/insights, not
+    // interactive checkout steps), so surface it as a non-blocking warning that
+    // accepts any primary action rather than a hardcoded single-customer testid.
+    const hasCta = /data-testid=['"][^'"]*cta[^'"]*['"]|<button\b/i.test(block);
+    if (!hasCta) {
       out.push({
         stepId: step.id,
         category: 'cra-lendscore-host-layout',
-        severity: 'critical',
-        deterministicBlocker: true,
-        issue: 'LendScore host step is missing primary CTA data-testid="approve-plan-cta".',
-        suggestion: 'Add visible pink Approve plan button per demo-script interaction target.',
+        severity: 'warning',
+        deterministicBlocker: false,
+        issue: 'LendScore reveal step has no visible CTA/primary action (button or *-cta testid).',
+        suggestion: 'If this reveal drives a decision, add a primary CTA (e.g. data-testid="approve-plan-cta" / "continue-application-cta") per the demo-script interaction target.',
       });
     }
-    if (!/\blendscore\b|lend[\s_-]?score/i.test(block) || !/\b78\b|\bscore\b/i.test(block)) {
+    if (!/\blendscore\b|lend[\s_-]?score/i.test(block) || !/\bscore\b/i.test(block)) {
       out.push({
         stepId: step.id,
         category: 'cra-lendscore-host-layout',
         severity: 'warning',
         deterministicBlocker: false,
         issue: 'LendScore score/decision not clearly visible on the host step.',
-        suggestion: 'Show LendScore 78 (or script value), APPROVE badge, and LendScore — beta microcopy.',
+        suggestion: 'Show the LendScore value (per demo-script), an approval badge, and "LendScore — beta" microcopy.',
       });
     }
     if (/base[_\s-]?report\/get/i.test(block) && !/lend[_\s-]?score\/get/i.test(block)) {

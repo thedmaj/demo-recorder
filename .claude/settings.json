@@ -10,7 +10,25 @@
       "Glob",
       "Grep",
       "Agent",
-      "mcp__*"
+      "mcp__figma__*",
+      "mcp__figma-desktop__*",
+      "mcp__salesforce__*",
+      "mcp__askbill-plaid__*",
+      "mcp__solutions-master__*",
+      "mcp__context7__*",
+      "mcp__playwright__*",
+      "mcp__heycoast__*",
+      "mcp__claude_ai_Glean__*",
+      "mcp__claude_ai_Slack__*",
+      "mcp__claude_ai_Gmail__*",
+      "mcp__claude_ai_Google_Calendar__*",
+      "mcp__claude_ai_Google_Drive__*",
+      "mcp__claude_ai_Linear__*",
+      "mcp__claude_ai_Atlassian_Rovo__*",
+      "mcp__claude_ai_Ironclad_Contracts__*",
+      "mcp__claude_ai_NetSuite__*",
+      "mcp__claude_ai_Pigment__*",
+      "mcp__claude_ai_Plaid_Developer_Tools__*"
     ]
   },
   "enabledPlugins": {
