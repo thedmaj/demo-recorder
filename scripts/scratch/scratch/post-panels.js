@@ -1354,7 +1354,24 @@ function normalizePanelsInHtml(html, demoScript, opts = {}) {
   const { responses, endpoints } = collectStepApiResponses(demoScript, opts);
   const hasAnyApiData = Object.keys(responses).length > 0;
 
-  const hasApiPanel = /id\s*=\s*["']api-response-panel["']/.test(html);
+  // The canonical JSON rail is a top-level <section> with id="api-response-panel".
+  // Builds occasionally MISATTRIBUTE that id (and data-testid) to a non-panel
+  // element — e.g. a CTA <button> inside a step — or nest it inside a step. When
+  // inactive-step DOM is swapped out, getElementById('api-response-panel') then
+  // can't resolve it on the API/insight steps → false `missing-panel` blockers
+  // (observed 2026-06-09, single-Layer-session CRA build). Only a real <section>
+  // panel counts; otherwise strip the stray id/testid so the canonical GLOBAL
+  // shell injected below becomes the sole #api-response-panel.
+  const hasApiPanel = /<section\b[^>]*\bid\s*=\s*["']api-response-panel["']/.test(html);
+  if (!hasApiPanel) {
+    const strayIdCount = (html.match(/\bid\s*=\s*["']api-response-panel["']/g) || []).length;
+    if (strayIdCount > 0) {
+      html = html
+        .replace(/\bid\s*=\s*["']api-response-panel["']/g, 'data-stray-api-panel="id"')
+        .replace(/\bdata-testid\s*=\s*["']api-response-panel["']/g, 'data-stray-api-panel="testid"');
+      changes.strippedStrayApiPanelId = strayIdCount;
+    }
+  }
   const hasLinkPanel = /id\s*=\s*["']link-events-panel["']/.test(html);
 
   if (!hasApiPanel && hasAnyApiData && html.includes('</body>')) {
