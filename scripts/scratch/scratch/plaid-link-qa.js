@@ -568,6 +568,41 @@ async function main(opts = {}) {
         `during Link bootstrap. See ${REPORT_FILE}.`
       );
     }
+    // Plaid Link / IDV handler readiness. Token HTTP status alone is not proof
+    // the handler actually initialized: token-create can 500 ("fetch failed"),
+    // the SDK/API host can be unresolvable (ERR_NAME_NOT_RESOLVED), the token can
+    // be malformed, or the app's own guard fires ("handler not ready after 10s" /
+    // "fatal token error"). A demo in any of these states cannot open Plaid Link
+    // or a real IDV session, so fail it explicitly with the observed reason —
+    // this catches handler failures even if a token request was seen.
+    const HANDLER_FAIL_RE = /handler not ready|fatal token error|create-(?:idv-)?link-token failed|link token error|ERR_NAME_NOT_RESOLVED|Plaid is not defined|handler\.open is not a function/i;
+    const handlerFailure =
+      pageErrors.find((e) => HANDLER_FAIL_RE.test(String(e || ''))) ||
+      consoleErrors.find((e) => HANDLER_FAIL_RE.test(String((e && e.text) || '')));
+    if (handlerFailure) {
+      const reason = typeof handlerFailure === 'string'
+        ? handlerFailure
+        : (handlerFailure.text || JSON.stringify(handlerFailure));
+      const detail = {
+        passed: false,
+        launchStepId: launchStep.id,
+        launchRowIndex: launchIdx,
+        expectedServerUrl,
+        tokenRequests,
+        tokenResponses,
+        handlerFailureReason: String(reason).slice(0, 240),
+        mode: qaMode,
+        consoleErrors: consoleErrors.slice(-20),
+        pageErrors: pageErrors.slice(-20),
+      };
+      writeReport(detail);
+      throw new Error(
+        `CRITICAL: Plaid Link handler failed to initialize for launch "${launchStep.id}" — ` +
+        `"${String(reason).slice(0, 160)}". The launch never produced a working Plaid handler ` +
+        `(token-create failure, unreachable SDK/host, or app handler-not-ready guard). See ${REPORT_FILE}.`
+      );
+    }
+
     if (!tokenHealth.passed) {
       const detail = {
         passed: false,

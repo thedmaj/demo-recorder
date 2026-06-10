@@ -1037,6 +1037,32 @@ function validateDemoScript(demoScript, opts = {}) {
     }
   }
 
+  // ── IDV authenticity ─────────────────────────────────────────────────────────
+  // A demo that features Identity Verification must actually LAUNCH a real IDV
+  // session (plaidPhase:"launch" resolving to IDV → /api/create-idv-link-token),
+  // not merely assert a verdict on a host screen. Observed: Scrub.io rendered an
+  // "identity-verified" host beat + /identity_verification/get with NO IDV launch
+  // step, so the IDV session never ran. Warn (don't hard-error): some demos
+  // intentionally simulate a prior IDV pass. Matches IDV specifically, not the
+  // Identity (identity-match) product.
+  const featuresIdv = steps.some((s) => {
+    const ep = String(s.apiResponse?.endpoint || '');
+    const txt = [s.id, s.label, s.narration, s.visualState].filter(Boolean).join(' ');
+    return /\/identity_verification\b/i.test(ep) || /\bidentity[\s-]?verification\b|\bIDV\b/i.test(txt);
+  });
+  if (featuresIdv) {
+    const hasIdvLaunch = steps.some((s) => s.plaidPhase === 'launch' && inferLaunchProduct(s) === 'idv');
+    if (!hasIdvLaunch) {
+      warnings.push(
+        'Demo features Identity Verification but NO step launches a real IDV session ' +
+        '(needs a plaidPhase:"launch" step resolving to IDV → /api/create-idv-link-token). ' +
+        'An "identity-verified" host beat or a /identity_verification/get verdict implies a ' +
+        'verification session that never actually runs. Add an IDV launch step, or relabel the ' +
+        'beat so it does not claim a live IDV verification.'
+      );
+    }
+  }
+
   const launchSteps = steps.filter(step => step.plaidPhase === 'launch');
   // Multi-launch allowed for DISTINCT Plaid sessions (Layer / IDV / CRA / Link).
   // Error only on duplicate launches of the SAME product (an accidental dupe that
