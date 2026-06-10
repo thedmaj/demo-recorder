@@ -340,9 +340,21 @@ function routeSlideTemplate(step, deckContext = {}, opts = {}) {
   // it a HARD layout so field-table decisively wins. lend_score is excluded
   // (single headline score → stat-highlight). Only force when the author has not
   // already pinned a layout/template of their own.
+  //
+  // GUARD (2026-06-10): this text heuristic must NOT hijack a slide whose intent
+  // is clearly something else. The value-summary / close slide routinely RECAPS
+  // CRA products in its narration ("…base report and income insights…"), which
+  // wrongly forced a field-table onto a CTA close (observed: CashRepublic
+  // value-summary-slide → api-field-table). Now that the script tags slideRole,
+  // respect an explicit non-field role and never fire on the value-summary; a
+  // genuine field reveal is either tagged api-field-reveal or carries a real CRA
+  // endpoint (craEp), which still wins below.
+  const roleAllowsCraText = !slideRole || slideRole === 'api-field-reveal';
   if (!hardLayout && !step?.showcaseTemplateId) {
     const craEp = /\/cra\/check_report\/(?:base_report|income_insights|cashflow_insights|partner_insights)/i.test(ep);
-    const craText = !/lend[_\s-]?score/i.test(text)
+    const craText = !isValueSummary
+      && roleAllowsCraText
+      && !/lend[_\s-]?score/i.test(text)
       && /\b(income insights|cash[-\s]?flow insights|base report)\b/i.test(text);
     if (craEp || craText) {
       const ft = getTemplateByWorkhorseLayout('field-table', opts);
