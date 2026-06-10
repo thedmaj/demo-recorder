@@ -80,8 +80,15 @@ PRODUCTS & FAMILY
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [ ] **Live Plaid Link** — real SDK (`plaidPhase: "launch"` single step per `CLAUDE.md`)
-  [ ] **Plaid Layer** / OAuth / IDV — note if applicable
+  [ ] **Live Plaid Link launch(es)** — real SDK (`plaidPhase: "launch"`). **One launch step per
+      DISTINCT Plaid session** — Layer, IDV, CRA/Consumer Report, and bank Link can each be their own
+      live launch. **Multiple launches are allowed**; only duplicate launches of the *same* product
+      are rejected. List every session you want live (in order).
+  [ ] **Plaid Identity Verification (IDV)** — if featured, give it its **OWN `plaidPhase: "launch"`
+      step** (a real `/api/create-idv-link-token` session). Do **not** represent IDV as a passive
+      “identity verified” host screen — that asserts a verdict for a session that never runs.
+  [ ] **Plaid Layer / OAuth** — note if applicable; Layer is its own launch (Layer+CRA = ONE Layer
+      session, no separate CRA Link — see `CLAUDE.md`).
   [ ] **Sandbox / persona** — or “defaults per `inputs/plaid-link-sandbox.md`”
 
 -------------------------------------------------------------------------------

@@ -90,7 +90,7 @@ Research depth:
 CONNECTION & RECORDING (CHECKLIST)
 -------------------------------------------------------------------------------
 
-[ ] Live Plaid Link (single `plaidPhase: "launch"` step)
+[ ] Live Plaid Link launch(es) — one `plaidPhase: "launch"` step per DISTINCT session (Layer / IDV / CRA / bank Link); multiple allowed, only duplicate same-product launches are rejected. IDV, if featured, gets its own launch — not a passive "identity verified" host screen.
 [ ] Extra Link products (transactions, investments, etc.) noted if applicable
 [ ] Sandbox / persona selected (or defaults from `inputs/plaid-link-sandbox.md`)
 
