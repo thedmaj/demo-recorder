@@ -3,67 +3,81 @@
 
 const STEP_TIMING = [
   {
-    "id": "opening-slide",
-    "label": "Problem: Fraud vs. Credit Loss Blindspot",
+    "id": "keybank-post-kyb-home",
+    "label": "KeyBank — Business verified, fund your account",
     "startFrame": 9,
-    "endFrame": 299,
-    "audioEndFrame": 254
+    "endFrame": 381,
+    "audioEndFrame": 312
   },
   {
-    "id": "tilt-onboarding",
-    "label": "Tilt Landing — Apply for Cash Advance",
-    "startFrame": 299,
-    "endFrame": 440,
-    "audioEndFrame": 425
+    "id": "funding-problem-slide",
+    "label": "The funding friction",
+    "startFrame": 381,
+    "endFrame": 733,
+    "audioEndFrame": 691
   },
   {
-    "id": "plaid-link-session",
-    "label": "Plaid Link — Bank Connection",
-    "startFrame": 440,
-    "endFrame": 814,
-    "audioEndFrame": 737
+    "id": "plaid-link-launch",
+    "label": "Connect the business bank with Plaid Link",
+    "startFrame": 733,
+    "endFrame": 1845,
+    "audioEndFrame": 1033
   },
   {
-    "id": "verifying-account",
-    "label": "Fraud & Repayment Scoring In Progress",
-    "startFrame": 814,
-    "endFrame": 975,
-    "audioEndFrame": 1093
+    "id": "identity-match-insight",
+    "label": "Identity Match — confirm ownership",
+    "startFrame": 1845,
+    "endFrame": 2249,
+    "audioEndFrame": 2201
   },
   {
-    "id": "trust-index-statement-slide",
-    "label": "Plaid Trust Index — One Score, Three Fraud Vectors",
-    "startFrame": 975,
-    "endFrame": 1374,
-    "audioEndFrame": 1283
+    "id": "identity-match-slide",
+    "label": "How name scoring works — companies and people",
+    "startFrame": 2249,
+    "endFrame": 2685,
+    "audioEndFrame": 2643
   },
   {
-    "id": "underwriting-console-reveal",
-    "label": "Underwriting Console — Trust Index ACCEPT",
-    "startFrame": 1374,
-    "endFrame": 2204,
-    "audioEndFrame": 1570
+    "id": "auth-insight",
+    "label": "Auth — pull the ACH rails",
+    "startFrame": 2685,
+    "endFrame": 3046,
+    "audioEndFrame": 3030
   },
   {
-    "id": "advance-approved",
-    "label": "Maya Funded — $400 Instantly",
-    "startFrame": 2204,
-    "endFrame": 2470,
-    "audioEndFrame": 2456
+    "id": "auth-slide",
+    "label": "Auth fields — a true business account",
+    "startFrame": 3046,
+    "endFrame": 3376,
+    "audioEndFrame": 3421
   },
   {
-    "id": "peer-benchmark-slide",
-    "label": "Peer Benchmark — Protect Portfolio Results",
-    "startFrame": 2470,
-    "endFrame": 2992,
-    "audioEndFrame": 2736
+    "id": "funding-amount",
+    "label": "KeyBank — enter funding amount",
+    "startFrame": 3376,
+    "endFrame": 3726,
+    "audioEndFrame": 3705
+  },
+  {
+    "id": "signal-insight",
+    "label": "Signal — score this transfer",
+    "startFrame": 3726,
+    "endFrame": 4046,
+    "audioEndFrame": 4149
+  },
+  {
+    "id": "funds-approved",
+    "label": "KeyBank — funds available instantly",
+    "startFrame": 4046,
+    "endFrame": 4396,
+    "audioEndFrame": 4355
   },
   {
     "id": "value-summary-slide",
-    "label": "value-summary-slide",
-    "startFrame": 2992,
-    "endFrame": 32662,
-    "audioEndFrame": 3304
+    "label": "Value Summary",
+    "startFrame": 4396,
+    "endFrame": 4780,
+    "audioEndFrame": 4786
   }
 ];
 

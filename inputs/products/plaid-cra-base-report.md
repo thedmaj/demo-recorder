@@ -15,7 +15,7 @@ use_cases:
   - "mortgage-voa"
   - "mortgage-employment-refresh"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-09T16:58:43.844Z"
+last_ai_update: "2026-06-10T05:53:46.949Z"
 needs_review: true
 approved: true
 version: 1
@@ -240,6 +240,28 @@ Host/consumer screens must read like a real product a borrower/applicant uses. T
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-10 — Run: 2026-06-10-Cashrepublic-CRA-Auth-Identity-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Auth, Identity, CRA Base Report, and CRA Income Insights ride the same single Plaid Link connection, so layering ownership verification + funds confirmation + cash-flow underwriting + verified income reuses one connection.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+
+### 2026-06-10 — Run: 2026-06-10-Ascend-Bank-CRA-Assets-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"CRA Base Report and CRA Income Insights ride the same single Plaid Link connection, so layering verified income on top of cash-flow/asset underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Mortgage-specific: Plaid CRA VOA enables lenders to qualify for Fannie Mae Day 1 Certainty reps-and-warrants relief — less fallback, more automation.","source":"GTM Guide: Home Lending Report, 2026-03-26","status":"DRAFT"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+
+### 2026-06-09 — Run: 2026-06-09-Spring-Eq-CRA-Identity-Signal-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Plaid Layer pairs with CRA so one Plaid relationship covers both front-of-funnel onboarding and underwriting in a single session.","status":"high"}
+- [high] {"claim":"CRA Base Report and CRA LendScore ride the same single Plaid Link connection, so layering a cash-flow risk score on top of cash-flow underwriting reuses existing infrastructure.","status":"high"}
 
 ### 2026-06-09 — Run: 2026-06-09-Demo-CRA-Identity-Signal-v2 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

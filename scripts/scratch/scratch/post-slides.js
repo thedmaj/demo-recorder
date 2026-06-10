@@ -194,6 +194,41 @@ function sanitizeSlideFragment(fragment, stepId) {
   s = s.replace(/\sstyle="[^"]*\bdisplay\s*:[^";]+;?[^"]*"/gi, '');
 
   s = stripChromeFootFromHtml(s);
+  s = s.trim();
+
+  // HARD GUARD (2026-06-10): balance <div> tags before splicing. An LLM
+  // fragment missing ONE </div> swallowed every subsequent .step into the
+  // spliced step's subtree (KeyBank v2: steps 5–11 nested inside
+  // step-identity-match-insight, parent display:none → blank frames →
+  // build-qa 5/100 across the back half of the demo). Missing closers are
+  // deterministically repairable by appending at the tail (the fragment is a
+  // single root div). EXTRA closers would prematurely close the host's
+  // containers (.stage / body) — trim them from the tail; if they're not at
+  // the tail, reject the fragment so the retry loop regenerates it.
+  const divOpens = (s.match(/<div\b/gi) || []).length;
+  let divCloses = (s.match(/<\/div>/gi) || []).length;
+  if (divCloses < divOpens) {
+    console.warn(
+      `[post-slides] Fragment for "${stepId}" missing ${divOpens - divCloses} </div> closer(s) — auto-repaired at tail.`
+    );
+    s += '</div>'.repeat(divOpens - divCloses);
+  } else if (divCloses > divOpens) {
+    let trimmed = 0;
+    while (divCloses > divOpens && /<\/div>\s*$/i.test(s)) {
+      s = s.replace(/<\/div>\s*$/i, '').trimEnd();
+      divCloses -= 1;
+      trimmed += 1;
+    }
+    if (divCloses > divOpens) {
+      console.warn(
+        `[post-slides] Fragment for "${stepId}" has ${divCloses - divOpens} extra non-tail </div> closer(s) — rejecting fragment.`
+      );
+      return { html: '', styles };
+    }
+    console.warn(
+      `[post-slides] Fragment for "${stepId}" had ${trimmed} extra trailing </div> closer(s) — trimmed.`
+    );
+  }
 
   return { html: s.trim(), styles };
 }

@@ -1,0 +1,103 @@
+================================================================================
+Bright Money — One-tap onboarding to cash-flow underwriting (Plaid Layer + Plaid Consumer Report: CRA Income Insights + CRA Cash Flow Insights)
+================================================================================
+
+**Host:** **Bright Money** — consumer fintech offering credit-builder loans / personal lending
+**Brand URL:** https://www.brightmoney.co
+
+**User journey (one sentence):**
+A new Bright Money applicant starts a credit-builder loan and taps once to onboard with Plaid Layer — a single session that both shares their prefilled identity and permissions their bank — and Bright Money then generates a Plaid Consumer Report (CRA) server-side to underwrite on verified income and cash-flow behavior, approving the loan in minutes.
+
+**Story arc (short prose):**
+Aaliyah Brooks wants a $1,500 credit-builder loan. Instead of a long signup form, Bright Money leads with Plaid Layer: in one tap she reviews her prefilled name, email, phone, and address AND permissions her bank — a single Layer session, no second connection step. Bright Money writes that identity to the Plaid user record and generates her Consumer Report server-side. Moments later it reads **CRA Income Insights** (verified biweekly payroll, monthly net income, predicted next payday) and **CRA Cash Flow Insights** (model-ready attributes: low income volatility, NSF history, discretionary-vs-essential spend) and approves the loan with terms timed to her income. Compliance-safe language only ("can help," "typically," "up to").
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Layer, CRA Income Insights, CRA Cash Flow Insights
+(canonical: Plaid Consumer Report — use the contiguous phrases "CRA Income Insights" and "CRA Cash Flow Insights" verbatim in labels + narration)
+
+**Solutions supported:** Account Opening / Onboarding, Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family:** `cra_cashflow_insights`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-cashflow-insights.md` (pair with `inputs/products/plaid-cra-income-insights.md` and `inputs/products/plaid-layer.md`)
+
+**Canonical flow:** `.claude/skills/plaid-layer-cra-onboarding/SKILL.md` — Layer + CRA is ONE Layer session; the report is generated server-side. NO separate CRA Plaid Link launch.
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **EXACTLY ONE launch — the Plaid Layer session.** `plaidPhase:"launch"` appears on the Layer step ONLY. Do NOT author a separate CRA Plaid Link launch; the single Layer session both shares identity AND permissions accounts.
+  [x] **Layer session (CRA-enabled):** `POST /user/create` → `POST /session/token/create` with the **CRA Layer template** (`CRA_LAYER_TEMPLATE`, resolved server-side) and the Plaid `user_id`; `Plaid.create` → `submit(phone)` first → `open()` on `LAYER_READY`. Sandbox eligible phone **+14155550011**. CRA API calls use `CRA_CLIENT_ID`/`CRA_SECRET` (resolved server-side).
+  [x] **Server-side report generation (NOT a launch):** after Layer, `POST /user_account/session/get` → `POST /user/update` (populate `name`, `date_of_birth`, `emails`, `phone_numbers`, `addresses`; partial SSN in `id_numbers` recommended) → `POST /cra/check_report/create` (Base Report eagerly generated) → wait `USER_CHECK_REPORT_READY`.
+  [x] **Reports retrieved by `user_id`** (NOT access_token): `POST /cra/check_report/income_insights/get` and `POST /cra/check_report/cashflow_insights/get` (`cra_cashflow_insights` builds on `cra_base_report`).
+  [x] **Sandbox / persona** — Layer eligible phone +14155550011; identity prefilled by Layer.
+
+Link/Layer narration boundary: the pre-Layer step ends on the tap ("…she taps Continue with Plaid."); the Layer step narrates content visible inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Bright Money app — Aaliyah starts a **$1,500 credit-builder loan**. A short "Get started" card; one-tap **Continue with Plaid** instead of a long form. Ends on the tap. | `POST /user/create`; `POST /session/token/create` (CRA Layer template) | `Continue with Plaid` |
+| 2 | layer-launch | Live **Plaid Layer** session (the ONLY launch): phone-first, eligibility-gated; she reviews prefilled **name, email, phone, address** and permissions her bank in one tap. `plaidPhase:"launch"`. | `Plaid.create` → `submit(phone)` → `open()` on `LAYER_READY` | Identity shared + bank permissioned |
+| 3 | host | "Generating your Consumer Report…" async state — Bright Money writes Layer identity to the user record and generates the report server-side. | `POST /user_account/session/get`; `POST /user/update`; `POST /cra/check_report/create`; webhook `USER_CHECK_REPORT_READY` | Report ready |
+| 4 | insight | **CRA Income Insights** card + JSON panel: verified stream "ACME LOGISTICS PAYROLL", **BIWEEKLY**, monthly net **$3,412.55**, predicted next payday **2026-06-26**, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income → ability to repay" |
+| 5 | insight | **CRA Cash Flow Insights** card + JSON panel: model-ready attributes — income volatility **low**, **nsf_overdraft_transactions_count: 1** (trailing 90 days), discretionary-vs-essential spend balanced, average daily balance **$1,284.40**, days_available 365. | `POST /cra/check_report/cashflow_insights/get` (`user_id`) | "Cash-flow signals a bureau can't see" |
+| 6 | host | **Approved.** $1,500 credit-builder loan with a payment schedule timed to her verified payday; decision card cites verified income + cash-flow behavior (not a bureau score). | (decision derived from CRA data) | `Accept loan` |
+
+**Product-specific reminders:**
+- ONE launch only (Layer). The report-generation beat (step 3) is a server-side async state, NOT a `plaidPhase` launch.
+- Layer identity is user-permissioned; it is written to the Plaid user record via `/user/update` before report generation. Frame as "shared / permissioned," not document-verified KYC.
+- CRA reports retrieved by `user_id`; `cra_cashflow_insights` requires `cra_base_report` server-side.
+- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" / "eliminate." Avoid GTM percentage stats in narration.
+- Happy path only — no declines/errors.
+
+**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`) collected in the Layer/CRA session; representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Aaliyah Brooks — Bright Money applicant requesting a $1,500 credit-builder loan.
+**Sample fields (use verbatim — non-round, no generic placeholders):**
+- loan $1,500 · applicant Aaliyah Brooks
+- Layer prefill: Aaliyah Brooks · aaliyah.brooks@gmail.com · (415) 555-0011 · 1847 Harrison St, San Francisco, CA 94103
+- CRA Income Insights: ACME LOGISTICS PAYROLL · BIWEEKLY · monthly net $3,412.55 · predicted next payday 2026-06-26 · status ACTIVE
+- CRA Cash Flow Insights: income volatility low · nsf_overdraft_transactions_count 1 (trailing 90 days) · average daily balance $1,284.40 · days_available 365
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Bright Money-style light consumer-fintech surface (white / light-neutral background, Bright accent on CTAs). A "Get started" loan flow, a report-generating state, two CRA insight reveals, and an approval decision card. Never show raw JSON on host steps; insight beats use the global `#api-response-panel` (collapsed by default).
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+3 slides, no JSON on slide: (1) CRA Income Insights — verified income beat; (2) CRA Cash Flow Insights — ability-to-pay attributes beyond the bureau file; (3) value summary — Layer onboarding + CRA underwriting in ONE Layer session. One-line headlines, concrete (generic) value claims; no host brand colors on slides.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] EXACTLY ONE launch (Layer); NO separate CRA Plaid Link launch
+  [x] CRA report generated server-side (`/user/update` → `/cra/check_report/create` → `USER_CHECK_REPORT_READY` → `…/get` by `user_id`)
+  [x] CRA Layer template (`CRA_LAYER_TEMPLATE`) + `CRA_CLIENT_ID`/`CRA_SECRET` (server-side)
+  [x] Compliance-safe claims; no guarantees
+  [x] app+slides build, stop at build-qa
+
+END OF SPECIFICATION

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-06-10T02:51:57.667Z",
+    "generatedAt": "2026-06-10T16:50:35.981Z",
     "source": "templates/slide-template/showcase/index.html",
     "templateCount": 21
   },
@@ -78,7 +78,7 @@
       "workhorseLayout": "bullets",
       "backgroundClass": null,
       "whenToUse": "One headline, one paragraph, lots of breathing room. Best for the single most important point in a section.",
-      "avoidWhen": "When you have 3+ supporting points — use Bullet List or Three Pillars instead.",
+      "avoidWhen": "When you have 3+ supporting points — use Bullet List or Three Pillars instead. NEVER for label+value metric lists or per-field API score read-outs (Identity Match field scores, account attributes) — those jam labels into values on a statement layout; use API Field Table.",
       "signals": {
         "keywords": [
           "single point",
@@ -296,21 +296,21 @@
       "slideTemplate": "T7",
       "workhorseLayout": "field-table",
       "backgroundClass": null,
-      "whenToUse": "Show the key fields an API response returns alongside their sample values — CRA Income Insights / Cash Flow Insights / Base Report reveals, identity or account field read-outs. Label/value rows with real separation; never bare adjacent spans.",
+      "whenToUse": "Show the key fields an API response returns alongside their sample values — CRA Income Insights / Cash Flow Insights / Base Report reveals, Identity Match per-field similarity scores (legal_name / phone / email / address), Auth account attributes (holder_category / type / subtype), any field→score or field→value read-out. Label/value rows with real separation (gap or space-between, value AFTER its label); humanize field names in labels (LEGAL NAME, not LEGAL_NAME); never bare adjacent spans.",
       "avoidWhen": "A few big headline numbers (use Triple Stat / KPI Grid) or a multi-column comparison matrix (use Data Table).",
       "signals": {
         "keywords": [
-          "fields returned",
-          "response fields",
-          "api fields",
+          "field score",
+          "match score",
+          "per-field",
+          "name score",
+          "identity match",
+          "ownership confirmed",
+          "holder_category",
+          "legal_name",
+          "fields an api returns",
           "sample values",
-          "read-out",
-          "readout",
-          "field values",
-          "returns the following",
-          "income insights",
-          "cash flow insights",
-          "base report",
+          "field table",
           "percent",
           "%",
           "kpi",
@@ -323,7 +323,8 @@
           "increase",
           "table",
           "chart",
-          "data"
+          "data",
+          "scores"
         ],
         "workhorseLayout": "field-table",
         "stepRoles": [
@@ -422,7 +423,7 @@
       "workhorseLayout": "comparison",
       "backgroundClass": null,
       "whenToUse": "Two-panel transformation — old way vs new way, raw data vs enriched, manual review vs automated. The narrative arc lives in the contrast.",
-      "avoidWhen": "Three-panel comparisons (use Three Pillars). The 50/50 split is what makes the rhetoric work.",
+      "avoidWhen": "Three-panel comparisons (use Three Pillars). The 50/50 split is what makes the rhetoric work. NOT for name-match scoring phrased as 'form name vs bank name' (Identity Match) — that is a per-field API Field Table reveal, not a transformation.",
       "signals": {
         "keywords": [
           "before and after",

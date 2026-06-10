@@ -1,31 +1,29 @@
 ================================================================================
-Spring EQ — One-tap HELOC onboarding to cash-flow-backed approval (Plaid Layer + Plaid Consumer Report: CRA Base Report + CRA LendScore)
+KeyBank — Small Business Account Funding — Fund a new business checking account from any bank in seconds, post-KYB, with ownership + ACH-risk checks built in
 ================================================================================
 
-**Host:** **Spring EQ** — home equity lender (HELOCs and home equity loans)
-**Brand URL:** https://www.springeq.com
+**Host:** **KeyBank** — U.S. business banking (small-business deposit account funding)
+**Canonical URL:** https://www.key.com
+**Brand URL:** https://www.key.com
 
 **User journey (one sentence):**
-A homeowner starts a HELOC application and taps once to onboard with Plaid Layer — a single session that shares their prefilled identity and permissions their bank — and Spring EQ then generates a Plaid Consumer Report (CRA) server-side to underwrite on 365 days of verified cash flow plus a CRA LendScore, pre-qualifying the line in minutes.
+A small-business owner who has just completed KYB at KeyBank funds their new business checking account from the company's external bank by connecting it with Plaid, and KeyBank instantly confirms the account belongs to the business, pulls the ACH rails, and clears the transfer for ACH-return risk before approving the funds.
 
 **Story arc (short prose):**
-Gregory Hudson wants a $75,000 HELOC against his home. Spring EQ's digital funnel loses applicants to long forms, so it leads with Plaid Layer: in one tap Gregory reviews his prefilled name, email, phone, and property address AND permissions his bank — a single Layer session, no second connection step. Spring EQ writes that identity to the Plaid user record and generates his Consumer Report server-side. It then reads the **CRA Base Report** (365-day cash flow — healthy inflows, zero NSFs, stable balances) and a **CRA LendScore** (1–99, higher = lower default risk) as a complementary cash-flow risk signal, and pre-qualifies the line. Compliance-safe language only ("can help," "typically," "up to").
+KYB is done — the business is verified and its details are on file. The friction is now *funding*: slow micro-deposits and the risk of moving money into the wrong account. KeyBank drops in Plaid: the owner links the company's external bank in one tap, and behind the scenes KeyBank confirms the linked account's name matches the business (Identity Match), pulls account + routing rails and sees it's a business account (Auth), captures the amount, and risk-scores that specific transfer (Signal). Low risk → funds approved instantly, no micro-deposits. Close on the value: small businesses funded and transacting on day one, with fewer returns and less fraud.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
 **Products featured (approved names only):**
-Plaid Layer, CRA Base Report, CRA LendScore
-(canonical: Plaid Consumer Report — use the contiguous phrases "CRA Base Report" and "CRA LendScore" verbatim in labels + narration)
+Plaid Link, Plaid Auth, Plaid Identity (Identity Match), Plaid Signal
 
-**Solutions supported:** Account Opening / Onboarding, Credit Scoring & Underwriting, Consumer Report Underwriting
+**Solutions supported:** Account Funding
 
-**Primary product family:** `cra_base_report`
+**Primary product family:** `funding`
 
-**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-cra-lend-score.md` and `inputs/products/plaid-layer.md`)
-
-**Canonical flow:** `.claude/skills/plaid-layer-cra-onboarding/SKILL.md` — Layer + CRA is ONE Layer session; the report is generated server-side. NO separate CRA Plaid Link launch.
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
 
 **Research depth:** gapfill
 
@@ -33,73 +31,79 @@ Plaid Layer, CRA Base Report, CRA LendScore
 CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-  [x] **EXACTLY ONE launch — the Plaid Layer session.** `plaidPhase:"launch"` appears on the Layer step ONLY. Do NOT author a separate CRA Plaid Link launch; the single Layer session both shares identity AND permissions accounts.
-  [x] **Layer session (CRA-enabled):** `POST /user/create` → `POST /session/token/create` with the **CRA Layer template** (`CRA_LAYER_TEMPLATE`, resolved server-side) and `user.user_id` = the Plaid `user_id`; `Plaid.create` → `submit(phone)` first → `open()` on `LAYER_READY`. Sandbox eligible phone **+14155550011**. CRA API calls use `CRA_CLIENT_ID`/`CRA_SECRET` (resolved server-side).
-  [x] **Server-side report generation (NOT a launch):** after Layer, `POST /user_account/session/get` → `POST /user/update` (populate `name`, `date_of_birth`, `emails`, `phone_numbers`, `addresses`; partial SSN in `id_numbers` recommended) → `POST /cra/check_report/create` (Base Report eagerly generated) → wait `USER_CHECK_REPORT_READY`.
-  [x] **Reports retrieved by `user_id`** (NOT access_token): `POST /cra/check_report/base_report/get`; **LendScore is NOT a products[] string** — retrieve via `POST /cra/check_report/lend_score/get` after report-ready.
-  [x] **Sandbox / persona** — Layer eligible phone +14155550011; identity prefilled by Layer.
-
-Link/Layer narration boundary: the pre-Layer step ends on the tap ("…he taps Continue with Plaid."); the Layer step narrates content visible inside the modal only.
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase: "launch"` step per `CLAUDE.md`. **Standard Plaid Link** (NOT Layer, NOT multi-item link).
+  [ ] Plaid Layer / OAuth / IDV — N/A
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, `user_good`/`pass_good`); external institution name + account mask come from Link `onSuccess` metadata only — never hardcode them.
 
 -------------------------------------------------------------------------------
 STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
-|---|------|----------------------|--------------|--------------|
-| 1 | host | Spring EQ app — Gregory starts a **$75,000 HELOC** application. A short "Get started" card; one-tap **Continue with Plaid** instead of a long form. Ends on the tap. | `POST /user/create`; `POST /session/token/create` (CRA Layer template) | `Continue with Plaid` |
-| 2 | layer-launch | Live **Plaid Layer** session (the ONLY launch): phone-first, eligibility-gated; he reviews prefilled **name, email, phone, property address** and permissions his bank in one tap. `plaidPhase:"launch"`. | `Plaid.create` → `submit(phone)` → `open()` on `LAYER_READY` | Identity shared + bank permissioned |
-| 3 | host | "Generating your Consumer Report…" async state — Spring EQ writes Layer identity to the user record and generates the report server-side. | `POST /user_account/session/get`; `POST /user/update`; `POST /cra/check_report/create`; webhook `USER_CHECK_REPORT_READY` | Report ready |
-| 4 | insight | **CRA Base Report** card + JSON panel: 365-day cash flow — total inflow **$184,920.48**, total outflow **$162,338.71**, **nsf_overdraft_transactions_count: 0**, current balance **$28,470.15**, days_available 365. | `POST /cra/check_report/base_report/get` (`user_id`) | "365 days of healthy cash flow, zero NSFs" |
-| 5 | insight | **CRA LendScore** card + JSON panel: score **84** on a **1–99 scale (higher = lower default risk)**, with model-ready supporting context; a complementary cash-flow risk signal alongside the Base Report. | `POST /cra/check_report/lend_score/get` (`user_id`) | "Cash-flow-backed risk signal" |
-| 6 | host | **Pre-qualified.** $75,000 HELOC pre-qualified pending property/title steps; decision card cites verified cash flow + LendScore. | (decision derived from CRA data) | `Continue application` |
+Demo STARTS post-KYB (business already verified; company info prefilled). Backend order after Link is **ownership -> rails -> amount -> risk**: Identity Match, then Auth, then host amount capture, then Signal. Never show Auth before Identity Match.
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | KeyBank post-KYB home (host) | "Business verified" + prefilled company info (Pixel & Paper Co, EIN, owner, address); "Fund your business account" screen | KYB done — now fund the account in one connect | "Link your business bank account" button |
+| 2 | Plaid Link (launch) | Real standard Plaid Link modal | Narrate inside the modal: select bank, log in, choose the business account | account linked |
+| 3 | identity-match-insight | Plaid insight screen (dark navy/teal) | Confirm the linked account belongs to the business; fuzzy match tolerates the legal suffix | form "Pixel & Paper Co" vs bank "Pixel & Paper" -> name score 95 |
+| 3a | identity-match-slide (technical slide) | Plaid technical slide + JSON rail | How name scoring works for businesses AND people | bullets below |
+| 4 | auth-insight | Plaid insight screen | Pull ACH rails; the account is a business account | account + routing retrieved; holder_category business |
+| 4a | auth-slide (technical slide) | Plaid technical slide + JSON rail | The account holder/type values, incl. business | bullets below |
+| 5 | funding-amount (host) | KeyBank UX: enter amount to fund | Owner enters the amount to move into the new account | $7,500.00 entered |
+| 6 | signal-insight | Plaid insight screen | Score ACH-return risk for THIS transfer/amount | low risk -> ACCEPT |
+| 7 | funds-approved (host) | KeyBank UX: funds approved instantly | No micro-deposits; good businesses funded on the spot | "Funds available" |
+| 8 | value-summary-slide | Plaid value slide | Small businesses funded day one, fewer returns, less fraud | CTA |
+
+**Slide content (required):**
+- **identity-match-slide** (JSON rail mirrors `/identity/match`):
+  - Company name: onboarding/KYB form **"Pixel & Paper Co"** vs external bank **"Pixel & Paper"** -> **`legal_name.score` 95** (fuzzy match tolerates the "Co" legal suffix).
+  - The same name-scoring convention works for **company names AND person names** — e.g. **"John B. Henry"** vs **"Johnathan Henry"** still scores as a strong match (middle-initial vs full-middle, abbreviation tolerance).
+  - Takeaway: formatting / suffix / abbreviation differences don't sink the score; ownership is confirmed before funds move.
+- **auth-slide** (JSON rail mirrors `/auth/get`): highlight the account holder/type values — the account object's **`holder_category`** can be **`business`**, `personal`, or `unrecognized` (this account is **`business`**), alongside `type` (depository) / `subtype` (checking) and the ACH `numbers`. Show prospects Plaid distinguishes a business account on the funding rail.
 
 **Product-specific reminders:**
-- ONE launch only (Layer). The report-generation beat (step 3) is a server-side async state, NOT a `plaidPhase` launch.
-- LendScore: 1–99, **higher = lower default risk = safer** (opposite of Plaid Signal). Predicts 12-month non-mortgage default risk; here a complementary cash-flow signal, never the sole basis. Retrieved via `/cra/check_report/lend_score/get` after report-ready; not a Link product string.
-- Layer identity is user-permissioned; written to the Plaid user record via `/user/update` before report generation. Frame as "shared / permissioned," not document-verified KYC.
-- CRA reports retrieved by `user_id`.
-- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" / "eliminate." Avoid GTM percentage stats in narration.
-- Happy path only — no declines/errors.
+- Signal: low score = low ACH return risk; happy path **ACCEPT** with low scores (customer-initiated 12, bank-initiated 10). `ruleset.result` in {ACCEPT, REVIEW, REROUTE} — happy path ACCEPT.
+- Identity Match: scores 0–100; pass the business legal name as `legal_name`; ~70+ is a strong match. Never label scores "Trust Index".
+- Link: the pre-Link step ends on the **button** ("…taps Link your business bank account."); the Link step narrates content **inside** the modal only.
+- Consumer/host KeyBank screens never show raw JSON; JSON belongs only in the global `#api-response-panel` and the technical slides' JSON rail.
 
-**Compliance / user data:** FCRA consumer-report consent + permissible purpose (`EXTENSION_OF_CREDIT`) collected in the Layer/CRA session; representative sandbox data.
+**Compliance / user data (one line):** N/A — funding flow, demo starts post-KYB (business already verified).
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Gregory Hudson — Spring EQ applicant requesting a $75,000 HELOC.
-**Sample fields (use verbatim — non-round, no generic placeholders):**
-- HELOC $75,000 · applicant Gregory Hudson
-- Layer prefill: Gregory Hudson · gregory.hudson@gmail.com · (415) 555-0011 · 2290 Maplewood Dr, Wayne, PA 19087
-- CRA Base Report: total_inflow $184,920.48 · total_outflow $162,338.71 · nsf_overdraft_transactions_count 0 · current balance $28,470.15 · days_available 365
-- CRA LendScore: 84 (scale 1–99, higher = lower default risk) · status ACTIVE
+**Name / role:** Jordan Lee — owner of Pixel & Paper Co, funding the company's new KeyBank business checking account
+**Company / context:** Pixel & Paper Co — small design studio (already KYB-verified at KeyBank); external bank = the linked institution (from Link `onSuccess`)
+**Sample fields that must appear on screen:**
+- Identity Match: KYB form business name **"Pixel & Paper Co"** vs external-bank name **"Pixel & Paper"** -> `legal_name.score` **95**; supporting address/phone strong. Person-name convention example on the slide: "John B. Henry" vs "Johnathan Henry".
+- Auth: account `holder_category` **business**; `type` depository / `subtype` checking; ACH account + routing in `numbers.ach[]`.
+- Funding amount: **$7,500.00**
+- Signal: `customer_initiated_return_risk.score` 12, `bank_initiated_return_risk.score` 10, `ruleset.result` ACCEPT.
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Spring EQ-style light home-lending surface (white / light-neutral background, Spring EQ accent on CTAs). A "Get started" HELOC application flow, a report-generating state, two CRA insight reveals, and a pre-qualification decision card. Never show raw JSON on host steps; insight beats use the global `#api-response-panel` (collapsed by default). Include Spring EQ's NMLS footer disclosure (NMLS #1464945) on host underwriting screens.
+KeyBank-branded business-banking host (KeyBank red accent nav, light/white background) opening on a post-KYB "Business verified — fund your account" screen with prefilled company details and a clear "Link your business bank account" CTA that opens standard Plaid Link. Return to KeyBank chrome for the amount entry and the instant-approval outcome. Plaid insight screens use Plaid dark navy/teal — distinct from KeyBank host chrome.
 
-**Viewport:** 1440×900.
+**Viewport:** 1440x900.
 
 -------------------------------------------------------------------------------
 OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
 [[SLIDE_OUTPUT_BEGIN]]
-3 slides, no JSON on slide: (1) CRA Base Report — 365-day cash flow underwriting beat; (2) CRA LendScore — cash-flow-backed default-risk signal (1–99, higher = safer); (3) value summary — Layer onboarding + CRA underwriting in ONE Layer session. One-line headlines, concrete (generic) value claims; no host brand colors on slides.
+Up to 5 slides: (1) exec value slide (problem/outcome for small-business funding, no JSON); (2) identity-match technical slide with a "Sample API response" JSON rail mirroring `/identity/match` + the company/person name-scoring bullets above; (3) auth technical slide with a JSON rail mirroring `/auth/get` highlighting `holder_category: business`; (4) value-summary slide. Plaid-only styling (dark navy/teal), no KeyBank chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
 [[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] EXACTLY ONE launch (Layer); NO separate CRA Plaid Link launch
-  [x] CRA report generated server-side (`/user/update` → `/cra/check_report/create` → `USER_CHECK_REPORT_READY` → `…/get` by `user_id`)
-  [x] LendScore via `/cra/check_report/lend_score/get` (add-on, not a product string); direction correct (1–99, higher = safer)
-  [x] CRA Layer template (`CRA_LAYER_TEMPLATE`) + `CRA_CLIENT_ID`/`CRA_SECRET` (server-side)
-  [x] NMLS #1464945 footer on host underwriting screens
-  [x] app+slides build, stop at build-qa
+  [x] One primary source for stats (`inputs/plaid-value-props.md`)
+  [x] Product names and family match `CLAUDE.md` (funding; Auth, Identity, Signal, Link)
+  [x] Storyboard order matches goToStep flow (post-KYB -> link -> ownership -> rails -> amount -> risk -> approved)
+  [x] Standard Plaid Link (real SDK); sandbox per pipeline env
 
 END OF SPECIFICATION

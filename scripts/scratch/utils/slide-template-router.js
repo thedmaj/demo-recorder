@@ -18,6 +18,13 @@ const ENDPOINT_CATEGORY_HINTS = [
   { pattern: /\/investments\//i, category: 'metrics', layouts: ['kpi-grid', 'table'] },
   { pattern: /\/liabilities\//i, category: 'metrics', layouts: ['table', 'kpi-grid'] },
   { pattern: /\/link\/token\/create/i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
+  // Identity MATCH returns per-field similarity scores (legal_name / phone /
+  // email / address) — a field→value reveal, NOT an explainer and NOT a
+  // before/after. Must precede the generic /identity/ hint (first match wins).
+  // The "form name vs bank name" phrasing in match copy used to trip the
+  // comparison cue and route to t6/t3, producing a statement slide with
+  // jammed label+value runs (KeyBank v2 identity-match-insight, 2026-06-10).
+  { pattern: /\/identity\/match/i, category: 'metrics', layouts: ['field-table'] },
   { pattern: /\/identity\//i, category: 'explainer', layouts: ['bullets', 'three-column'] },
   // CRA / consumer report endpoints — webhook-driven lifecycles + score reveal slides.
   // LendScore is a single score → stat reveal. Base Report / Income Insights /
@@ -40,6 +47,9 @@ const LAYOUT_KEYWORDS = {
   'stat-highlight': ['triple', 'three stat', 'hero number', 'side-by-side', 'peer benchmark', 'benchmark', 'two stat'],
   'kpi-grid': ['grid', 'four metric', 'dashboard', 'qoq', 'delta'],
   table: ['table', 'row', 'tier', 'pricing', 'threshold'],
+  // Per-field API reveals: N field names with sample values / similarity
+  // scores. Previously absent — field-table could never win on text cues.
+  'field-table': ['field score', 'match score', 'per-field', 'field-by-field', 'name score', 'fields an api returns', 'field table', 'legal_name', 'holder_category', 'sample values'],
   'chart-bar': ['chart', 'bar', 'top-n', 'cohort'],
   comparison: ['before', 'after', 'transformation', 'two-panel'],
   'process-steps': ['step 1', 'numbered', 'sequential', 'lifecycle'],
@@ -148,8 +158,12 @@ function applyContentSignals(template, ctx) {
     }
   }
 
-  // 3) Comparison / contrast cues.
-  if (ctx.hasComparison) {
+  // 3) Comparison / contrast cues. Suppressed when the endpoint hint already
+  //    says this is a per-field API reveal: match copy like "form name vs bank
+  //    name" reads as a comparison but the slide's job is the field→score
+  //    table, not a before/after panel (Identity Match hijack, 2026-06-10).
+  const endpointWantsFieldTable = !!ctx.endpointHint?.layouts?.includes('field-table');
+  if (ctx.hasComparison && !endpointWantsFieldTable) {
     if (layout === 'comparison') {
       score += 4;
       reasons.push('comparison-cue');

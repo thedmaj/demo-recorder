@@ -11,6 +11,19 @@
         "/Users/dmajetic/plaid-mcp-servers/askbill-plaid/askbill_mcp_server.py"
       ],
       "env": {}
+    },
+    "moviepy": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/Users/dmajetic/.mcp-servers/mcp-moviepy",
+        "run",
+        "main.py",
+        "--transport",
+        "stdio"
+      ],
+      "env": {}
     }
   }
 }
