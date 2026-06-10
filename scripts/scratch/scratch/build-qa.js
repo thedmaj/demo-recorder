@@ -4164,6 +4164,25 @@ async function main(opts = {}) {
     deviceScaleFactor: RECORD_PARITY ? 2 : 1,
   });
   const page = await context.newPage();
+  // build-qa scores the rendered static UI + slides (Track A), not the live
+  // Plaid SDK. The app loads the real SDK via a blocking <script src="https://
+  // cdn.plaid.com/...">; when that CDN is slow/unreachable (offline sandbox,
+  // flaky network) the request stalls the page's DOMContentLoaded and page.goto
+  // times out at 60s — failing QA for reasons unrelated to slide/app quality.
+  // Abort external (non-localhost) requests up front so load completes fast and
+  // QA is deterministic regardless of network. (Recording — which DOES need the
+  // live SDK — runs in its own stage with network and is unaffected.)
+  await context.route('**/*', (route) => {
+    try {
+      const host = new URL(route.request().url()).hostname;
+      if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+        return route.continue();
+      }
+      return route.abort();
+    } catch (_) {
+      return route.continue();
+    }
+  });
   const pageErrors = [];
   page.on('pageerror', (err) => {
     pageErrors.push(String((err && err.message) || err || 'unknown pageerror'));
