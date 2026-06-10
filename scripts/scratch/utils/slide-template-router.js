@@ -311,13 +311,35 @@ function routeSlideTemplate(step, deckContext = {}, opts = {}) {
   const ep = step?.apiResponse?.endpoint || '';
   const epHint = endpointHint(ep);
 
-  const hardLayout = step?.workhorseLayout ? String(step.workhorseLayout).trim() : '';
+  let hardLayout = step?.workhorseLayout ? String(step.workhorseLayout).trim() : '';
   let hardTemplateId = '';
   if (hardLayout) {
     const byLayout = getTemplateByWorkhorseLayout(hardLayout, opts);
     if (byLayout) hardTemplateId = byLayout.id;
   }
   if (step?.showcaseTemplateId) hardTemplateId = String(step.showcaseTemplateId);
+
+  // CRA field-data reveals (Income Insights / Cash Flow Insights / Base Report)
+  // must render as an api-field-table — never a KPI grid, which scores in the
+  // same "metrics" category but jams label+value into bare adjacent spans
+  // (observed live: kpi-grid produced "FREQUENCYBiweekly"). The endpoint hint
+  // alone is only a weak +2.5 boost AND demo steps frequently omit
+  // apiResponse.endpoint, so detect from the endpoint OR the step text and make
+  // it a HARD layout so field-table decisively wins. lend_score is excluded
+  // (single headline score → stat-highlight). Only force when the author has not
+  // already pinned a layout/template of their own.
+  if (!hardLayout && !step?.showcaseTemplateId) {
+    const craEp = /\/cra\/check_report\/(?:base_report|income_insights|cashflow_insights|partner_insights)/i.test(ep);
+    const craText = !/lend[_\s-]?score/i.test(text)
+      && /\b(income insights|cash[-\s]?flow insights|base report)\b/i.test(text);
+    if (craEp || craText) {
+      const ft = getTemplateByWorkhorseLayout('field-table', opts);
+      if (ft) {
+        hardLayout = 'field-table';
+        hardTemplateId = ft.id;
+      }
+    }
+  }
 
   const preferredCategory = step?.slideCategory
     ? String(step.slideCategory)

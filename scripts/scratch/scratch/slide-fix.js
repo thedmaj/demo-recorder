@@ -238,6 +238,20 @@ async function main(opts = {}) {
     return { iterations: 0, finalTierSummary: tier.tierSummary, slidePassed: true, skipped: true };
   }
 
+  // Regression guard (2026-06-10): the strip + LLM-reinsert loop can produce a
+  // WORSE deck than it started with (observed live: slide tier 42 → 14 → 13).
+  // Snapshot the starting HTML + slide-tier avg, keep the BEST iteration, and if
+  // an iteration regresses below where we started, revert to the best snapshot
+  // and stop. Never leave the deck worse than the best seen.
+  const INDEX_HTML = path.join(runDir, 'scratch-app', 'index.html');
+  const readIndex = () => { try { return fs.readFileSync(INDEX_HTML, 'utf8'); } catch (_) { return null; } };
+  const writeIndex = (html) => { try { if (html != null) fs.writeFileSync(INDEX_HTML, html); } catch (_) {} };
+  const slideAvg = (t) => (t?.tierSummary?.slide?.avgScore ?? 0);
+  const startAvg = slideAvg(tier);
+  let bestAvg = startAvg;
+  let bestHtml = readIndex();
+  let bestTier = tier;
+
   let iter = 0;
   const iterationLog = [];
   while (iter < maxIterations) {
@@ -265,6 +279,7 @@ async function main(opts = {}) {
 
     const qaResult = await runSlidesScopedBuildQa(runDir);
     tier = readTierSummary(runDir);
+    const newAvg = slideAvg(tier);
     iterationLog.push({
       iteration: iter,
       patchesApplied: patchOut.applied || 0,
@@ -272,13 +287,30 @@ async function main(opts = {}) {
       postSlidesRan: stripOut.stripped.length > 0,
       slidePassed: tier?.tierSummary?.slide?.passed === true,
       slideMinScore: tier?.tierSummary?.slide?.minScore ?? null,
+      slideAvgScore: newAvg,
       slideFailingStepIds: tier?.tierSummary?.slide?.failingStepIds || [],
       overallScore: qaResult?.overallScore || null,
     });
     if (tier?.tierSummary?.slide?.passed) {
+      if (newAvg >= bestAvg) { bestAvg = newAvg; bestHtml = readIndex(); bestTier = tier; }
       console.log(`[slide-fix] slide tier passed on iteration ${iter}`);
       break;
     }
+    if (newAvg > bestAvg) {
+      bestAvg = newAvg; bestHtml = readIndex(); bestTier = tier;
+    } else if (newAvg < startAvg) {
+      console.warn(`[slide-fix] iteration ${iter} regressed slide avg ${newAvg} < start ${startAvg} — reverting to best (avg ${bestAvg}) and stopping to avoid corrupting the deck.`);
+      writeIndex(bestHtml);
+      tier = bestTier;
+      break;
+    }
+  }
+  // Never leave the deck worse than the best seen (e.g. iterations exhausted on
+  // a downward trend without tripping the start-regression guard above).
+  if (slideAvg(tier) < bestAvg) {
+    console.warn(`[slide-fix] final slide avg ${slideAvg(tier)} < best ${bestAvg} — restoring best snapshot.`);
+    writeIndex(bestHtml);
+    tier = bestTier;
   }
 
   let agentTaskPath = null;
