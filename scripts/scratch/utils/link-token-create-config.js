@@ -641,6 +641,12 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   const isCraResolved =
     /^cra_|income_insights/.test(String(productFamily).toLowerCase()) ||
     (Array.isArray(merged.products) && merged.products.some((p) => /^cra_|consumer_report/i.test(String(p))));
+  // `declaredText` = products inferred/declared from the prompt (fromPrompt),
+  // lowercased. It was referenced here but never defined → a ReferenceError that
+  // threw the entire CRA-signal-strip block (caught as a non-fatal warning, so
+  // the strip silently never ran on any build). Define it so an explicitly
+  // declared `signal` still counts as genuine intent.
+  const declaredText = (Array.isArray(fromPrompt) ? fromPrompt.join(' ') : '').toLowerCase();
   const genuineSignalIntent =
     protectIntentAffirmative(/\bplaid\s+signal\b/) ||
     /\/signal\/evaluate\b/.test(lcPrompt) ||

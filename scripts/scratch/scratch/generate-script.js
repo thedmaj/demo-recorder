@@ -1011,15 +1011,29 @@ function validateDemoScript(demoScript, opts = {}) {
 
   if (productFamily === 'income_insights') {
     const hasIncomeEndpoint = steps.some(step => /\/cra\/check_report\/income_insights\/get\b/i.test(step.apiResponse?.endpoint || ''));
-    if (!hasIncomeEndpoint) {
+    // A demo can be mislabeled `income_insights` (CRA Income Insights) when it is
+    // really Plaid **Bank Income** (/credit/bank_income/get) — a DIFFERENT product
+    // family with no Consumer Report / async report-ready beat. Forcing the CRA
+    // endpoint + ready-beat on a Bank Income demo is a false-positive hard error
+    // (observed: Scrub.io "Bank Income + Assets" prompt declared family
+    // income_insights). Detect the real Bank Income endpoints and treat the demo
+    // as Bank Income instead of erroring.
+    const isReallyBankIncome = steps.some(step =>
+      /\/credit\/(?:bank_income|payroll_income)\b/i.test(step.apiResponse?.endpoint || '')
+    );
+    if (!hasIncomeEndpoint && isReallyBankIncome) {
+      warnings.push('Demo declared family "income_insights" but uses Plaid Bank Income (/credit/bank_income/get), not CRA Income Insights (/cra/check_report/income_insights/get) — treating as Bank Income. Set the prompt\'s Primary product family to bank_income to silence this.');
+    } else if (!hasIncomeEndpoint) {
       (pipelineAppOnlyHostUi ? warnings : errors).push('CRA Income Insights demos should include an insight step using /cra/check_report/income_insights/get.');
     }
-    const hasReadyBeat = steps.some(step => {
-      const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();
-      return /\bready\b|\breport ready\b|\breport available\b|\bprocessing\b/.test(haystack);
-    });
-    if (!hasReadyBeat) {
-      warnings.push('CRA Income Insights demos usually need a report-ready or report-available beat before showing retrieved income insights.');
+    if (!isReallyBankIncome) {
+      const hasReadyBeat = steps.some(step => {
+        const haystack = [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+        return /\bready\b|\breport ready\b|\breport available\b|\bprocessing\b/.test(haystack);
+      });
+      if (!hasReadyBeat) {
+        warnings.push('CRA Income Insights demos usually need a report-ready or report-available beat before showing retrieved income insights.');
+      }
     }
   }
 
