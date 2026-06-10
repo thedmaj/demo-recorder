@@ -472,36 +472,50 @@ function ensureSlideDesignStylesInHead(html, templates) {
   const titleFitRuntime =
     `<script data-slide-title-fit="v3">\n` +
     `(function(){\n` +
-    `  // Only NUDGE a title onto one line when a GENTLE reduction achieves it.\n` +
-    `  // If one line can't be reached within the floor (a genuine multi-line\n` +
-    `  // display headline, e.g. \"Account opening / shouldn't end in / abandonment.\"),\n` +
-    `  // REVERT to the designed size — never leave a title shrunk-but-still-wrapped.\n` +
-    `  var FLOOR_DEFAULT = 0.70; // generic titles: don't shrink past ~30%\n` +
-    `  var FLOOR_HERO = 0.80;    // T1/T3/T6 hero/statement/comparison headlines: cap shrink at 20% (floor 0.8), then accept a wrap\n` +
-    `  var HERO_TPL = { T1: 1, T3: 1, T6: 1 };\n` +
-    `  function floorFor(t){ var r = t.closest && t.closest('.slide-root'); var tpl = r ? (r.getAttribute('data-slide-template') || '') : ''; return HERO_TPL[tpl] ? FLOOR_HERO : FLOOR_DEFAULT; }\n` +
+    `  // Shrink a wrapping title just enough to fit ONE line, down to a readable\n` +
+    `  // ABSOLUTE px floor (aligned with the build-qa wrap scanner's 24px\n` +
+    `  // threshold). A clean one-liner at ~40-46px beats an 80px+ title wrapping\n` +
+    `  // to two lines and scoring ~45/100. The old relative floor (0.70/0.80) was\n` +
+    `  // too high for long sentence-titles: it could not reach one line within the\n` +
+    `  // cap and REVERTED to the full designed size, leaving the wrap (observed\n` +
+    `  // across campaign builds: idv title 83px / 2 lines, score 45). Only fires\n` +
+    `  // when the title actually wraps and stops as soon as it fits, so well-sized\n` +
+    `  // titles are untouched; reverts only if it can't fit even at the floor.\n` +
+    `  var FLOOR_PX = 26;\n` +
     `  function oneLine(t, lh){ return t.getBoundingClientRect().height <= lh * 1.4; }\n` +
     `  function fitOne(t){\n` +
     `    if (t.hasAttribute('data-titlefit-skip')) return;\n` +
     `    t.style.fontSize = '';                                  // reset prior fit (idempotent)\n` +
     `    var base = parseFloat(getComputedStyle(t).fontSize) || 0;\n` +
     `    if (!base) return;\n` +
-    `    var MIN = floorFor(t);                                  // T1/T3/T6 floor 0.8 (20% cap); other templates 0.7\n` +
     `    var lh = parseFloat(getComputedStyle(t).lineHeight) || base * 1.1;\n` +
     `    if (oneLine(t, lh)) return;                             // already one line\n` +
-    `    var scale = 1, fitted = false;\n` +
-    `    while (scale - 0.05 >= MIN){\n` +
-    `      scale -= 0.05;\n` +
-    `      t.style.fontSize = (base * scale) + 'px';\n` +
-    `      var lh2 = parseFloat(getComputedStyle(t).lineHeight) || base * scale * 1.1;\n` +
+    `    var size = base, fitted = false;\n` +
+    `    while (size - 2 >= FLOOR_PX){\n` +
+    `      size -= 2;\n` +
+    `      t.style.fontSize = size + 'px';\n` +
+    `      var lh2 = parseFloat(getComputedStyle(t).lineHeight) || size * 1.1;\n` +
     `      if (oneLine(t, lh2)) { fitted = true; break; }\n` +
     `    }\n` +
-    `    if (!fitted) t.style.fontSize = '';                     // revert — leave as designed (multi-line hero)\n` +
+    `    if (!fitted) t.style.fontSize = '';                     // revert — genuinely too long even at floor\n` +
     `  }\n` +
-    `  function fit(){ document.querySelectorAll('.slide-root .h-title, .slide-root .h-display').forEach(fitOne); }\n` +
+    `  var SEL = '.slide-root .h-title, .slide-root .h-display';\n` +
+    `  function fit(){ document.querySelectorAll(SEL).forEach(fitOne); }\n` +
     `  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit); else fit();\n` +
     `  setTimeout(fit, 0);\n` +
     `  window.addEventListener('resize', fit);\n` +
+    `  // Demo steps are display:none until navigated (goToStep). A title measured\n` +
+    `  // while hidden has height 0 and is skipped, so a load-time-only fit leaves\n` +
+    `  // every non-initial slide's title at full size — it wraps when build-qa /\n` +
+    `  // recording later reveals the step. Re-fit each title the moment it becomes\n` +
+    `  // visible, which is the only reliable signal independent of goToStep timing.\n` +
+    `  try {\n` +
+    `    var io = new IntersectionObserver(function(es){ es.forEach(function(e){ if (e.isIntersecting) fitOne(e.target); }); });\n` +
+    `    document.querySelectorAll(SEL).forEach(function(t){ io.observe(t); });\n` +
+    `  } catch(_){ }\n` +
+    `  if (typeof window.goToStep === 'function' && !window.__titleFitGoToStep){\n` +
+    `    var _g = window.goToStep; window.goToStep = function(){ var r = _g.apply(this, arguments); setTimeout(fit, 30); return r; }; window.__titleFitGoToStep = 1;\n` +
+    `  }\n` +
     `})();\n` +
     `</script>\n`;
   const designBlock =
