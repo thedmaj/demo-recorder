@@ -792,7 +792,6 @@ async function createConsumerReportLinkToken(flat = {}) {
     flat.craLayerTemplate ??
     flat.cra_layer_template ??
     process.env.CRA_LAYER_TEMPLATE ??           // canonical CRA Layer template
-    process.env.CRA_EWA_LAYER_TEMPLATE_ID ??    // accepted alias (same value)
     null;
   const requestedProducts = Array.isArray(flat.products) ? flat.products : [];
 
@@ -1031,14 +1030,14 @@ function runIsCraDemo() {
 
 async function createSessionToken(opts = {}) {
   // Layer template selection:
-  //   • CRA demos → CRA_LAYER_TEMPLATE (alias CRA_EWA_LAYER_TEMPLATE_ID) under CRA
-  //     credentials (the CRA Layer template lives on the CRA account).
+  //   • CRA demos → CRA_LAYER_TEMPLATE under CRA credentials (the CRA Layer
+  //     template lives on the CRA account).
   //   • everything else → PLAID_LAYER_TEMPLATE_ID under default credentials.
   //   • an explicit caller-supplied template_id always wins.
   // If the CRA Layer template can't mint a session for this account's users (e.g.
   // it's a legacy-only template that rejects the new usr_ user_id), fall back to
   // the default template so the demo still completes — and log why.
-  const craTemplate = process.env.CRA_LAYER_TEMPLATE || process.env.CRA_EWA_LAYER_TEMPLATE_ID || null;
+  const craTemplate = process.env.CRA_LAYER_TEMPLATE || null;
   const defaultTemplate = process.env.PLAID_LAYER_TEMPLATE_ID || 'template_n31w56t6o9a7';
   const isCra = opts.cra === true || hasCraProducts(opts.products) || runIsCraDemo();
   const explicitTemplate = opts.template_id || opts.templateId || null;
