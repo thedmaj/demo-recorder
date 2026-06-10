@@ -20,7 +20,12 @@ const ENDPOINT_CATEGORY_HINTS = [
   { pattern: /\/link\/token\/create/i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
   { pattern: /\/identity\//i, category: 'explainer', layouts: ['bullets', 'three-column'] },
   // CRA / consumer report endpoints — webhook-driven lifecycles + score reveal slides.
-  { pattern: /\/cra\/check_report\/(?:lend_score|base_report)/i, category: 'metrics', layouts: ['stat-highlight', 'kpi-grid'] },
+  // LendScore is a single score → stat reveal. Base Report / Income Insights /
+  // Cash Flow Insights return key field→value attribute data → a field table
+  // reads far better than a big-number stat card (avoids the cover/T1 fallback
+  // that produced jammed bare-span reveals).
+  { pattern: /\/cra\/check_report\/lend_score/i, category: 'metrics', layouts: ['stat-highlight', 'kpi-grid'] },
+  { pattern: /\/cra\/check_report\/(?:base_report|income_insights|cashflow_insights|partner_insights)/i, category: 'metrics', layouts: ['field-table'] },
   { pattern: /\/cra\/check_report\/network_insights/i, category: 'metrics', layouts: ['kpi-grid', 'stat-highlight'] },
   { pattern: /\/webhooks?\b/i, category: 'comparison_flow', layouts: ['process-steps', 'flow-diagram'] },
   // Plaid Protect / Trust Index — fraud risk explainer + score reveal.

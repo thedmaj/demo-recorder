@@ -1,8 +1,8 @@
 {
   "meta": {
-    "generatedAt": "2026-05-26T02:54:23.463Z",
+    "generatedAt": "2026-06-10T01:38:52.400Z",
     "source": "templates/slide-template/showcase/index.html",
-    "templateCount": 20
+    "templateCount": 21
   },
   "templates": [
     {
@@ -231,6 +231,38 @@
           "metrics"
         ],
         "workhorseLayout": "kpi-grid",
+        "stepRoles": []
+      }
+    },
+    {
+      "id": "api-field-table",
+      "name": "API Field Table",
+      "category": "metrics",
+      "categories": [
+        "Metrics"
+      ],
+      "slideTemplate": "T7",
+      "workhorseLayout": "field-table",
+      "backgroundClass": null,
+      "whenToUse": "Show the key fields an API response returns alongside their sample values — CRA Income Insights / Cash Flow Insights / Base Report reveals, identity or account field read-outs. Label/value rows with real separation; never bare adjacent spans.",
+      "avoidWhen": "A few big headline numbers (use Triple Stat / KPI Grid) or a multi-column comparison matrix (use Data Table).",
+      "signals": {
+        "keywords": [
+          "percent",
+          "%",
+          "kpi",
+          "metric",
+          "score",
+          "stat",
+          "number",
+          "rate",
+          "reduction",
+          "increase",
+          "table",
+          "chart",
+          "data"
+        ],
+        "workhorseLayout": "field-table",
         "stepRoles": []
       }
     },
