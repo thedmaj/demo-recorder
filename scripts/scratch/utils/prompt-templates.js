@@ -1172,6 +1172,11 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `Do not describe or require host demo UI (nav, banners, account cards, dashboard modules) inside slide visualState or slide copy — slides are Plaid-only deck surfaces.\n` +
       `Do not describe or require slide deck shell (.slide-root regions, slide header/footer strips, slide panel grid) inside host, link, or insight visualState.\n` +
       `Narrative may echo themes; DOM/layout systems must stay separate except the shared global #api-response-panel on insight/slide per pipeline contract.\n\n` +
+      `API PANEL IN visualState (CRITICAL):\n` +
+      `The global #api-response-panel is a fixed overlay that stays COLLAPSED by default on every step — the presenter expands it live. ` +
+      `NEVER write visualState text that requires the panel "expanded", "open", "visible", or "showing JSON". ` +
+      `Instead describe the step's concrete API values (scores, statuses, amounts, field values) as styled in-slide content (cards, key/value rows, metric chips). ` +
+      `Also never prescribe a slide background color in visualState (navy vs light/cream/holo) — the deck design system owns background rhythm.\n\n` +
       (requireFinalValueSummarySlide
         ? `FINAL VALUE SUMMARY SLIDE RULE (CRITICAL):\n` +
           `The LAST step in the demo MUST be a Plaid-branded value-summary slide (sceneType:"slide").\n` +
@@ -1182,7 +1187,10 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
           `Use concise user-benefit language and outcomes. Avoid decorative internal model metrics\n` +
           `or scorecards unless they directly explain a user action or decision.\n` +
           `The final slide visualState must require visible content (Plaid branding, 3-4 value bullets,\n` +
-          `and a visible CTA), never a blank placeholder surface.\n\n`
+          `and a closing declarative outcome line), never a blank placeholder surface.\n` +
+          `Do NOT require a CTA button in visualState — sales CTAs (buttons, pill CTAs, "contact us" /\n` +
+          `"get started" actions) are forbidden on slides; the value summary closes with outcome bullets\n` +
+          `+ declarative copy only.\n\n`
         : `FINAL STEP RULE (NO MARKETING SLIDE MODE):\n` +
           `Do NOT append value-summary-slide or any sceneType:"slide" wrap-up card.\n` +
           `End on a host or insight outcome step that clearly states the completed user result.\n` +
@@ -2748,10 +2756,30 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
     !Array.isArray(step.apiResponse.response) &&
     Object.keys(step.apiResponse.response).length > 0;
   const isValueSummaryId = String(step.id || '').toLowerCase() === 'value-summary-slide';
+  // OVERLAY CONTRACT (2026-06-04, re-aligned 2026-06-10): the global
+  // #api-response-panel is a fixed overlay that stays COLLAPSED by default on
+  // EVERY step; build-qa deliberately screenshots slides with it collapsed and
+  // the presenter expands it live. The old "JSON rail must be visible" wording
+  // contradicted that contract and systematically dragged every apiResponse
+  // slide to ~55-70 ("panel collapsed, no JSON visible"). Score the DATA, not
+  // the panel state.
   const apiJsonRailNote =
     hasApiResponsePayload && !isValueSummaryId
-      ? `\n\nAPI JSON RAIL CONTRACT: This step includes apiResponse in the demo script. The global right-hand API / JSON side panel (#api-response-panel) should be visible with plausible sample JSON — not only narrative UI in the main slide. If the JSON rail is missing, empty, or raw JSON is only inside the slide body, treat that as a significant defect (deduct materially and list in issues).`
+      ? `\n\nAPI PANEL OVERLAY CONTRACT: This step includes apiResponse in the demo script. The global right-hand API/JSON side panel (#api-response-panel) is a FIXED OVERLAY that stays COLLAPSED by default on every step — only a thin chevron tab is visible at the right edge; the presenter expands it live during delivery. A collapsed JSON rail is CORRECT and expected in these frames. Do NOT deduct points because the panel is collapsed, because no raw JSON is visible, or because API data is rendered as styled slide content instead of raw JSON — even if the Expected visual state describes the panel as expanded, visible, or "showing JSON" (that description is satisfied by the collapsed overlay + populated panel data). Instead verify the step's concrete API data values (scores, statuses, amounts, field values from apiResponse) are evidenced in the slide body as styled content (cards, key/value rows, metric chips). Deduct only if those concrete values are absent from the slide body.`
       : '';
+  // Slide-tier steps are static deck surfaces and follow the Deck Design
+  // System's background rhythm + no-sales-CTA rules. The expected-state text
+  // sometimes contradicts those contracts (asks for a CTA button, a specific
+  // background color, or panel-expansion progression) — the contracts win.
+  const isSlideTierStep = !isAppTierStep;
+  const slideContractNote = isSlideTierStep
+    ? `\n\nSLIDE STEP CONTRACT: This is a static Plaid deck slide.` +
+      ` (1) STATIC FRAMES: start/mid/end frames are expected to be identical — do NOT deduct for missing animation, reveal progression, or "no visible change across frames".` +
+      ` (2) BACKGROUND VARIANT: the deck design system owns background rhythm; navy, light, cream, and holo are all approved — do NOT deduct if the slide uses a different approved background variant than the Expected visual state describes.` +
+      (isValueSummaryId
+        ? ` (3) CLOSING CONTRACT: value-summary slides intentionally close with product outcome bullets + declarative copy ONLY; sales CTA buttons are FORBIDDEN by the design system. Do NOT deduct for a missing CTA button even if the Expected visual state mentions a visible CTA — a closing declarative line or the headline satisfies that expectation.`
+        : '')
+    : '';
 
   // App-only host/link steps explicitly bind QA to visualState only.
   // In app-only builds the customer-branded UI is the entire deliverable; concrete
@@ -2777,6 +2805,7 @@ function buildQAReviewPrompt(step, framesBase64, expectedState, demoContext = {}
     plaidBrandingNote +
     plaidLaunchCtaNote +
     apiJsonRailNote +
+    slideContractNote +
     appOnlyContractNote;
 
   // Narration-strict only fires when there's a slide tier expected to show the
@@ -3108,6 +3137,7 @@ function buildSlideInsertionPrompt({
   slideDesignSkillMarkdown = '',
   templateRouting = null,
   showcaseTemplate = null,
+  recentBackgrounds = [],
 } = {}) {
   const brandName = (brand && brand.name) || 'Plaid';
   const stepId = String(step?.id || '').trim();
@@ -3181,13 +3211,18 @@ function buildSlideInsertionPrompt({
     `- Layout: flex/grid + gap only (no inline-block).\n` +
     `- **Mint cap (HARD):** maximum 3 total references to \`--plaid-teal-500\` or \`#42F0CD\` per slide — counted across class names, inline styles, and CSS. Reserve mint for ONE primary eye-draw moment (a single stat, a single CTA accent, or a single chip). For supporting text, use \`var(--plaid-white)\` or \`rgba(255,255,255,0.78)\` on navy; \`var(--plaid-ink-900)\` on light/cream/holo. **WRONG**: 8+ mint hex/var references stacked across cards. **RIGHT**: 1–3 mint references, all clustered on the focal element.\n` +
     `- **Forbidden sales CTAs (HARD — build-QA blocker):** Do NOT add buttons, pill CTAs, or prominent action lines for: contact Plaid, contact Account Manager, start a free trial, Start a POC, perform a retro analysis / run the production retro / start your retro. Value-summary slides close with product outcome bullets + declarative copy only.\n` +
-    `- **Partnership / section labels:** put "Plaid × {customer}" and product names in .eyebrow-tag only — never in a footer row.\n` +
+    `- **Partnership / section labels:** put "Plaid × {customer}" and product names in .eyebrow-tag only — never in a footer row. NEVER write "Plaid × Plaid" — if the customer brand name is unknown or is itself "Plaid", use "Plaid · {product/section}" instead.\n` +
     `- **Plaid logo (HARD — build-QA blocker):** NEVER invent a logo (no SVG, no four-dot icon grid, no "PLAID" text, no CSS shapes). ` +
     `Either use exactly one bundled horizontal wordmark: <img class="chrome-logo" src="assets/logos/plaid-horizontal-white.png" alt=""> ` +
     `(navy), plaid-horizontal-dark.png (light/cream/holo), or plaid-horizontal-holograph.png on holo — OR omit .chrome-logo entirely (T1 may omit).\n` +
     `- **Logo placement (HARD):** Do NOT inline style on .chrome-logo. CSS sets top-right placement (75px above eyebrow) at 28px height via slide.css / pipeline-slide-contract.css. Showcase preview uses ~140px for gallery only — never copy that scale.\n` +
     `- REQUIRED attrs on .slide-root: data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}".\n` +
     `- Do NOT add JSON rail inside the step (#api-response-panel is global).\n` +
+    `- **Vertical fit (HARD — build-QA blocker):** ALL content must fit inside the slide canvas at 1440×900 — no card, row, chart bar, or score chip may extend past the .slide-root edge (clipped content like a 4th field-score row cut off at the bottom is a scored defect). When a field table / score list / metric grid has 4+ rows, make it fit by TIGHTENING SPACING AND SIZE — reduce .slide-stack gap (e.g. 32px → 20px), trim row padding, and step the row value font down one notch — rather than letting the last row overflow. Fewer, denser rows beat clipped rows.\n` +
+    `- **Evidence completeness (HARD — vision QA deducts for gaps):** every concrete value the narration or Expected visual state mentions (masked account numbers, routing numbers, scores, statuses, dollar amounts, dates) must appear as styled slide content — pull realistic values from the step's apiResponse. If the Expected visual state describes a list (e.g. transactions with ALL-CAPS merchants and posted dates), render a compact 3–4 row version of it; never replace a described list with summary chips only. If narration says values were "returned" or "retrieved", show the values, not just a count.\n` +
+    (Array.isArray(recentBackgrounds) && recentBackgrounds.length
+      ? `- **Background rhythm:** preceding slides in DOM order use these backgrounds: ${recentBackgrounds.join(', ')}. No more than 4 navy slides may run consecutively — if the last 3+ are navy, give this slide a light, cream, or holo background class (on .slide-root) when the template allows it.\n`
+      : '') +
     `- Do NOT include emojis.\n\n`;
 
   if (vps.length) {

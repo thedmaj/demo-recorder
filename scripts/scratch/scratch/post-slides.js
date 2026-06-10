@@ -470,24 +470,40 @@ function ensureSlideDesignStylesInHead(html, templates) {
   // soft (only fires when the title actually wraps), idempotent, and skips any
   // title the build deliberately marked `data-titlefit-skip`. Re-fits on resize.
   const titleFitRuntime =
-    `<script data-slide-title-fit="v3">\n` +
+    `<script data-slide-title-fit="v4">\n` +
     `(function(){\n` +
     `  // Shrink a wrapping title just enough to fit ONE line, down to a readable\n` +
     `  // ABSOLUTE px floor (aligned with the build-qa wrap scanner's 24px\n` +
     `  // threshold). A clean one-liner at ~40-46px beats an 80px+ title wrapping\n` +
-    `  // to two lines and scoring ~45/100. The old relative floor (0.70/0.80) was\n` +
-    `  // too high for long sentence-titles: it could not reach one line within the\n` +
-    `  // cap and REVERTED to the full designed size, leaving the wrap (observed\n` +
-    `  // across campaign builds: idv title 83px / 2 lines, score 45). Only fires\n` +
-    `  // when the title actually wraps and stops as soon as it fits, so well-sized\n` +
-    `  // titles are untouched; reverts only if it can't fit even at the floor.\n` +
+    `  // to two lines and scoring ~45/100. Only fires when the title actually\n` +
+    `  // wraps and stops as soon as it fits, so well-sized titles are untouched;\n` +
+    `  // reverts only if it can't fit even at the floor.\n` +
+    `  //\n` +
+    `  // v4 (2026-06-10): v3 ran the IntersectionObserver setup and the goToStep\n` +
+    `  // wrapper install at <head> parse time — before <body> existed (zero\n` +
+    `  // titles observed) and before the app script defined window.goToStep (no\n` +
+    `  // wrapper installed). Net effect: only the load-time fit on the single\n` +
+    `  // visible first step ever ran, and every later-revealed slide kept its\n` +
+    `  // wrap (observed across all six 2026-06-10 campaign builds: .h-title\n` +
+    `  // wrapping at 58px despite v3 present). v4 defers ALL DOM-dependent setup\n` +
+    `  // to DOMContentLoaded, installs the goToStep wrapper lazily, and widens\n` +
+    `  // the selector to mirror the build-qa wrap scanner (raw h1/h2/h3 lead\n` +
+    `  // titles too, with the scanner's label/caption/body exclusions) so what\n` +
+    `  // the scanner can flag, the runtime can fix.\n` +
     `  var FLOOR_PX = 26;\n` +
+    `  var MIN_BASE_PX = 30;  // never touch card sub-headings / small h3s\n` +
+    `  var NON_TITLE = /(?:label|caption|sub-?title|sub-?head|subhead|eyebrow|body|bullet|footnote|disclaimer|note|meta|detail|copy|desc)/i;\n` +
     `  function oneLine(t, lh){ return t.getBoundingClientRect().height <= lh * 1.4; }\n` +
     `  function fitOne(t){\n` +
     `    if (t.hasAttribute('data-titlefit-skip')) return;\n` +
+    `    if (NON_TITLE.test(String(t.className || ''))) return;\n` +
+    `    // ch-based max-width (T1 hero "max-width:16ch") scales WITH font-size,\n` +
+    `    // so shrinking can never reach one line — the multi-line hero wrap is\n` +
+    `    // intentional design. Skip instead of shrink-then-revert.\n` +
+    `    if (/ch\\s*$/.test(String((t.style && t.style.maxWidth) || ''))) return;\n` +
     `    t.style.fontSize = '';                                  // reset prior fit (idempotent)\n` +
     `    var base = parseFloat(getComputedStyle(t).fontSize) || 0;\n` +
-    `    if (!base) return;\n` +
+    `    if (!base || base < MIN_BASE_PX) return;\n` +
     `    var lh = parseFloat(getComputedStyle(t).lineHeight) || base * 1.1;\n` +
     `    if (oneLine(t, lh)) return;                             // already one line\n` +
     `    var size = base, fitted = false;\n` +
@@ -499,23 +515,31 @@ function ensureSlideDesignStylesInHead(html, templates) {
     `    }\n` +
     `    if (!fitted) t.style.fontSize = '';                     // revert — genuinely too long even at floor\n` +
     `  }\n` +
-    `  var SEL = '.slide-root .h-title, .slide-root .h-display';\n` +
-    `  function fit(){ document.querySelectorAll(SEL).forEach(fitOne); }\n` +
-    `  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fit); else fit();\n` +
-    `  setTimeout(fit, 0);\n` +
-    `  window.addEventListener('resize', fit);\n` +
-    `  // Demo steps are display:none until navigated (goToStep). A title measured\n` +
-    `  // while hidden has height 0 and is skipped, so a load-time-only fit leaves\n` +
-    `  // every non-initial slide's title at full size — it wraps when build-qa /\n` +
-    `  // recording later reveals the step. Re-fit each title the moment it becomes\n` +
-    `  // visible, which is the only reliable signal independent of goToStep timing.\n` +
-    `  try {\n` +
-    `    var io = new IntersectionObserver(function(es){ es.forEach(function(e){ if (e.isIntersecting) fitOne(e.target); }); });\n` +
-    `    document.querySelectorAll(SEL).forEach(function(t){ io.observe(t); });\n` +
-    `  } catch(_){ }\n` +
-    `  if (typeof window.goToStep === 'function' && !window.__titleFitGoToStep){\n` +
-    `    var _g = window.goToStep; window.goToStep = function(){ var r = _g.apply(this, arguments); setTimeout(fit, 30); return r; }; window.__titleFitGoToStep = 1;\n` +
+    `  var SEL = '.slide-root .h-title, .slide-root .h-display, .slide-root h1, .slide-root h2, .slide-root h3';\n` +
+    `  function hookGoToStep(){\n` +
+    `    // Lazy install: the app script that defines goToStep runs at the end of\n` +
+    `    // <body>, long after this head-injected runtime executes.\n` +
+    `    if (typeof window.goToStep === 'function' && !window.__titleFitGoToStep){\n` +
+    `      var _g = window.goToStep; window.goToStep = function(){ var r = _g.apply(this, arguments); setTimeout(fit, 30); return r; }; window.__titleFitGoToStep = 1;\n` +
+    `    }\n` +
     `  }\n` +
+    `  function fit(){ hookGoToStep(); document.querySelectorAll(SEL).forEach(fitOne); }\n` +
+    `  function init(){\n` +
+    `    fit();\n` +
+    `    setTimeout(fit, 0);\n` +
+    `    window.addEventListener('resize', fit);\n` +
+    `    // Demo steps are display:none until navigated (goToStep). A title\n` +
+    `    // measured while hidden has height 0 and is skipped, so a load-time-only\n` +
+    `    // fit leaves every non-initial slide's title at full size — it wraps\n` +
+    `    // when build-qa / recording later reveals the step. Re-fit each title\n` +
+    `    // the moment it becomes visible — a signal independent of goToStep\n` +
+    `    // timing.\n` +
+    `    try {\n` +
+    `      var io = new IntersectionObserver(function(es){ es.forEach(function(e){ if (e.isIntersecting) fitOne(e.target); }); });\n` +
+    `      document.querySelectorAll(SEL).forEach(function(t){ io.observe(t); });\n` +
+    `    } catch(_){ }\n` +
+    `  }\n` +
+    `  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();\n` +
     `})();\n` +
     `</script>\n`;
   const designBlock =
@@ -738,7 +762,15 @@ async function main() {
 
   const templates = loadSlideTemplates(PROJECT_ROOT);
   const slideDesignSkill = loadSlideDesignSkill({ projectRoot: PROJECT_ROOT });
-  const brand = loadBrand(outDir);
+  let brand = loadBrand(outDir);
+  // Customer-name fallback: when brand extraction produced nothing (or a
+  // literal "Plaid"), fall back to the script persona's company so eyebrow
+  // co-brands render "Plaid × {customer}" — never "Plaid × Plaid" (observed
+  // dragging value-summary-slide vision scores on the TD Bank build).
+  const personaCompany = String(demoScript?.persona?.company || '').trim();
+  if (personaCompany && (!brand || !String(brand.name || '').trim() || /^plaid$/i.test(String(brand.name).trim()))) {
+    brand = { ...(brand || {}), name: personaCompany };
+  }
   const vps = loadValueProps(outDir);
   const scratchAppDir = path.join(outDir, 'scratch-app');
 
@@ -760,6 +792,17 @@ async function main() {
 
   const slideIndexById = new Map(slideSteps.map((s, i) => [s.id, i]));
   const recentLayouts = [];
+  // Background rhythm context for the insertion prompt: backgrounds of slides
+  // generated earlier in this run (script order). The build-qa navy-run scanner
+  // flags >4 consecutive navy slides; telling the LLM what came before lets it
+  // alternate to light/cream/holo instead of stacking navy.
+  const recentBackgrounds = [];
+  const extractSlideBackground = (fragment) => {
+    const m = String(fragment || '').match(/class="[^"]*\bslide-root\b[^"]*"/i);
+    if (!m) return 'navy';
+    const variant = m[0].match(/\b(light|cream|holo)\b/i);
+    return variant ? variant[1].toLowerCase() : 'navy';
+  };
 
   for (const step of targets) {
     const slideIdx = slideIndexById.get(step.id) ?? 0;
@@ -795,6 +838,7 @@ async function main() {
           slideDesignSkillMarkdown: slideDesignSkill.text,
           templateRouting: routing,
           showcaseTemplate,
+          recentBackgrounds: recentBackgrounds.slice(-4),
         });
         lastRaw = raw;
         const { html: updated, applied: ok, reason } = spliceSlideFragmentIntoHtml(
@@ -808,6 +852,7 @@ async function main() {
           html = updated;
           // Slide typography normalize removed 2026-05-27 — templates own sizing.
           applied = true;
+          recentBackgrounds.push(extractSlideBackground(raw));
         } else {
           console.warn(`[post-slides] Splice attempt ${attempts} for "${step.id}" failed: ${reason}`);
         }

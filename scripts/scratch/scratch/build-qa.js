@@ -2290,6 +2290,11 @@ async function evaluateStepState(page, stepId) {
           const isShortTag = SHORT_TAG.has(el.tagName);
           // Skip multi-sentence body copy — natural wrapping is expected.
           if (!isHeadlineLike && !isShortTag) continue;
+          // ch-based max-width (e.g. T1 hero "max-width:16ch") scales WITH
+          // font-size, so no font reduction can ever reach one line — the
+          // multi-line hero wrap is intentional design, and the "would fit at
+          // Npx" recommendation below would be mathematically wrong. Skip.
+          if (/ch\s*$/.test(String((el.style && el.style.maxWidth) || ''))) continue;
           if (text.length > 120 && !isHeadlineLike) continue;
           const fontSize = parseFloat(cs.fontSize || '0') || 0;
           const lineHeightRaw = cs.lineHeight;
@@ -2479,6 +2484,34 @@ function evaluateApiStoryAlignment(step) {
       endpointPattern: /income[_\s-]?insights/,
       responseHints: ['income', 'income_stream', 'predicted_next_payment', 'historical_average_monthly_income', 'forecasted_average_monthly_income'],
       label: 'income-insights context',
+    },
+    {
+      // Real-time balance beats (/accounts/balance/get). The endpoint check is
+      // authoritative (matched before any story fallback), so a balance-snapshot
+      // slide inside an income/CRA demo aligns here: without this entry the
+      // endpoint had NO check, the story fallback matched "bank income" in
+      // surrounding copy, and the step was flagged "Endpoint does not match
+      // income-insights context" (Scrub-Io assets-balance-snapshot, scored 45
+      // → slide-tier blocker, 2026-06-10).
+      key: 'balance',
+      storyPattern: /\b(?:available|current|real-?time|live) balance|balance (?:check|snapshot)|\/accounts\/balance\b/i,
+      endpointPattern: /\/accounts\/balance\/get\b/,
+      responseHints: ['balances', 'available', 'current', 'iso_currency_code', 'accounts'],
+      label: 'balance context',
+    },
+    {
+      key: 'assetsReport',
+      storyPattern: /\basset[s]? report\b|\bplaid assets\b/i,
+      endpointPattern: /\/asset_report\/(get|create)\b/,
+      responseHints: ['report', 'accounts', 'balances', 'owners', 'historical_balances', 'days_requested'],
+      label: 'assets-report context',
+    },
+    {
+      key: 'statements',
+      storyPattern: /\bbank statements?\b|\bstatements? (?:pdf|download|list)\b/i,
+      endpointPattern: /\/statements\/(list|download)\b/,
+      responseHints: ['statements', 'account_id', 'date_posted', 'statement_id'],
+      label: 'statements context',
     },
     {
       key: 'lendScore',
