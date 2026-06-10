@@ -251,6 +251,17 @@ function scoreTemplate(template, ctx) {
     }
   }
 
+  // slideRole: the LLM-assigned narrative intent (e.g. api-field-reveal). The
+  // dominant NON-hard signal (+12 > category +3 / keyword +1.2 / content +2-5),
+  // so a matched role decisively resolves within-category ties — api-field-reveal
+  // beats kpi-dashboard without a per-case hard-wire — yet still yields to the
+  // author's explicit hard overrides (+50/+100 below).
+  if (ctx.slideRole && Array.isArray(template.signals?.stepRoles)
+      && template.signals.stepRoles.includes(ctx.slideRole)) {
+    score += 12;
+    reasons.push(`step-role:${ctx.slideRole}`);
+  }
+
   if (ctx.hardTemplateId && template.id === ctx.hardTemplateId) score += 100;
   if (ctx.hardLayout && template.workhorseLayout === ctx.hardLayout) score += 100;
   if (ctx.hardSlideTemplate && template.slideTemplate === ctx.hardSlideTemplate) score += 50;
@@ -310,6 +321,7 @@ function routeSlideTemplate(step, deckContext = {}, opts = {}) {
   const isLastSlide = stepIndex === totalSlides - 1;
   const ep = step?.apiResponse?.endpoint || '';
   const epHint = endpointHint(ep);
+  const slideRole = step?.slideRole ? String(step.slideRole).trim() : '';
 
   let hardLayout = step?.workhorseLayout ? String(step.workhorseLayout).trim() : '';
   let hardTemplateId = '';
@@ -367,6 +379,7 @@ function routeSlideTemplate(step, deckContext = {}, opts = {}) {
     isLastSlide,
     preferredCategory,
     endpointHint: epHint,
+    slideRole,
     recentLayouts,
     hardTemplateId,
     // Content-aware signal features (consumed by applyContentSignals).

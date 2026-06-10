@@ -58,6 +58,71 @@ const CATEGORY_KEYWORDS = {
   close: ['summary', 'next step', 'cta', 'recap', 'value', 'outcome', 'action'],
 };
 
+// Controlled slideRole vocabulary, ~1:1 with templates. The script-generation
+// LLM tags each slide step with one of these roles (its narrative job); the
+// router maps role -> template with a strong score (see scoreTemplate). This is
+// what lets the router disambiguate WITHIN a category (e.g. api-field-reveal vs
+// kpi-dashboard, both "metrics") without a per-case hard-wire. A showcase
+// <section> may override via data-step-roles="role[,role2]".
+const TEMPLATE_STEP_ROLES = {
+  't1-title-hero': ['opening'],
+  't2-section-beat': ['section-break'],
+  't3-statement-slide': ['problem-statement'],
+  'bullet-list': ['concept-explainer'],
+  't5-three-pillars': ['three-pillars'],
+  'big-pull-quote': ['pull-quote'],
+  't4-triple-stat': ['hero-metrics'],
+  'kpi-grid': ['kpi-dashboard'],
+  'api-field-table': ['api-field-reveal'],
+  'data-table': ['data-comparison-table'],
+  'bar-chart-insight': ['bar-chart'],
+  't6-before-after': ['before-after'],
+  't7-comparison-table': ['transformation-rows'],
+  't8-step-flow': ['sequential-steps'],
+  'flow-diagram': ['flow-diagram'],
+  't9-architecture-map': ['architecture'],
+  timeline: ['timeline'],
+  roadmap: ['roadmap'],
+  'code-window': ['code-proof'],
+  't10-proof-quote': ['customer-proof'],
+  't11-action-cards': ['value-summary'],
+};
+
+// Per-template DISCRIMINATING keywords. Unlike CATEGORY_KEYWORDS (identical
+// across a whole category, so they can't separate same-category templates),
+// these are the phrases unique to each template. Unioned with the category
+// keywords at build time (additive recall + per-template discrimination). A
+// showcase <section> may override via data-keywords="phrase; phrase".
+const TEMPLATE_KEYWORDS = {
+  // opening
+  't1-title-hero': ['title', 'opener', 'hero moment', 'welcome', 'brand statement'],
+  't2-section-beat': ['section', 'chapter', 'part one', 'where we are'],
+  // explainer
+  't3-statement-slide': ['single point', 'one idea', 'thesis', 'key takeaway'],
+  'bullet-list': ['agenda', 'capabilities', 'rundown', 'list of', 'enumerated'],
+  't5-three-pillars': ['three pillars', 'three capabilities', 'rule of three', 'three peers'],
+  'big-pull-quote': ['pull quote', 'full-bleed quote', 'standout quote'],
+  // metrics — the 4-way collision this whole change targets
+  't4-triple-stat': ['three stats', 'three numbers', 'hero number', 'headline metric', 'side by side'],
+  'kpi-grid': ['four metrics', 'dashboard', 'quarter over quarter', 'qoq', 'deltas', 'kpi grid', 'ops metrics', 'board update'],
+  'api-field-table': ['fields returned', 'response fields', 'api fields', 'sample values', 'read-out', 'readout', 'field values', 'returns the following', 'income insights', 'cash flow insights', 'base report'],
+  'data-table': ['pricing', 'tiers', 'plan comparison', 'thresholds', 'api limits', 'comparison rows'],
+  'bar-chart-insight': ['bar chart', 'top n', 'top-n', 'categories', 'cohort', 'ranking'],
+  // comparison_flow
+  't6-before-after': ['before and after', 'old way', 'new way', 'manual vs', 'two panel', 'raw vs enriched'],
+  't7-comparison-table': ['transformation', 'latency', 'accuracy', 'matched rows', 'cost comparison'],
+  't8-step-flow': ['step 1', 'sequential', 'three steps', 'numbered', 'lifecycle', 'left to right'],
+  'flow-diagram': ['pipeline', 'nodes', 'branches', 'flow diagram', 'data flow'],
+  't9-architecture-map': ['platform', 'dependencies', 'big picture', 'system map', 'central block'],
+  // plans_proof
+  timeline: ['milestones', 'history', 'rollout phases', 'time axis'],
+  roadmap: ['now next later', 'vision', 'planning', 'commitment levels'],
+  'code-window': ['api call', 'snippet', 'endpoint', 'sdk', 'developer experience'],
+  't10-proof-quote': ['testimonial', 'customer quote', 'proof point', 'why this is real'],
+  // close
+  't11-action-cards': ['next steps', 'call to action', 'get started', 'action cards', 'rollout phases'],
+};
+
 /**
  * Parse showcase index.html into registry template entries.
  * @param {string} html
@@ -96,6 +161,10 @@ function parseShowcaseIndexHtml(html) {
     const whenToUse = extractAttr(openTag, 'data-when') || '';
     const avoidWhen = extractAttr(openTag, 'data-avoid') || '';
     const tagsRaw = extractAttr(openTag, 'data-tags') || '';
+    const stepRolesRaw = extractAttr(openTag, 'data-step-roles') || '';
+    const keywordsRaw = extractAttr(openTag, 'data-keywords') || '';
+    const htmlRoles = stepRolesRaw ? stepRolesRaw.split(',').map((s) => s.trim()).filter(Boolean) : null;
+    const htmlKeywords = keywordsRaw ? keywordsRaw.split(/[;,]/).map((s) => s.trim()).filter(Boolean) : null;
     const sr = body.match(/<div class="slide-root([^"]*)"([^>]*)>/i);
     let slideTemplate = 'T1';
     let workhorseLayout = '';
@@ -123,7 +192,7 @@ function parseShowcaseIndexHtml(html) {
       backgroundClass: bgClass || null,
       whenToUse,
       avoidWhen,
-      signals: buildSignals(category, whenToUse, name, workhorseLayout),
+      signals: buildSignals(id, category, whenToUse, name, workhorseLayout, { stepRoles: htmlRoles, keywords: htmlKeywords }),
     });
   }
   return sections;
@@ -161,18 +230,34 @@ function inferCategoryFromTags(tagLabels) {
   return 'Explainer';
 }
 
-function buildSignals(category, whenToUse, name, workhorseLayout) {
-  const keywords = new Set(CATEGORY_KEYWORDS[category] || []);
+function buildSignals(id, category, whenToUse, name, workhorseLayout, opts = {}) {
+  const explicitRoles = Array.isArray(opts.stepRoles) && opts.stepRoles.length ? opts.stepRoles : null;
+  const explicitKeywords = Array.isArray(opts.keywords) && opts.keywords.length ? opts.keywords : null;
+
+  // Keywords: per-template discriminating phrases (HTML override > code map)
+  // UNIONED with the category keywords (recall) and the whenToUse-derived
+  // expansion (existing behavior). Per-template phrases are what break the
+  // within-category tie; category keywords keep legacy recall for steps that
+  // carry no slideRole.
+  const perTemplate = explicitKeywords || TEMPLATE_KEYWORDS[id] || [];
+  const catKeywords = CATEGORY_KEYWORDS[category] || [];
+  const keywords = new Set([...perTemplate, ...catKeywords]);
   const text = `${whenToUse} ${name} ${workhorseLayout}`.toLowerCase();
   for (const [word] of text.matchAll(/\b[a-z]{4,}\b/g)) {
-    if (CATEGORY_KEYWORDS[category]?.some((k) => word.includes(k.replace(/\s+/g, '')))) {
+    if (catKeywords.some((k) => word.includes(k.replace(/\s+/g, '')))) {
       keywords.add(word);
     }
   }
+
+  // Step roles: HTML override > code map > legacy close-only default.
+  const stepRoles = explicitRoles
+    || TEMPLATE_STEP_ROLES[id]
+    || (category === 'close' ? ['value-summary'] : []);
+
   return {
-    keywords: [...keywords].slice(0, 24),
+    keywords: [...keywords].slice(0, 32),
     workhorseLayout,
-    stepRoles: category === 'close' ? ['value-summary'] : [],
+    stepRoles,
   };
 }
 
@@ -249,6 +334,8 @@ module.exports = {
   TAG_CATEGORY_TO_KEY,
   CATEGORY_DEFAULT_TEMPLATE,
   CATEGORY_KEYWORDS,
+  TEMPLATE_STEP_ROLES,
+  TEMPLATE_KEYWORDS,
   parseShowcaseIndexHtml,
   parseSidebarCategories,
   getRegistryPath,

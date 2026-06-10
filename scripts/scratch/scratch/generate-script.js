@@ -125,6 +125,10 @@ const GENERATE_DEMO_SCRIPT_TOOL = {
               type: 'string',
               description: 'Optional router category hint: opening|explainer|metrics|comparison_flow|plans_proof|close',
             },
+            slideRole: {
+              type: 'string',
+              description: 'For sceneType "slide"/"insight" slides ONLY — the narrative job this slide performs. The router maps it to the right template, so prefer this over slideTemplate/workhorseLayout. One of: opening | section-break | problem-statement | concept-explainer | three-pillars | pull-quote | hero-metrics | kpi-dashboard | api-field-reveal | data-comparison-table | bar-chart | before-after | transformation-rows | sequential-steps | flow-diagram | architecture | timeline | roadmap | code-proof | customer-proof | value-summary. Use api-field-reveal when the slide shows the key fields an API returns with their sample values.',
+            },
             showcaseTemplateId: {
               type: 'string',
               description: 'Optional showcase section id from templates/slide-template/showcase/index.html',

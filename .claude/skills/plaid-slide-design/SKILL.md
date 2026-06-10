@@ -155,8 +155,44 @@ These patterns caused the most **deterministic** failures in showcase-router rer
 
 ## Template selection
 
-Pick **one** of T1–T11 from DECK_TEMPLATES.md. Set `data-slide-template="T#"` on `.slide-root`.
-Insight/API steps (`sceneType: "insight"`, `stepKind: "slide"`) use the same deck system — not host insight chrome.
+**The script tags intent; the router maps it to a template.** You normally do **not** hand-pick a
+template. The script-gen LLM sets a `slideRole` on each slide step (its narrative job), and
+`slide-template-router.js` deterministically maps the role to the right Plaid template/layout. Prefer
+setting `slideRole` over `slideTemplate`/`workhorseLayout`/`showcaseTemplateId` — the latter are hard
+overrides that bypass routing. Insight/API steps (`sceneType: "insight"`, `stepKind: "slide"`) use the
+same deck system — not host insight chrome.
+
+### Slide intent → template (authoritative)
+
+| slideRole | Template | T# / layout | Reach for it when… |
+|---|---|---|---|
+| `opening` | Title Hero | T1 / cover | deck opener, one emotional payoff |
+| `section-break` | Section Beat | T2 / section-divider | chapter divider in a long deck |
+| `problem-statement` | Statement Slide | T3 / bullets | one headline + one idea, lots of air |
+| `concept-explainer` | Bullet List | T3 / bullets | 3–6 peer points (not a process) |
+| `three-pillars` | Three Pillars | T5 / three-column | exactly three peers of equal weight |
+| `pull-quote` | Big Pull Quote | T3 / big-quote | a single quote that earns full-bleed |
+| `hero-metrics` | Triple Stat | T4 / stat-highlight | ≤3 hero numbers at max size |
+| `kpi-dashboard` | KPI Grid | T4 / kpi-grid | 4 metrics with QoQ deltas |
+| `api-field-reveal` | **API Field Table** | T7 / field-table | **the key fields an API returns + sample values** (CRA Income/Cash Flow/Base Report read-outs, identity/account fields) — label/value rows, never bare spans or KPI cards |
+| `data-comparison-table` | Data Table | T7 / table | pricing tiers, thresholds, API limits — rows + right-aligned numerics |
+| `bar-chart` | Bar Chart Insight | T4 / chart-bar | bounded categorical comparison (top-N, cohorts); SVG only |
+| `before-after` | Before / After | T6 / comparison | two-panel old-way vs new-way |
+| `transformation-rows` | Comparison Table | T7 / comparison | 3–5 matched before→after rows |
+| `sequential-steps` | Step Flow | T8 / process-steps | a numbered, causal process |
+| `flow-diagram` | Flow Diagram | T8 / flow-diagram | 4–6 node pipeline, one highlighted node |
+| `architecture` | Architecture Map | T9 / arch-diagram | one platform + many dependencies |
+| `timeline` | Timeline | T8 / timeline | events on a true time axis |
+| `roadmap` | Roadmap | T11 / roadmap | NOW / NEXT / LATER / VISION |
+| `code-proof` | Code Window | T3 / code | one API call / snippet (10–15 lines) |
+| `customer-proof` | Proof Quote | T10 / customer-proof | testimonial + a hero stat |
+| `value-summary` | Action Cards | T11 / cta | the closing outcomes slide |
+
+The router also honors per-template `whenToUse`/`avoidWhen` (in `slide-template-registry.json`) and a
+CRA-endpoint safety fallback. To change role↔template mappings or a template's discriminating
+keywords, edit `TEMPLATE_STEP_ROLES` / `TEMPLATE_KEYWORDS` in
+`scripts/scratch/utils/slide-template-registry.js` (or `data-step-roles` / `data-keywords` on the
+showcase `<section>`), then regenerate the registry.
 
 ## Build-QA expectations
 

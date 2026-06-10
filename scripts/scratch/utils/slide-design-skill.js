@@ -63,7 +63,10 @@ function loadSlideDesignSkill(opts = {}) {
   const maxChars = Number(
     opts.maxChars ||
       process.env.SLIDE_DESIGN_SKILL_MAX_CHARS ||
-      (hybrid.length > 0 ? 20000 : 12000)
+      // Headroom so the primary plaid-slide-design skill (now carries the
+      // authoritative intent→template map) does not truncate the secondary
+      // workhorse hybrid + catalog off the end of the merged text.
+      (hybrid.length > 0 ? 28000 : 12000)
   );
   const skillLoaded = text.length > 0;
   if (hybrid) {

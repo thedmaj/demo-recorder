@@ -29,6 +29,8 @@ description: >-
 
 ## Layout selection (agent decides at runtime)
 
+> **Authoritative intent → template map lives in [`plaid-slide-design/SKILL.md` § Template selection](../plaid-slide-design/SKILL.md#template-selection).** In the pipeline, the script tags each slide with a `slideRole` and `slide-template-router.js` picks the template — prefer that over hand-picking. The table below is the layout-mechanics view (narrative job → Workhorse layout → nearest T#); keep it consistent with the slide-design map.
+
 Read [`.claude/skills/tosea-slide-workhorse/references/layouts.md`](../../tosea-slide-workhorse/references/layouts.md), the matching `templates/single-page/<name>.html` for structure **only** (never copy Workhorse themes/runtime), and the **20-template showcase catalog** in `templates/slide-template/brand-design-briefs/WORKHORSE_TEMPLATE_CATALOG.md` (sourced from `tmp-showcase/index.html`).
 
 | Narrative job | Workhorse layout | Set `data-workhorse-layout` | Nearest `data-slide-template` | Showcase # |
@@ -38,6 +40,7 @@ Read [`.claude/skills/tosea-slide-workhorse/references/layouts.md`](../../tosea-
 | One idea + body | `bullets`, `two-column` | same | T3 | 03 Statement / 04 Bullets |
 | Three pillars | `three-column` | `three-column` | T5 | 05 Three Pillars |
 | Hero metrics | `stat-highlight`, `kpi-grid` | same | T4 | 07 Triple Stat / 08 KPI Grid |
+| API field read-out | `field-table` | `field-table` | T7 | API Field Table |
 | Tabular data | `table` | `table` | T7 | 09 Data Table |
 | Chart insight | `chart-bar` | `chart-bar` | T4 | 10 Bar Chart (SVG only) |
 | Before / after | `comparison` | `comparison` | T6 / T7 | 11 Before/After / 12 Old vs New |

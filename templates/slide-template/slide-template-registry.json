@@ -1,6 +1,6 @@
 {
   "meta": {
-    "generatedAt": "2026-06-10T01:38:52.400Z",
+    "generatedAt": "2026-06-10T02:51:57.667Z",
     "source": "templates/slide-template/showcase/index.html",
     "templateCount": 21
   },
@@ -19,16 +19,21 @@
       "avoidWhen": "When you need to introduce multiple ideas at once — use Three Pillars or Bullet List instead.",
       "signals": {
         "keywords": [
+          "title",
+          "opener",
+          "hero moment",
+          "welcome",
+          "brand statement",
           "intro",
           "overview",
-          "welcome",
           "hero",
-          "opener",
           "opening",
           "openers"
         ],
         "workhorseLayout": "cover",
-        "stepRoles": []
+        "stepRoles": [
+          "opening"
+        ]
       }
     },
     {
@@ -45,6 +50,10 @@
       "avoidWhen": "Decks shorter than 8 slides — every break costs pacing. Use sparingly: 3–5 in a 20-slide deck.",
       "signals": {
         "keywords": [
+          "section",
+          "chapter",
+          "part one",
+          "where we are",
           "intro",
           "overview",
           "welcome",
@@ -53,7 +62,9 @@
           "opening"
         ],
         "workhorseLayout": "section-divider",
-        "stepRoles": []
+        "stepRoles": [
+          "section-break"
+        ]
       }
     },
     {
@@ -70,6 +81,10 @@
       "avoidWhen": "When you have 3+ supporting points — use Bullet List or Three Pillars instead.",
       "signals": {
         "keywords": [
+          "single point",
+          "one idea",
+          "thesis",
+          "key takeaway",
           "explain",
           "why",
           "how it works",
@@ -81,7 +96,9 @@
           "bullets"
         ],
         "workhorseLayout": "bullets",
-        "stepRoles": []
+        "stepRoles": [
+          "problem-statement"
+        ]
       }
     },
     {
@@ -98,6 +115,11 @@
       "avoidWhen": "When the items are sequential (use Step Flow) or comparative (use Old Way vs New Way).",
       "signals": {
         "keywords": [
+          "agenda",
+          "capabilities",
+          "rundown",
+          "list of",
+          "enumerated",
           "explain",
           "why",
           "how it works",
@@ -109,7 +131,9 @@
           "bullets"
         ],
         "workhorseLayout": "bullets",
-        "stepRoles": []
+        "stepRoles": [
+          "concept-explainer"
+        ]
       }
     },
     {
@@ -126,6 +150,10 @@
       "avoidWhen": "Two ideas (use Before / After) or four+ (drop to Bullet List). Forcing three when only two fit reads as filler.",
       "signals": {
         "keywords": [
+          "three pillars",
+          "three capabilities",
+          "rule of three",
+          "three peers",
           "explain",
           "why",
           "how it works",
@@ -137,7 +165,9 @@
           "pillars"
         ],
         "workhorseLayout": "three-column",
-        "stepRoles": []
+        "stepRoles": [
+          "three-pillars"
+        ]
       }
     },
     {
@@ -154,6 +184,9 @@
       "avoidWhen": "Generic platitudes — the quote needs to land. If it doesn't quote-tweet itself, cut it.",
       "signals": {
         "keywords": [
+          "pull quote",
+          "full-bleed quote",
+          "standout quote",
           "explain",
           "why",
           "how it works",
@@ -164,7 +197,9 @@
           "statement"
         ],
         "workhorseLayout": "big-quote",
-        "stepRoles": []
+        "stepRoles": [
+          "pull-quote"
+        ]
       }
     },
     {
@@ -181,6 +216,11 @@
       "avoidWhen": "Four+ metrics (use KPI Grid) or qualitative claims dressed as numbers. Each stat must be defensible.",
       "signals": {
         "keywords": [
+          "three stats",
+          "three numbers",
+          "hero number",
+          "headline metric",
+          "side by side",
           "percent",
           "%",
           "kpi",
@@ -198,7 +238,9 @@
           "metrics"
         ],
         "workhorseLayout": "stat-highlight",
-        "stepRoles": []
+        "stepRoles": [
+          "hero-metrics"
+        ]
       }
     },
     {
@@ -215,6 +257,14 @@
       "avoidWhen": "Marketing decks where three big numbers tell a stronger story — switch to Triple Stat.",
       "signals": {
         "keywords": [
+          "four metrics",
+          "dashboard",
+          "quarter over quarter",
+          "qoq",
+          "deltas",
+          "kpi grid",
+          "ops metrics",
+          "board update",
           "percent",
           "%",
           "kpi",
@@ -231,7 +281,9 @@
           "metrics"
         ],
         "workhorseLayout": "kpi-grid",
-        "stepRoles": []
+        "stepRoles": [
+          "kpi-dashboard"
+        ]
       }
     },
     {
@@ -248,6 +300,17 @@
       "avoidWhen": "A few big headline numbers (use Triple Stat / KPI Grid) or a multi-column comparison matrix (use Data Table).",
       "signals": {
         "keywords": [
+          "fields returned",
+          "response fields",
+          "api fields",
+          "sample values",
+          "read-out",
+          "readout",
+          "field values",
+          "returns the following",
+          "income insights",
+          "cash flow insights",
+          "base report",
           "percent",
           "%",
           "kpi",
@@ -263,7 +326,9 @@
           "data"
         ],
         "workhorseLayout": "field-table",
-        "stepRoles": []
+        "stepRoles": [
+          "api-field-reveal"
+        ]
       }
     },
     {
@@ -280,6 +345,12 @@
       "avoidWhen": "Three peers (use Three Pillars) or before/after (use Before / After). Tables are dense by design — earn the density.",
       "signals": {
         "keywords": [
+          "pricing",
+          "tiers",
+          "plan comparison",
+          "thresholds",
+          "api limits",
+          "comparison rows",
           "percent",
           "%",
           "kpi",
@@ -295,7 +366,9 @@
           "data"
         ],
         "workhorseLayout": "table",
-        "stepRoles": []
+        "stepRoles": [
+          "data-comparison-table"
+        ]
       }
     },
     {
@@ -312,6 +385,12 @@
       "avoidWhen": "Continuous trends (use Timeline). Pipeline contract: SVG only — Chart.js is blocked by build-QA.",
       "signals": {
         "keywords": [
+          "bar chart",
+          "top n",
+          "top-n",
+          "categories",
+          "cohort",
+          "ranking",
           "percent",
           "%",
           "kpi",
@@ -327,7 +406,9 @@
           "data"
         ],
         "workhorseLayout": "chart-bar",
-        "stepRoles": []
+        "stepRoles": [
+          "bar-chart"
+        ]
       }
     },
     {
@@ -344,12 +425,16 @@
       "avoidWhen": "Three-panel comparisons (use Three Pillars). The 50/50 split is what makes the rhetoric work.",
       "signals": {
         "keywords": [
+          "before and after",
+          "old way",
+          "new way",
+          "manual vs",
+          "two panel",
+          "raw vs enriched",
           "before",
           "after",
           "vs",
           "versus",
-          "old way",
-          "new way",
           "compare",
           "flow",
           "step",
@@ -359,7 +444,9 @@
           "pipeline"
         ],
         "workhorseLayout": "comparison",
-        "stepRoles": []
+        "stepRoles": [
+          "before-after"
+        ]
       }
     },
     {
@@ -376,6 +463,11 @@
       "avoidWhen": "More than five rows (collapse to fewer pairs) or qualitative-only rows that don't earn their place (cut them).",
       "signals": {
         "keywords": [
+          "transformation",
+          "latency",
+          "accuracy",
+          "matched rows",
+          "cost comparison",
           "before",
           "after",
           "vs",
@@ -391,7 +483,9 @@
           "pipeline"
         ],
         "workhorseLayout": "comparison",
-        "stepRoles": []
+        "stepRoles": [
+          "transformation-rows"
+        ]
       }
     },
     {
@@ -408,6 +502,12 @@
       "avoidWhen": "Loose categories that aren't actually a process (use Three Pillars). Sequencing without causality reads as filler.",
       "signals": {
         "keywords": [
+          "step 1",
+          "sequential",
+          "three steps",
+          "numbered",
+          "lifecycle",
+          "left to right",
           "before",
           "after",
           "vs",
@@ -424,7 +524,9 @@
           "steps"
         ],
         "workhorseLayout": "process-steps",
-        "stepRoles": []
+        "stepRoles": [
+          "sequential-steps"
+        ]
       }
     },
     {
@@ -441,6 +543,11 @@
       "avoidWhen": "Strict three-step process (use Step Flow). Long chains (>6 nodes) — break them into two slides.",
       "signals": {
         "keywords": [
+          "pipeline",
+          "nodes",
+          "branches",
+          "flow diagram",
+          "data flow",
           "before",
           "after",
           "vs",
@@ -452,11 +559,12 @@
           "step",
           "process",
           "architecture",
-          "integration",
-          "pipeline"
+          "integration"
         ],
         "workhorseLayout": "flow-diagram",
-        "stepRoles": []
+        "stepRoles": [
+          "flow-diagram"
+        ]
       }
     },
     {
@@ -473,6 +581,11 @@
       "avoidWhen": "Linear process (use Step Flow or Flow Diagram). Architecture means hierarchy + multiplicity, not just sequence.",
       "signals": {
         "keywords": [
+          "platform",
+          "dependencies",
+          "big picture",
+          "system map",
+          "central block",
           "before",
           "after",
           "vs",
@@ -488,7 +601,9 @@
           "pipeline"
         ],
         "workhorseLayout": "arch-diagram",
-        "stepRoles": []
+        "stepRoles": [
+          "architecture"
+        ]
       }
     },
     {
@@ -505,6 +620,10 @@
       "avoidWhen": "Items that aren't on a true time axis (use Step Flow). 'Future plans' slides — use Roadmap, it's more honest.",
       "signals": {
         "keywords": [
+          "milestones",
+          "history",
+          "rollout phases",
+          "time axis",
           "timeline",
           "roadmap",
           "quote",
@@ -516,7 +635,9 @@
           "customer"
         ],
         "workhorseLayout": "timeline",
-        "stepRoles": []
+        "stepRoles": [
+          "timeline"
+        ]
       }
     },
     {
@@ -533,6 +654,10 @@
       "avoidWhen": "If the columns are equally weighted, you're not really planning. Earlier columns should be denser; later columns shorter.",
       "signals": {
         "keywords": [
+          "now next later",
+          "vision",
+          "planning",
+          "commitment levels",
           "timeline",
           "roadmap",
           "quote",
@@ -544,7 +669,9 @@
           "customer"
         ],
         "workhorseLayout": "roadmap",
-        "stepRoles": []
+        "stepRoles": [
+          "roadmap"
+        ]
       }
     },
     {
@@ -561,10 +688,13 @@
       "avoidWhen": "Quotes without a named source. The attribution is the credibility. Vague 'a customer said' kills it.",
       "signals": {
         "keywords": [
+          "testimonial",
+          "customer quote",
+          "proof point",
+          "why this is real",
           "timeline",
           "roadmap",
           "quote",
-          "testimonial",
           "proof",
           "code",
           "api",
@@ -572,7 +702,9 @@
           "customer"
         ],
         "workhorseLayout": "customer-proof",
-        "stepRoles": []
+        "stepRoles": [
+          "customer-proof"
+        ]
       }
     },
     {
@@ -589,6 +721,11 @@
       "avoidWhen": "Stacked code under the title (use left/right split). Whole files (post a gist instead). Runtime libraries (highlight.js is blocked by build-QA — use pre with monospace).",
       "signals": {
         "keywords": [
+          "api call",
+          "snippet",
+          "endpoint",
+          "sdk",
+          "developer experience",
           "timeline",
           "roadmap",
           "quote",
@@ -596,11 +733,12 @@
           "proof",
           "code",
           "api",
-          "snippet",
           "customer"
         ],
         "workhorseLayout": "code",
-        "stepRoles": []
+        "stepRoles": [
+          "code-proof"
+        ]
       }
     },
     {
@@ -617,6 +755,11 @@
       "avoidWhen": "A single generic 'thanks' slide — that wastes the closing real estate. Always end with what to do next.",
       "signals": {
         "keywords": [
+          "next steps",
+          "call to action",
+          "get started",
+          "action cards",
+          "rollout phases",
           "summary",
           "next step",
           "cta",

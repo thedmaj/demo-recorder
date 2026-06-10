@@ -1156,6 +1156,18 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `- insight: Plaid insight step using global api-response-panel; optional deck-style layout may use .slide-root shell (see build prompt) but never host UI\n` +
       `- slide: template-driven slide step that uses .slide-root\n` +
       `Do not label insight steps as slide unless they intentionally render .slide-root.\n\n` +
+      `SLIDE ROLE RULE (drives template selection):\n` +
+      `For every sceneType:"slide" (and any insight step rendered as .slide-root), set "slideRole" to the\n` +
+      `narrative job the slide performs. The router maps the role to the right Plaid template, so prefer\n` +
+      `slideRole over slideTemplate/workhorseLayout (leave those unset unless you must pin a specific template).\n` +
+      `Pick the single best-fit role:\n` +
+      `- opening (deck title/hero) · section-break (chapter divider) · value-summary (the closing outcomes slide)\n` +
+      `- problem-statement (one headline + one idea) · concept-explainer (3–6 peer bullets) · three-pillars (exactly 3 peers) · pull-quote\n` +
+      `- hero-metrics (≤3 big numbers) · kpi-dashboard (4 metrics w/ deltas) · api-field-reveal (KEY FIELDS AN API RETURNS + their sample values) · data-comparison-table (pricing/threshold rows) · bar-chart\n` +
+      `- before-after (old vs new) · transformation-rows · sequential-steps (numbered process) · flow-diagram · architecture · timeline · roadmap\n` +
+      `- code-proof (one API call/snippet) · customer-proof (testimonial + stat)\n` +
+      `Use api-field-reveal — NOT kpi-dashboard/hero-metrics — when the slide shows the fields an API response\n` +
+      `returns alongside sample values (e.g. CRA Income Insights / Cash Flow Insights / Base Report read-outs).\n\n` +
       `HOST VS SLIDE — ZERO COMPONENT CROSS-REUSE (CRITICAL):\n` +
       `Do not describe or require host demo UI (nav, banners, account cards, dashboard modules) inside slide visualState or slide copy — slides are Plaid-only deck surfaces.\n` +
       `Do not describe or require slide deck shell (.slide-root regions, slide header/footer strips, slide panel grid) inside host, link, or insight visualState.\n` +
