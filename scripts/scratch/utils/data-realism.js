@@ -40,9 +40,16 @@ const GENERIC_DATA_PATTERNS = [
   { pattern: /\bjane\s+(?:doe|smith)\b/i,                kind: 'persona-placeholder',  hint: 'Jane Doe / Jane Smith — replace with a brand-appropriate persona name.' },
   { pattern: /\btest\s*user\b|\bdemo\s*user\b/i,         kind: 'persona-placeholder',  hint: '"test user" / "demo user" — use a realistic first + last name.' },
   { pattern: /\bexample@example\.\w+/i,                  kind: 'email-placeholder',    hint: 'example@example.com — use a plausible email format (firstname.lastname@<brand or gmail>.com).' },
-  { pattern: /\bfoo|bar|baz\b/i,                         kind: 'generic-placeholder',  hint: 'foo/bar/baz placeholders — replace with realistic content.' },
+  // Alternation precedence bug fixed 2026-06-10: /\bfoo|bar|baz\b/ parses as
+  // (\bfoo)|(bar)|(baz\b) — bare "bar" matched inside "sidebar"/"bar chart"
+  // and "\bfoo" matched "footer", producing false CRITICALs on clean scripts
+  // (Credit Karma campaign run). Each token needs its own word boundaries.
+  { pattern: /\bfoo\b|\bbar\b|\bbaz\b/i,                 kind: 'generic-placeholder',  hint: 'foo/bar/baz placeholders — replace with realistic content.' },
   { pattern: /\blorem\s+ipsum\b/i,                       kind: 'lorem-ipsum',          hint: 'Lorem ipsum text — write realistic copy for the brand.' },
-  { pattern: /\b555[-.\s]\d{4}\b/,                       kind: 'placeholder-phone',    hint: 'Movie-style 555 phone number — use a plausible area code.' },
+  // 555-0011 / 555-0000 are the REQUIRED Plaid Layer sandbox phones
+  // (+1 415-555-0011 eligible, +1 415-555-0000 ineligible per CLAUDE.md) —
+  // exempt them or every Layer demo gets a false placeholder-phone CRITICAL.
+  { pattern: /\b555[-.\s](?!0011\b|0000\b)\d{4}\b/,      kind: 'placeholder-phone',    hint: 'Movie-style 555 phone number — use a plausible area code.' },
   { pattern: /\b12345\s*(?:zip|postal)?\b/i,             kind: 'placeholder-zip',      hint: 'ZIP 12345 — use a realistic ZIP for the persona\'s claimed location.' },
 ];
 

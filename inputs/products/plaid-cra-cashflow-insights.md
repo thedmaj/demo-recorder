@@ -11,7 +11,7 @@ use_cases:
   - "near-prime-credit-expansion"
   - "ability-to-pay-assessment"
 last_human_review: ""
-last_ai_update: "2026-06-10T02:33:53.637Z"
+last_ai_update: "2026-06-11T00:25:49.479Z"
 needs_review: true
 approved: false
 version: 1
@@ -144,6 +144,19 @@ Feature Cash Flow Insights when the persona is a lender or credit platform that 
 
 ## AI Research Notes
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run. -->
+
+### 2026-06-11 — Run: 2026-06-11-Carmax-Auto-Finance-CRA-Signal-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"FCRA-compliant cash-flow attributes purpose-built for credit models — not raw transaction dumps.","status":"approved"}
+- [high] {"claim":"Single integration delivers Base Report + Cash Flow Insights + optional LendScore under one consumer report contract.","status":"approved"}
+- [high] {"claim":"vs. Transactions: Transactions gives raw data; Cash Flow Insights gives model-ready FCRA-compliant attributes (income volatility, NSF counts, spending burden) designed to plug directly into underwriting models.","status":"draft"}
+
+### 2026-06-10 — Run: 2026-06-10-Bright-Money-CRA-Identity-v4 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"FCRA-compliant cash-flow attributes purpose-built for credit models — not raw transaction dumps.","status":"DRAFT"}
+- [high] {"claim":"Single integration delivers Base Report + Cash Flow Insights + optional LendScore under one consumer report contract.","status":"DRAFT"}
+- [high] {"claim":"vs. Transactions: Transactions gives raw data; Cash Flow Insights gives model-ready FCRA-compliant attributes (income volatility, NSF counts, spending burden) designed to plug directly into underwriting models.","status":"DRAFT"}
+- [high] {"claim":"Layer + CRA delivered as ONE session — onboarding identity share and account permissioning happen together, then the Consumer Report is generated server-side with no second connection step.","status":"DRAFT"}
 
 ### 2026-06-10 — Run: 2026-06-10-Bright-Money-CRA-Identity-v3 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

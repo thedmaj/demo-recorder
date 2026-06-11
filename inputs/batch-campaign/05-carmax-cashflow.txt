@@ -1,0 +1,101 @@
+================================================================================
+CarMax Auto Finance — CRA Cash Flow Insights for near-prime underwriting
+================================================================================
+
+**Host:** **CarMax Auto Finance** — automotive retail / indirect lending
+**Canonical URL:** https://www.carmax.com/
+**Brand URL:** https://www.carmax.com/
+
+**Opportunity context (Salesforce — open):**
+- Opportunity: `ENT-CarMax- LendScore & CRA` (`006UV00000ahBt7YAF`)
+- Stage: `Evaluation`  •  Close Date: `2026-12-11`
+- Primary products (SFDC): `Cash Flow Insights`, `Base Report (Consumer Report)`, `LendScore`
+- **Hero for this demo:** Cash Flow Insights only (not LendScore reveal)
+- Pain (SFDC): Near-prime/subprime expansion; today bureau-only — need deeper cash-flow signal for ability-to-pay
+- Gong/email: Vehicle-specific hard-pull underwriting; cash-flow underwriting scores from Plaid rails; retro in flight
+
+**User journey (one sentence):**
+A CarMax shopper financing a used vehicle links checking via Plaid CRA Link; when the report is ready, underwriting sees Cash Flow Insights attributes and approves a near-prime applicant the bureau alone would have missed.
+
+**Story arc (short prose):**
+Marcus applies for CarMax financing on a $22K used SUV. The host flow explains cash-flow verification for ability-to-pay. He taps Link Your Bank on the pre-Link screen. Inside Plaid Link he completes CRA consent, OTP, and selects checking. A report-generating beat sets expectations. Cash Flow Insights return: low income volatility, stable inflows, manageable discretionary spend — **APPROVED** with quantified funnel expansion narrative.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link (CRA / Check), **Plaid CRA Base Report** (foundation), **CRA Cash Flow Insights** (beta)
+
+**Solutions supported:**
+Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+cra_cashflow_insights
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-cra-cashflow-insights.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link CRA** — single `plaidPhase: "launch"` step
+  [x] **Sandbox:** `user_credit_profile_good` / `pass_good` per `inputs/plaid-link-sandbox.md` (CRA personas)
+  [x] **Async report-ready** beat before `/cra/check_report/cashflow_insights/get`
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | CarMax-style finance application — vehicle + amount | Marcus needs fair near-prime decisioning beyond bureau-only. | Continue |
+| 2 | host | Pre-Link — verify cash flow for ability-to-pay | Ends on **Link Your Bank** (trigger here, not in Link step). | `Link your bank` |
+| 3 | **link** | Real CRA Plaid Link modal (`plaidPhase: "launch"`) | Inside modal: consent, OTP, institution, account. | HANDOFF |
+| 4 | host | Report generating / processing indicator | Async CRA lifecycle. | — |
+| 5 | host | Report ready — proceed to insights | Report available; fetch Cash Flow Insights next. | `View cash flow insights` |
+| 6 | insight | Cash Flow Insights panel — 3–4 attributes + collapsed JSON | Named attributes visible; beta Cash Flow Insights. | **Low volatility — APPROVED** |
+| 7 | host | Underwriting decision — approved near-prime | Decision on screen with attribute callouts. | — |
+| 8 | slide | Plaid-branded — expand funnel beyond bureau | Quantify conversion / near-prime approvals. | CTA |
+
+**Compliance / user data:** Permissible purpose `EXTENSION_OF_CREDIT`; `/user/create` before Link; CRA notices on Link step only.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Marcus Reed, 38, first-time CarMax finance applicant  
+**On screen:** $22,400 vehicle price, report status, attributes (income stability, NSF low, discretionary spend ratio), **APPROVED**
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Light neutral host background; CarMax yellow accent on CTAs and nav; auto-finance application layout. 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+2 slides: (1) Bureau-only blind spot for near-prime auto; (2) Cash Flow Insights unlock safer approvals. No JSON on slides.
+[[SLIDE_OUTPUT_END]]
+
+================================================================================
+END OF SPECIFICATION
+
+**Viewport:** 1440x900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for stats (inputs/products/plaid-cra-cashflow-insights.md)
+  [x] Product names and family match CLAUDE.md
+  [x] Storyboard order matches intended goToStep flow
+  [x] Live Link vs mock consistent with pipeline env
+
+END OF SPECIFICATION

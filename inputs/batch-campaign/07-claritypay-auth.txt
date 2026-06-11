@@ -1,0 +1,121 @@
+================================================================================
+CLARITYPAY + PLAID AUTH — INSTANT BANK VERIFICATION FOR DIGITAL LENDING PAYMENTS
+================================================================================
+
+**Host:** **ClarityPay** — digital lending / BNPL-style financing
+**Canonical URL:** https://claritypay.com/
+**Brand URL:** https://claritypay.com/
+
+**User journey (one sentence):**
+An applicant finances a $1,200 purchase with ClarityPay and connects her checking
+account through Plaid Link so her account is verified instantly — before her first
+installment payment is ever scheduled.
+
+**Story arc (short prose):**
+ClarityPay loses applicants when bank verification takes days — micro-deposits mean
+drop-off before the first payment is ever collected. Plaid enters at checkout: the
+applicant taps one button, connects her bank in a live Plaid Link session, and Plaid
+Auth returns verified account and routing numbers in seconds. ClarityPay confirms a
+depository checking account is on file, unlocks the payment schedule, and the
+applicant finishes setup in a single sitting — Link and fund in seconds, not days.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Instant Auth
+
+**Solutions supported** (used to query Solutions Master foundation):
+Funding
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`funding`
+
+**Primary messaging file for this demo** (pick one to own stats):
+`inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link launch(es)** — real SDK (`plaidPhase: "launch"`). ONE live launch:
+      the bank-connection Link session at checkout. No other Plaid sessions.
+  [ ] **Plaid Identity Verification (IDV)** — not featured.
+  [ ] **Plaid Layer / OAuth** — not featured.
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`:
+      First Platypus Bank (`ins_109508`), `user_good` / `pass_good`.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | ClarityPay checkout — $1,200 purchase financed over 6 payments of $200 | Maya is approved; one step left: connect the account her payments come from. Ends on "...she taps Link Bank Account." | CTA: Link Bank Account |
+| 2 | link | Live Plaid Link modal — institution search, First Platypus Bank, credentials, account selection | Narrate inside the modal only: she selects her bank, signs in, picks her checking account — no typing account numbers, no micro-deposits | Bank connected |
+| 3 | insight | ClarityPay verification panel — account and routing numbers retrieved via Plaid Auth | Plaid Auth returns verified numbers straight from the bank: account ••1135, routing 011401533, holder Maya Rivera, type depository / subtype checking | Verified in seconds |
+| 4 | host | Account card marked Verified; payment method set to Plaid Checking ••1135 | Her checking account is on file and verified — ClarityPay can schedule installments with confidence | Account verified |
+| 5 | host | Payment schedule unlocked — first $200 installment dated, autopay enabled | The happy-path payoff: setup finishes in one sitting instead of waiting days for deposits to clear | Schedule active |
+| 6 | slide | Value-summary slide | Recap: instant verification, verified numbers from the source, higher funding conversion for ClarityPay | CTA: plaid.com/auth |
+
+**Product-specific reminders:**
+- Link: pre-step narration ends on the **button**; the Link step narrates **inside** the modal only.
+- Auth: `/auth/get` returns `numbers.ach[]` (`account`, `routing`, `wire_routing`) — never `numbers.routing[]`.
+- "Instant Auth" is the verification method shown; the API product string is `"auth"`.
+
+**Compliance / user data (one line):**
+N/A — sandbox data only; happy path; no declined or error states shown.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Rivera — approved financing applicant
+**Company / context:** ClarityPay, financing a $1,200 purchase as 6 payments of $200
+**Sample fields that must appear on screen:**
+- Purchase total: $1,200.00 — plan: 6 payments of $200.00, first payment Jun 24, 2026
+- Verified account: Plaid Checking ••1135 — routing 011401533
+- Account holder: Maya Rivera — type `depository`, subtype `checking`
+- Institution: First Platypus Bank — status badge: Verified
+- Verification method: Instant Auth — completed in seconds
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+ClarityPay is a clean, light-neutral checkout experience: slim top nav with the
+ClarityPay logo, a payment-plan summary card, and a single primary CTA labeled
+"Link Bank Account" that opens Plaid Link. After verification, the same screen shows
+the verified account card and the unlocked payment schedule.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Up to 3 slides, no raw JSON on slides:
+1. Opening value slide — why instant bank verification matters for lending payments
+   (micro-deposit drop-off vs. Link-and-verify in seconds).
+2. Auth technical slide — Plaid Link → `/auth/get` → `numbers.ach[]` (account, routing),
+   account `type`/`subtype`; Instant Auth coverage of U.S. depository accounts.
+3. Value-summary slide — recap of verified funding rails and conversion impact for
+   ClarityPay (stats owned by `inputs/plaid-value-props.md`).
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (`inputs/plaid-value-props.md` — not duplicated)
+  [x] Product names and family match `CLAUDE.md` (Plaid Instant Auth; `funding`)
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link (one `plaidPhase: "launch"`) consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

@@ -141,10 +141,13 @@ async function main() {
   // (See inputs/plaid-link-sandbox.md.)
   const SANDBOX_BANKS = /first platypus bank|platypus oauth bank|tartan bank|houndstooth bank|tattersall|royal bank of plaid|flexible platypus|first gingham|gingham credit union|pers fed|second platypus/i;
   const isSandboxBankFinding = (i) => {
-    const kind = String(i.kind || '');
     const ev = String(i.evidence || i.message || '');
-    const bankNameRule = /bank.?name|institution|unrealistic.?bank|fake.?bank/i.test(kind);
-    return bankNameRule && SANDBOX_BANKS.test(ev);
+    // Any-kind suppression (2026-06-10): the old gate also required the
+    // finding KIND to mention bank/institution, so `haiku:fake_merchant_name`
+    // with evidence "First Platypus Bank" slipped through (Current EWA
+    // campaign run). A sandbox bank name is never a realism defect in ANY
+    // category — merchant, income stream, counterparty, or bank.
+    return SANDBOX_BANKS.test(ev);
   };
   const dropExplain = (label, arr) => {
     const kept = arr.filter((i) => {

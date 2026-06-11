@@ -1,0 +1,98 @@
+================================================================================
+Liberty Mutual — Instant Claims Disbursement with Plaid Transfer
+================================================================================
+
+**Host:** **Liberty Mutual** — U.S. property & casualty insurance
+**Canonical URL:** https://www.libertymutual.com/
+**Brand URL** (for `brand-extract`): https://www.libertymutual.com/
+
+**User journey (one sentence):**
+An approved auto-claim policyholder links her bank account in seconds, Liberty Mutual verifies the account and authorizes the payout through Plaid Transfer, and her $4,820 claim lands instantly over RTP instead of waiting a week for a check.
+
+**Story arc (short prose):**
+Erica's claim is approved, but the default payout is a mailed check — days of waiting at the worst possible moment. She chooses direct deposit and taps Link your bank. Inside Plaid Link she authenticates with First Platypus Bank and selects her checking account. Plaid Instant Auth verifies the account and routing details instantly — no micro-deposits, no typed account numbers. Plaid Transfer authorizes the credit — risk and compliance checks pass inside the authorization, decision approved — and pays the $4,820 claim over RTP. Erica sees "Claim paid" while the demo is still running. A closing slide quantifies fewer misdirected payouts and a claims experience that builds loyalty at the moment of truth.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **Plaid Instant Auth**, **Plaid Transfer**
+
+**Solutions supported:**
+Outbound Bank Payments: Disbursements
+
+**Primary product family:**
+`funding`
+
+**Primary messaging file for this demo:**
+`inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, modal mode, single `plaidPhase: "launch"` step
+  [ ] **Plaid Layer** / OAuth / IDV — not in scope
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, `user_good` / `pass_good`)
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, 6 BEATS)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Claim detail — "Claim #LM-48219 approved · $4,820.00", payout method choice: mailed check (5–7 days) vs direct deposit (instant) | Approved claim, but a check means another week of waiting; Erica picks direct deposit and ends on the bank-link tap. | `Link your bank` |
+| 2 | link | Real Plaid Link (Remember Me skip → institution → credentials → account select → success) | Narrate only inside the modal: bank search, sign-in, checking account selected, connected. | `onSuccess` |
+| 3 | insight | "Payout account verified" with API panel — `POST /auth/get`: account and routing numbers verified for the linked checking account (name + mask from Link metadata) | Plaid Instant Auth confirms the destination account instantly — no micro-deposits, no mistyped routing numbers, no misdirected payouts. | `Continue` |
+| 4 | insight | "Disbursement authorized" with API panel — `POST /transfer/capabilities/get` (RTP credit supported) then `POST /transfer/authorization/create` (type credit, $4,820.00): `authorization.decision: approved`, `decision_rationale: null` | Risk and compliance checks run inside the Transfer authorization — one call, decision approved, cleared to pay. | `Send payout` |
+| 5 | host | Payout confirmation — "Claim #LM-48219 paid · $4,820.00 · RTP · Instant", linked account name + mask, settled status badge | Quantified reveal: the claim is paid in seconds over RTP, not days by mail — loyalty earned at the moment that matters. | `Done` |
+| 6 | slide | `value-summary` slide — link once, verify instantly, pay instantly; one disbursement stat from `inputs/plaid-value-props.md` | Recap: verified destination + Signal-backed authorization + instant rails in one integration. | — |
+
+**Product-specific reminders:**
+- **Transfer**: endpoints verbatim — `POST /transfer/authorization/create`, `POST /transfer/create`; never `/transfer/initiate`. Risk checks run INSIDE the authorization — no separate `/signal/evaluate` panel. Happy path: `decision: "approved"` with `decision_rationale: null`.
+- **Credit payout semantics**: `type: "credit"`, `user_present: false`, `credit_funds_source: "ledger"`; end on `transfer.status: settled` (RTP settles in seconds).
+- **RTP is Limited Availability** — label the RTP panel "Limited Availability"; `/transfer/capabilities/get` precedes the RTP authorization (fallback to same-day ACH if unsupported).
+- **Link**: beat 1 narration ends on the `Link your bank` tap; beat 2 narrates inside the modal only. `products[]` comes from `linkTokenCreate.suggestedClientRequest` — do not hardcode.
+
+**Compliance / user data (one line):**
+Claimant-consented bank link for payout only; credit disbursement (no NACHA debit POA needed); US/USD only; no error or declined states in the main demo.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Erica Thompson, auto policyholder with an approved collision claim
+**Company / context:** Liberty Mutual digital claims portal; claim approved today, payout method not yet selected
+**Sample fields on screen:** Claim #LM-48219, $4,820.00, First Platypus Bank Checking (name + mask from Link metadata — never hardcoded), `decision: approved`, RTP · Instant, status settled
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Liberty Mutual–inspired light UI on a white background: yellow/navy brand accents, simple top nav ("Claims · Policies · Support"), claim summary card with status pill and amount. Payout stepper: Link account → Verify → Get paid. Primary CTA `data-testid="link-external-account-btn"` lives inside the initiate-link step.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Up to 4 slides: (1) claims payout challenge — checks, delays, misdirected payments; (2) Liberty Mutual + Plaid flow — Link → Instant Auth → Transfer authorization → RTP payout; (3) instant-rails value prop with one stat from `inputs/plaid-value-props.md`; (4) value-summary close. No raw JSON on slides.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Stats from `inputs/plaid-value-props.md` only (not duplicated from product KBs)
+  [x] Product names and `funding` family match CLAUDE.md
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link single launch step, sandbox defaults
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

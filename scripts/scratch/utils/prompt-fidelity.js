@@ -583,7 +583,22 @@ function compareEntitiesToScript(entities, demoScript) {
   // narration is exempt. We're checking that the products are at least
   // referenced in narration (or in step ids / labels).
   for (const slug of entities.products) {
-    const re = new RegExp('\\b' + slug.replace(/-/g, '[\\s-]?') + '\\b', 'i');
+    // The extractor maps ANY of "cra | base report | consumer report" to the
+    // 'cra-base-report' expectation, but the literal-slug regex then demanded
+    // the exact words "cra base report" in the script — every CRA-derivative
+    // demo (LendScore, Income Insights, Cash Flow Insights) that narrates
+    // "Consumer Report" or "CRA LendScore" tripped a false product-missing
+    // critical (4/4 campaign builds, 2026-06-10). Check with the same
+    // alternation the extractor used.
+    // Other cra-* slugs (cra-cash-flow-insights, cra-income-insights,
+    // cra-lend-score): scripts legitimately narrate the product WITHOUT the
+    // "CRA" prefix ("Cash Flow Insights adds model-ready attributes…"), so the
+    // prefix is optional in the check.
+    const re = slug === 'cra-base-report'
+      ? /\bcra\b|\bbase[\s-]?report\b|\bconsumer[\s-]?report\b|\bcheck_report\b/i
+      : slug.startsWith('cra-')
+        ? new RegExp('\\b(?:cra[\\s-]?)?' + slug.slice(4).replace(/-/g, '[\\s-]?') + '\\b', 'i')
+        : new RegExp('\\b' + slug.replace(/-/g, '[\\s-]?') + '\\b', 'i');
     if (!re.test(stepBlobs)) {
       drifts.push({
         field: 'products',

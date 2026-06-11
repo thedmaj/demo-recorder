@@ -10,7 +10,7 @@ use_cases:
   - "consumer-report-income-review"
   - "income-stability-assessment"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-10T06:43:25.985Z"
+last_ai_update: "2026-06-11T00:34:58.000Z"
 needs_review: true
 approved: true
 version: 1
@@ -165,6 +165,12 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-11 — Run: 2026-06-11-Cox-Automotive-Auth-Identity-Signal-Income-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the dealer finance desk.","source":"AskBill / Plaid docs + per-product KB","status":"approved"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). The income_verification Link token ONLY accepts {income_verification, employment}; do not bundle other products into it.","source":"AskBill / Plaid docs + brief CRITICAL note","status":"approved"}
+- [high] {"claim":"Traditional Bank Income (income_source_types ['bank']) returns synchronously after Link onSuccess — no INCOME_VERIFICATION report-ready webhook gate, unlike Document/Payroll Income.","source":"AskBill / Plaid Bank Income + Income docs","status":"approved"}
 
 ### 2026-06-10 — Run: 2026-06-10-Scrub-Io-CRA-Identity-Assets-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

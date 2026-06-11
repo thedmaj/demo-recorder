@@ -1,0 +1,134 @@
+================================================================================
+Arvest Bank — CRA Income Insights: verify income with one bank connection
+================================================================================
+
+**Host:** **Arvest Bank** — regional bank / consumer lending
+**Canonical URL:** https://www.arvest.com/
+**Brand URL:** https://www.arvest.com/
+
+**Opportunity context:** `Arvest Bank | CBA Live | VOI` (`006UV00000ZLd75YAD`) —
+Discovery; pain: pay-stub uploads stall personal-loan applications and force manual review.
+
+**User journey (one sentence):**
+A personal-loan applicant at Arvest Bank verifies her income through one Plaid bank
+connection instead of uploading pay stubs, and Arvest reads CRA Income Insights from
+her Plaid Consumer Report to verify income and approve the loan.
+
+**Story arc (short prose):**
+Dana applies for a $15,000 personal loan at Arvest. Instead of hunting down pay stubs,
+the application offers bank-based income verification with clear FCRA consent. She taps
+Connect your bank and completes the real CRA Plaid Link flow; Arvest requests her
+Consumer Report. After a short report-generating beat, Income Insights reveal a verified
+employer, biweekly pay frequency, steady monthly net income, and a predicted next
+payday. Arvest approves on that verified income — minutes, not days, no documents.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, **CRA Income Insights** (Plaid Consumer Report)
+
+**Solutions supported:**
+Consumer Report Underwriting, Credit Scoring & Underwriting
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+income_insights
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-income-insights.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **ONE live CRA Plaid Link launch** — real SDK, single `plaidPhase: "launch"` step
+  [x] **CRA setup before Link:** `POST /user/create` with applicant PII → `user_id`,
+      then `/link/token/create` with products `["cra_base_report","cra_income_insights"]`,
+      `consumer_report_permissible_purpose: EXTENSION_OF_CREDIT`,
+      `cra_options.days_requested: 90`
+  [x] **Async report-ready beat** keyed on the `USER_CHECK_REPORT_READY` webhook
+      (webhook name in JSON panel / technical slide only — never on host UI);
+      reports retrieved by `user_id` via `/cra/check_report/income_insights/get`
+  [x] **Sandbox / persona:** `user_credit_profile_good` / `pass_good`, non-OAuth
+      institution (First Platypus Bank) per `inputs/plaid-link-sandbox.md`;
+      no IDV, no Layer — the CRA Link launch is the only live session
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Arvest personal-loan application — amount, term, purpose | Dana applies for $15,000; income verification is the next step. | Continue |
+| 2 | host | Income verification screen with FCRA-consent card — plain-language "to review your application for credit" | One bank connection replaces pay-stub uploads; ends on the button tap. | `Connect your bank` |
+| 3 | **link** | Real CRA Plaid Link modal (`plaidPhase: "launch"`) | Inside the modal only: consent, credentials, OTP, account selection. | HANDOFF |
+| 4 | host | "Generating your Consumer Report" progress state | Async report lifecycle; Arvest is notified the moment the report is ready. | — |
+| 5 | insight | CRA Income Insights — verified employer **NORTHWEST MEDICAL GROUP**, frequency **BIWEEKLY**, monthly net **$5,612.40**, predicted next payday **Jun 19, 2026**, status **ACTIVE** | Report-derived income attributes: employer, frequency, net income, forecasted payday. | Verified income, no documents |
+| 6 | slide | Plaid-branded income-insights technical slide — `/user/create` → `/link/token/create` → report-ready → `/cra/check_report/income_insights/get` | How the Consumer Report income attributes are produced and retrieved. | — |
+| 7 | host | Loan decision — **APPROVED** with verified-income basis ($5,612.40/mo net, ACTIVE stream) | Arvest approves on report-verified income, same session. | APPROVED |
+| 8 | slide | Plaid-branded value-summary slide | Faster approvals, no document chase, FCRA-compliant income verification. | CTA |
+
+**Product-specific reminders:**
+- CRA: real Link; async report-ready beat required; report retrieved by `user_id`.
+- Link: beat 2 narration ends on the **Connect your bank** tap; beat 3 narrates
+  **inside** the modal only — never "she taps" or "Plaid Link opens".
+- No webhook/event names, raw enums (`EXTENSION_OF_CREDIT`), endpoints, or report JSON
+  on host/consumer screens — JSON panel and technical slide only.
+- This is **not** `income_verification` / Bank Income — never `user_bank_income`.
+
+**Compliance / user data (one line):**
+Permissible purpose `EXTENSION_OF_CREDIT`; `/user/create` with PII before Link;
+consent normalized for humans on the FCRA card.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Dana Whitfield, 34, registered nurse applying for a personal loan
+**Company / context:** Employed at Northwest Medical Group; needs $15,000 over 48 months
+**Sample fields that must appear on screen:** loan amount **$15,000** / 48-month term;
+employer **NORTHWEST MEDICAL GROUP**; pay frequency **BIWEEKLY**; historical monthly
+net income **$5,612.40**; predicted next payday **Jun 19, 2026**; income stream status
+**ACTIVE**; decision **APPROVED**
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Light neutral (white) host background with Arvest blue accents on nav and CTAs.
+Simple consumer-lending application layout: Arvest logo top-left, stepper across the
+top (Apply → Verify income → Decision), single centered card per step. The FCRA-consent
+card sits above the **Connect your bank** CTA on beat 2.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+2 slides required, Plaid-branded (`.slide-root`), matching beats 6 and 8; up to 5 total:
+(1) Income-insights technical slide — CRA call sequence (`/user/create` →
+`/link/token/create` with `cra_base_report` + `cra_income_insights` → report-ready
+webhook → `/cra/check_report/income_insights/get`) and key returned attributes
+(employer, frequency, monthly net, forecasted next payday). Endpoint/field names OK;
+no full raw JSON.
+(2) Value-summary slide — one connection replaces pay-stub collection; report-based,
+FCRA-compliant income verification inside the Plaid Consumer Report workflow. No JSON.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for stats (`inputs/products/plaid-income-insights.md`)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

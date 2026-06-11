@@ -1126,6 +1126,24 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `problem stated in step 1. Format: "[Product(s)] deliver [metric] — enabling [outcome from\n` +
       `opening hook]." Generic mantras ("faster, safer, more compliant") without scenario-specific\n` +
       `numbers are not acceptable as a closing beat.\n\n` +
+      `NARRATION FLOW RULE (scene-to-scene continuity — read narrations as ONE script):\n` +
+      `The narration track is heard as one continuous voiceover, so write it as one story, not\n` +
+      `eleven isolated captions. Before finalizing, read all narrations in sequence aloud:\n` +
+      `- CONNECT each beat to the previous one. At least half the steps should open with connective\n` +
+      `  tissue that carries the action forward ("With the account linked…", "That score clears the\n` +
+      `  way for…", "Behind that confirmation…", "Now that ownership is settled…") instead of\n` +
+      `  restarting cold.\n` +
+      `- VARY sentence openers: never start two consecutive narrations with the same word, the\n` +
+      `  persona's name, or "Plaid". Use the persona's first name in at most 3 narrations total —\n` +
+      `  pronouns and role words ("she", "the owner", "the applicant") carry the rest.\n` +
+      `- NO TEMPLATE STAMPING: do not reuse the same sentence skeleton ("X does Y — Z happens")\n` +
+      `  across steps. Alternate rhythm: a short punchy line (8-12 words) after every 2-3 longer ones.\n` +
+      `- HAND OFF forward: when a beat sets up the next screen, let the last clause lean into it\n` +
+      `  ("…and the report starts building." → next beat opens on the report). The pre-Link tap rule\n` +
+      `  ("…taps Connect your bank.") is the model — apply the same momentum elsewhere.\n` +
+      `- SOUND SPOKEN, not written: contractions are good ("it's", "that's"); apposition-heavy\n` +
+      `  marketing constructions ("Plaid, the network powering…") are not. If a sentence would feel\n` +
+      `  stiff said across a desk to a prospect, rewrite it.\n\n` +
       `PLAID SESSION STEP RULE (CRITICAL — non-negotiable):\n` +
       `A demo may include ONE OR MORE live Plaid sessions. Each DISTINCT Plaid session is its\n` +
       `own single step with "plaidPhase":"launch" and sceneType:"link". The distinct sessions are:\n` +

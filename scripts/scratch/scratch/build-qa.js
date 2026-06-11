@@ -4211,6 +4211,15 @@ async function main(opts = {}) {
       if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
         return route.continue();
       }
+      // Allow external IMAGES (Brandfetch host logos, brand icons). The hang
+      // this guard exists for is the blocking <script src="cdn.plaid.com">;
+      // images never block DOMContentLoaded, but aborting them broke every
+      // remote host logo (present/visible but loaded=false at all viewports →
+      // false "logo missing" deductions on host steps; Current EWA campaign
+      // run scored payday-home 75 for exactly this).
+      if (route.request().resourceType() === 'image') {
+        return route.continue();
+      }
       return route.abort();
     } catch (_) {
       return route.continue();
