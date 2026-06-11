@@ -214,6 +214,21 @@ async function main() {
 
   const recording = path.join(runDir, 'recording-processed.webm');
   if (!fs.existsSync(recording)) throw new Error('recording-processed.webm missing — run post-process first');
+
+  // Storyboard staleness contract: the dashboard editor logs every narration /
+  // slide mutation to editor-mutation-log.json and flags voiceoverStale /
+  // recordingStale. This stage consumes vo_*.mp3 + the processed recording, so
+  // stale flags mean the stitch would bake OUTDATED narration or visuals in —
+  // surface it loudly (same contract build-qa/record observe; the freeze
+  // sentinel only gates automated slide regen, not editor mutations).
+  try {
+    const mutLog = JSON.parse(fs.readFileSync(path.join(runDir, 'editor-mutation-log.json'), 'utf8'));
+    const entries = Array.isArray(mutLog?.entries) ? mutLog.entries : [];
+    const voStale = entries.some((e) => e && e.voiceoverStale === true);
+    const recStale = entries.some((e) => e && e.recordingStale === true);
+    if (voStale) console.warn('[mcp-edit] ⚠ STALE VOICEOVER: storyboard narration changed after voiceover — run `pipe stage voiceover` first or the stitch bakes outdated narration.');
+    if (recStale) console.warn('[mcp-edit] ⚠ STALE RECORDING: storyboard slide/scene edits postdate the recording — run `pipe stage record` first or the stitch bakes outdated visuals.');
+  } catch (_) { /* no mutation log — nothing edited via storyboard */ }
   const demoScript = JSON.parse(fs.readFileSync(path.join(runDir, 'demo-script.json'), 'utf8'));
   const stepTiming = JSON.parse(fs.readFileSync(path.join(runDir, 'step-timing.json'), 'utf8'));
   const processedTiming = JSON.parse(fs.readFileSync(path.join(runDir, 'processed-step-timing.json'), 'utf8'));
