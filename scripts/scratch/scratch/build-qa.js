@@ -1382,6 +1382,35 @@ function scanSlideTextWrap(state, step) {
   return out;
 }
 
+/**
+ * Slide text-contrast emitter (2026-06-11). Reads `state.slideTextContrast`
+ * (computed-style WCAG ratios from the Playwright walker) and flags text that
+ * is effectively invisible against its background (ratio < 2.0). CRITICAL +
+ * deterministic blocker: unreadable text is a rendering bug, not a style
+ * preference. Root-cause class: the slide contract CSS paints slide text
+ * white and a light/cream/holo background variant lacks the matching ink
+ * counter-rule (KeyBank auth-slide: white sc-field rows on cream, ~1.1:1).
+ */
+function scanSlideTextContrast(state, step) {
+  if (!state || !step || !isSlideLikeStep(step)) return [];
+  const items = Array.isArray(state.slideTextContrast) ? state.slideTextContrast : [];
+  if (items.length === 0) return [];
+  return items.map((c) => ({
+    stepId: step.id,
+    category: 'slide-text-contrast',
+    severity: 'critical',
+    deterministicBlocker: true,
+    issue:
+      `Unreadable slide text: ${c.tag}${c.classes ? '.' + String(c.classes).split(/\s+/).join('.') : ''} ` +
+      `"${c.text}" — ${c.color} on ${c.background} (contrast ${c.ratio}:1, minimum 2.0).`,
+    suggestion:
+      `On light/cream/holo slide variants, body text must use ink tones (var(--plaid-ink-900) / ` +
+      `rgba(2,37,68,…)), never white. Check pipeline-slide-contract.css variant counter-rules and ` +
+      `any per-slide <style> or inline colors for this element.`,
+    meta: { tag: c.tag, classes: c.classes, text: c.text, color: c.color, background: c.background, ratio: c.ratio },
+  }));
+}
+
 function scanSlideMotionAttributes(html, slideStepIds) {
   if (!html || !/\bslide-root\b/.test(html)) return [];
   const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
@@ -2353,6 +2382,86 @@ async function evaluateStepState(page, stepId) {
         // Worst wrappers first (most lines × largest font).
         candidates.sort((a, b) => (b.lines * b.fontSize) - (a.lines * a.fontSize));
         return candidates.slice(0, 8);
+      })(),
+
+      // ── Slide text-contrast measurement (2026-06-11) ────────────────────
+      // Detects unreadable text on slides: computed text color vs the nearest
+      // opaque ancestor background, WCAG contrast ratio. Root cause class:
+      // the contract CSS paints slide spans white and a light/cream/holo
+      // variant misses a counter-rule (KeyBank auth-slide: pure white
+      // sc-field rows on cream, ratio ~1.1). Threshold 2.0 — far below any
+      // intentional dim text (white@0.54 on navy is ≈9:1), so this only
+      // fires on genuine invisibility bugs.
+      slideTextContrast: (() => {
+        const slideRoot = active ? active.querySelector('.slide-root') : null;
+        if (!slideRoot) return [];
+        const parse = (c) => {
+          const m = String(c || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\)/);
+          return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] == null ? 1 : +m[4] } : null;
+        };
+        const lum = (c) => {
+          const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+          return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+        };
+        const blend = (fg, bg) => ({
+          r: fg.r * fg.a + bg.r * (1 - fg.a),
+          g: fg.g * fg.a + bg.g * (1 - fg.a),
+          b: fg.b * fg.a + bg.b * (1 - fg.a),
+          a: 1,
+        });
+        // Variant-aware fallback: gradient backgrounds report backgroundColor
+        // transparent, so walking past them must land on the variant's real
+        // tone — light/cream/holo ≈ cream, else navy. A fixed navy fallback
+        // false-flagged ink text on holo-gradient value-summary slides (1.0:1
+        // because fg ≈ wrong fallback bg).
+        const variantFallback = /\b(?:light|cream|holo)\b/.test(String(slideRoot.className || ''))
+          ? { r: 244, g: 240, b: 230, a: 1 }
+          : { r: 2, g: 37, b: 68, a: 1 };
+        const bgOf = (el) => {
+          let node = el;
+          while (node && node !== document.documentElement) {
+            const cs2 = getComputedStyle(node);
+            const c = parse(cs2.backgroundColor);
+            if (c && c.a >= 0.9) return c;
+            // A gradient/image background covers the element; its average tone
+            // is unknowable from computed styles — trust the variant class.
+            if (cs2.backgroundImage && cs2.backgroundImage !== 'none') return variantFallback;
+            node = node.parentElement;
+          }
+          return variantFallback;
+        };
+        const found = [];
+        for (const el of Array.from(slideRoot.querySelectorAll('*'))) {
+          if (found.length >= 6) break;
+          const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!text || text.length < 3) continue;
+          const hasDirectText = Array.from(el.childNodes).some(
+            (n) => n.nodeType === 3 && (n.textContent || '').trim().length > 1
+          );
+          if (!hasDirectText) continue;
+          const cs = window.getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          if (Number(cs.opacity || '1') < 0.05) continue; // pre-reveal animation states
+          const rect = el.getBoundingClientRect();
+          if (rect.width < 2 || rect.height < 2) continue;
+          const fg = parse(cs.color);
+          if (!fg) continue;
+          const bg = bgOf(el);
+          const eff = fg.a < 1 ? blend(fg, bg) : fg;
+          const l1 = lum(eff); const l2 = lum(bg);
+          const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+          if (ratio < 2.0) {
+            found.push({
+              tag: el.tagName,
+              classes: String(el.className || '').slice(0, 60),
+              text: text.slice(0, 60),
+              color: cs.color,
+              background: `rgb(${Math.round(bg.r)}, ${Math.round(bg.g)}, ${Math.round(bg.b)})`,
+              ratio: Number(ratio.toFixed(2)),
+            });
+          }
+        }
+        return found;
       })(),
     };
   }, stepId);
@@ -3720,6 +3829,7 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
     for (const d of scanSlideHostChromeLeak(state, step)) diagnostics.push(d);
     for (const d of scanSlideTextOverlap(state, step)) diagnostics.push(d);
     for (const d of scanSlideTextWrap(state, step)) diagnostics.push(d);
+    for (const d of scanSlideTextContrast(state, step)) diagnostics.push(d);
   }
   if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {
     diagnostics.push({

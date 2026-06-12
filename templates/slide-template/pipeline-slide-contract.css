@@ -321,6 +321,11 @@ body.pipeline-slide-active .step.active {
   color: var(--plaid-white);
 }
 
+/* The light/cream/holo counter-rule MUST mirror the dark rule's selector list
+   above COMPLETELY. It used to cover only the root + headings — p / li / span
+   stayed painted white by the dark rule (whose span:not():not() selector is
+   (0,4,1) and beats the showcase classes' light overrides at (0,3,0)) →
+   invisible white-on-cream field tables (KeyBank auth-slide, 2026-06-10). */
 .slide-root.light,
 .slide-root.light .h-title,
 .slide-root.light h1,
@@ -331,11 +336,29 @@ body.pipeline-slide-active .step.active {
 .slide-root.cream .h-title,
 .slide-root.cream h1,
 .slide-root.cream h2,
+.slide-root.cream h3,
+.slide-root.cream h4,
 .slide-root.holo,
 .slide-root.holo .h-title,
 .slide-root.holo h1,
-.slide-root.holo h2 {
+.slide-root.holo h2,
+.slide-root.holo h3,
+.slide-root.holo h4 {
   color: var(--plaid-ink-900);
+}
+
+/* Body-tier text on light variants: slightly softened ink (keeps the heading
+   vs body hierarchy the dark side gets from white-alpha tokens). */
+.slide-root.light p,
+.slide-root.light li,
+.slide-root.light span:not(.endpoint):not(.badge),
+.slide-root.cream p,
+.slide-root.cream li,
+.slide-root.cream span:not(.endpoint):not(.badge),
+.slide-root.holo p,
+.slide-root.holo li,
+.slide-root.holo span:not(.endpoint):not(.badge) {
+  color: rgba(2, 37, 68, 0.82);
 }
 
 .slide-root .h-title em,
@@ -343,10 +366,16 @@ body.pipeline-slide-active .step.active {
   color: var(--plaid-teal-500);
 }
 
+/* Mint (--plaid-teal-500) on light/cream/holo is ~1.3:1 — invisible (KeyBank
+   auth-slide title accent, 2026-06-11). Light variants use the same dark
+   accent the light-eyebrow rule uses. */
 .slide-root.light .h-title em,
 .slide-root.cream .h-title em,
-.slide-root.holo .h-title em {
-  color: var(--plaid-teal-500);
+.slide-root.holo .h-title em,
+.slide-root.light .h-title .bowery-accent,
+.slide-root.cream .h-title .bowery-accent,
+.slide-root.holo .h-title .bowery-accent {
+  color: var(--plaid-blue-600);
 }
 
 /* Per-slide visual chrome is allowed via per-slide <style> blocks emitted by

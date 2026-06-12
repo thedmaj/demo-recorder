@@ -3,81 +3,60 @@
 
 const STEP_TIMING = [
   {
-    "id": "keybank-post-kyb-home",
-    "label": "KeyBank — Business verified, fund your account",
-    "startFrame": 9,
-    "endFrame": 381,
-    "audioEndFrame": 312
+    "id": "layer-session",
+    "label": "Plaid Layer session",
+    "startFrame": 0,
+    "endFrame": 3302,
+    "audioEndFrame": 405
   },
   {
-    "id": "funding-problem-slide",
-    "label": "The funding friction",
-    "startFrame": 381,
-    "endFrame": 733,
-    "audioEndFrame": 691
+    "id": "generating-report",
+    "label": "Generating the Consumer Report",
+    "startFrame": 3302,
+    "endFrame": 3719,
+    "audioEndFrame": 3659
   },
   {
-    "id": "plaid-link-launch",
-    "label": "Connect the business bank with Plaid Link",
-    "startFrame": 733,
-    "endFrame": 1845,
-    "audioEndFrame": 1033
+    "id": "income-insights-reveal",
+    "label": "CRA Income Insights",
+    "startFrame": 3719,
+    "endFrame": 4275,
+    "audioEndFrame": 4215
   },
   {
-    "id": "identity-match-insight",
-    "label": "Identity Match — confirm ownership",
-    "startFrame": 1845,
-    "endFrame": 2249,
-    "audioEndFrame": 2201
+    "id": "income-insights-slide",
+    "label": "Verified income beat",
+    "startFrame": 4275,
+    "endFrame": 4681,
+    "audioEndFrame": 4621
   },
   {
-    "id": "identity-match-slide",
-    "label": "How name scoring works — companies and people",
-    "startFrame": 2249,
-    "endFrame": 2685,
-    "audioEndFrame": 2643
+    "id": "cashflow-insights-reveal",
+    "label": "CRA Cash Flow Insights",
+    "startFrame": 4681,
+    "endFrame": 5196,
+    "audioEndFrame": 5136
   },
   {
-    "id": "auth-insight",
-    "label": "Auth — pull the ACH rails",
-    "startFrame": 2685,
-    "endFrame": 3046,
-    "audioEndFrame": 3030
+    "id": "cashflow-insights-slide",
+    "label": "Ability-to-pay attributes",
+    "startFrame": 5196,
+    "endFrame": 5610,
+    "audioEndFrame": 5550
   },
   {
-    "id": "auth-slide",
-    "label": "Auth fields — a true business account",
-    "startFrame": 3046,
-    "endFrame": 3376,
-    "audioEndFrame": 3421
-  },
-  {
-    "id": "funding-amount",
-    "label": "KeyBank — enter funding amount",
-    "startFrame": 3376,
-    "endFrame": 3726,
-    "audioEndFrame": 3705
-  },
-  {
-    "id": "signal-insight",
-    "label": "Signal — score this transfer",
-    "startFrame": 3726,
-    "endFrame": 4046,
-    "audioEndFrame": 4149
-  },
-  {
-    "id": "funds-approved",
-    "label": "KeyBank — funds available instantly",
-    "startFrame": 4046,
-    "endFrame": 4396,
-    "audioEndFrame": 4355
+    "id": "loan-approved",
+    "label": "Approved",
+    "startFrame": 5610,
+    "endFrame": 6031,
+    "audioEndFrame": 5956
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 4396,
-    "endFrame": 4780,
-    "audioEndFrame": 4786
+    "startFrame": 6031,
+    "endFrame": 6121,
+    "audioEndFrame": 6429
   }
 ];
 

@@ -557,10 +557,45 @@
       });
     });
 
+    // Wire up delete buttons (permanently removes the run dir — typed confirm)
+    content.querySelectorAll('.build-card-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const runId = btn.dataset.delRunId;
+        const displayName = btn.dataset.delDisplayName || runId;
+        if (!runId) return;
+        const typed = window.prompt(
+          `Permanently delete "${displayName}" and ALL of its files?\n\n` +
+          `This removes the entire build directory (recordings, renders, QA reports, scripts) for this demo only. It cannot be undone.\n\n` +
+          `Type DELETE to confirm:`
+        );
+        if (typed !== 'DELETE') return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            alert(`Delete failed: ${body.error || res.status}`);
+            btn.disabled = false;
+            return;
+          }
+          if (currentRunId === runId) {
+            currentRunId = null;
+            localStorage.removeItem('lastRunId');
+          }
+          refreshBuildPanel();
+        } catch (err) {
+          alert(`Delete failed: ${err.message}`);
+          btn.disabled = false;
+        }
+      });
+    });
+
     // Wire up card clicks (load run)
     content.querySelectorAll('.build-card').forEach(card => {
       card.addEventListener('click', (e) => {
         if (e.target.closest('.build-card-load-btn')) return;
+        if (e.target.closest('.build-card-delete-btn')) return;
         const runId = card.dataset.runId;
         if (!runId) return;
         currentRunId = runId;
@@ -616,11 +651,21 @@
       ? `<button class="build-card-load-btn" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">Load</button>`
       : `<span style="font-size:11px;color:#00A67E">Current</span>`;
 
+    // Recording-complete icon — the build has a finished screen recording when
+    // the raw or processed capture exists; tooltip notes rendered-MP4 state.
+    const hasRecording = !!(r.artifacts && (r.artifacts.processed || r.artifacts.recording));
+    const recordingBadgeHtml = hasRecording
+      ? `<span class="build-card-badge rec-done" title="${esc(r.artifacts.mp4 ? 'Recording complete · final MP4 rendered' : 'Recording complete')}">🎥</span>`
+      : '';
+
+    const deleteBtn = `<button class="build-card-delete-btn" data-del-run-id="${esc(runId)}" data-del-display-name="${esc(displayName)}" title="Delete this demo build — removes ALL files for this run only">🗑</button>`;
+
     return `
       <div class="build-card ${isActive ? 'active' : ''}" data-run-id="${esc(runId)}" data-display-name="${esc(displayName)}">
         <div class="build-card-header">
           <span class="build-card-id">${esc(displayName)}</span>
           <span class="build-card-badges">
+            ${recordingBadgeHtml}
             ${buildModeBadgeHtml}
             <span class="build-card-badge ${badgeClass}">${badgeText}</span>
           </span>
@@ -630,7 +675,7 @@
         <div class="build-progress-bar">${pipsHtml}</div>
         <div class="build-card-footer">
           <span>${qaText}</span>
-          ${loadBtn}
+          <span class="build-card-footer-actions">${deleteBtn}${loadBtn}</span>
         </div>
       </div>`;
   }

@@ -2905,10 +2905,24 @@ async function main(opts = {}) {
           });
         }
       } else if (stepEntry.action === 'click') {
+        // DWELL BEFORE THE CLICK (2026-06-11). In this pipeline's grammar a
+        // click row's click is the TRANSITION TRIGGER into the next beat
+        // ("…she taps Link Your Bank"). The old order [click, wait(waitMs)]
+        // clicked ~150–650ms after the step activated and then spent the
+        // ENTIRE dwell on the NEXT screen — the step's own content flashed
+        // for under a second, so post-record QA frames showed the previous/
+        // next screens (Zip v1: zip-checkout 5/100, lendscore-reveal 10/100,
+        // approval-success 0/100 — all click rows following slides). Wait the
+        // narration dwell first, click at the end, then a short settle so the
+        // click and resulting transition land on camera.
+        if (stepEntry.waitMs) {
+          actions.push({ type: 'wait', ms: stepEntry.waitMs });
+        }
         actions.push({
           type: 'click',
           selector: stepEntry.target,
         });
+        actions.push({ type: 'wait', ms: 400 });
       } else if (stepEntry.action === 'fill') {
         actions.push({
           type: 'fill',
@@ -2918,8 +2932,9 @@ async function main(opts = {}) {
       } else if (stepEntry.action === 'wait') {
         // Just wait — no interaction
       }
-      // Add a wait for the step's declared duration
-      if (stepEntry.waitMs) {
+      // Add a wait for the step's declared duration (clicks already spent the
+      // dwell BEFORE the interaction — no tail wait for them).
+      if (stepEntry.waitMs && stepEntry.action !== 'click') {
         actions.push({
           type: 'wait',
           ms: stepEntry.waitMs,

@@ -11,7 +11,7 @@ use_cases:
   - "near-prime-second-look"
   - "credit-underwriting"
 last_human_review: "2026-05-21"
-last_ai_update: "2026-05-31T00:00:00Z"
+last_ai_update: "2026-06-11T00:00:00Z"
 approved: true
 version: 1
 last_vp_research: "2026-05-30"
@@ -66,6 +66,8 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 
 ## Implementation Pitfalls
 <!-- demo-UI guidance -->
+
+- **🚫 NOT a mortgage / HELOC underwriting score — do not let it decide a home loan.** LendScore predicts **general consumer (non-mortgage) 90+DPD default over 12 months**; it is positioned for BNPL, personal lending, and near-prime second-look — **never** as the basis for a mortgage or **HELOC** pre-qualification/approval. **Observed drift (2026-06-09 → 2026-06-10, ≥3 Spring EQ runs):** narration pre-qualified a $75K HELOC "citing verified cash flow and his LendScore." That is the wrong product for a home-lending decision. **Mortgage/HELOC demos must underwrite on Home Lending verification — VOA (Verification of Assets) + INCOME via `POST /cra/check_report/verification/get`** (Home Lending Report / VOA is explicitly not limited to GSE-backed loans and covers HELOCs), shown via [Base Report](plaid-cra-base-report.md) + [Income Insights](plaid-cra-income-insights.md) framing. If a HELOC/mortgage prompt still wants LendScore on screen, it may appear only as a **secondary, non-decisioning** signal and the decision narration must cite asset/income verification — not LendScore. (Primary source: AskBill / Plaid Check docs, verified 2026-06-11 — see `/cra/check_report/verification/get`.)
 - **Consumer/host screens stay realistic — no behind-the-scenes leakage.** Never show webhook/event names (e.g. `USER_CHECK_REPORT_READY`, `SESSION_FINISHED`), raw API endpoints/field names, raw report JSON, `report_id`/`user_id`, or the raw `EXTENSION_OF_CREDIT` enum on host screens. Normalize permissible purpose for humans (e.g. "Extension of credit"). Move technical detail / raw report data to Plaid **slides**, the JSON **`#api-response-panel`**, or a clearly labeled **"Underwriter Internal view"** step. (Full guidance: see the "Demo UI Guidance" section in `inputs/products/plaid-cra-base-report.md`.)
 
 - **`cra_base_report` must be in `products[]`** alongside `cra_lend_score` — LendScore is an add-on, never standalone
@@ -110,7 +112,7 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 - Label the API panel as Base Report when the step endpoint is `lend_score/get`
 - Present LendScore as GA without beta callout
 - Use federal student loan / Mohela liabilities tropes (wrong product family)
-- **Position LendScore as a mortgage underwriting score** — it predicts general consumer 90+DPD default, not mortgage performance. Mortgage / HELOC demos should feature **asset + income verification (VOA/VOI)** via [Base Report](plaid-cra-base-report.md) + [Income Insights](plaid-cra-income-insights.md), NOT a LendScore decision. (Glean: John Wiederin Gong calls, 2026 — cash-flow *underwriting* for mortgage is early; asset/income *verification* is the mature mortgage use case.)
+- **Position LendScore as a mortgage underwriting score** — it predicts general consumer 90+DPD default, not mortgage performance. Mortgage / HELOC demos should feature **asset + income verification (VOA/INCOME)** via the **Home Lending reports** (`POST /cra/check_report/verification/get`), surfaced with [Base Report](plaid-cra-base-report.md) + [Income Insights](plaid-cra-income-insights.md) framing — NOT a LendScore decision. (Primary: AskBill / Plaid Check docs 2026-06-11. Also Glean: John Wiederin Gong calls, 2026 — cash-flow *underwriting* for mortgage is early; asset/income *verification* is the mature mortgage use case.)
 
 ## Layer + CRA onboarding (canonical) — no separate CRA Link session
 

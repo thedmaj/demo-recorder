@@ -143,7 +143,26 @@ function snapshotRunInputs(runDir, opts = {}) {
     promptHash,
     cli: opts.cli || {},
   };
-  fs.writeFileSync(path.join(layout.inputsDir, 'prompt.txt'), promptText, 'utf8');
+  // NEVER overwrite an existing, different prompt snapshot. The orchestrator
+  // snapshots at EVERY startup — including `--run-id` resumes — so resuming an
+  // older run after `inputs/prompt.txt` changed used to clobber the run's
+  // archived prompt with an unrelated one (Credit Karma / Bright Money / KeyBank
+  // snapshots all contained later prompts; story-echo-check then scored the
+  // voiceover 0/88 against the WRONG pitch, 2026-06-11). New runs get a fresh
+  // dir (no snapshot), so first-write always proceeds.
+  const promptPath = path.join(layout.inputsDir, 'prompt.txt');
+  let preserved = false;
+  if (fs.existsSync(promptPath)) {
+    const existing = fs.readFileSync(promptPath, 'utf8');
+    if (existing.trim() && existing !== promptText) {
+      preserved = true;
+      runtimeConfig.promptSnapshotPreserved = true;
+      runtimeConfig.promptHash = crypto.createHash('sha256').update(existing).digest('hex');
+      runtimeConfig.attemptedPromptHash = promptHash;
+      console.log('[run-io] Existing run prompt snapshot differs from current inputs/prompt.txt — preserving the run\'s original snapshot.');
+    }
+  }
+  if (!preserved) fs.writeFileSync(promptPath, promptText, 'utf8');
   fs.writeFileSync(path.join(layout.inputsDir, 'runtime-config.json'), JSON.stringify(runtimeConfig, null, 2), 'utf8');
   return runtimeConfig;
 }

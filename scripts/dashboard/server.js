@@ -1045,6 +1045,52 @@ app.get('/api/runs', (req, res) => {
   }
 });
 
+// DELETE /api/runs/:runId — permanently remove ONE demo build: the run
+// directory under out/demos and nothing else (project files, other runs,
+// slide library, templates are untouched). Unlike pipeline run/resume
+// actions (CLI-gated), deletion is dashboard housekeeping and is enabled by
+// default — guarded by getRunDir path containment and a running-pipeline
+// check; the UI additionally requires an explicit typed confirmation.
+app.delete('/api/runs/:runId', (req, res) => {
+  try {
+    const runId = String(req.params.runId || '').trim();
+    if (!runId || runId === 'latest' || runId.includes('..') || runId.includes('/')) {
+      return res.status(400).json({ error: 'invalid runId' });
+    }
+    const dir = getRunDir(runId);
+    if (!fs.existsSync(dir)) return res.status(404).json({ error: 'run not found' });
+
+    // Refuse while a pipeline is actively running this run.
+    const pidFile = path.join(dir, '.pipeline.pid');
+    if (fs.existsSync(pidFile)) {
+      let pid = NaN;
+      try { pid = parseInt(fs.readFileSync(pidFile, 'utf8'), 10); } catch (_) {}
+      let alive = false;
+      if (Number.isFinite(pid) && pid > 0) {
+        try { process.kill(pid, 0); alive = true; } catch (_) { alive = false; }
+      }
+      if (alive) {
+        return res.status(409).json({
+          error: `A pipeline is running for this demo (pid ${pid}). Stop it first: npm run pipe -- stop ${runId}`,
+        });
+      }
+    }
+
+    // If out/latest points at this run, drop the would-be-dangling symlink.
+    try {
+      const latestLink = path.join(OUT_DIR, 'latest');
+      if (path.basename(fs.readlinkSync(latestLink)) === runId) fs.unlinkSync(latestLink);
+    } catch (_) { /* no symlink or unreadable — nothing to do */ }
+
+    fs.rmSync(dir, { recursive: true, force: true });
+    invalidateRunsCache();
+    console.log(`[dashboard] Deleted demo build ${runId} (${dir})`);
+    res.json({ ok: true, deleted: runId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/slide-library', (req, res) => {
   try {
     const q = String(req.query.q || '').trim().toLowerCase();

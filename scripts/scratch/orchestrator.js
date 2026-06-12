@@ -53,6 +53,7 @@ const { validateNarrationSync, writeReport: writeNarrationSyncReport } = require
 const {
   requireRunDir,
   ensureRunManifest,
+  readRunManifest,
   snapshotRunInputs,
   writeRunDirMarker,
 } = require('./utils/run-io');
@@ -4093,17 +4094,57 @@ async function runScratchPipeline({
       // Stage this run's recording + voiceover into public/ for Remotion
       stageArtifactsForRemotion(versionedDir);
 
-      // Build Remotion input props from pipeline artifacts
+      // Build Remotion input props from pipeline artifacts. Written for BOTH
+      // engines: it is the single source of truth for syncMap (incl. Plaid
+      // min-duration freeze injection) + scratchDurationFrames, consumed by
+      // render-moviepy AND by the dashboard/Studio rebuild-props endpoint.
       const remotionProps = buildRemotionProps();
       const propsFile = path.join(versionedDir, 'remotion-props.json');
       fs.writeFileSync(propsFile, JSON.stringify(remotionProps, null, 2));
       console.log('[Render] Generated remotion-props.json');
 
       const outFile = path.join(versionedDir, 'demo-scratch.mp4');
-      execSync(
-        `npx remotion render remotion/index.js DemoScratch "${outFile}" --props="${propsFile}" --timeout=120000 --log=warn`,
-        { stdio: 'inherit', cwd: PROJECT_ROOT }
-      );
+
+      // ── Engine dispatch (2026-06-11) ─────────────────────────────────────
+      // 'moviepy' decodes recording-processed.webm directly and encodes once
+      // with explicit x264 quality (CRF 16 / preset slow / 2880x1800@30) —
+      // no Remotion JPEG-screenshot re-render generation. Initial build is
+      // effect-less (sync-map retime + voiceover only; pointer overlays
+      // deferred per user decision). Resolution: env > run-manifest > default.
+      const renderEngineExplicit = (process.env.RENDER_ENGINE || '').trim().toLowerCase();
+      const manifestEngine = (() => {
+        try { return String((readRunManifest(versionedDir) || {}).renderEngine || '').trim().toLowerCase(); }
+        catch (_) { return ''; }
+      })();
+      // Default flipped to moviepy 2026-06-11 after A/B validation on KeyBank
+      // v2: SSIM vs source ≥ Remotion on 5/5 sampled windows (0.998+ vs
+      // 0.887–0.998 — Remotion's JPEG-screenshot re-render measurably degrades
+      // speed-1 footage), identical 2880×1800@30 output, 4.3× faster
+      // (94.5s vs 409s). Remotion remains the automatic fallback on engine
+      // failure and selectable via RENDER_ENGINE=remotion.
+      const renderEngine = renderEngineExplicit || manifestEngine || 'moviepy';
+      const renderViaRemotion = () => {
+        execSync(
+          `npx remotion render remotion/index.js DemoScratch "${outFile}" --props="${propsFile}" --timeout=120000 --log=warn`,
+          { stdio: 'inherit', cwd: PROJECT_ROOT }
+        );
+      };
+      if (renderEngine === 'moviepy') {
+        console.log('[Render] Engine: moviepy (vidmagik MCP) — effect-less composition, x264 CRF16');
+        try {
+          // Fresh require so engine fixes don't need an orchestrator restart.
+          delete require.cache[require.resolve('./render-moviepy')];
+          const { main: renderMoviepy } = require('./render-moviepy');
+          await renderMoviepy({ runDir: versionedDir, outFile });
+        } catch (err) {
+          if (renderEngineExplicit) throw err; // explicitly requested — surface the failure
+          console.error(`[Render] ⚠ moviepy engine failed (${err.message}) — falling back to Remotion.`);
+          renderViaRemotion();
+        }
+      } else {
+        console.log('[Render] Engine: remotion');
+        renderViaRemotion();
+      }
     }, timer);
   }
 

@@ -49,6 +49,20 @@ function safeReadJson(file) {
 }
 
 function readPromptText(runDir) {
+  // PREFERRED: the ingest-time archive inside ingested-inputs.json — written
+  // once at ingest and never mutated. The runDir/inputs/prompt.txt snapshot
+  // used to be re-written by the orchestrator on EVERY startup (including
+  // resumes), so resuming an old run after the global prompt changed made
+  // this check score the voiceover against an unrelated pitch (Credit Karma
+  // VO judged 0/88 vs the Cox prompt, 2026-06-11). run-io now preserves
+  // snapshots, but the ingest archive stays the authoritative source.
+  try {
+    const ing = JSON.parse(fs.readFileSync(path.join(runDir, 'ingested-inputs.json'), 'utf8'));
+    const t = ing && Array.isArray(ing.texts) && ing.texts[0]
+      ? String(ing.texts[0].content || ing.texts[0].text || '')
+      : '';
+    if (t.trim()) return { path: path.join(runDir, 'ingested-inputs.json'), text: t };
+  } catch (_) {}
   const candidates = [
     path.join(runDir, 'inputs', 'prompt.txt'),
     path.join(runDir, 'prompt.txt'),

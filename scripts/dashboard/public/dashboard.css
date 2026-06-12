@@ -3869,6 +3869,36 @@ pre.json-preview {
   background: rgba(167,139,250,0.20);
   color: #a78bfa;
 }
+/* Recording-complete icon — shown when recording[-processed].webm exists */
+.build-card-badge.rec-done {
+  background: rgba(0,166,126,0.18);
+  padding: 1px 5px;
+  line-height: 1.3;
+}
+.build-card-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Delete demo build — destructive; quiet until hovered */
+.build-card-delete-btn {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255,255,255,0.35);
+  cursor: pointer;
+}
+.build-card-delete-btn:hover {
+  background: rgba(239,68,68,0.15);
+  border-color: rgba(239,68,68,0.4);
+  color: #ef4444;
+}
+.build-card-delete-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .build-card-meta {
   font-size: 11px;
   color: rgba(255,255,255,0.5);
