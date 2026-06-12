@@ -1,141 +1,236 @@
 ================================================================================
-Cox Automotive — Plaid Bank Income for instant auto-finance income verification
+Ally Bank Account Funding Demo — Link and Fund in Seconds, Not Days
 ================================================================================
 
-**Host:** **Cox Automotive** — automotive retail / indirect lending (dealer finance desk)
-**Canonical URL:** https://www.coxautoinc.com/
-**Brand URL:** https://www.coxautoinc.com/
+Host: Ally Bank — U.S. digital-first retail banking
+Canonical URL: https://www.ally.com
+Brand URL: https://www.ally.com
 
-**Opportunity context (Salesforce — open):**
-- Opportunity: `Cox - ENT - Reseller - Income Verification` (`006UV00000YKIBiYAP`)
-- Stage: `Discovery`
-- Primary product (SFDC): `Income` (Bank Income)
-- Use case: Income Verification for auto financing
-- Account: Cox Automotive (dealer / lender workflow, US)
+User journey (one sentence):
+A Ally Bank customer funds their Ally checking account from an external
+bank by connecting with Plaid (embedded Link), verifying ownership with
+Identity Match, pulling ACH rails with Auth, entering the transfer amount,
+running Signal Evaluate for return-risk, and getting instant funds approval.
 
-**User journey (one sentence):**
-A dealer finance manager verifies a buyer's income by having them link their checking
-account through Plaid Link — replacing paystub uploads — and Bank Income returns
-verified income streams that clear the buyer for auto financing in seconds.
-
-**Story arc (short prose):**
-At the dealership finance desk, verifying a buyer's income usually means chasing
-paystubs, W-2s, or bank statements — slow, fraud-prone, and a drop-off point in the
-deal. The finance manager offers the buyer a faster path: connect your bank securely
-with Plaid. The buyer taps Link your bank on the pre-Link screen, completes Plaid Link,
-and Bank Income returns verified income — primary employer, monthly income, and a
-consistent deposit history. The finance desk sees confirmed income and clears the buyer
-for financing, closing the deal without a single document upload. Close on faster
-funding decisions, fewer stips, and less income-fraud exposure.
+Story arc (short prose):
+Ally wants to remove friction from account funding without taking on ACH
+return risk. Today, customers either wait days for micro-deposits or give up
+after a clunky credential hand-off. Plaid enters at the "Link external bank"
+CTA on the Transfers screen. Plaid's embedded Link gets the user to a
+connected external account in seconds. Identity Match confirms the external
+account belongs to the Ally customer of record. Auth returns ACH account and
+routing numbers. The customer enters the amount to transfer, and Signal
+Evaluate risk-scores that specific transaction. Low-risk users are approved
+instantly; funds show available same-session with no micro-deposit wait.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
-**Products featured (approved names only):**
-Plaid Link, **Plaid Bank Income**
+Products featured (approved names only):
+Plaid Link (embedded institution search), Plaid Identity Match, Plaid Auth,
+Plaid Signal.
 
-**Solutions supported:**
-Income Verification, Lending / Underwriting
+Solutions supported (used to query Solutions Master):
+Account Funding, ACH risk management.
 
-**Primary product family** (pick one — aligns with pipeline profiles):
-`funding`
+Primary product family: funding
 
-**Primary messaging file for this demo:**
-`inputs/products/plaid-bank-income.md`
+Primary messaging file for this demo (owns stats):
+inputs/plaid-value-props.md
 
-**Research depth:** gapfill
-
-**CRITICAL — NOT CRA:** This is **traditional Plaid Bank Income** (`income_verification`),
-NOT Plaid Check / Consumer Report / CRA (`cra_base_report`, `cra_income_insights`,
-LendScore). Endpoint is `POST /credit/bank_income/get`. An `income_verification` Link
-token accepts only `{income_verification, employment}` — do not bundle `auth`,
-`identity`, or `signal` into the same Link token. `products[]` is research-driven; use
-the resolver's `suggestedClientRequest` verbatim.
+Research depth: gapfill
 
 -------------------------------------------------------------------------------
-CONNECTION & RECORDING (checklist)
+CONNECTION & RECORDING (CHECKLIST)
 -------------------------------------------------------------------------------
 
-  [x] **Live Plaid Link** — real SDK, modal mode, single `plaidPhase: "launch"` step
-  [ ] **CRA / Layer / OAuth / IDV** — not in scope
-  [x] **Sandbox / persona** — Bank Income persona `user_bank_income` / password `{}`
-      (literal two-character password — NOT `pass_good`), First Platypus Bank
-      (`ins_109508`, non-OAuth), per `inputs/plaid-link-sandbox.md`. Use
-      `window._plaidInstitutionName/_plaidAccountName/_plaidAccountMask` for labels.
+[x] Live Plaid Link — **embedded Link** (embedded institution search),
+    single `plaidPhase: "launch"` step, mounted via `Plaid.createEmbedded` on
+    an in-page container `data-testid="plaid-embedded-link-container"`.
+[ ] Plaid Layer / OAuth / IDV — not required for this core flow
+[x] Sandbox / persona — defaults per `inputs/plaid-link-sandbox.md`
 
-Link narration boundary: the pre-Link step ends on the tap ("…he taps Link your bank.");
-the Link step narrates content inside the modal only.
+**Plaid Link mode: embedded** (NOT modal). The embedded widget IS the launch
+CTA — clicking an institution tile inside the widget surfaces the Plaid Link
+modal. Do NOT render a separate "Connect external bank" / "Link external
+account" / "Launch Plaid" button. Do NOT emit
+`<button data-testid="link-external-account-btn">` anywhere on the launch step.
+
+**Embedded widget sizing (use-case driven per CLAUDE.md):** this is an
+account-funding / external-bank flow — use the **default profile
+(~430×390px)** so the Plaid institution search reads as a natural in-page
+widget on the Ally Transfers screen. Emit these runtime globals on the
+launch step so deterministic QA can verify:
+
+    window.__embeddedLinkUseCase = 'account_funding_ach';
+    window.__embeddedLinkSizeProfile = 'default';
+    window.__embeddedLinkExpectedInstitutionTileCount = 6;
+
+Pre-link trust messaging and the embedded widget MUST be shown in the SAME
+launch step (per CLAUDE.md). Do not split into separate explainer and
+embedded-launch steps.
+
+Sandbox note for the build/record stage:
+- Link token uses `"products": ["auth", "signal"]` plus identity via
+  `"required_if_supported_products": ["identity"]` (so Identity Match works
+  without blocking on institutions that don't support Identity).
+- Sandbox default user (`user_good` / `pass_good`) at First Platypus Bank
+  exposes a checking account suitable for Auth + Signal happy-path.
 
 -------------------------------------------------------------------------------
-STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+STORYBOARD BEATS (ORDER = SCRIPT ORDER, NO SLIDES)
 -------------------------------------------------------------------------------
 
-| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
-|---|------|----------------------|-----------------|--------------|
-| 1 | slide | Title: "Income verification shouldn't stall the deal." Subhead on paystub friction + fraud at the finance desk. | Frame the income-verification problem in auto finance. | — |
-| 2 | host | Cox dealer finance application — buyer, vehicle, requested financing; "Verify income" step with two options: upload documents vs. connect bank (recommended). | Position bank linking as the fast, low-friction path vs. document upload. | `Continue` |
-| 3 | host | Pre-Link explainer — secure connection, what data powers the income check. | Trust + value framing; end narration on the CTA trigger. | `Link your bank` |
-| 4 | link | Real Plaid Link modal — institution search, sign-in, account select (`plaidPhase:"launch"`). | Inside-modal: the buyer connects their checking account. | `onSuccess` → public_token + institution/account metadata |
-| 5 | insight | `POST /credit/bank_income/get` JSON in side panel. Card: verified income summary — primary employer, total monthly income, number of income streams, deposit consistency / historical average. | Reveal: verified income pulled straight from bank data — no paystubs, no manual review. | `Continue to decision` |
-| 6 | host | Cox finance decision screen: "Income verified — buyer cleared for financing," verified monthly income, employer, requested amount approved. | Verified income → fast, confident financing decision. | End on success |
-| 7 | slide | Value-summary slide: "Verified income in seconds · fewer stips · less income-fraud exposure." | Recap, compliance-safe. | — |
+| # | Beat Type | What the viewer sees | Narration focus | Reveal / CTA |
+|---|-----------|----------------------|-----------------|--------------|
+| 1 | host    | Ally dashboard with primary checking balance and primary nav (Home, Accounts, Transfers, Bill Pay, Deposits, Menu). | Set the stage — an Ally customer wants to fund their checking account from an external bank. | Click Transfers. |
+| 2 | host    | Ally Transfers landing — Internal transfer / External transfer toggle, and an "Add an external bank account" CTA card. | One tap from everyday banking into the funding flow. | Click "Add an external bank account". |
+| 3 | host    | "Link an external bank" page with brief trust copy (secure, no credentials stored) AND the embedded Plaid Link widget mounted in-page. | The customer doesn't leave Ally — Plaid's embedded widget surfaces their bank in place. | Click a suggested institution tile inside the embedded widget (simulated). |
+| 4 | link    | Plaid Link modal opens with credential entry, OTP, account selection (sandbox / simulated). | "Plaid handles the credential hand-off, tokenization, and account selection so Ally never touches the user's password." | Link onSuccess → returns to Ally. |
+| 5 | host    | Ally "External account connected" confirmation — institution name, account mask — and a subtle "verifying ownership" status. | Connection complete; now we confirm this external account belongs to the same person Ally already KYC'd. | Auto-advances to Identity Match insight. |
+| 6 | insight | Plaid-branded full-viewport Identity Match screen with global `#api-response-panel` showing `/identity/match` JSON. | Identity Match fuzzy-matches Ally's KYC record against the bank's file — nicknames and formatting handled automatically. Email mismatch surfaces in JSON but isn't a blocker. | Return to Ally. |
+| 7 | host    | Short Ally-branded "Ownership confirmed" screen — verified badge, institution + mask — then auto-advance. | Ownership established; next we pull the account and routing numbers for the ACH transfer. | Auto-advance to Auth insight. |
+| 8 | insight | Plaid-branded full-viewport Auth screen with global `#api-response-panel` showing `/auth/get` JSON (numbers.ach[]). | Auth returns the account and routing numbers so the funding leg can actually settle on the ACH network. | Return to Ally. |
+| 9 | host    | Ally "Transfer amount" entry — input in USD with validation (e.g. $500 default), Ally primary CTA "Continue". | Customer enters the amount they want to move. This is the amount Signal evaluates in a moment. | Continue. |
+| 10 | insight | Plaid-branded full-viewport Signal screen with global `#api-response-panel` showing `/signal/evaluate` JSON (low scores, `ruleset.result: ACCEPT`). | Signal risk-scores this specific debit — bank-initiated + customer-initiated return risk — so low-risk transfers are auto-approved. | Return to Ally. |
+| 11 | host    | Ally success screen — "Transfer approved — $500 will be available today" — and CTA back to Accounts. | Ownership first, rails second, amount-aware risk third — instant funding for qualified users without multi-day micro-deposits. | End on Ally-branded host outcome. |
 
-**Product-specific reminders:**
-- Bank Income endpoint `POST /credit/bank_income/get`; surface realistic income streams
-  (employer name, monthly income, deposit history) — never fabricate field names; verify
-  exact shapes via AskBill if unsure.
-- Compliance-safe claims only: "can help," "typically," "up to"; never "guarantee" /
-  "eliminate fraud." Outcomes depend on data availability + Cox's own credit policy.
-- Synchronous demo: a brief processing state then immediate verified-income outcome.
-  No declined / failed / edge-case branches.
+Product-specific reminders:
+- Signal: low score = low ACH return risk; happy path is ACCEPT with low
+  scores (illustrative: `customer_initiated_return_risk.score: 12`,
+  `bank_initiated_return_risk.score: 10`).
+- Identity Match: strong match on name/address/phone despite formatting
+  differences (e.g. "Rachel Marie" vs "Rachel M."). Show an email
+  mismatch in the JSON to illustrate nuance — the ruleset still approves.
+- Link: pre-step narration ends on the embedded widget; the Link step
+  narrates inside the modal only.
+- Every insight step id MUST contain the substring `insight`
+  (`identity-match-insight`, `auth-insight`, `signal-insight`) so
+  automated recording heuristics and humans can grep them consistently.
 
-**Compliance / user data:** Buyer-consented bank link for income verification; income
-streams shown are representative sandbox data. Factual language only.
+Compliance / user data:
+Ally KYC PII is illustrative only — use a deliberate mismatch between Ally's
+record and the external bank's file on one field (email) and strong matches
+on name/address/phone to showcase fuzzy matching.
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-**Name / role:** Daniel Carter — auto buyer at a Cox-powered dealership, financing a used vehicle.
-**Company / context:** Dealer finance desk; "Verify income to complete financing."
+Name / role: Rachel M. Torres — Ally Bank checking customer funding
+a new Ally account from an external bank.
+Company / context: Ally Bank retail customer, Detroit, MI.
 
-**Sample on-screen fields (use verbatim — no generic placeholders):**
-- buyer Daniel Carter · requested financing $24,600 · used vehicle
-- primary employer (from Bank Income) · total monthly income · income stream count
-- deposit consistency / historical average monthly income
-- decision: income verified → cleared for financing
+Sample on-screen fields:
+- Ally primary checking balance: $6,148.27
+- External institution (from Plaid Link metadata): First Platypus Bank
+- External account mask: ****4321
+- Transfer amount: $500.00
+- Identity Match scores (illustrative):
+    legal_name.score: 88 (Rachel Marie Torres vs Rachel M. Torres)
+    address.score: 95 (parsed variant of 500 Woodward Ave #2100 Detroit MI 48226)
+    phone_number.score: 95 (+13135550162 vs (313) 555-0162)
+    email_address.score: 18 (email mismatch — shown in JSON, narrated briefly)
+    is_nickname_match: true
+    is_postal_code_match: true
+- Signal (illustrative, happy path):
+    customer_initiated_return_risk.score: 12
+    bank_initiated_return_risk.score: 10
+    ruleset.result: ACCEPT
+
+No generic placeholders — use these names and values.
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Cox Automotive–style light dealer-finance surface: white / light-neutral background,
-dealer-finance application layout, income-verification step with document-vs-bank choice,
-clear "income verified" decision card. Never show raw JSON on host steps; the insight beat
-uses the global `#api-response-panel` (collapsed by default; Response tab default).
+Sticky global header with Ally logo (left), primary nav, and user menu with
+avatar initials "RT" (right). Primary nav: Home · Accounts · Transfers ·
+Bill Pay · Deposits · Menu. Entry into the funding flow is from
+**Transfers → "Add an external bank account"**. CTA label that opens the
+embedded Plaid widget: the widget IS the CTA on the "Link an external bank"
+page — no separate "Launch Plaid" button. Ally brand: plum purple and white per
+brand/ally.json (freshly generated by `brand-extract`).
+Light backgrounds on all host screens; Plaid insight screens use dark navy
+(#0d1117) and teal accent (#00A67E).
 
-**Viewport:** 1440×900.
+Viewport: 1440x900
 
 -------------------------------------------------------------------------------
-SLIDE SUPPLEMENT
+CRITICAL UI REQUIREMENT — PLAID INSIGHT SCREENS (PRODUCT LANGUAGE)
 -------------------------------------------------------------------------------
 
-[[SLIDE_OUTPUT_BEGIN]]
-Two Plaid-branded slides: (1) opening problem (paystub-based income verification friction
-at the finance desk), (7) closing value-summary (verified income in seconds, fewer stips,
-less fraud exposure). No JSON rail on slides.
-[[SLIDE_OUTPUT_END]]
+For EVERY behind-the-scenes Plaid-branded full-viewport insight screen that
+corresponds to **POST /identity/match**, **POST /auth/get**, and **POST
+/signal/evaluate**:
+
+1. The host viewport shows Plaid insight chrome (dark navy, teal accent) and
+   does NOT embed the raw API body in the main layout.
+2. The **global** `#api-response-panel` overlay (right rail) is labeled
+   clearly (e.g. "API response") and shows the JSON for that step only when
+   that step is active.
+3. The panel is collapsible (chevron / Show / Hide) and animates in
+   (~400ms) consistently with the app.
+4. The consumer Ally UX must never show raw JSON — no `<pre>` JSON columns
+   inside host steps, no duplicate "insight-right" / "api-json-panel" /
+   "raw-json" divs inside insight step markup.
+
+Default for insight steps: the api-response-panel opens expanded on step
+load so recording frames never read as "missing JSON". Ally host steps
+always start with the panel collapsed / hidden.
+
+-------------------------------------------------------------------------------
+MANDATORY BACKEND API SEQUENCE (STORYBOARD AND NARRATION MUST MATCH THIS ORDER)
+-------------------------------------------------------------------------------
+
+After `public_token` exchange yields an `access_token` and `account_id`:
+
+1. POST /identity/match — Confirm account ownership first.
+2. POST /auth/get — Retrieve rails for ACH funding.
+3. HOST APP STEP (Ally consumer UX) — amount entry in USD.
+4. POST /signal/evaluate — ACH return risk for the specific amount.
+5. Ally consumer UX — instant approval (Signal ACCEPT).
+
+Do NOT present Auth before Identity Match in narration, `goToStep`
+ordering, or insight screen order.
+
+-------------------------------------------------------------------------------
+SIGNAL SCORE DIRECTION (OFFICIAL SEMANTICS — DO NOT INVERT)
+-------------------------------------------------------------------------------
+
+Per Plaid Signal documentation:
+- `bank_initiated_return_risk.score` and
+  `customer_initiated_return_risk.score` are on a 1–99 scale.
+- HIGHER numeric score = HIGHER ACH return risk.
+- LOWER numeric score = LOWER return risk.
+
+Happy path uses LOW risk scores (illustrative: single digits to low teens)
+with `ruleset.result: "ACCEPT"`.
+
+-------------------------------------------------------------------------------
+NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+-------------------------------------------------------------------------------
+
+This demo is APP-ONLY. Do not generate `sceneType: "slide"` steps.
+Do not add a final value-summary slide. End on an Ally host success step
+with a clear outcome ("Transfer approved — $500 will be available today").
+Value-proposition statements from solutions master / research remain in
+the narration and storyboard notes but must NOT appear as marketing
+headlines or hero banners in the Ally host UI.
 
 -------------------------------------------------------------------------------
 PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-  [x] Story order: open slide → dealer income step → pre-Link → Link → Bank Income insight → decision → close slide
-  [x] Traditional Bank Income (`/credit/bank_income/get`), NOT CRA; income_verification token only
-  [x] Sandbox `user_bank_income` / `{}` (literal); First Platypus Bank (non-OAuth)
-  [x] Compliance-safe claims; no absolute guarantees
-  [x] app+slides build
+[x] One primary source for stats (inputs/plaid-value-props.md)
+[x] Product names and family match CLAUDE.md (Plaid Link, Identity Match,
+    Auth, Signal; family=funding)
+[x] Storyboard order matches intended `goToStep` flow (Identity Match →
+    Auth → amount → Signal → approval)
+[x] No slide beats included
+[x] App-only run (default — run with `npm run pipe -- new --app-only`)
+[x] Embedded Link mode documented; no `link-external-account-btn` emitted
 
 ================================================================================
 END OF SPECIFICATION

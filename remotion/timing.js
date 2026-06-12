@@ -3,60 +3,81 @@
 
 const STEP_TIMING = [
   {
-    "id": "layer-session",
-    "label": "Plaid Layer session",
+    "id": "td-funding-home",
+    "label": "TD funding home",
     "startFrame": 0,
-    "endFrame": 3302,
-    "audioEndFrame": 405
+    "endFrame": 339,
+    "audioEndFrame": 309
   },
   {
-    "id": "generating-report",
-    "label": "Generating the Consumer Report",
-    "startFrame": 3302,
-    "endFrame": 3719,
-    "audioEndFrame": 3659
+    "id": "plaid-link-launch",
+    "label": "Plaid Link bank connection",
+    "startFrame": 339,
+    "endFrame": 1262,
+    "audioEndFrame": 653
   },
   {
-    "id": "income-insights-reveal",
-    "label": "CRA Income Insights",
-    "startFrame": 3719,
-    "endFrame": 4275,
-    "audioEndFrame": 4215
+    "id": "identity-match-insight",
+    "label": "Identity Match — ownership confirmed",
+    "startFrame": 1262,
+    "endFrame": 1825,
+    "audioEndFrame": 1769
   },
   {
-    "id": "income-insights-slide",
-    "label": "Verified income beat",
-    "startFrame": 4275,
-    "endFrame": 4681,
-    "audioEndFrame": 4621
+    "id": "identity-match-slide",
+    "label": "Identity Match API fields",
+    "startFrame": 1825,
+    "endFrame": 2309,
+    "audioEndFrame": 2249
   },
   {
-    "id": "cashflow-insights-reveal",
-    "label": "CRA Cash Flow Insights",
-    "startFrame": 4681,
-    "endFrame": 5196,
-    "audioEndFrame": 5136
+    "id": "auth-insight",
+    "label": "Auth — ACH rails retrieved",
+    "startFrame": 2309,
+    "endFrame": 2754,
+    "audioEndFrame": 2694
   },
   {
-    "id": "cashflow-insights-slide",
-    "label": "Ability-to-pay attributes",
-    "startFrame": 5196,
-    "endFrame": 5610,
-    "audioEndFrame": 5550
+    "id": "auth-slide",
+    "label": "Auth API fields",
+    "startFrame": 2754,
+    "endFrame": 3162,
+    "audioEndFrame": 3102
   },
   {
-    "id": "loan-approved",
-    "label": "Approved",
-    "startFrame": 5610,
-    "endFrame": 6031,
-    "audioEndFrame": 5956
+    "id": "funding-amount",
+    "label": "Funding amount entry",
+    "startFrame": 3162,
+    "endFrame": 3561,
+    "audioEndFrame": 3515
+  },
+  {
+    "id": "signal-insight",
+    "label": "Signal — return risk scored",
+    "startFrame": 3561,
+    "endFrame": 4073,
+    "audioEndFrame": 4021
+  },
+  {
+    "id": "signal-slide",
+    "label": "Signal API fields",
+    "startFrame": 4073,
+    "endFrame": 4445,
+    "audioEndFrame": 4533
+  },
+  {
+    "id": "funds-approved",
+    "label": "Funds approved instantly",
+    "startFrame": 4445,
+    "endFrame": 5047,
+    "audioEndFrame": 4824
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 6031,
-    "endFrame": 6121,
-    "audioEndFrame": 6429
+    "startFrame": 5047,
+    "endFrame": 5549,
+    "audioEndFrame": 5519
   }
 ];
 

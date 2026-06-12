@@ -3434,6 +3434,21 @@ async function runScratchPipeline({
             touchupStepId: fixModeDecision.touchupStepId,
             fixModeReasonCodes: fixModeDecision.reasons,
           });
+          // CRITICAL (2026-06-12): a refinement rebuild regenerates
+          // playwright-script.json with the build-time PLACEHOLDER waits
+          // (0.8–3s) — the narration dwells that set-recording-dwells applied
+          // before recording are wiped, so every refinement re-record rushed
+          // its steps and frames lagged a full screen behind (Gringo iter-2:
+          // host steps marked 2s apart, QA 79 with previous-step frames).
+          // Re-apply narration dwells before the loop re-records.
+          try {
+            delete require.cache[require.resolve('./scratch/set-recording-dwells.js')];
+            const { main: reDwell } = require('./scratch/set-recording-dwells.js');
+            await reDwell(versionedDir);
+            cliLog('[Orchestrator] Re-applied narration dwells after refinement rebuild.');
+          } catch (dwellErr) {
+            cliWarn(`[Orchestrator] Could not re-apply recording dwells after rebuild: ${dwellErr.message}`);
+          }
         } catch (err) {
           cliError(`[build] refinement iteration ${iter} failed: ${err.message}`);
           if (process.env.SCRATCH_AUTO_APPROVE !== 'true') {

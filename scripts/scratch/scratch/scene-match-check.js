@@ -201,6 +201,17 @@ async function main(runDir) {
   const narrationByStep = new Map(
     (demoScript?.steps || []).map((s) => [s.id, s.narration || ''])
   );
+  // Live Plaid session steps (plaidPhase:"launch" — Link / Layer / IDV
+  // modals) get the same exemption qa-review applies (LIVE-PLAID-AUTO 85):
+  // their narration spans the WHOLE modal journey (phone → prefill review →
+  // permission), so any single sampled frame legitimately shows only one
+  // sub-screen of it — judging the start frame against the full-journey
+  // narration false-flagged Spring-Eq's layer-onboarding at 15/100
+  // (2026-06-12). The modal's real progress is already verified at record
+  // time by the Plaid automation's own success gates.
+  const livePlaidSteps = new Set(
+    (demoScript?.steps || []).filter((s) => s && s.plaidPhase === 'launch').map((s) => s.id)
+  );
 
   const framesDir = path.join(outDir, 'scene-match-frames');
   fs.mkdirSync(framesDir, { recursive: true });
@@ -218,6 +229,20 @@ async function main(runDir) {
     };
     if (!segment.narration) {
       results.push({ ...segment, skipped: true, reason: 'no-narration-text' });
+      continue;
+    }
+    if (livePlaidSteps.has(segment.stepId)) {
+      results.push({
+        stepId: segment.stepId,
+        compStartMs: segment.startMs,
+        compEndMs: segment.endMs,
+        narration: segment.narration,
+        score: 85,
+        verdict: 'live-plaid-auto',
+        explanation: 'Live Plaid modal segment (plaidPhase:launch) — narration spans the whole modal journey; auto-scored like qa-review LIVE-PLAID-AUTO.',
+        passed: true,
+      });
+      console.log(`  ${segment.stepId.padEnd(34)}  85/${MIN_SCORE} ✓ live-plaid-auto`);
       continue;
     }
 

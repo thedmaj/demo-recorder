@@ -10,7 +10,7 @@ use_cases:
   - "instant-account-verification"
   - "external-account-verification"
 last_human_review: "2026-03-12"
-last_ai_update: "2026-06-08T14:03:07.492Z"
+last_ai_update: "2026-06-12T19:33:55.001Z"
 needs_review: true
 approved: true
 version: 1
@@ -150,6 +150,12 @@ Key demo insight: despite the email mismatch (score 0), all other fields pass �
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-12 — Run: 2026-06-12-Ally-Bank-Auth-Identity-Signal-Transfer-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"No one else in the market can do what Plaid does when it comes to marrying KYC data with bank-held identity data at the funding source","source":"Priority Messaging — approved"}
+- [high] {"claim":"98%+ U.S. depository account coverage across 10,000+ FIs including long-tail fintechs — often 3–4x the coverage of traditional database solutions","source":"Priority Messaging — approved"}
+- [high] {"claim":"Single Plaid Link connection returns both Auth (account/routing) and Identity Match ownership signals, so platforms verify ownership and pull ACH rails in one flow","source":"Integration Skill + Priority Messaging"}
 
 ### 2026-06-08 — Run: 2026-06-08-Demo-Auth-Identity-v4 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

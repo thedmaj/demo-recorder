@@ -667,9 +667,11 @@
 
     // Recording-complete icon — the build has a finished screen recording when
     // the raw or processed capture exists; tooltip notes rendered-MP4 state.
-    const hasRecording = !!(r.artifacts && (r.artifacts.processed || r.artifacts.recording));
-    const recordingBadgeHtml = hasRecording
-      ? `<span class="build-card-badge rec-done demo-video-open-badge" data-run="${esc(runId)}" role="button" style="cursor:pointer" title="${esc(r.artifacts.mp4 ? 'Recording complete · final MP4 rendered — click to open in your video player' : 'Recording complete — click to open in your video player')}">🎥</span>`
+    // Badge gated on a NARRATED final render only (mp4 / MCP edit) — silent
+    // raw/processed captures are not openable videos.
+    const hasFinalVideo = !!(r.artifacts && (r.artifacts.mp4 || r.artifacts.mcpEdit));
+    const recordingBadgeHtml = hasFinalVideo
+      ? `<span class="build-card-badge rec-done demo-video-open-badge" data-run="${esc(runId)}" role="button" style="cursor:pointer" title="Final narrated video ready — click to open in your video player">🎥</span>`
       : '';
 
     const deleteBtn = `<button class="build-card-delete-btn" data-del-run-id="${esc(runId)}" data-del-display-name="${esc(displayName)}" title="Delete this demo build — removes ALL files for this run only">🗑</button>`;
@@ -5043,12 +5045,12 @@
 
       const qaBadge = _qaBadgesHtml(app);
       const buildBadge = _buildModeBadge(app);
-      // Recording-complete badge — the build has a finished screen recording
-      // (raw or processed webm in the run dir). Clicking opens the run's best
-      // video (final MP4 → processed → raw) in the OS default player.
-      const recBadge = app.hasRecording
+      // Final-video badge — shown ONLY when a NARRATED render exists
+      // (demo-scratch.mp4 / demo-mcp-edit.mp4). Raw/processed captures are
+      // silent and are deliberately not surfaced as openable videos.
+      const recBadge = app.hasFinalVideo
         ? `<span class="demo-video-open-badge" data-run="${esc(app.runId)}" role="button"
-                 title="${esc(app.hasFinalMp4 ? 'Recording complete · final MP4 rendered — click to open in your video player' : 'Recording complete — click to open in your video player')}"
+                 title="Final narrated video ready — click to open in your video player"
                  style="font-size:11px;padding:1px 6px;background:rgba(0,166,126,0.18);border-radius:3px;flex-shrink:0;cursor:pointer">🎥</span>`
         : '';
       const ownerBadge = app.owner && app.owner.login

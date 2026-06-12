@@ -720,6 +720,7 @@ function getRunArtifacts(runId) {
     qa:        !!getLatestQaReport(runId),
     voiceover: fileInfo('audio/voiceover.mp3'),
     mp4:       fileInfo('demo-scratch.mp4'),
+    mcpEdit:   fileInfo('demo-mcp-edit.mp4'),
     pptx:      fileInfo('demo-summary.pptx'),
     remotion:  fileInfo('remotion-props.json'),
   };
@@ -1056,9 +1057,12 @@ app.post('/api/runs/:runId/open-video', (req, res) => {
       return res.status(400).json({ error: 'invalid runId' });
     }
     const dir = getRunDir(runId);
-    const candidates = ['demo-scratch.mp4', 'demo-mcp-edit.mp4', 'recording-processed.webm', 'recording.webm'];
+    // FINAL narrated videos only (user contract 2026-06-12): never fall back
+    // to the silent raw/processed captures — the badge is only shown when a
+    // narrated render exists, and opening a mute webm reads as a bug.
+    const candidates = ['demo-scratch.mp4', 'demo-mcp-edit.mp4'];
     const file = candidates.find((f) => fs.existsSync(path.join(dir, f)));
-    if (!file) return res.status(404).json({ error: 'no video found for this run' });
+    if (!file) return res.status(404).json({ error: 'no final narrated video for this run — run the render stage first' });
     const full = path.join(dir, file);
     const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
     require('child_process').execFile(opener, [full], (err) => {
@@ -4554,11 +4558,15 @@ app.get('/api/demo-apps', (req, res) => {
       const promptExists =
         fs.existsSync(path.join(dir, 'inputs', 'prompt.txt')) ||
         fs.existsSync(path.join(dir, 'prompt.txt'));
-      // Recording-complete flags for the Demo Apps listing badge.
+      // Video flags for the Demo Apps listing badge. The badge is gated on
+      // hasFinalVideo (a NARRATED render: demo-scratch.mp4 or the MCP edit) —
+      // raw/processed captures are silent and must not be surfaced as
+      // openable videos (user contract 2026-06-12).
       const hasRecording =
         fs.existsSync(path.join(dir, 'recording-processed.webm')) ||
         fs.existsSync(path.join(dir, 'recording.webm'));
       const hasFinalMp4 = fs.existsSync(path.join(dir, 'demo-scratch.mp4'));
+      const hasFinalVideo = hasFinalMp4 || fs.existsSync(path.join(dir, 'demo-mcp-edit.mp4'));
       return {
         runId,
         displayName: resolveDemoDisplayName(runId, namesMap),
@@ -4570,6 +4578,7 @@ app.get('/api/demo-apps', (req, res) => {
         plaidLinkMode,
         hasRecording,
         hasFinalMp4,
+        hasFinalVideo,
         ...qaScores,
         qaPassed: (() => {
           const qa = getLatestQaReport(runId);

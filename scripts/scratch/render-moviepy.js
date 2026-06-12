@@ -170,7 +170,14 @@ async function main(opts = {}) {
     throw new Error(`remotion-props.json scratchDurationFrames invalid: ${props.scratchDurationFrames}`);
   }
   const compDurationSec = totalFrames / FPS;
-  const srcDur = videoDurationSec(recording);
+  // Stay 50ms (1.5 frames) inside the container duration: ffprobe's
+  // format.duration can exceed moviepy's internally-decoded duration by up to
+  // a frame (VP8@60 sources), and moviepy REJECTS subclip(end_time >=
+  // clip.duration) — "end_time (171.28) should be smaller or equal to the
+  // clip's duration (171.28)" persisted through a 1ms margin (TD Bank,
+  // 2026-06-12). Harmless: the EOF freeze-extend below compensates exactly,
+  // keeping the composition duration frame-perfect.
+  const srcDur = videoDurationSec(recording) - 0.05;
   const hasVoiceover = fs.existsSync(voiceover);
 
   const segments = buildSyncSegments(syncMap, totalFrames);
