@@ -557,6 +557,20 @@
       });
     });
 
+    // 🎥 badge click — open the run's best video in the OS default player.
+    content.querySelectorAll('.demo-video-open-badge').forEach(badge => {
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const runId = badge.dataset.run;
+        if (!runId) return;
+        try {
+          const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/open-video`, { method: 'POST' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) { alert(`Open failed: ${body.error || res.status}`); }
+        } catch (err) { alert(`Open failed: ${err.message}`); }
+      });
+    });
+
     // Wire up delete buttons (permanently removes the run dir — typed confirm)
     content.querySelectorAll('.build-card-delete-btn').forEach(btn => {
       btn.addEventListener('click', async (e) => {
@@ -655,7 +669,7 @@
     // the raw or processed capture exists; tooltip notes rendered-MP4 state.
     const hasRecording = !!(r.artifacts && (r.artifacts.processed || r.artifacts.recording));
     const recordingBadgeHtml = hasRecording
-      ? `<span class="build-card-badge rec-done" title="${esc(r.artifacts.mp4 ? 'Recording complete · final MP4 rendered' : 'Recording complete')}">🎥</span>`
+      ? `<span class="build-card-badge rec-done demo-video-open-badge" data-run="${esc(runId)}" role="button" style="cursor:pointer" title="${esc(r.artifacts.mp4 ? 'Recording complete · final MP4 rendered — click to open in your video player' : 'Recording complete — click to open in your video player')}">🎥</span>`
       : '';
 
     const deleteBtn = `<button class="build-card-delete-btn" data-del-run-id="${esc(runId)}" data-del-display-name="${esc(displayName)}" title="Delete this demo build — removes ALL files for this run only">🗑</button>`;
@@ -5029,6 +5043,14 @@
 
       const qaBadge = _qaBadgesHtml(app);
       const buildBadge = _buildModeBadge(app);
+      // Recording-complete badge — the build has a finished screen recording
+      // (raw or processed webm in the run dir). Clicking opens the run's best
+      // video (final MP4 → processed → raw) in the OS default player.
+      const recBadge = app.hasRecording
+        ? `<span class="demo-video-open-badge" data-run="${esc(app.runId)}" role="button"
+                 title="${esc(app.hasFinalMp4 ? 'Recording complete · final MP4 rendered — click to open in your video player' : 'Recording complete — click to open in your video player')}"
+                 style="font-size:11px;padding:1px 6px;background:rgba(0,166,126,0.18);border-radius:3px;flex-shrink:0;cursor:pointer">🎥</span>`
+        : '';
       const ownerBadge = app.owner && app.owner.login
         ? `<span title="Owner" style="font-size:10px;color:rgba(255,255,255,0.45);padding:2px 6px;background:rgba(255,255,255,0.05);border-radius:999px;border:1px solid rgba(255,255,255,0.1);flex-shrink:0">@${esc(app.owner.login)}</span>`
         : '';
@@ -5057,6 +5079,7 @@
         <div style="flex:1;min-width:0">
           <div class="demo-app-name-row" style="display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">
             <div class="demo-app-display-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_displayNameWithSuffix(app))}</div>
+            ${recBadge}
             ${qaBadge}
             ${buildBadge}
             ${ownerBadge}
@@ -5108,9 +5131,64 @@
                        title="Start a local Express server for this demo (auto-picks a free port from 3750+) and inject the AI-edit overlay. Returns a URL you can open in your browser.${app.source === 'remote' ? ' For Remote demos, first click stages a local copy from ~/.plaid-demo-apps into out/demos/.' : ''}"
                        style="padding:5px 14px;background:#00A67E;border:none;border-radius:5px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Launch</button>`
           }
+          ${app.source !== 'remote'
+            ? `<button class="demo-app-delete-btn" data-run="${esc(app.runId)}" data-display-name="${esc(app.displayName || app.runId)}"
+                       title="Delete this demo build — permanently removes ALL files for this run only (recordings, renders, QA reports, scripts). Cannot be undone."
+                       style="padding:5px 10px;background:transparent;border:1px solid rgba(239,68,68,0.35);border-radius:5px;color:rgba(239,68,68,0.8);font-size:12px;cursor:pointer">🗑</button>`
+            : ''
+          }
         </div>
       `;
       list.appendChild(card);
+    });
+
+    // 🎥 badge click — open the run's best video in the OS default player.
+    list.querySelectorAll('.demo-video-open-badge').forEach(badge => {
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const runId = badge.dataset.run;
+        if (!runId) return;
+        try {
+          const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/open-video`, { method: 'POST' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) { showToast(`Open failed: ${body.error || res.status}`, 'error'); return; }
+          showToast(`Opening ${body.opened} in your video player`, 'success');
+        } catch (err) {
+          showToast(`Open failed: ${err.message}`, 'error');
+        }
+      });
+    });
+
+    // Delete demo build — permanently removes the run dir (typed confirm).
+    // Server refuses while a pipeline is actively running the run (HTTP 409).
+    list.querySelectorAll('.demo-app-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const runId = btn.dataset.run;
+        const displayName = btn.dataset.displayName || runId;
+        if (!runId) return;
+        const typed = window.prompt(
+          `Permanently delete "${displayName}" and ALL of its files?\n\n` +
+          `This removes the entire build directory (recordings, renders, QA reports, scripts) for this demo only. It cannot be undone.\n\n` +
+          `Type DELETE to confirm:`
+        );
+        if (typed !== 'DELETE') return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(`Delete failed: ${body.error || res.status}`, 'error');
+            btn.disabled = false;
+            return;
+          }
+          showToast(`Deleted ${displayName}`, 'success');
+          loadDemoApps(true);
+        } catch (err) {
+          showToast(`Delete failed: ${err.message}`, 'error');
+          btn.disabled = false;
+        }
+      });
     });
 
     // Copy PID — copies the run ID to the clipboard. The label deliberately

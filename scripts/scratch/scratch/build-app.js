@@ -3869,13 +3869,26 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     });
   })`
     );
+    // Variable-agnostic guard (2026-06-12): the old guard hard-coded `token`
+    // and `data` variable names — builds whose handler factory used a
+    // different param (Cox fullbuild: createHandler(linkToken)) had NEITHER
+    // in scope, so the guard always fired and its console.error dereferenced
+    // bare `data` → ReferenceError swallowed by the fetch .catch as
+    // "create-link-token failed undefined undefined", and the handler was
+    // never created ("handler not ready after wait"). Capture the ACTUAL
+    // token expression from Plaid.create and evaluate it inside try/catch so
+    // the guard can never throw regardless of the generated variable names.
     html = html.replace(
-      /window\._plaidHandler\s*=\s*Plaid\.create\(\{/,
-      `if (((typeof token !== 'undefined') ? !token : true) && (typeof data === 'undefined' || !data || !data.link_token)) {
-      console.error('Failed to create link token: missing link_token in response', data);
+      /window\._plaidHandler\s*=\s*Plaid\.create\(\{\s*token\s*:\s*([^,\n}]+)/,
+      (m, tokenExpr) => {
+        const expr = tokenExpr.trim();
+        return `var __plaidLinkTok; try { __plaidLinkTok = ${expr}; } catch (_) { __plaidLinkTok = undefined; }
+    if (!__plaidLinkTok) {
+      console.error('Failed to create link token: token expression is empty/unavailable');
       return;
     }
-    window._plaidHandler = Plaid.create({`
+    window._plaidHandler = Plaid.create({ token: __plaidLinkTok`;
+      }
     );
     if (html !== before) {
       console.log('[Build] Hardened Plaid token bootstrap (HTTP/error-aware + link_token guard)');
