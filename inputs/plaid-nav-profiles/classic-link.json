@@ -1,0 +1,321 @@
+{
+  "profileVersion": 1,
+  "experience": "classic-link",
+  "flowType": "link",
+  "surface": "modal",
+  "description": "Standard Plaid Link modal: phone/Remember-Me prologue, then either saved-institution shortcut (phone +14155550011) or full search → credentials → account select → confirm. Selectors confirmed end-to-end 2026-03-10 (inputs/plaid-link-nav-learnings.md).",
+  "credentials": {
+    "phone": "+14155550011",
+    "otp": "123456",
+    "username": "user_good",
+    "password": "pass_good",
+    "institutionId": "ins_109508",
+    "institutionName": "First Platypus Bank",
+    "mfaOtp": "1234"
+  },
+  "pacingDefaults": {
+    "readWpm": 220,
+    "interKeyMs": [
+      80,
+      150
+    ],
+    "passwordInterKeyMs": [
+      100,
+      180
+    ],
+    "numericInterKeyMs": [
+      120,
+      220
+    ],
+    "preClickMs": [
+      300,
+      900
+    ],
+    "consentPreClickMs": [
+      600,
+      1200
+    ],
+    "settleMs": [
+      250,
+      600
+    ]
+  },
+  "screens": [
+    {
+      "id": "phone-entry",
+      "detect": {
+        "label": "phone",
+        "selector": "input[type='tel']"
+      },
+      "typicalWordCount": 90,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1228,
+        "p90TransitionMs": 1563,
+        "samples": 6,
+        "recent": [
+          1310,
+          1228,
+          1118,
+          1230,
+          1121,
+          1563
+        ]
+      },
+      "markPlaidStep": "phone-submitted",
+      "notes": "Plaid does NOT auto-submit on fill — click Continue explicitly. 'Continue without phone number' skips Remember Me entirely."
+    },
+    {
+      "id": "otp-screen",
+      "detect": {
+        "label": "mfa",
+        "selector": "input[inputmode='numeric']"
+      },
+      "typicalWordCount": 35,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1261,
+        "p90TransitionMs": 2156,
+        "samples": 6,
+        "recent": [
+          2156,
+          1262,
+          1275,
+          1261,
+          7,
+          4
+        ]
+      },
+      "markPlaidStep": "otp-screen",
+      "notes": "Single text input (inputmode=numeric), auto-advances ~1s after fill. Chunk pause after digit 3–4 is the key human tell here."
+    },
+    {
+      "id": "saved-institution-list",
+      "detect": {
+        "label": "search",
+        "selector": "ul li",
+        "notTextProbe": "Select an account",
+        "generic": true
+      },
+      "typicalWordCount": 30,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 8522,
+        "p90TransitionMs": 13300,
+        "samples": 4,
+        "recent": [
+          8522,
+          8542,
+          13300,
+          6588
+        ]
+      },
+      "optional": true,
+      "markPlaidStep": "institution-list-shown",
+      "notes": "Remember Me branch (phone +14155550011). 500ms pre-click pause is load-bearing in fast mode; human mode uses scanList. Avoid Chase ins_56 (OAuth)."
+    },
+    {
+      "id": "consent",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Continue')",
+        "generic": true
+      },
+      "typicalWordCount": 90,
+      "pacing": {
+        "readDwellMs": [
+          2000,
+          3500
+        ],
+        "preClickMs": [
+          600,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 314,
+        "p90TransitionMs": 326,
+        "samples": 2,
+        "recent": [
+          326,
+          314
+        ]
+      },
+      "optional": true
+    },
+    {
+      "id": "institution-search",
+      "detect": {
+        "label": "search",
+        "selector": "input[placeholder*='Search' i]"
+      },
+      "typicalWordCount": 20,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "notes": "Type institution name at text cadence; pause 400–800ms after results render before clicking (replaces the fixed 2s wait)."
+    },
+    {
+      "id": "credentials",
+      "detect": {
+        "label": "credentials",
+        "selector": "input[type='password']"
+      },
+      "typicalWordCount": 28,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "notes": "user_good/pass_good. Username via text cadence, password via password cadence, brief settle between fields."
+    },
+    {
+      "id": "account-select",
+      "detect": {
+        "label": "accounts",
+        "selector": "li[role='listitem'], [role='radio'], input[type='radio']",
+        "textProbeAny": [
+          "Select an account",
+          "Select account",
+          "account you select"
+        ]
+      },
+      "typicalWordCount": 78,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 312,
+        "p90TransitionMs": 328,
+        "samples": 4,
+        "recent": [
+          315,
+          312,
+          328,
+          308
+        ]
+      },
+      "notes": "li[role=listitem] is the clickable element — Plaid hides the checkbox input."
+    },
+    {
+      "id": "confirm",
+      "detect": {
+        "label": "accounts",
+        "selector": "button:has-text('Confirm')",
+        "generic": true
+      },
+      "typicalWordCount": 40,
+      "pacing": {
+        "readDwellMs": [
+          1500,
+          2800
+        ],
+        "preClickMs": [
+          600,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "markPlaidStep": "confirm-clicked",
+      "notes": "Terminal CTA variants: Confirm / Link account / Continue / Share / Done / button[type=submit]. Calibration: action merged into account-select (same pane).",
+      "optional": true
+    },
+    {
+      "id": "save-with-plaid",
+      "detect": {
+        "label": "unknown",
+        "selector": "button:has-text('Finish without saving')",
+        "generic": true
+      },
+      "typicalWordCount": 30,
+      "pacing": {
+        "readDwellMs": [
+          900,
+          1500
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "notes": "Auto-dismissed; keep dismissal quick — it is not a story beat."
+    },
+    {
+      "id": "success",
+      "detect": {
+        "label": "success",
+        "selector": null
+      },
+      "typicalWordCount": 12,
+      "pacing": {
+        "readDwellMs": [
+          900,
+          1500
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 250,
+        "p90TransitionMs": 10031,
+        "samples": 7,
+        "recent": [
+          9091,
+          9378,
+          10031,
+          53,
+          57,
+          250,
+          48
+        ]
+      },
+      "markPlaidStep": "link-complete"
+    }
+  ],
+  "verifiedRuns": 7,
+  "lastVerifiedAt": "2026-06-12T20:56:22.844Z",
+  "lastBrokenAt": "2026-06-12T18:33:38.564Z",
+  "knowledgeConfidence": 0.95
+}

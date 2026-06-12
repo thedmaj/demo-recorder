@@ -89,6 +89,11 @@ Full reference: [`inputs/plaid-link-sandbox.md`](inputs/plaid-link-sandbox.md). 
   `user_bank_income` (that is **Bank Income** — see [`inputs/products/plaid-bank-income.md`](inputs/products/plaid-bank-income.md))
 - IDV persona: Leslie Knope — see `inputs/plaid-link-sandbox.md § 5`
 - Always skip the Remember Me phone screen via "Continue without phone number"
+- **Human-like nav pacing is the DEFAULT** (`PLAID_NAV_STYLE=human`; `fast` = legacy machine
+  speed). Per-experience screen graphs + pacing live in `inputs/plaid-nav-profiles/*.json`
+  (classic-link, embedded-link, layer, cra-link, idv); calibrate with
+  `node scripts/test-plaid-nav-calibrate.js --experience=<x> --app=out/demos/<run>`.
+  Post-process cut preset: `PLAID_CUT_PRESET=tight|relaxed|natural` (default tight).
 
 ---
 
@@ -115,6 +120,7 @@ referenced by path; new skills go in `.claude/skills/`.)
 | Embedded Link UX / pre-link host UI | [`skills/plaid-link-embedded-link-skill.md`](skills/plaid-link-embedded-link-skill.md), [`skills/plaid-link-prelink-ui-skill.md`](skills/plaid-link-prelink-ui-skill.md) |
 | Plaid Transfer (funding / disbursement / ledger / Fund & Protect) | [`plaid-transfer`](.claude/skills/plaid-transfer/SKILL.md) |
 | Per-product API shapes, gotchas, Link products, endpoints | [`inputs/products/*.md`](inputs/products/) (one file per product) |
+| Human-like Plaid nav pacing: per-experience screen graphs, pacing params, observed sandbox latencies (p50/p90), calibration + feedback loop | [`inputs/plaid-nav-profiles/*.json`](inputs/plaid-nav-profiles/) + `scripts/scratch/utils/human-pacing.js` / `plaid-nav-profile.js` / `plaid-nav-feedback.js` + `scripts/test-plaid-nav-calibrate.js` |
 
 ### Per-product quick map (`inputs/products/*.md`)
 

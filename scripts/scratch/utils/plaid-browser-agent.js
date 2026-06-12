@@ -167,7 +167,11 @@ const SANDBOX_CREDS = {
    * For credential-flow demos: click "I'd rather log in manually".
    */
   layer: {
-    phone:    '+14155550000',
+    // +14155550011 = ELIGIBLE → LAYER_READY (verified live: Mar 10 2026 batch
+    // + Spring-Eq calibration 2026-06-12). +14155550000 is the INELIGIBLE test
+    // number (LAYER_NOT_AVAILABLE) — kept only for failure-path testing.
+    phone:           '+14155550011',
+    ineligiblePhone: '+14155550000',
     otp:      '123456',
     skipText: "I'd rather log in manually",
     notes: 'Layer uses phone passkey. Skip to manual login for credential-flow demos.',
@@ -460,14 +464,27 @@ async function visionClick(page, intent, { retries = 2, waitAfterMs = 1000 } = {
  * @param {{ waitAfterMs?: number }} opts
  * @returns {Promise<boolean>}
  */
-async function visionType(page, intent, text, { waitAfterMs = 500 } = {}) {
+// Optional human-pacing engine, injected by record-local.js (setNavPacer).
+// Null → all typing/waits use the original constants.
+let _navPacer = null;
+function setNavPacer(pacer) { _navPacer = pacer || null; }
+
+async function visionType(page, intent, text, { waitAfterMs = 500, kind = 'text' } = {}) {
   const result = await screenshotAndFind(page, intent);
   if (result.found && result.x && result.y) {
     await page.mouse.click(result.x, result.y);
     await page.waitForTimeout(200);
     // Clear any existing value then type
     await page.keyboard.press('Meta+a');
-    await page.keyboard.type(text, { delay: 40 });
+    if (_navPacer && _navPacer.isHuman) {
+      // Human cadence: jittered per-keystroke delays from the nav pacer
+      for (const ch of String(text)) {
+        await page.keyboard.type(ch);
+        await page.waitForTimeout(_navPacer.interKeyDelayMs(kind));
+      }
+    } else {
+      await page.keyboard.type(text, { delay: 40 });
+    }
     console.log(`  [BrowserAgent] ✓ Typed "${text}" at (${result.x},${result.y}) — ${result.description}`);
     if (waitAfterMs) await page.waitForTimeout(waitAfterMs);
     return true;
@@ -1002,6 +1019,7 @@ module.exports = {
   SANDBOX_INSTITUTIONS,
   resolveSandboxCredentials,
   queryGleanPlaidDocs,
+  setNavPacer,
 
   // Vision primitives
   findWithVision,

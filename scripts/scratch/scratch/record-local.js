@@ -32,6 +32,8 @@ const agent          = require('../utils/plaid-browser-agent');
 const { executeSmartPlaidPhase } = require('../utils/smart-plaid-agent');
 const { loadRecipe: loadPlaidRecipe, executeRecipe: executePlaidRecipe } = require('../utils/plaid-recipe-executor');
 const { inferProductFamily } = require('../utils/product-profiles');
+const { createPacer } = require('../utils/human-pacing');
+const navProfile = require('../utils/plaid-nav-profile');
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -108,6 +110,39 @@ const STEP_TRANSITION_SETTLE_MS = parseInt(process.env.STEP_TRANSITION_SETTLE_MS
 const POST_LINK_STEP_BOUNDARY_GUARD_MS = parseInt(process.env.POST_LINK_STEP_BOUNDARY_GUARD_MS || '700', 10);
 const RECORD_POSTPROCESS_TIMEOUT_MS = parseInt(process.env.RECORD_POSTPROCESS_TIMEOUT_MS || '360000', 10);
 const RECORD_POSTPROCESS_MAX_RETRIES = parseInt(process.env.RECORD_POSTPROCESS_MAX_RETRIES || '1', 10);
+
+// Human-pacing engine (PLAID_NAV_STYLE=human|fast). DEFAULT IS 'human' as of
+// 2026-06-12 — validated across classic/CRA/Layer/IDV/embedded (QA 84–95);
+// set PLAID_NAV_STYLE=fast to reproduce the pre-pacer machine-speed constants
+// exactly (byte-identical fast path, verified by checkpoint regression).
+// Initialized in main() once the flow type and nav profile are known;
+// getPacer() lazily provides a profile-less pacer for earlier call paths.
+const PLAID_NAV_STYLE_DEFAULT = 'human';
+let _pacer = null;
+function getPacer() {
+  if (!_pacer) _pacer = createPacer({ style: process.env.PLAID_NAV_STYLE || PLAID_NAV_STYLE_DEFAULT });
+  return _pacer;
+}
+// Iframe-relative interaction coords (data for the future pointer-overlay
+// phase — written to plaid-interactions.json, never rendered today).
+const plaidInteractions = [];
+async function recordPlaidInteraction(page, locator, screenId) {
+  try {
+    const box = await locator.boundingBox({ timeout: 800 });
+    if (!box || !recordingStartMs) return;
+    const iframeEl = page.locator(PLAID_IFRAME_SELECTOR).first();
+    const ibox = await iframeEl.boundingBox({ timeout: 800 }).catch(() => null);
+    plaidInteractions.push({
+      screenId: screenId || null,
+      t: (Date.now() - recordingStartMs) / 1000,
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2,
+      frameRelative: !!ibox,
+      frameX: ibox ? box.x - ibox.x + box.width / 2 : null,
+      frameY: ibox ? box.y - ibox.y + box.height / 2 : null,
+    });
+  } catch (_) { /* best-effort — data capture only */ }
+}
 
 // Resolved sandbox credentials (populated in main() after async Glean lookup)
 let _sandboxCredentials = null;
@@ -409,7 +444,11 @@ async function plaidWaitForTransition(page, timeoutMs = 8000, dwell = PLAID_SCRE
     before,
     { timeout: timeoutMs, polling: 100 }
   ).catch(() => null);
-  if (dwell > 0) await page.waitForTimeout(dwell);
+  // Human style: content-proportional read dwell replaces the uniform constant.
+  const resolvedDwell = getPacer().isHuman
+    ? getPacer().screenDwellMs({ fallbackMs: dwell })
+    : dwell;
+  if (resolvedDwell > 0) await page.waitForTimeout(resolvedDwell);
 }
 
 /**
@@ -488,9 +527,14 @@ async function plaidSelectSavedInstitution(page, otpSubmittedWallMs = null) {
   }
   markPlaidStep('institution-list-shown', page);
 
-  // Dwell 2 seconds so the viewer sees the institution list before selection.
+  // Dwell so the viewer sees the institution list before selection.
   // Do NOT scroll — Tartan Bank is always visible at the top of the list.
-  await page.waitForTimeout(2000);
+  // Human style: visual-search scan dwell; fast: the original fixed 2s.
+  if (getPacer().isHuman) {
+    await getPacer().scanList(page, 5, 'saved-institution-list');
+  } else {
+    await page.waitForTimeout(2000);
+  }
 
   const plaidFrame = page.frames().find(f => f.url().includes('cdn.plaid.com') || f.url().includes('plaid.com'));
   if (!plaidFrame) return null;
@@ -852,7 +896,10 @@ async function plaidLinkWaitSuccess(page) {
     console.warn('[Record] WARNING: window.getCurrentStep not defined — DOM contract violation. Will wait for _plaidLinkComplete only, which may advance recording prematurely.');
   }
 
-  const TIMEOUT_MS = 90000;  // 90s — accommodates Remember Me flow (onSuccess fires late)
+  // 90s — accommodates Remember Me flow (onSuccess fires late). Human pacing
+  // extends the budget by the dwell it added, so the 25s-remaining deterministic
+  // fallback can never fire mid-dwell.
+  const TIMEOUT_MS = 90000 + (getPacer().isHuman ? getPacer().dwellBudgetMs() : 0);
   // Intermediate step IDs that indicate Link is still in progress
   const PLAID_LINK_INTERMEDIATE_STEPS = [
     'step-link-consent', 'step-link-otp', 'step-link-account-select',
@@ -1117,17 +1164,31 @@ async function executeLayerOrIdvLaunch(page, product) {
 
   // 3. Optional vision navigation of the modal screens (best effort).
   if (modalLoaded && USE_BROWSER_AGENT) {
+    // Human style: per-iteration wait becomes a read dwell from the product's
+    // nav profile (layer/idv) instead of the uniform 1.8s.
+    const productPacer = getPacer().isHuman
+      ? createPacer({
+          style: 'human',
+          seed: path.basename(OUT_DIR),
+          profile: navProfile.resolveProfile({ product }),
+          getScreenPacing: navProfile.getScreenPacing,
+        })
+      : null;
     for (let i = 0; i < 6; i++) {
       const done = await page.evaluate((f) => window[f] === true, doneFlag).catch(() => false);
       if (done) break;
+      const waitAfterMs = productPacer ? productPacer.screenDwellMs({ fallbackMs: 1800 }) : 1800;
       await agent.visionClick(
         page,
         'Inside the Plaid modal, click the primary action button to proceed — it may say ' +
         '"Continue", "Allow", "Agree", "Share", "Submit", "Get started", "Take photo", or "Done". ' +
         'Click only inside the Plaid modal/sheet, not the host page behind it.',
-        { retries: 2, waitAfterMs: 1800 }
+        { retries: 2, waitAfterMs }
       ).catch(() => {});
     }
+    // Fold the product pacer's dwell ledger into the main manifest so
+    // plaid-pacing-manifest.json covers Layer/IDV launches too.
+    if (productPacer) getPacer().absorb(productPacer);
   }
 
   // 4. Wait for the product completion flag (best effort — recording proceeds regardless).
@@ -1321,6 +1382,14 @@ async function executePlaidLinkPhase(page, phase) {
               plaidIframeSelector: PLAID_IFRAME_SELECTOR,
               markPlaidStep,
               runDir: process.env.PIPELINE_RUN_DIR || null,
+              // Human style: profile pacing overrides recipe dwell constants
+              // (before = pre-click hesitation, after = read/settle dwell).
+              // fast → null → raw recipe constants, unchanged.
+              pacingResolver: getPacer().isHuman
+                ? ({ screen, phase, defaultMs }) => (phase === 'before'
+                    ? Math.max(defaultMs, getPacer().hesitateMs('primary', screen.id))
+                    : getPacer().screenDwellMs({ screenId: screen.id, fallbackMs: defaultMs }))
+                : null,
               hooks: {
                 visionFallback: async ({ page: p, screenId, actionType, hint }) => {
                   if (actionType !== 'click') return null;
@@ -1364,7 +1433,24 @@ async function executePlaidLinkPhase(page, phase) {
             // Requirement: keep initial Plaid Link screen visible ~3s before continuing.
             await page.waitForTimeout(3000);
             const phone = _sandboxConfig?.phone || '+14155550011';
-            await phoneInput.fill(phone);
+            await recordPlaidInteraction(page, phoneInput, 'phone-entry');
+            await getPacer().humanType(phoneInput, phone, { kind: 'numeric', screenId: 'phone-entry' });
+            if (getPacer().isHuman) {
+              // Keystroke entry can be mangled by the input mask (and does not
+              // trigger Plaid's fill-based auto-submit). Verify the digits; on
+              // mismatch fall back to fill(), then click Continue explicitly.
+              const wantDigits = phone.replace(/\D/g, '').slice(-10);
+              const gotDigits = (await phoneInput.inputValue().catch(() => '')).replace(/\D/g, '');
+              if (!gotDigits.endsWith(wantDigits)) {
+                console.log('  [Plaid Link] human-typed phone mangled by mask — falling back to fill()');
+                await phoneInput.fill(phone).catch(() => {});
+              }
+              const phoneCont = frame.locator('button[type="submit"], button:has-text("Continue")').first();
+              if (await phoneCont.isVisible({ timeout: 2000 }).catch(() => false)) {
+                await getPacer().hesitate(page, 'primary', 'phone-entry');
+                await phoneCont.click({ force: true, timeout: 3000 }).catch(() => {});
+              }
+            }
             await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
             markPlaidStep('phone-submitted', page);
             console.log('  [Plaid Link] Phone filled — auto-submitted');
@@ -1391,11 +1477,22 @@ async function executePlaidLinkPhase(page, phase) {
           for (const otpSel of otpSelectors) {
             const otpInput = frame.locator(otpSel).first();
             if (await otpInput.isVisible({ timeout: otpSel.includes('inputmode') ? 8000 : 2000 }).catch(() => false)) {
+              // Guard: 'input[type=tel]' also matches the PHONE input. If the
+              // candidate already holds ≥7 digits it's the filled phone field
+              // (pane didn't advance) — not an OTP box. Try the next selector.
+              const existing = (await otpInput.inputValue().catch(() => '')).replace(/\D/g, '');
+              if (existing.length >= 7) {
+                console.log(`  [Plaid Link] "${otpSel}" matches the filled phone input — not an OTP box, skipping`);
+                continue;
+              }
               markPlaidStep('otp-screen', page);
               const otp = _sandboxConfig?.otp || '123456';
               // Requirement: simulate human typing (~1–2s) + 1s pause.
               await otpInput.click({ force: true, timeout: 3000 }).catch(() => {});
-              const typed = await otpInput.pressSequentially(String(otp), { delay: 220 }).then(() => true).catch(() => false);
+              await recordPlaidInteraction(page, otpInput, 'otp-screen');
+              const typed = await getPacer().humanType(otpInput, String(otp), {
+                kind: 'numeric', screenId: 'otp-screen', fastDelayMs: 220,
+              }).then(() => true).catch(() => false);
               if (!typed) await otpInput.fill(String(otp)).catch(() => {});
               await page.waitForTimeout(1000);
               markPlaidStep('otp-filled');
@@ -1445,6 +1542,8 @@ async function executePlaidLinkPhase(page, phase) {
             for (const label of ['Get started', 'I agree', 'Agree', 'Continue', 'Next']) {
               const btn = frame.getByRole('button', { name: label, exact: false }).first();
               if (await btn.isVisible({ timeout: 4000 }).catch(() => false)) {
+                await getPacer().hesitate(page, 'consent', 'consent');
+                await recordPlaidInteraction(page, btn, 'consent');
                 await btn.click();
                 await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
                 console.log(`  [Plaid Link] Consent: clicked "${label}"`);
@@ -1479,7 +1578,7 @@ async function executePlaidLinkPhase(page, phase) {
               const timeout = si === 0 ? searchFirstTimeout : searchFallbackTimeout;
               const input = frame.locator(sel).first();
               if (await input.isVisible({ timeout }).catch(() => false)) {
-                await input.fill(PLAID_SANDBOX_INSTITUTION);
+                await getPacer().humanType(input, PLAID_SANDBOX_INSTITUTION, { kind: 'text', screenId: 'institution-search' });
                 await plaidWaitForTransition(page, 5000, PLAID_SCREEN_DWELL_MS);
                 console.log(`  [Plaid Link] Institution search via: ${sel} (timeout=${timeout}ms)`);
                 searchDone = true;
@@ -1493,6 +1592,8 @@ async function executePlaidLinkPhase(page, phase) {
             let institutionSelected = false;
             const byText = frame.getByText(PLAID_SANDBOX_INSTITUTION, { exact: false }).first();
             if (await byText.isVisible({ timeout: 6000 }).catch(() => false)) {
+              await getPacer().scanList(page, 6, 'institution-search');
+              await recordPlaidInteraction(page, byText, 'institution-search');
               await byText.click();
               await plaidWaitForTransition(page, 8000, PLAID_SCREEN_DWELL_MS);
               console.log(`  [Plaid Link] Institution selected by text: "${PLAID_SANDBOX_INSTITUTION}"`);
@@ -1550,7 +1651,7 @@ async function executePlaidLinkPhase(page, phase) {
           for (const sel of ['input[name="username"]', 'input[id*="username" i]', 'input[type="text"]:first-of-type']) {
             const el = frame.locator(sel).first();
             if (await el.isVisible({ timeout: 6000 }).catch(() => false)) {
-              await el.fill(creds.username || PLAID_SANDBOX_USERNAME);
+              await getPacer().humanType(el, creds.username || PLAID_SANDBOX_USERNAME, { kind: 'text', screenId: 'credentials' });
               console.log(`  [Plaid Link] Username filled via: ${sel}`);
               break;
             }
@@ -1559,7 +1660,7 @@ async function executePlaidLinkPhase(page, phase) {
           for (const sel of ['input[name="password"]', 'input[type="password"]']) {
             const el = frame.locator(sel).first();
             if (await el.isVisible({ timeout: 3000 }).catch(() => false)) {
-              await el.fill(creds.password || PLAID_SANDBOX_PASSWORD);
+              await getPacer().humanType(el, creds.password || PLAID_SANDBOX_PASSWORD, { kind: 'password', screenId: 'credentials' });
               console.log(`  [Plaid Link] Password filled via: ${sel}`);
               break;
             }
@@ -1568,6 +1669,8 @@ async function executePlaidLinkPhase(page, phase) {
           for (const sel of ['button[type="submit"]', 'button:has-text("Submit")', 'button:has-text("Log in")', 'button:has-text("Sign in")']) {
             const btn = frame.locator(sel).first();
             if (await btn.isVisible({ timeout: 3000 }).catch(() => false)) {
+              await getPacer().hesitate(page, 'primary', 'credentials');
+              await recordPlaidInteraction(page, btn, 'credentials');
               await btn.click();
               await plaidWaitForTransition(page, 12000, PLAID_SCREEN_DWELL_MS);
               console.log(`  [Plaid Link] Credentials submitted via: ${sel}`);
@@ -1601,6 +1704,8 @@ async function executePlaidLinkPhase(page, phase) {
           for (const sel of ['li[role="listitem"]', '[role="radio"]', 'input[type="radio"]']) {
             const el = frame.locator(sel).first();
             if (await el.isVisible({ timeout: 6000 }).catch(() => false)) {
+              await getPacer().scanList(page, 3, 'account-select');
+              await recordPlaidInteraction(page, el, 'account-select');
               await el.click({ force: true });
               console.log(`  [Plaid Link] Account row selected via: ${sel}`);
               await page.waitForTimeout(1000);
@@ -1610,6 +1715,8 @@ async function executePlaidLinkPhase(page, phase) {
           for (const sel of ['button:has-text("Continue")', 'button:has-text("Confirm")', 'button:has-text("Link account")', 'button:has-text("Share")', 'button[type="submit"]']) {
             const btn = frame.locator(sel).first();
             if (await btn.isVisible({ timeout: 8000 }).catch(() => false)) {
+              await getPacer().hesitate(page, 'consent', 'confirm');
+              await recordPlaidInteraction(page, btn, 'confirm');
               try {
                 await btn.click({ timeout: 5000 });
               } catch (_) {
@@ -1766,10 +1873,19 @@ async function executePlaidLinkPhase(page, phase) {
           for (const otpSel of cssOtpSelectors) {
             const otpEl = frame.locator(otpSel).first();
             if (await otpEl.isVisible({ timeout: otpSel.includes('inputmode') ? 8000 : 2000 }).catch(() => false)) {
+              // Guard: a candidate already holding ≥7 digits is the filled
+              // phone field, not an OTP box (see vision-path note).
+              const cssExisting = (await otpEl.inputValue().catch(() => '')).replace(/\D/g, '');
+              if (cssExisting.length >= 7) {
+                console.log(`  [Plaid Link] CSS: "${otpSel}" matches the filled phone input — skipping`);
+                continue;
+              }
               const otp = _sandboxConfig?.otp || '123456';
               // Requirement: simulate human typing (~1–2s) + 1s pause.
               await otpEl.click({ force: true, timeout: 3000 }).catch(() => {});
-              const typed = await otpEl.pressSequentially(String(otp), { delay: 220 }).then(() => true).catch(() => false);
+              const typed = await getPacer().humanType(otpEl, String(otp), {
+                kind: 'numeric', screenId: 'otp-screen', fastDelayMs: 220,
+              }).then(() => true).catch(() => false);
               if (!typed) await otpEl.fill(String(otp)).catch(() => {});
               await page.waitForTimeout(1000);
               let otpSent = false;
@@ -2028,6 +2144,32 @@ function writeStepTiming(totalMs) {
     const plaidTimingFile = path.join(OUT_DIR, 'plaid-link-timing.json');
     fs.writeFileSync(plaidTimingFile, JSON.stringify(plaidTimingArr, null, 2));
     console.log(`[Record] Wrote plaid-link-timing.json (${plaidTimingArr.length} checkpoints)`);
+  }
+
+  // Human-pacing manifest (read by post-process cut presets + nav feedback loop)
+  if (_pacer && _pacer.isHuman) {
+    const manifestFile = path.join(OUT_DIR, 'plaid-pacing-manifest.json');
+    fs.writeFileSync(manifestFile, JSON.stringify(_pacer.manifest(), null, 2));
+    console.log(`[Record] Wrote plaid-pacing-manifest.json (+${Math.round(_pacer.dwellBudgetMs() / 1000)}s human dwell)`);
+  }
+
+  // Iframe-relative interaction coords (future pointer-overlay phase — data only)
+  if (plaidInteractions.length > 0) {
+    fs.writeFileSync(path.join(OUT_DIR, 'plaid-interactions.json'), JSON.stringify(plaidInteractions, null, 2));
+    console.log(`[Record] Wrote plaid-interactions.json (${plaidInteractions.length} interactions)`);
+  }
+
+  // Continuous-learning loop: fold observed transitions back into the nav profile.
+  if (plaidKeys.length > 0) {
+    try {
+      const { recordNavFeedback } = require('../utils/plaid-nav-feedback');
+      recordNavFeedback({
+        runDir: OUT_DIR,
+        completed: plaidLinkTimings['link-complete'] != null,
+      });
+    } catch (err) {
+      console.warn(`[Record] nav-feedback skipped: ${err.message}`);
+    }
   }
 }
 
@@ -2471,6 +2613,16 @@ async function main(opts = {}) {
     stepLabelMap[step.id] = step.label;
     if (step.plaidPhase) plaidPhaseMap[step.id] = step.plaidPhase;
   }
+  // When the demo-script declares ANY explicit plaidPhase metadata it is
+  // AUTHORITATIVE — disable the regex/click-target phase heuristics entirely
+  // (2026-06-12). The fallbacks exist only for legacy scripts without
+  // plaidPhase fields; with metadata present they HIJACK host steps whose ids
+  // or targets merely sound Plaid-ish: Ascend "application-consent" matched a
+  // link-phase pattern → live-override path skipped the step's dwell+click
+  // (1s window, frames stuck on the prior slide, QA 10/100); Gringo
+  // "host-link-bank" was similarly at risk via the click-target launch regex.
+  const hasExplicitPlaidPhases = Object.keys(plaidPhaseMap).length > 0;
+  const phaseForStep = (id) => plaidPhaseMap[id] || (hasExplicitPlaidPhases ? null : matchPlaidLinkPhase(id));
 
   console.log(`[Record] Loaded playwright-script.json: ${playwrightScript.steps.length} steps`);
   console.log(`[Record] Product: ${demoScript.product}`);
@@ -2518,6 +2670,21 @@ async function main(opts = {}) {
     }
     console.log(`[Record] Resolving Plaid sandbox credentials (flow: ${flowType})...`);
     _sandboxCredentials = await agent.resolveSandboxCredentials(flowType);
+    // Initialize the human-pacing engine with the flow's nav profile.
+    // Default 'human'; PLAID_NAV_STYLE=fast reproduces pre-pacer behavior exactly.
+    const navStyle = process.env.PLAID_NAV_STYLE || PLAID_NAV_STYLE_DEFAULT;
+    const profileForFlow = navProfile.resolveProfile({
+      flowType,
+      embedded: _plaidLinkMode === 'embedded',
+    });
+    _pacer = createPacer({
+      style: navStyle,
+      seed: path.basename(OUT_DIR),
+      profile: profileForFlow,
+      getScreenPacing: navProfile.getScreenPacing,
+    });
+    console.log(`[Record] Nav pacing: style=${navStyle}${profileForFlow ? `, profile=${profileForFlow.experience}` : ' (no profile — engine defaults)'}`);
+    agent.setNavPacer(_pacer); // vision-driven typing inherits the cadence
     if (USE_BROWSER_AGENT) {
       console.log('[Record] Browser agent: ENABLED (vision-based Plaid Link automation)');
     } else {
@@ -2685,8 +2852,9 @@ async function main(opts = {}) {
   }
   function entryIsPlaidLaunch(entry, stepId, idx) {
     if (!PLAID_LINK_LIVE) return false;
-    const phase = plaidPhaseMap[stepId] || matchPlaidLinkPhase(stepId);
+    const phase = phaseForStep(stepId);
     if (phase === 'launch') return true;
+    if (hasExplicitPlaidPhases) return false; // metadata authoritative — no target-regex guessing
     if (
       entry &&
       entry.action === 'click' &&
@@ -2719,13 +2887,12 @@ async function main(opts = {}) {
     // _isLaunch: also check plaidPhaseMap (explicit "plaidPhase":"launch" in demo-script.json)
     // and the click-target regex so the overrun timer is never armed for Plaid launch steps
     // regardless of step ID naming (e.g. "chime-link-entry" wouldn't match the regex alone).
-    const _clickIsLaunch = PLAID_LINK_LIVE &&
+    const _clickIsLaunch = PLAID_LINK_LIVE && !hasExplicitPlaidPhases &&
       !plaidPhaseMap[stepId] && !matchPlaidLinkPhase(stepId) &&
       stepEntry.action === 'click' &&
       (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i);
     const _isLaunch = PLAID_LINK_LIVE && (
-      matchPlaidLinkPhase(stepId) === 'launch' ||
-      plaidPhaseMap[stepId] === 'launch' ||
+      phaseForStep(stepId) === 'launch' ||
       !!_clickIsLaunch
     );
     armStepOverrun(page, stepId, stepEntry.waitMs, _nextStepId, _isLaunch);
@@ -2744,16 +2911,20 @@ async function main(opts = {}) {
     // generated mock actions.
     if (PLAID_LINK_LIVE) {
       // Primary: check plaidPhase field from demo-script.json (authoritative, handles any step ID)
-      // Fallback: regex pattern matching (for steps without explicit plaidPhase field)
-      let plaidPhase = plaidPhaseMap[stepId] || matchPlaidLinkPhase(stepId);
+      // Fallback: regex pattern matching — ONLY for legacy scripts with no
+      // explicit plaidPhase metadata anywhere (see hasExplicitPlaidPhases:
+      // 'application-consent' matched a link-phase pattern and the override
+      // skipped the host step's dwell+click entirely, Ascend 2026-06-12).
+      let plaidPhase = phaseForStep(stepId);
       if (plaidPhaseMap[stepId]) {
         console.log(`  [Record] Live Plaid Link phase from demo-script: step "${stepId}" → "${plaidPhase}"`);
       }
       // Fallback: if a click action targets the Plaid Link button, treat as launch phase.
       // This handles build-agent step IDs like "wf-link-initiate-click" that don't match
-      // the standard naming patterns but represent the same action.
+      // the standard naming patterns but represent the same action. Disabled when the
+      // demo-script carries explicit plaidPhase metadata (authoritative).
       let plaidLaunchStepId = null; // step ID to goToStep before executing launch
-      if (!plaidPhase && stepEntry.action === 'click' &&
+      if (!plaidPhase && !hasExplicitPlaidPhases && stepEntry.action === 'click' &&
           (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)) {
         plaidPhase = 'launch';
         // For synthetic click steps (e.g. "wf-link-initiate-click"), there's no corresponding

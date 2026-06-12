@@ -1,0 +1,364 @@
+{
+  "profileVersion": 1,
+  "experience": "idv",
+  "flowType": "idv",
+  "surface": "modal",
+  "description": "Plaid Identity Verification Link session (products:['identity_verification'], template-driven). Sandbox sequence per AskBill 2026-06-12: consent → phone → SMS 11111 → PII form → kyc_check (runs) → documentary_verification (runs, simulated as Leslie Knope 1975-01-18) → selfie_check NOT run in sandbox → completion. onSuccess = submitted, not passed; verdict via /identity_verification/get.",
+  "credentials": {
+    "phone": "+12345678909",
+    "smsCode": "11111",
+    "firstName": "Leslie",
+    "lastName": "Knope",
+    "address": "123 Main St.",
+    "city": "Pawnee",
+    "state": "IN",
+    "zip": "46001",
+    "dob": "1975-01-18",
+    "ssn": "123-45-6789"
+  },
+  "pacingDefaults": {
+    "readWpm": 220,
+    "interKeyMs": [
+      80,
+      150
+    ],
+    "numericInterKeyMs": [
+      120,
+      220
+    ],
+    "preClickMs": [
+      300,
+      900
+    ],
+    "consentPreClickMs": [
+      700,
+      1400
+    ],
+    "settleMs": [
+      250,
+      600
+    ]
+  },
+  "screens": [
+    {
+      "id": "country-select",
+      "detect": {
+        "label": "unknown",
+        "selector": "button:has-text('Continue')",
+        "textProbe": "Where do you live"
+      },
+      "typicalWordCount": 48,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2000
+        ],
+        "preClickMs": [
+          400,
+          800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 2508,
+        "p90TransitionMs": 2699,
+        "samples": 5,
+        "recent": [
+          2508,
+          2699,
+          2558,
+          2252,
+          2181
+        ]
+      },
+      "notes": "First IDV pane ('Basic information' / 'Where do you live?'): country dropdown, US preselected — just Continue. Observed Gringo 2026-06-12."
+    },
+    {
+      "id": "idv-consent",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Continue')",
+        "generic": true
+      },
+      "typicalWordCount": 79,
+      "pacing": {
+        "readDwellMs": [
+          2500,
+          4200
+        ],
+        "preClickMs": [
+          700,
+          1400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1259,
+        "p90TransitionMs": 1259,
+        "samples": 1,
+        "recent": [
+          1259
+        ]
+      },
+      "optional": true,
+      "markPlaidStep": "phone-submitted",
+      "notes": "Token sets identity_verification.gave_consent:true — this pane does NOT render in our pipeline apps. Kept for templates without pre-consent."
+    },
+    {
+      "id": "phone-entry",
+      "detect": {
+        "label": "phone",
+        "selector": "input[type='tel'], input[inputmode='numeric']",
+        "textProbe": "Message and data rates"
+      },
+      "typicalWordCount": 45,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 311,
+        "p90TransitionMs": 314,
+        "samples": 4,
+        "recent": [
+          311,
+          311,
+          310,
+          314
+        ]
+      },
+      "notes": "IDV phone pane uses inputmode=numeric (NOT type=tel) with separate +1 country code — fill NATIONAL digits (2345678909). CTA: Send verification code. Observed Gringo 2026-06-12. WARNING: the sandbox helper rail renders INSIDE the IDV iframe and repeats Country/Phone/DOB labels on every pane — probes must use pane-body phrasing, never field labels."
+    },
+    {
+      "id": "dob-entry",
+      "detect": {
+        "label": "unknown",
+        "selector": "input[inputmode='numeric'], input[placeholder*='MM' i]",
+        "textProbe": "should match what is on your government"
+      },
+      "typicalWordCount": 48,
+      "pacing": {
+        "readDwellMs": [
+          1300,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 309,
+        "p90TransitionMs": 311,
+        "samples": 2,
+        "recent": [
+          311,
+          309
+        ]
+      },
+      "notes": "Date-of-birth pane ('This should match what is on your government-issued ID'). Masked MM/DD/YYYY — type 01181975 as keystrokes. Observed Gringo 2026-06-12."
+    },
+    {
+      "id": "sms-code",
+      "detect": {
+        "label": "mfa",
+        "selector": "input[inputmode='numeric']",
+        "textProbe": "code sent to"
+      },
+      "typicalWordCount": 36,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 310,
+        "p90TransitionMs": 5651,
+        "samples": 2,
+        "recent": [
+          310,
+          5651
+        ]
+      },
+      "markPlaidStep": "otp-screen",
+      "notes": "IDV SMS pane: 'Verify phone number / Enter the 5-digit code sent to…' — FIVE separate digit boxes; type 11111 into the first box (focus auto-advances). Sandbox code 11111. Observed Gringo 2026-06-12."
+    },
+    {
+      "id": "identity-review",
+      "detect": {
+        "label": "unknown",
+        "selector": "button:has-text('Confirm and Continue')",
+        "textProbe": "found an identity"
+      },
+      "typicalWordCount": 79,
+      "pacing": {
+        "readDwellMs": [
+          2200,
+          3800
+        ],
+        "preClickMs": [
+          600,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1259,
+        "p90TransitionMs": 1259,
+        "samples": 1,
+        "recent": [
+          1259
+        ]
+      },
+      "notes": "'Good news, we found an identity linked to your phone number' — Leslie Knope autofill review (name, address, SSN on file) + Confirm and Continue. Replaces the manual pii-form when the phone matches a known identity. Observed Gringo 2026-06-12."
+    },
+    {
+      "id": "pii-form",
+      "detect": {
+        "label": "unknown",
+        "selector": "input[name*='name' i], input[autocomplete='given-name']"
+      },
+      "typicalWordCount": 50,
+      "pacing": {
+        "readDwellMs": [
+          1500,
+          2600
+        ],
+        "settleMs": [
+          350,
+          800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "notes": "Multi-field form (name, DOB, address, SSN). The settle between fields IS the human tell — a real person tabs/clicks between inputs with pauses. Fields prefilled via the link token's user{} are omitted. Exact Leslie Knope data required for kyc_check pass. OPTIONAL: only when no identity is linked to the phone — identity-review replaces it on the happy path.",
+      "optional": true
+    },
+    {
+      "id": "kyc-running",
+      "detect": {
+        "label": "loading",
+        "selector": null
+      },
+      "typicalWordCount": 8,
+      "pacing": {
+        "readDwellMs": [
+          900,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "notes": "Data-source verification spinner — wait, don't act. p90 floor from calibration matters most here."
+    },
+    {
+      "id": "doc-qr-handoff",
+      "detect": {
+        "label": "unknown",
+        "selector": "svg, canvas",
+        "textProbe": "Scan this code"
+      },
+      "typicalWordCount": 43,
+      "pacing": {
+        "readDwellMs": [
+          2000,
+          3500
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 3311,
+        "p90TransitionMs": 3311,
+        "samples": 1,
+        "recent": [
+          3311
+        ]
+      },
+      "terminal": true,
+      "notes": "'Use your phone — Scan this code with your phone's camera': desktop doc-capture is phone-handoff-only for this template (NO buttons/file input/desktop path). TERMINAL for desktop automation — recorder relies on its deterministic completion fallback here. Observed Gringo 2026-06-12."
+    },
+    {
+      "id": "doc-upload",
+      "detect": {
+        "label": "unknown",
+        "selector": "input[type='file'], button:has-text('Take photo')"
+      },
+      "typicalWordCount": 40,
+      "pacing": {
+        "readDwellMs": [
+          1800,
+          3000
+        ],
+        "preClickMs": [
+          500,
+          1000
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "markPlaidStep": "institution-list-shown",
+      "notes": "Only when the template requires documentary verification (or as KYC-fail fallback). Sandbox treats ANY uploaded image as a genuine Leslie Knope document. Desktop sessions hit doc-qr-handoff instead; this screen applies only if the template offers on-device upload."
+    },
+    {
+      "id": "selfie",
+      "detect": {
+        "label": "unknown",
+        "selector": "button:has-text('Get started'), video",
+        "generic": true
+      },
+      "typicalWordCount": 30,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2000
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "notes": "selfie_check is NOT run in sandbox even when template-enabled; UI step may still render. Calibration must record what actually appears for our template (idvtmp_75VaHqzaX1ZJxK)."
+    },
+    {
+      "id": "success",
+      "detect": {
+        "label": "success",
+        "selector": null
+      },
+      "typicalWordCount": 16,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 250,
+        "p90TransitionMs": 250,
+        "samples": 1,
+        "recent": [
+          250
+        ]
+      },
+      "markPlaidStep": "link-complete",
+      "notes": "_idvComplete set by host onSuccess. Status via /identity_verification/get steps{}."
+    }
+  ],
+  "verifiedRuns": 2,
+  "lastVerifiedAt": "2026-06-12T22:01:09.913Z",
+  "lastBrokenAt": "2026-06-12T19:27:09.121Z",
+  "knowledgeConfidence": 0.81,
+  "notes": "IDV sessions RESUME by phone-linked identity: a re-launch with the same phone (+12345678909) skips already-completed steps (observed resume at SMS and at doc-QR). Calibration/re-records start mid-flow after a prior partial session."
+}

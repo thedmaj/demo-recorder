@@ -1,0 +1,297 @@
+{
+  "profileVersion": 1,
+  "experience": "embedded-link",
+  "flowType": "link",
+  "surface": "embedded",
+  "description": "Embedded Link (Plaid.createEmbedded in #plaid-embedded-link-container): institution search renders INLINE on the host page; selecting an institution hands off into the standard Link flow. Handoff signal = onEvent SELECT_INSTITUTION → TRANSITION_VIEW view_name=CONSENT → TRANSITION_VIEW view_name=CREDENTIAL|OAUTH (AskBill 2026-06-12 — do NOT DOM-sniff the iframe). Rendering the embedded pane emits NO events; they start on first interaction. Post-handoff screens identical to classic-link.",
+  "credentials": {
+    "phone": "+14155550011",
+    "otp": "123456",
+    "username": "user_good",
+    "password": "pass_good",
+    "institutionId": "ins_109508",
+    "institutionName": "First Platypus Bank"
+  },
+  "pacingDefaults": {
+    "readWpm": 220,
+    "interKeyMs": [
+      80,
+      150
+    ],
+    "passwordInterKeyMs": [
+      100,
+      180
+    ],
+    "numericInterKeyMs": [
+      120,
+      220
+    ],
+    "preClickMs": [
+      300,
+      900
+    ],
+    "consentPreClickMs": [
+      600,
+      1200
+    ],
+    "settleMs": [
+      250,
+      600
+    ]
+  },
+  "screens": [
+    {
+      "id": "embedded-search",
+      "detect": {
+        "label": "search",
+        "selector": "input[placeholder*='Search' i]"
+      },
+      "typicalWordCount": 13,
+      "pacing": {
+        "readDwellMs": [
+          1500,
+          2800
+        ],
+        "listScanBaseMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 52,
+        "p90TransitionMs": 62,
+        "samples": 6,
+        "recent": [
+          52,
+          58,
+          55,
+          42,
+          62,
+          30
+        ]
+      },
+      "notes": "Inline widget on the host page (inside the embedded iframe). Human scans the institution grid before searching/clicking. Handoff begins on institution click → watch SELECT_INSTITUTION event."
+    },
+    {
+      "id": "phone-entry",
+      "detect": {
+        "label": "phone",
+        "selector": "input[type='tel']"
+      },
+      "typicalWordCount": 90,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1274,
+        "p90TransitionMs": 2986,
+        "samples": 4,
+        "recent": [
+          2986,
+          1274,
+          1074,
+          1657
+        ]
+      },
+      "optional": true,
+      "markPlaidStep": "phone-submitted",
+      "notes": "Remember-Me phone prologue appears INSIDE the embedded handoff modal too (same 90-word pane as classic). Observed Ally 2026-06-12."
+    },
+    {
+      "id": "otp-screen",
+      "detect": {
+        "label": "mfa",
+        "selector": "input[inputmode='numeric']"
+      },
+      "typicalWordCount": 35,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1283,
+        "p90TransitionMs": 1566,
+        "samples": 4,
+        "recent": [
+          1566,
+          1242,
+          1283,
+          1552
+        ]
+      },
+      "optional": true,
+      "markPlaidStep": "otp-screen"
+    },
+    {
+      "id": "consent",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Continue')",
+        "generic": true
+      },
+      "typicalWordCount": 82,
+      "pacing": {
+        "readDwellMs": [
+          2000,
+          3500
+        ],
+        "preClickMs": [
+          600,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1321,
+        "p90TransitionMs": 3492,
+        "samples": 4,
+        "recent": [
+          1321,
+          3492,
+          1869,
+          1254
+        ]
+      },
+      "markPlaidStep": "phone-submitted",
+      "notes": "TRANSITION_VIEW view_name=CONSENT marks entry into full Link. Continue → TRANSITION_VIEW CREDENTIAL completes the handoff."
+    },
+    {
+      "id": "credentials",
+      "detect": {
+        "label": "credentials",
+        "selector": "input[type='password']"
+      },
+      "typicalWordCount": 67,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 309,
+        "p90TransitionMs": 332,
+        "samples": 4,
+        "recent": [
+          332,
+          308,
+          309,
+          311
+        ]
+      }
+    },
+    {
+      "id": "mfa-otp",
+      "detect": {
+        "label": "mfa",
+        "selector": "input[inputmode='numeric']"
+      },
+      "typicalWordCount": 18,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "markPlaidStep": "otp-screen",
+      "notes": "First Platypus MFA OTP is 1234 (institution MFA, not the Remember Me 123456)."
+    },
+    {
+      "id": "account-select",
+      "detect": {
+        "label": "accounts",
+        "selector": "li[role='listitem'], [role='radio'], input[type='radio']",
+        "textProbeAny": [
+          "Select an account",
+          "Select account",
+          "account you select"
+        ]
+      },
+      "typicalWordCount": 82,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1248,
+        "p90TransitionMs": 1581,
+        "samples": 2,
+        "recent": [
+          1581,
+          1248
+        ]
+      },
+      "markPlaidStep": "institution-list-shown"
+    },
+    {
+      "id": "confirm",
+      "detect": {
+        "label": "accounts",
+        "selector": "button:has-text('Confirm')",
+        "generic": true
+      },
+      "typicalWordCount": 40,
+      "pacing": {
+        "readDwellMs": [
+          1500,
+          2800
+        ],
+        "preClickMs": [
+          600,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "markPlaidStep": "confirm-clicked",
+      "optional": true,
+      "notes": " Calibration: action merged into account-select (same pane)."
+    },
+    {
+      "id": "success",
+      "detect": {
+        "label": "success",
+        "selector": null
+      },
+      "typicalWordCount": 12,
+      "pacing": {
+        "readDwellMs": [
+          900,
+          1500
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 7518,
+        "p90TransitionMs": 7898,
+        "samples": 3,
+        "recent": [
+          7898,
+          7518,
+          251
+        ]
+      },
+      "markPlaidStep": "link-complete"
+    }
+  ],
+  "verifiedRuns": 3,
+  "lastVerifiedAt": "2026-06-12T22:14:30.906Z",
+  "lastBrokenAt": "2026-06-12T19:59:03.808Z",
+  "knowledgeConfidence": 0.95
+}

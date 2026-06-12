@@ -53,15 +53,30 @@ const INPUT_PATH  = getArg('--input',  path.join(OUT_DIR, 'recording.webm'));
 const OUTPUT_PATH = getArg('--output', path.join(OUT_DIR, 'recording-processed.webm'));
 const TIMING_PATH = getArg('--timing', path.join(OUT_DIR, 'step-timing.json'));
 
+// ── Cut presets (human-pacing aware) ─────────────────────────────────────────
+// tight   (default): today's compression — human cadence shows only inside the
+//                    kept windows; overall demo rhythm unchanged.
+// relaxed:           modestly wider windows so the human rhythm is visible.
+// natural:           keep the full Plaid span as recorded (single 0→end range).
+// Explicit CLI flags always win over the preset.
+const CUT_PRESET = String(getArg('--cut-preset', process.env.PLAID_CUT_PRESET || 'tight')).toLowerCase();
+const PRESET_DEFAULTS = {
+  tight:   { otpKeep: '2.5', successKeep: '4.0', phoneTail: '0.5', maxInst: '5.0' },
+  relaxed: { otpKeep: '4.0', successKeep: '4.0', phoneTail: '1.0', maxInst: '8.0' },
+  natural: { otpKeep: '2.5', successKeep: '4.0', phoneTail: '0.5', maxInst: '5.0' }, // unused — natural bypasses cutting
+}[CUT_PRESET] || { otpKeep: '2.5', successKeep: '4.0', phoneTail: '0.5', maxInst: '5.0' };
+const NATURAL_MODE = CUT_PRESET === 'natural';
+if (CUT_PRESET !== 'tight') console.log(`[PostProcess] Cut preset: ${CUT_PRESET}`);
+
 // Tunable keep windows (seconds)
-const OTP_KEEP     = parseFloat(getArg('--otp-keep',       '2.5'));
-const SUCCESS_KEEP = parseFloat(getArg('--success-keep',   '4.0'));
-const PHONE_TAIL   = parseFloat(getArg('--phone-tail',     '0.5'));
+const OTP_KEEP     = parseFloat(getArg('--otp-keep',       PRESET_DEFAULTS.otpKeep));
+const SUCCESS_KEEP = parseFloat(getArg('--success-keep',   PRESET_DEFAULTS.successKeep));
+const PHONE_TAIL   = parseFloat(getArg('--phone-tail',     PRESET_DEFAULTS.phoneTail));
 // Institution list hard cap: entire list→confirm section must fit within this many seconds.
 // Must be ≥ 2×MIN_PLAID_SCREEN_S + LEAD_IN + TAIL = 2+2+0.2+0.5 = 4.7s.
 // Default raised to 5.0s so each of the two sub-parts (list-appear, account+confirm)
 // gets at least MIN_PLAID_SCREEN_S seconds of visible screen time.
-const MAX_INST_S   = parseFloat(getArg('--max-institution', '5.0'));
+const MAX_INST_S   = parseFloat(getArg('--max-institution', PRESET_DEFAULTS.maxInst));
 
 // Minimum processed-video duration per Plaid Link sub-step screen (milliseconds).
 // Screens shorter than this get a freezeMs tag; orchestrator injects a Remotion freeze.
@@ -411,6 +426,15 @@ if (T['otp-screen'] != null) {
   } else {
     console.warn('[PostProcess] No Plaid phase markers available (T is empty). Skipping success+app range so the full recording is kept by the safety fallback.');
   }
+}
+
+// ── Natural preset: keep the full recording (no Plaid cutting) ───────────────
+// Human-paced sessions have meaningful dwell everywhere; the manifest
+// (plaid-pacing-manifest.json) documents per-screen dwell for downstream QA.
+if (NATURAL_MODE) {
+  console.log('[PostProcess] natural preset — keeping the full Plaid span as recorded (no cuts)');
+  keepRanges.length = 0;
+  addKeep(0, totalDuration, 'full recording (natural preset)');
 }
 
 // ── Validate ──────────────────────────────────────────────────────────────────

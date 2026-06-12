@@ -1,0 +1,189 @@
+{
+  "profileVersion": 1,
+  "experience": "layer",
+  "flowType": "layer",
+  "surface": "modal",
+  "description": "Plaid Layer Web SDK (Plaid.create + submit(phone) → LAYER_READY → open()). Sandbox: +14155550011 = eligible (LAYER_READY), +14155550000 = ineligible (LAYER_NOT_AVAILABLE), OTP 123456, OTP-only auth. Confirmed end-to-end Mar 10 2026 batch (15/15) + AskBill 2026-06-12. With CRA: ONE Layer session, report generated server-side afterwards.",
+  "credentials": {
+    "phone": "+14155550011",
+    "ineligiblePhone": "+14155550000",
+    "otp": "123456"
+  },
+  "pacingDefaults": {
+    "readWpm": 220,
+    "interKeyMs": [
+      80,
+      150
+    ],
+    "numericInterKeyMs": [
+      120,
+      220
+    ],
+    "preClickMs": [
+      300,
+      900
+    ],
+    "consentPreClickMs": [
+      600,
+      1200
+    ],
+    "settleMs": [
+      250,
+      600
+    ]
+  },
+  "screens": [
+    {
+      "id": "layer-consent",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Continue')",
+        "generic": true
+      },
+      "typicalWordCount": 43,
+      "pacing": {
+        "readDwellMs": [
+          2200,
+          3800
+        ],
+        "preClickMs": [
+          600,
+          1200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 2103,
+        "p90TransitionMs": 14689,
+        "samples": 6,
+        "recent": [
+          1840,
+          14283,
+          1961,
+          14689,
+          2267,
+          2103
+        ]
+      },
+      "markPlaidStep": "phone-submitted",
+      "notes": "Appears after LAYER_READY when handler.open() fires. Consent copy explains data sharing — substantial read dwell."
+    },
+    {
+      "id": "layer-otp",
+      "detect": {
+        "label": "mfa",
+        "selector": "input[inputmode='numeric']"
+      },
+      "typicalWordCount": 27,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 335,
+        "p90TransitionMs": 944,
+        "samples": 4,
+        "recent": [
+          315,
+          335,
+          944,
+          613
+        ]
+      },
+      "markPlaidStep": "otp-screen",
+      "notes": "OTP 123456 auto-submits after fill (confirmed Mar 10 batch). Chunk pause after digit 3 is the human tell."
+    },
+    {
+      "id": "layer-review",
+      "detect": {
+        "label": "accounts",
+        "selector": "button:has-text('Share')",
+        "generic": true
+      },
+      "typicalWordCount": 57,
+      "pacing": {
+        "readDwellMs": [
+          2500,
+          4500
+        ],
+        "preClickMs": [
+          700,
+          1400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1237,
+        "p90TransitionMs": 1244,
+        "samples": 4,
+        "recent": [
+          1234,
+          1244,
+          1237,
+          1240
+        ]
+      },
+      "markPlaidStep": "confirm-clicked",
+      "notes": "Profile review pane (identity + linked accounts). A human verifies their own data here — longest dwell of the Layer flow. CTA: Share."
+    },
+    {
+      "id": "share-consumer-report",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Confirm')",
+        "textProbe": "Share consumer report"
+      },
+      "typicalWordCount": 57,
+      "pacing": {
+        "readDwellMs": [
+          2500,
+          4200
+        ],
+        "preClickMs": [
+          700,
+          1400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 5330,
+        "p90TransitionMs": 5933,
+        "samples": 2,
+        "recent": [
+          5330,
+          5933
+        ]
+      },
+      "optional": true,
+      "notes": "Layer+CRA sessions only: after Share on layer-review, Plaid Check shows the FCRA 'Share consumer report' Confirm pane. Pure-Layer sessions skip it. Observed Spring-Eq 2026-06-12."
+    },
+    {
+      "id": "success",
+      "detect": {
+        "label": "success",
+        "selector": null
+      },
+      "typicalWordCount": 12,
+      "pacing": {
+        "readDwellMs": [
+          900,
+          1500
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 5639,
+        "p90TransitionMs": 5658,
+        "samples": 2,
+        "recent": [
+          5658,
+          5639
+        ]
+      },
+      "markPlaidStep": "link-complete",
+      "notes": "onSuccess → public_token. Event sequence observed: LAYER_READY, OPEN, VERIFY_PHONE, TRANSITION_VIEW×2, SUBMIT_OTP, TRANSITION_VIEW, HANDOFF."
+    }
+  ],
+  "verifiedRuns": 2,
+  "lastVerifiedAt": "2026-06-12T18:58:06.756Z",
+  "lastBrokenAt": "2026-06-12T18:56:37.976Z",
+  "knowledgeConfidence": 0.95
+}

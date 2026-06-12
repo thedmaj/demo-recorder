@@ -153,15 +153,20 @@ async function tryFill(frame, selector, value) {
   return false;
 }
 
-async function executeAction(action, screen, recipe, page, frame, telemetry) {
+async function executeAction(action, screen, recipe, page, frame, telemetry, pacingResolver) {
   const t0 = Date.now();
   const primaryKey = action.target;
   const primarySelector = resolveSelector(primaryKey, screen);
   const fallbackKeys = Array.isArray(action.fallbackTargets) ? action.fallbackTargets : [];
   const candidateSelectors = [primarySelector, ...fallbackKeys.map((k) => resolveSelector(k, screen))];
 
-  if (action.dwellBeforeMs && action.dwellBeforeMs > 0) {
-    await page.waitForTimeout(action.dwellBeforeMs);
+  // Optional human-pacing hook (record-local wires it when PLAID_NAV_STYLE=human).
+  // Absent → raw recipe dwell constants, exactly as before.
+  const dwellBefore = pacingResolver
+    ? pacingResolver({ screen, action, phase: 'before', defaultMs: action.dwellBeforeMs || 0 })
+    : (action.dwellBeforeMs || 0);
+  if (dwellBefore && dwellBefore > 0) {
+    await page.waitForTimeout(dwellBefore);
   }
 
   let winner = null;
@@ -201,8 +206,11 @@ async function executeAction(action, screen, recipe, page, frame, telemetry) {
     console.warn(`[recipe] Unknown action.type="${action.type}" on screen=${screen.id}`);
   }
 
-  if (action.dwellAfterMs && action.dwellAfterMs > 0) {
-    await page.waitForTimeout(action.dwellAfterMs);
+  const dwellAfter = pacingResolver
+    ? pacingResolver({ screen, action, phase: 'after', defaultMs: action.dwellAfterMs || 0 })
+    : (action.dwellAfterMs || 0);
+  if (dwellAfter && dwellAfter > 0) {
+    await page.waitForTimeout(dwellAfter);
   }
 
   telemetry.actions.push({
@@ -261,7 +269,7 @@ function appendCandidateSelector(recipe, runDir, candidate) {
  *
  * Returns a telemetry object describing the run for post-mortem.
  */
-async function executeRecipe({ page, recipe, hooks, markPlaidStep, runDir, plaidIframeSelector }) {
+async function executeRecipe({ page, recipe, hooks, markPlaidStep, runDir, plaidIframeSelector, pacingResolver }) {
   if (!recipe || !Array.isArray(recipe.screens)) {
     throw new Error('[recipe] Invalid recipe: missing screens[]');
   }
@@ -307,7 +315,9 @@ async function executeRecipe({ page, recipe, hooks, markPlaidStep, runDir, plaid
       ? DEFAULT_OPTIONAL_SCREEN_TIMEOUT_MS
       : (screen.arrivalTimeoutMs || DEFAULT_ARRIVAL_TIMEOUT_MS);
 
+    const arrivalStart = Date.now();
     const arrived = await waitForArrival(page, frame, screen.arrivalSignals, arrivalTimeoutMs);
+    const arrivalMs = Date.now() - arrivalStart;
     if (!arrived) {
       if (isOptional) {
         telemetry.screensSkipped++;
@@ -326,7 +336,7 @@ async function executeRecipe({ page, recipe, hooks, markPlaidStep, runDir, plaid
 
     let actionsMissed = 0;
     for (const action of (screen.actions || [])) {
-      const result = await executeAction(action, screen, recipe, page, frame, telemetry);
+      const result = await executeAction(action, screen, recipe, page, frame, telemetry, pacingResolver);
       if (!result.winner && action.type !== 'wait') {
         actionsMissed++;
         if (hooks && typeof hooks.visionFallback === 'function') {
@@ -381,6 +391,7 @@ async function executeRecipe({ page, recipe, hooks, markPlaidStep, runDir, plaid
       id: screen.id,
       status: actionsMissed > 0 ? 'completed-with-misses' : 'completed',
       actionsMissed,
+      arrivalMs,
       elapsedMs: Date.now() - screenStart,
     });
   }

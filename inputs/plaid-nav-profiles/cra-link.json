@@ -1,0 +1,331 @@
+{
+  "profileVersion": 1,
+  "experience": "cra-link",
+  "flowType": "cra",
+  "surface": "modal",
+  "description": "Plaid Check / CRA consumer-report Link (user_token + cra_base_report). Same institution mechanics as classic Link, with consumer-report consent/disclosure panes, an OTP-or-SNA phone step (OTP screen may NOT appear when Silent Network Auth fires), and a possible Passport opt-in on the final pane. user_credit_profile_good changes report DATA, not the UI shape (AskBill 2026-06-12).",
+  "credentials": {
+    "phone": "+14155550011",
+    "otp": "123456",
+    "username": "user_credit_profile_good",
+    "password": "pass_good",
+    "institutionId": "ins_109508",
+    "institutionName": "First Platypus Bank"
+  },
+  "pacingDefaults": {
+    "readWpm": 220,
+    "interKeyMs": [
+      80,
+      150
+    ],
+    "passwordInterKeyMs": [
+      100,
+      180
+    ],
+    "numericInterKeyMs": [
+      120,
+      220
+    ],
+    "preClickMs": [
+      300,
+      900
+    ],
+    "consentPreClickMs": [
+      700,
+      1400
+    ],
+    "settleMs": [
+      250,
+      600
+    ]
+  },
+  "screens": [
+    {
+      "id": "phone-entry",
+      "detect": {
+        "label": "phone",
+        "selector": "input[type='tel']"
+      },
+      "typicalWordCount": 67,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1348,
+        "p90TransitionMs": 2029,
+        "samples": 7,
+        "recent": [
+          1324,
+          1348,
+          1428,
+          1329,
+          1308,
+          2029,
+          1391
+        ]
+      },
+      "optional": true,
+      "markPlaidStep": "phone-submitted"
+    },
+    {
+      "id": "otp-screen",
+      "detect": {
+        "label": "mfa",
+        "selector": "input[inputmode='numeric']"
+      },
+      "typicalWordCount": 35,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1254,
+        "p90TransitionMs": 1272,
+        "samples": 7,
+        "recent": [
+          1251,
+          1267,
+          1272,
+          316,
+          1266,
+          1254,
+          1238
+        ]
+      },
+      "optional": true,
+      "markPlaidStep": "otp-screen",
+      "notes": "OPTIONAL — Silent Network Authentication can replace OTP with a loading pane. Automation must tolerate this screen never arriving."
+    },
+    {
+      "id": "cra-institution-select",
+      "detect": {
+        "label": "search",
+        "selector": "ul li",
+        "textProbe": "Select accounts"
+      },
+      "typicalWordCount": 27,
+      "pacing": {
+        "readDwellMs": [
+          1400,
+          2600
+        ],
+        "preClickMs": [
+          400,
+          900
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 309,
+        "p90TransitionMs": 1279,
+        "samples": 6,
+        "recent": [
+          1279,
+          307,
+          309,
+          316,
+          309,
+          307
+        ]
+      },
+      "markPlaidStep": "institution-list-shown",
+      "notes": "CRA returning-user pane: heading \"Select accounts\" but rows are saved INSTITUTIONS ('share all accounts from your selected institution'). Confirm stays disabled until a row is picked — click row, then Confirm. Observed Cashrepublic 2026-06-12."
+    },
+    {
+      "id": "share-consumer-report",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Confirm')",
+        "textProbe": "Share consumer report"
+      },
+      "typicalWordCount": 65,
+      "pacing": {
+        "readDwellMs": [
+          2500,
+          4200
+        ],
+        "preClickMs": [
+          700,
+          1400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 4218,
+        "p90TransitionMs": 5327,
+        "samples": 3,
+        "recent": [
+          4218,
+          4140,
+          5327
+        ]
+      },
+      "notes": "Plaid Check FCRA pane: 'Plaid Check will create a consumer report with the data from your linked accounts' + Fair Credit Reporting Act consent, CTA Confirm. THE consumer-report consent moment — humans read this. Observed Cashrepublic 2026-06-12."
+    },
+    {
+      "id": "cra-consent",
+      "detect": {
+        "label": "consent",
+        "selector": "button:has-text('Continue')",
+        "generic": true
+      },
+      "typicalWordCount": 14,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1600
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 15288,
+        "p90TransitionMs": 16275,
+        "samples": 3,
+        "recent": [
+          16275,
+          2566,
+          15288
+        ]
+      },
+      "notes": "Transition pane with Continue observed AFTER the share-consumer-report confirm (report prep). Position varies; optional.",
+      "optional": true
+    },
+    {
+      "id": "institution-search",
+      "detect": {
+        "label": "search",
+        "selector": "input[placeholder*='Search' i]"
+      },
+      "typicalWordCount": 20,
+      "pacing": {
+        "readDwellMs": [
+          1000,
+          1800
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true,
+      "notes": "CRA personas are non-OAuth only — never pick an OAuth institution."
+    },
+    {
+      "id": "credentials",
+      "detect": {
+        "label": "credentials",
+        "selector": "input[type='password']"
+      },
+      "typicalWordCount": 28,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2200
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "notes": "user_credit_profile_good / pass_good. Returning-user (phone) flow skips credentials entirely — observed Cashrepublic 2026-06-12.",
+      "optional": true
+    },
+    {
+      "id": "account-select",
+      "detect": {
+        "label": "accounts",
+        "selector": "li[role='listitem'], [role='radio'], input[type='radio']",
+        "textProbeAny": [
+          "Select an account",
+          "Select account",
+          "account you select"
+        ]
+      },
+      "typicalWordCount": 26,
+      "pacing": {
+        "readDwellMs": [
+          1200,
+          2400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": null,
+        "p90TransitionMs": null,
+        "samples": 0,
+        "recent": []
+      },
+      "optional": true
+    },
+    {
+      "id": "confirm",
+      "detect": {
+        "label": "accounts",
+        "selector": "button:has-text('Confirm')",
+        "generic": true
+      },
+      "typicalWordCount": 65,
+      "pacing": {
+        "readDwellMs": [
+          1800,
+          3200
+        ],
+        "preClickMs": [
+          700,
+          1400
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 1266,
+        "p90TransitionMs": 1292,
+        "samples": 4,
+        "recent": [
+          1279,
+          1266,
+          1292,
+          1257
+        ]
+      },
+      "markPlaidStep": "confirm-clicked",
+      "notes": "Final pane may carry a Passport opt-in toggle (faster future sharing) — leave default state, just confirm/share. Calibration: action merged into account-select (same pane).",
+      "optional": true
+    },
+    {
+      "id": "success",
+      "detect": {
+        "label": "success",
+        "selector": null
+      },
+      "typicalWordCount": 12,
+      "pacing": {
+        "readDwellMs": [
+          900,
+          1500
+        ]
+      },
+      "observed": {
+        "p50TransitionMs": 4158,
+        "p90TransitionMs": 4487,
+        "samples": 5,
+        "recent": [
+          4118,
+          4400,
+          4487,
+          4158,
+          4085
+        ]
+      },
+      "markPlaidStep": "link-complete",
+      "notes": "Report generation is server-side and async after Link — the host app waits for CHECK_REPORT_READY; not part of the Link surface."
+    }
+  ],
+  "verifiedRuns": 6,
+  "lastVerifiedAt": "2026-06-12T21:24:01.091Z",
+  "lastBrokenAt": "2026-06-12T18:44:27.565Z",
+  "knowledgeConfidence": 0.95
+}

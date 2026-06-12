@@ -2048,3 +2048,307 @@ Call log:
 | `+14155550011` | Layer — Manual login bypass | 16/16 ✅ | LAYER_READY | onSuccess |
 
 ---
+
+## Knowledge Gapfill: Jun 12, 2026 — AskBill (human-pacing nav-profile groundwork)
+
+Findings gathered for the human-like navigation system (nav profiles in `inputs/plaid-nav-profiles/`).
+
+### 1. Layer sandbox phones (discrepancy RESOLVED — KB wins)
+- `+14155550011` → eligible → `LAYER_READY` (matches the Mar 10, 2026 batch above: 15/15 PASS).
+- `+14155550000` → missing all identity/bank data → `LAYER_NOT_AVAILABLE` (ineligible).
+  - Extended Autofill caveat: submitting DOB `1975-01-18` after `+14155550000` CAN flip to `LAYER_READY` if the template supports it.
+- Sandbox Layer auth is OTP-only; OTP = `123456`.
+- **Action**: `SANDBOX_CREDS.layer.phone` in `scripts/scratch/utils/plaid-browser-agent.js` said `+14155550000` — stale; corrected to `+14155550011`.
+
+### 2. IDV sandbox screen sequence (Document + Data Source + Selfie template)
+1. Consent/TOS (skipped if link token sets `identity_verification.gave_consent: true`)
+2. Phone entry → 3. SMS code **`11111`**
+4. PII entry (prefilled fields from `user` on /link/token/create are omitted)
+5. `kyc_check` (Data Source) — RUNS in sandbox; passes only with the Leslie Knope identity:
+   Leslie Knope, `+12345678909`, 123 Main St., Pawnee, Indiana (IN) 46001, DOB 1975-01-18, SSN `123-45-6788` or `123-45-6789`
+6. `documentary_verification` — RUNS, simulated: any uploaded doc is treated as genuine AND as belonging to Leslie Knope / 1975-01-18 (passes iff submitted name+DOB match that)
+7. `selfie_check` — **NOT run in sandbox** even when enabled in the template (UI step may still appear in the configured flow but performs no real check)
+8. Completion. Verify which steps executed via `/identity_verification/get` → `steps{}`.
+- Document-as-fallback templates: KYC pass may finish without the document step at all.
+
+### 3. Embedded Link → modal handoff signal
+- Handoff begins when the user selects an institution in the inline grid; rely on `onEvent`, NOT DOM iframe detection:
+  `SELECT_INSTITUTION` → `OPEN`/`TRANSITION_VIEW view_name=CONSENT` → `TRANSITION_VIEW view_name=CREDENTIAL|OAUTH` (= fully in standard Link flow).
+- Rendering the embedded pane emits NO Link events — events start only on first interaction.
+- Post-handoff flow is standard Link (consent → credentials/OAuth → MFA → account select → success).
+
+### 4. CRA / Plaid Check Link deltas vs classic
+- Extra consumer-report consent/disclosure panes (FCRA permissible-purpose context); final pane may include a Passport opt-in toggle (faster future sharing).
+- Phone/returning-user step is part of the CRA flow family; OTP may be replaced by Silent Network Authentication (loading pane) for eligible users — automation must tolerate the OTP screen NOT appearing.
+- `user_credit_profile_good` changes the REPORT DATA, not the Link UI shape — no special post-credential branch.
+- Exact pane order is not canonical; record live sequence per template (calibration harness does this).
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [classic-link] — nav-profile calibration
+**App**: `2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: 0.18
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1310 | 90 | button:has-text('Continue') |
+| otp-screen | 2156 | 35 | otp-filled |
+| saved-institution-list | 315 | 78 | ul li |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [classic-link] — nav-profile calibration
+**App**: `2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1` | **Samples**: 2 | **Completed**: 0/2 | **Confidence**: -0.01
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1228 | 90 | button:has-text('Continue') |
+| consent | 326 | 90 | button:has-text('Continue') |
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [classic-link] — nav-profile calibration
+**App**: `2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1` | **Samples**: 2 | **Completed**: 2/2 | **Confidence**: 0.76
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1230 | 90 | button:has-text('Continue') |
+| otp-screen | 1262 | 35 | otp-filled |
+| account-select | 312 | 78 | li[role='listitem'] → button:has-text('Confirm') |
+| success | 9091 | — | — |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [cra-link] — nav-profile calibration
+**App**: `2026-06-10-Cashrepublic-CRA-Auth-Identity-v1` | **Samples**: 2 | **Completed**: 0/2 | **Confidence**: -0.2
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1324 | 78 | button:has-text('Continue') |
+| otp-screen | 1251 | 35 | otp-filled |
+| confirm | 1279 | 27 | button:has-text('Confirm') |
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [cra-link] — nav-profile calibration
+**App**: `2026-06-10-Cashrepublic-CRA-Auth-Identity-v1` | **Samples**: 2 | **Completed**: 2/2 | **Confidence**: 0.61
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1428 | 67 | button:has-text('Continue') |
+| otp-screen | 1272 | 35 | otp-filled |
+| cra-institution-select | 307 | 27 | ul li → button:has-text('Confirm') |
+| cra-consent | 16275 | 14 | button:has-text('Continue') |
+| confirm | 1292 | 65 | button:has-text('Confirm') |
+| success | 4118 | — | — |
+
+### Knowledge gaps:
+  - unknown-screen: consent
+  - unknown-screen: consent
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [cra-link] — nav-profile calibration
+**App**: `2026-06-10-Cashrepublic-CRA-Auth-Identity-v1` | **Samples**: 2 | **Completed**: 2/2 | **Confidence**: 0.71
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1308 | 78 | button:has-text('Continue') |
+| otp-screen | 1266 | 35 | otp-filled |
+| cra-institution-select | 316 | 27 | ul li → button:has-text('Confirm') |
+| share-consumer-report | 4218 | 65 | button:has-text('Confirm') |
+| success | 4487 | — | — |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [layer] — nav-profile calibration
+**App**: `2026-06-09-Spring-Eq-CRA-Identity-Signal-v1` | **Samples**: 2 | **Completed**: 0/2 | **Confidence**: 0.11
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| layer-consent | 1840 | 43 | button:has-text('Continue') |
+| layer-otp | 315 | 29 | otp-filled |
+| layer-review | 1234 | 57 | button:has-text('Share') |
+| layer-consent | 14283 | 13 | button:has-text('Continue') |
+
+### Knowledge gaps:
+  - unknown-screen: consent
+  - unknown-screen: consent
+  - unknown-screen: consent
+  - unknown-screen: consent
+  - unknown-screen: consent
+  - unknown-screen: consent
+  - unknown-screen: consent
+  - unknown-screen: consent
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [layer] — nav-profile calibration
+**App**: `2026-06-09-Spring-Eq-CRA-Identity-Signal-v1` | **Samples**: 2 | **Completed**: 2/2 | **Confidence**: 0.95
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| layer-consent | 2267 | 43 | button:has-text('Continue') |
+| layer-otp | 944 | 25 | otp-filled |
+| layer-review | 1237 | 57 | button:has-text('Share') |
+| share-consumer-report | 5330 | 57 | button:has-text('Confirm') |
+| success | 5658 | — | — |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 2 | **Completed**: 0/2 | **Confidence**: -0.3
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+
+### Knowledge gaps:
+  - unknown-screen: consent
+  - unknown-screen: consent
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: 0.18
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| country-select | 2508 | 48 | button:has-text('Continue') |
+| sms-code | 310 | 45 | otp-filled |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: 0.18
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| country-select | 2699 | 48 | button:has-text('Continue') |
+| phone-entry | 311 | 45 | button:has-text('Send verification code') |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: 0.18
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| country-select | 2558 | 48 | button:has-text('Continue') |
+| phone-entry | 311 | 45 | button:has-text('Send verification code') |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: 0.27
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| country-select | 2252 | 48 | button:has-text('Continue') |
+| phone-entry | 310 | 45 | button:has-text('Send verification code') |
+| dob-entry | 311 | 48 | button:has-text('Continue') |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: 0.22
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| country-select | 2181 | 48 | button:has-text('Continue') |
+| phone-entry | 314 | 45 | button:has-text('Send verification code') |
+| dob-entry | 309 | 48 | button:has-text('Continue') |
+
+### Knowledge gaps:
+  - unknown-screen: mfa
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 0/1 | **Confidence**: -0.09
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| sms-code | 5651 | 36 | sms-filled |
+| idv-consent | 1259 | 79 | button:has-text('Continue') |
+
+### Knowledge gaps:
+  - unknown-screen: mfa
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [idv] — nav-profile calibration
+**App**: `2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 1/1 | **Confidence**: 0.81
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| doc-qr-handoff | 3311 | 43 | — |
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [classic-link] — nav-profile calibration
+**App**: `2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1` | **Samples**: 1 | **Completed**: 1/1 | **Confidence**: 0.95
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1563 | 90 | button:has-text('Continue') |
+| otp-screen | 1261 | 35 | otp-filled |
+| account-select | 308 | 78 | li[role='listitem'] → button:has-text('Confirm') |
+| success | 10031 | — | — |
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [cra-link] — nav-profile calibration
+**App**: `2026-06-10-Cashrepublic-CRA-Auth-Identity-v1` | **Samples**: 1 | **Completed**: 1/1 | **Confidence**: 0.95
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| phone-entry | 1391 | 67 | button:has-text('Continue') |
+| otp-screen | 1238 | 35 | otp-filled |
+| cra-institution-select | 307 | 27 | ul li → button:has-text('Confirm') |
+| share-consumer-report | 5327 | 65 | button:has-text('Confirm') |
+| success | 4085 | — | — |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [embedded-link] — nav-profile calibration
+**App**: `2026-06-12-Ally-Bank-Auth-Identity-Signal-Transfer-Statements-v1` | **Samples**: 2 | **Completed**: 0/2 | **Confidence**: 0.18
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| embedded-search | 52 | 13 | text:First Platypus Bank |
+| consent | 1321 | 90 | button:has-text('Continue') |
+
+---
+
+## Calibration: Jun 12, 2026 — FAIL [embedded-link] — nav-profile calibration
+**App**: `2026-06-12-Ally-Bank-Auth-Identity-Signal-Transfer-Statements-v1` | **Samples**: 2 | **Completed**: 0/2 | **Confidence**: 0.37
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| embedded-search | 55 | 13 | text:First Platypus Bank |
+| phone-entry | 2986 | 90 | button:has-text('Continue') |
+| otp-screen | 1566 | 35 | otp-filled |
+| credentials | 332 | 64 | button[type='submit'] |
+| consent | 1869 | 82 | button:has-text('Continue') |
+
+---
+
+## Calibration: Jun 12, 2026 — PASS [embedded-link] — nav-profile calibration
+**App**: `2026-06-12-Ally-Bank-Auth-Identity-Signal-Transfer-Statements-v1` | **Samples**: 2 | **Completed**: 2/2 | **Confidence**: 0.95
+
+| Screen | Transition (ms) | Words | Action winner |
+|--------|-----------------|-------|---------------|
+| embedded-search | 62 | 13 | text:First Platypus Bank |
+| phone-entry | 1074 | 90 | button:has-text('Continue') |
+| otp-screen | 1283 | 35 | otp-filled |
+| credentials | 309 | 67 | button[type='submit'] |
+| account-select | 1581 | 82 | li[role='listitem'] → button:has-text('Continue') |
+| success | 7898 | — | — |
+
+---
+- 2026-06-12 [nav-feedback] classic-link run=2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1 completed=true style=fast screensMerged=3
+- 2026-06-12 [nav-feedback] classic-link run=2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1 completed=true style=fast screensMerged=3
+- 2026-06-12 [nav-feedback] classic-link run=2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+9s
+- 2026-06-12 [nav-feedback] classic-link run=2026-06-10-Td-Bank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+14s
+- 2026-06-12 [nav-feedback] cra-link run=2026-06-10-Cashrepublic-CRA-Auth-Identity-v1 completed=true style=human screensMerged=0 humanDwell=+19s
+- 2026-06-12 [nav-feedback] idv run=2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=1 humanDwell=+2s
+- 2026-06-12 [nav-feedback] embedded-link run=2026-06-12-Ally-Bank-Auth-Identity-Signal-Transfer-Statements-v1 completed=true style=human screensMerged=1 humanDwell=+5s
