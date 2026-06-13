@@ -1,0 +1,109 @@
+================================================================================
+KeyBank — Small Business Account Funding — Fund a new business checking account from any bank in seconds, post-KYB, with ownership + ACH-risk checks built in
+================================================================================
+
+**Host:** **KeyBank** — U.S. business banking (small-business deposit account funding)
+**Canonical URL:** https://www.key.com
+**Brand URL:** https://www.key.com
+
+**User journey (one sentence):**
+A small-business owner who has just completed KYB at KeyBank funds their new business checking account from the company's external bank by connecting it with Plaid, and KeyBank instantly confirms the account belongs to the business, pulls the ACH rails, and clears the transfer for ACH-return risk before approving the funds.
+
+**Story arc (short prose):**
+KYB is done — the business is verified and its details are on file. The friction is now *funding*: slow micro-deposits and the risk of moving money into the wrong account. KeyBank drops in Plaid: the owner links the company's external bank in one tap, and behind the scenes KeyBank confirms the linked account's name matches the business (Identity Match), pulls account + routing rails and sees it's a business account (Auth), captures the amount, and risk-scores that specific transfer (Signal). Low risk → funds approved instantly, no micro-deposits. Close on the value: small businesses funded and transacting on day one, with fewer returns and less fraud.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Identity (Identity Match), Plaid Signal
+
+**Solutions supported:** Account Funding
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase: "launch"` step per `CLAUDE.md`. **Standard Plaid Link** (NOT Layer, NOT multi-item link).
+  [ ] Plaid Layer / OAuth / IDV — N/A
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, `user_good`/`pass_good`); external institution name + account mask come from Link `onSuccess` metadata only — never hardcode them.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+Demo STARTS post-KYB (business already verified; company info prefilled). Backend order after Link is **ownership -> rails -> amount -> risk**: Identity Match, then Auth, then host amount capture, then Signal. Never show Auth before Identity Match.
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | KeyBank post-KYB home (host) | "Business verified" + prefilled company info (Pixel & Paper Co, EIN, owner, address); "Fund your business account" screen | KYB done — now fund the account in one connect | "Link your business bank account" button |
+| 2 | Plaid Link (launch) | Real standard Plaid Link modal | Narrate inside the modal: select bank, log in, choose the business account | account linked |
+| 3 | identity-match-insight | Plaid insight screen (dark navy/teal) | Confirm the linked account belongs to the business; fuzzy match tolerates the legal suffix | form "Pixel & Paper Co" vs bank "Pixel & Paper" -> name score 95 |
+| 3a | identity-match-slide (technical slide) | Plaid technical slide + JSON rail | How name scoring works for businesses AND people | bullets below |
+| 4 | auth-insight | Plaid insight screen | Pull ACH rails; the account is a business account | account + routing retrieved; holder_category business |
+| 4a | auth-slide (technical slide) | Plaid technical slide + JSON rail | The account holder/type values, incl. business | bullets below |
+| 5 | funding-amount (host) | KeyBank UX: enter amount to fund | Owner enters the amount to move into the new account | $7,500.00 entered |
+| 6 | signal-insight | Plaid insight screen | Score ACH-return risk for THIS transfer/amount | low risk -> ACCEPT |
+| 7 | funds-approved (host) | KeyBank UX: funds approved instantly | No micro-deposits; good businesses funded on the spot | "Funds available" |
+| 8 | value-summary-slide | Plaid value slide | Small businesses funded day one, fewer returns, less fraud | CTA |
+
+**Slide content (required):**
+- **identity-match-slide** (JSON rail mirrors `/identity/match`):
+  - Company name: onboarding/KYB form **"Pixel & Paper Co"** vs external bank **"Pixel & Paper"** -> **`legal_name.score` 95** (fuzzy match tolerates the "Co" legal suffix).
+  - The same name-scoring convention works for **company names AND person names** — e.g. **"John B. Henry"** vs **"Johnathan Henry"** still scores as a strong match (middle-initial vs full-middle, abbreviation tolerance).
+  - Takeaway: formatting / suffix / abbreviation differences don't sink the score; ownership is confirmed before funds move.
+- **auth-slide** (JSON rail mirrors `/auth/get`): highlight the account holder/type values — the account object's **`holder_category`** can be **`business`**, `personal`, or `unrecognized` (this account is **`business`**), alongside `type` (depository) / `subtype` (checking) and the ACH `numbers`. Show prospects Plaid distinguishes a business account on the funding rail.
+
+**Product-specific reminders:**
+- Signal: low score = low ACH return risk; happy path **ACCEPT** with low scores (customer-initiated 12, bank-initiated 10). `ruleset.result` in {ACCEPT, REVIEW, REROUTE} — happy path ACCEPT.
+- Identity Match: scores 0–100; pass the business legal name as `legal_name`; ~70+ is a strong match. Never label scores "Trust Index".
+- Link: the pre-Link step ends on the **button** ("…taps Link your business bank account."); the Link step narrates content **inside** the modal only.
+- Consumer/host KeyBank screens never show raw JSON; JSON belongs only in the global `#api-response-panel` and the technical slides' JSON rail.
+
+**Compliance / user data (one line):** N/A — funding flow, demo starts post-KYB (business already verified).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Jordan Lee — owner of Pixel & Paper Co, funding the company's new KeyBank business checking account
+**Company / context:** Pixel & Paper Co — small design studio (already KYB-verified at KeyBank); external bank = the linked institution (from Link `onSuccess`)
+**Sample fields that must appear on screen:**
+- Identity Match: KYB form business name **"Pixel & Paper Co"** vs external-bank name **"Pixel & Paper"** -> `legal_name.score` **95**; supporting address/phone strong. Person-name convention example on the slide: "John B. Henry" vs "Johnathan Henry".
+- Auth: account `holder_category` **business**; `type` depository / `subtype` checking; ACH account + routing in `numbers.ach[]`.
+- Funding amount: **$7,500.00**
+- Signal: `customer_initiated_return_risk.score` 12, `bank_initiated_return_risk.score` 10, `ruleset.result` ACCEPT.
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+KeyBank-branded business-banking host (KeyBank red accent nav, light/white background) opening on a post-KYB "Business verified — fund your account" screen with prefilled company details and a clear "Link your business bank account" CTA that opens standard Plaid Link. Return to KeyBank chrome for the amount entry and the instant-approval outcome. Plaid insight screens use Plaid dark navy/teal — distinct from KeyBank host chrome.
+
+**Viewport:** 1440x900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Up to 5 slides: (1) exec value slide (problem/outcome for small-business funding, no JSON); (2) identity-match technical slide with a "Sample API response" JSON rail mirroring `/identity/match` + the company/person name-scoring bullets above; (3) auth technical slide with a JSON rail mirroring `/auth/get` highlighting `holder_category: business`; (4) value-summary slide. Plaid-only styling (dark navy/teal), no KeyBank chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for stats (`inputs/plaid-value-props.md`)
+  [x] Product names and family match `CLAUDE.md` (funding; Auth, Identity, Signal, Link)
+  [x] Storyboard order matches goToStep flow (post-KYB -> link -> ownership -> rails -> amount -> risk -> approved)
+  [x] Standard Plaid Link (real SDK); sandbox per pipeline env
+
+END OF SPECIFICATION

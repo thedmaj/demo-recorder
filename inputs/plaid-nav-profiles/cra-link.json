@@ -309,23 +309,24 @@
         ]
       },
       "observed": {
-        "p50TransitionMs": 4158,
+        "p50TransitionMs": 4118,
         "p90TransitionMs": 4487,
-        "samples": 5,
+        "samples": 6,
         "recent": [
           4118,
           4400,
           4487,
           4158,
-          4085
+          4085,
+          270
         ]
       },
       "markPlaidStep": "link-complete",
       "notes": "Report generation is server-side and async after Link — the host app waits for CHECK_REPORT_READY; not part of the Link surface."
     }
   ],
-  "verifiedRuns": 6,
-  "lastVerifiedAt": "2026-06-12T21:24:01.091Z",
+  "verifiedRuns": 7,
+  "lastVerifiedAt": "2026-06-13T09:23:19.100Z",
   "lastBrokenAt": "2026-06-12T18:44:27.565Z",
   "knowledgeConfidence": 0.95
 }

@@ -3,81 +3,67 @@
 
 const STEP_TIMING = [
   {
-    "id": "td-funding-home",
-    "label": "TD funding home",
-    "startFrame": 0,
-    "endFrame": 339,
-    "audioEndFrame": 309
+    "id": "transfers-home",
+    "label": "Chase Transfers — account overview",
+    "startFrame": 9,
+    "endFrame": 383,
+    "audioEndFrame": 300
   },
   {
-    "id": "plaid-link-launch",
-    "label": "Plaid Link bank connection",
-    "startFrame": 339,
-    "endFrame": 1262,
-    "audioEndFrame": 653
+    "id": "initiate-link",
+    "label": "Connect external bank — trust messaging",
+    "startFrame": 383,
+    "endFrame": 726,
+    "audioEndFrame": 739
   },
   {
-    "id": "identity-match-insight",
-    "label": "Identity Match — ownership confirmed",
-    "startFrame": 1262,
-    "endFrame": 1825,
-    "audioEndFrame": 1769
+    "id": "plaid-link",
+    "label": "Plaid Link — connect external account",
+    "startFrame": 726,
+    "endFrame": 2155,
+    "audioEndFrame": 1023
   },
   {
-    "id": "identity-match-slide",
-    "label": "Identity Match API fields",
-    "startFrame": 1825,
-    "endFrame": 2309,
-    "audioEndFrame": 2249
+    "id": "identity-match",
+    "label": "Identity Match — confirm ownership",
+    "startFrame": 2155,
+    "endFrame": 2538,
+    "audioEndFrame": 2543
   },
   {
-    "id": "auth-insight",
-    "label": "Auth — ACH rails retrieved",
-    "startFrame": 2309,
-    "endFrame": 2754,
-    "audioEndFrame": 2694
+    "id": "auth-details",
+    "label": "Auth — verified ACH details",
+    "startFrame": 2538,
+    "endFrame": 2858,
+    "audioEndFrame": 2864
   },
   {
-    "id": "auth-slide",
-    "label": "Auth API fields",
-    "startFrame": 2754,
-    "endFrame": 3162,
-    "audioEndFrame": 3102
+    "id": "transfer-amount",
+    "label": "Enter transfer amount",
+    "startFrame": 2858,
+    "endFrame": 3220,
+    "audioEndFrame": 3244
   },
   {
-    "id": "funding-amount",
-    "label": "Funding amount entry",
-    "startFrame": 3162,
-    "endFrame": 3561,
-    "audioEndFrame": 3515
+    "id": "signal-evaluate",
+    "label": "Signal — ACH return risk check",
+    "startFrame": 3220,
+    "endFrame": 3604,
+    "audioEndFrame": 3592
   },
   {
-    "id": "signal-insight",
-    "label": "Signal — return risk scored",
-    "startFrame": 3561,
-    "endFrame": 4073,
-    "audioEndFrame": 4021
-  },
-  {
-    "id": "signal-slide",
-    "label": "Signal API fields",
-    "startFrame": 4073,
-    "endFrame": 4445,
-    "audioEndFrame": 4533
-  },
-  {
-    "id": "funds-approved",
-    "label": "Funds approved instantly",
-    "startFrame": 4445,
-    "endFrame": 5047,
-    "audioEndFrame": 4824
+    "id": "transfer-approved",
+    "label": "Transfer approved — funds today",
+    "startFrame": 3604,
+    "endFrame": 3923,
+    "audioEndFrame": 4056
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 5047,
-    "endFrame": 5549,
-    "audioEndFrame": 5519
+    "startFrame": 3923,
+    "endFrame": 4307,
+    "audioEndFrame": 4323
   }
 ];
 

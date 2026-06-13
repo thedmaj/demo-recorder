@@ -1,0 +1,121 @@
+================================================================================
+Scrub.io — Underwrite diaspora borrowers on US bank data (Identity Verification + CRA Consumer Report)
+================================================================================
+
+**Host:** **Scrub.io** — cross-border lending infrastructure (SMB; underwriting data provider)
+
+**User journey (one sentence):**
+A diaspora applicant clears a live Plaid Identity Verification session, then links a US bank through a Plaid Check Consumer Report Link so Scrub.io can pull CRA Income Insights and a CRA Base Report (verified income + balances/cash flow) to score loan eligibility for a lender in the applicant's home country.
+
+**Story arc (short prose):**
+Chidi Okafor lives in the US and is applying for a loan from a Nigerian lender that has no visibility into US financial data. On Scrub.io, Chidi completes Plaid Identity Verification for KYC — a real IDV session with phone, date-of-birth, and SMS verification — then connects a US bank through a Plaid Check Consumer Report Link. Scrub.io generates a consumer report server-side: CRA Income Insights confirm a regular income stream and the CRA Base Report returns 365 days of balances and cash flow. The result is an FCRA-grade eligibility score the home-country lender can trust — turning previously invisible diaspora applicants into underwritable borrowers.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Identity Verification (IDV), Plaid Link, CRA Base Report, CRA Income Insights
+
+**Solutions supported:** Identity Verification, Income Verification, Credit Scoring & Underwriting
+
+**Primary product family:** `income_insights`
+(This is the Plaid Check CRA Income Insights family — FCRA consumer-report
+underwriting. The CRA Link token carries `cra_base_report` + `cra_income_insights`
+ONLY; no non-CRA products. Retrieve with `/cra/check_report/income_insights/get`
+and `/cra/check_report/base_report/get`, NOT `/credit/bank_income/get`.)
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **TWO live Plaid sessions, each its own `plaidPhase:"launch"` step (multi-launch):**
+      1. **Identity Verification session** — real Plaid IDV modal. Its Link token is
+         `products: ["identity_verification"]` ONLY (IDV is mutually exclusive with all
+         other products). Wire via `/api/create-idv-link-token`; completion flag
+         `window._idvComplete`; verdict via `/identity_verification/get`. Sandbox
+         persona: **Leslie Knope** (the IDV modal displays Plaid's sandbox test
+         identity — narration during this step describes the verification steps,
+         NEVER the on-screen name or PII).
+      2. **CRA Consumer Report Link session** — real Plaid Check Link modal. Its Link
+         token carries `cra_base_report` + `cra_income_insights` ONLY, with
+         `consumer_report_permissible_purpose` and a `user_id` from `/user/create`.
+         Wire via `/api/create-link-token`; completion flag `window._plaidLinkComplete`.
+         Sandbox persona: **`user_credit_profile_good`** / `pass_good`, non-OAuth
+         institution (First Platypus Bank). The Consumer Report is generated
+         server-side and is ASYNCHRONOUS — include a report-ready beat before the
+         report contents are reviewed.
+  [x] CRA Income Insights is the hero product; IDV is the KYC gate; the CRA Base
+      Report supplies balances/cash flow (the "assets" view) — there is NO separate
+      Plaid Assets link product.
+
+Link narration boundary: each launch step narrates what is visible INSIDE that
+modal, never the button tap that opens it. The pre-launch host steps end on the tap.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Scrub.io eligibility flow — "Check your loan eligibility." Step 1: verify identity. Ends on tap. | KYC first | `Verify identity` |
+| 2 | idv-launch | **Live Plaid Identity Verification modal** (`plaidPhase:"launch"`, launchProduct idv) — country, phone, date of birth, SMS code panes. | Inside the modal: Identity Verification walks the applicant through document-grade KYC | IDV submitted |
+| 3 | host | Identity Verification result — status **verified**, KYC badge on the application. | Identity cleared; verdict from /identity_verification/get | Identity verified |
+| 4 | host | "Connect your US bank to generate a consumer report." Ends on tap. | One connection for income + balances | `Connect bank` |
+| 5 | link | **Live Plaid Check Consumer Report Link** (`plaidPhase:"launch"`, launchProduct link) — connect the US bank for the consumer report. | Inside the modal: connect the account and consent to the consumer report | Connected |
+| 6 | host (insight) | Report-generating state — Scrub.io writes the connection to the Plaid user record and the Consumer Report builds server-side. | Consumer Report generation is async, server-side | Report building |
+| 7 | host (insight) | Plaid panel: **CRA Income Insights** — verified regular income stream, monthly average **$5,184.20**, recent payroll-pattern deposits: 2026-05-30 $2,592.10; 2026-05-16 $2,592.10. | Income verified from the consumer report | "Verified income" |
+| 8 | host (insight) | Plaid panel: **CRA Base Report** — 365 days of cash flow, available balance **$6,742.91**, healthy inflows/outflows, no NSF/overdraft events. | Balances + cash flow underwriting view | "365-day cash flow" |
+| 9 | host | **Eligible.** Scrub.io returns an FCRA-grade eligibility score the home-country lender can rely on. | Diaspora applicants made underwritable | `Share with lender` |
+
+**Product-specific reminders:**
+- IDV statuses: `active`, `success`, `failed`, `pending_review`; show verified/`success`
+  on the host result step; never API errors. onSuccess = submitted, not passed —
+  the host result step reflects the `/identity_verification/get` verdict.
+- CRA persona `user_credit_profile_good`; the CRA Link token never carries non-CRA
+  products (no auth/identity/assets/transactions in the same token).
+- Consumer Report is async — show a report-ready/report-building beat (step 6)
+  before reviewing report contents (steps 7–8).
+- Show example payroll-pattern deposit transactions (ALL CAPS employer, posted dates)
+  in the Income Insights view — not just totals.
+- Every insight step id MUST contain the substring `insight`.
+- Compliance-safe claims ("can help," "typically"); happy path only.
+
+**Compliance / user data:** Applicant-consented identity + consumer-report verification with an extension-of-credit permissible purpose; representative sandbox data. The IDV modal shows Plaid sandbox test identity data by design.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Chidi Okafor — US-resident diaspora applicant seeking a home-country loan.
+**Sample fields that must appear on screen (use verbatim — non-round):**
+- Identity Verification: status verified (host result step)
+- CRA Income Insights: monthly average income $5,184.20 · regular income stream detected
+- CRA Base Report: available balance $6,742.91 · 365 days cash flow · 0 NSF/overdraft
+- Recent deposits (Income Insights): GLOBAL FREIGHT CO PAYROLL 2026-05-30 $2,592.10 · GLOBAL FREIGHT CO PAYROLL 2026-05-16 $2,592.10
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Scrub.io-style clean infrastructure/fintech surface (white background, modern accent). An eligibility flow (identity → bank link), an identity-result step, a bank-link step, a report-generating step, and an eligibility-score summary. The consumer-report insights use Plaid dark navy/teal in the global `#api-response-panel`. Raw JSON only in that panel.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] TWO plaidPhase:"launch" steps — IDV session first (idv), CRA Consumer Report Link second (link)
+  [x] IDV token = ["identity_verification"] only; CRA Link token = ["cra_base_report","cra_income_insights"] only
+  [x] CRA persona `user_credit_profile_good`; async report-ready beat present
+  [x] CRA Income Insights retrieval via /cra/check_report/* (never /credit/bank_income/get)
+  [x] Product names/family match `CLAUDE.md`
+  [x] **FULL pipeline run** — build, record, voiceover/narration, render to the final
+      produced video (do NOT stop at build-qa)
+
+END OF SPECIFICATION

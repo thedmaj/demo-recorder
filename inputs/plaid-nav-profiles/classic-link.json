@@ -115,14 +115,18 @@
         ]
       },
       "observed": {
-        "p50TransitionMs": 8522,
+        "p50TransitionMs": 6647,
         "p90TransitionMs": 13300,
-        "samples": 4,
+        "samples": 8,
         "recent": [
           8522,
           8542,
           13300,
-          6588
+          6588,
+          6613,
+          6582,
+          6647,
+          6863
         ]
       },
       "optional": true,
@@ -298,9 +302,9 @@
         ]
       },
       "observed": {
-        "p50TransitionMs": 250,
-        "p90TransitionMs": 10031,
-        "samples": 7,
+        "p50TransitionMs": 81,
+        "p90TransitionMs": 9378,
+        "samples": 11,
         "recent": [
           9091,
           9378,
@@ -308,14 +312,18 @@
           53,
           57,
           250,
-          48
+          48,
+          75,
+          81,
+          99,
+          80
         ]
       },
       "markPlaidStep": "link-complete"
     }
   ],
-  "verifiedRuns": 7,
-  "lastVerifiedAt": "2026-06-12T20:56:22.844Z",
+  "verifiedRuns": 11,
+  "lastVerifiedAt": "2026-06-13T10:47:50.961Z",
   "lastBrokenAt": "2026-06-12T18:33:38.564Z",
   "knowledgeConfidence": 0.95
 }

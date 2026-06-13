@@ -1,0 +1,125 @@
+================================================================================
+Zip BNPL — Plaid LendScore + Network Insights for near-prime underwriting
+================================================================================
+
+**Host:** **Zip** (Zip Co US Inc.) — BNPL / consumer installment lending
+**Canonical URL:** https://zip.co/
+**Brand URL** (for `brand-extract`): https://zip.co/
+
+**Opportunity context (Salesforce — open, Glean salescloud):**
+- Opportunity: `Fintech | Upsell | Zip | Network Insights + Lendscore` (`006UV00000Z2XoaYAF`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000Z2XoaYAF/view
+- Stage: `Discovery`  •  Forecast: `Pipeline`  •  Close Date: `2026-07-31`
+- Primary products (SFDC): `LendScore`, `Network Insights`, `LendScore Refresh`, `Network Insights Refresh`
+- Use case: `Credit Scoring & Underwriting`
+- Revenue uplift (SFDC): Moving LendScore + Network Insights upfunnel could pull base reports against ~200k users/mo
+- Pain (verbatim): They don't yet know how well Plaid's composite score and network-level attributes will separate good vs bad risk for their underserved, near-prime customers.
+- Situation (SFDC): Zip is actively evaluating LendScore and Network Insights to power BNPL underwriting and repayment strategy.
+- Impact: Proving lift would let Zip safely approve more customers, optimize lines, lower losses, and set up a future Plaid Qualify rollout.
+- Critical event: Complete production-scale retros on LendScore and Network Insights so leadership can make a go/no-go on live decisioning.
+- Decision process: Kris, Rob, and credit/data science review retro results and attribute-level insights, then recommend production rollout to Rory and John.
+- AE: Matthew Stein  •  Manager: Xander O'Han  •  Account: Zip Co US Inc. (~1,066 employees, Strategic Fintech)
+
+**User journey (one sentence):**
+A near-prime Zip shopper applying for a $800 BNPL plan links checking via Plaid CRA Link; when the report is ready, Zip underwriting sees a strong LendScore and supportive network attributes, then approves a line the bureau alone would have declined.
+
+**Story arc (short prose):**
+Jordan wants to split a $800 purchase at checkout. Zip's host flow explains that cash-flow and network signals help approve more creditworthy near-prime shoppers responsibly. She taps Link Your Bank on the pre-Link screen. Inside Plaid Link she completes CRA consent, OTP, and selects checking. A brief report-generating beat sets expectations. LendScore returns **78** (low default risk) with reason codes; Network Insights show stable fintech-connection patterns. Zip approves the plan with a higher limit than bureau-only rules would allow — quantifying the retro story Zip's team is running in Salesforce.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link (CRA / Check), **Plaid CRA Base Report** (foundation), **Plaid LendScore** (beta — hero), **Plaid Network Insights** (beta — supporting)
+
+**Solutions supported** (Solutions Master):
+Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`cra_lend_score`
+
+**Primary messaging file for this demo:**
+`inputs/products/plaid-cra-base-report.md` (CRA flow + underwriting family). Use GTM-approved LendScore stats below; do not duplicate conflicting stats from value-props.
+
+**Research depth:** gapfill
+
+**Approved marketing stats (use at most one each in narration/slides):**
+- Up to **25%** lift in predictive performance vs traditional credit data alone (LendScore GTM)
+- **20%** relative risk reduction for some subprime and near-prime segments (LendScore GTM)
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link CRA** — single `plaidPhase: "launch"` step; narrate inside modal only
+  [x] **Sandbox:** CRA persona per `inputs/plaid-link-sandbox.md` (`user_credit_profile_good` / `pass_good`, non-OAuth institution)
+  [x] **Async report-ready** beat before `/cra/check_report/lend_score/get` and optional `/cra/check_report/network_insights/get`
+  [x] **FCRA:** consumer-report permissible purpose; `/user/create` before Link token
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Plaid deck opener — BNPL underwriting challenge for near-prime (T1 or T3) | Frame Zip's retro: separate good vs bad risk beyond bureau snapshots. | — |
+| 2 | host | Zip-branded checkout / apply screen: $800 purchase, installment option, light neutral host background | Jordan wants Pay in 4; Zip needs cash-flow + network signal for near-prime. | `Apply with Zip` |
+| 3 | host | Pre-Link explainer card on Zip host: secure bank link for underwriting | End narration on CTA that opens Link. | `Link your bank` |
+| 4 | link | Real Plaid Link CRA flow (consent → OTP → institution → account) | Narrate only modal-visible steps. | Link `onSuccess` |
+| 5 | host | Zip "Generating your report" progress state (host-branded, white/light background) | Set async CRA expectation (~seconds). | — |
+| 6 | slide | Plaid insight slide: report ready / CHECK_REPORT_READY lifecycle (not Zip chrome) | Report is consumer-permissioned and ready for scoring modules. | — |
+| 7 | host | Zip underwriting review screen with **API panel** showing `POST /cra/check_report/lend_score/get` — **LendScore 78**, decision **APPROVE**, 2–3 `reason_codes` | Hero reveal: higher score = lower default risk; map to approve more near-prime safely. Call out **beta** in UI microcopy. | `Approve plan` |
+| 8 | slide | Plaid slide: Network Insights attribute callout (one network_attribute + why it matters for BNPL) | Complement LendScore with network behavior signal Zip cannot get from bureau alone. | — |
+| 9 | host | Zip approval success: $800 plan approved, limit shown, summary line referencing score + network | Outcome: more approvals without more losses; tee future Plaid Qualify. | `Continue to checkout` |
+| 10 | slide | Value summary / CTA slide (T11-style): retro next steps for Zip leadership | Close with retro → production decision narrative matching SFDC critical event. | — |
+
+**Insight presentation rules:**
+- LendScore and Network Insights API JSON use global `#api-response-panel` on host steps 7 (and optionally 8 if host beat).
+- Report-ready beat (6) is `sceneType: "slide"` with Plaid deck chrome per new slide design system.
+- Do **not** use Plaid Signal, EWA Score, or Auth-only funding flows — this is CRA LendScore.
+
+**Compliance / user data:**
+CRA permissible purpose for credit underwriting; `/user/create` + `user_token` before `/link/token/create` with `cra_base_report` (and CRA modules as research resolves).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Jordan Lee — near-prime shopper, first-time Zip Pay in 4 applicant
+**Company / context:** Zip BNPL at retail checkout, $800 cart
+**Sample fields that must appear on screen:**
+- Purchase amount `$800.00`
+- LendScore **`78`** with lender action **APPROVE** (or equivalent approved state)
+- At least two literal `reason_codes` (e.g. PCS-prefixed codes) in API panel
+- One Network Insights attribute key visible on slide or JSON (e.g. `plaid_conn_user_lifetime_personal_lending_flag` or similar documented key)
+- Beta badge or footnote on LendScore UI: "LendScore — beta"
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Zip consumer checkout / apply experience: top nav with Zip wordmark, white or light gray page background, accent pink/purple brand color on primary CTAs (from brand-extract). **Host nav (customer app only):** Shop | Pay in 4 | Help | Business on checkout screens; Underwriting | Queue | Policies | Help on underwriting console — do **not** use zip.co marketing mega-menu labels. **Footer (verbatim):** NMLS ID 1963958 on at least one host screen. Entry: installment selection at checkout. Primary Link CTA label: **Link your bank**. Underwriting screen shows decision card with **520px** clearance for `#api-response-panel`; `data-testid="approve-plan-cta"` fully visible.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Include **4 marketing slides** in `sceneType: "slide"` steps using Plaid Deck Design System (T1 title, T3 statement, T4 or T5 for stats, T11 CTA). Steps: opener, report-ready insight, network-insights explainer, closing retro CTA. Use `data-slide-template` T1/T3/T4/T11. JSON on slides only when illustrating API shape — otherwise keep JSON in `#api-response-panel` on host steps.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] Stats sourced from LendScore GTM (25% lift, 20% risk reduction) — not duplicated elsewhere
+  [x] Product family `cra_lend_score`; endpoints `/cra/check_report/lend_score/get` + optional `network_insights/get`
+  [x] Live CRA Link; no simulated Link divs
+  [x] Slides enabled via SLIDE_OUTPUT block
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

@@ -1,0 +1,90 @@
+================================================================================
+Credit Genie — One-tap debt-relief onboarding to a cash-flow-sized plan (Plaid Layer + Plaid Consumer Report: CRA Base Report + CRA Cashflow Insights)
+================================================================================
+
+**Host:** **Credit Genie** — AI-driven debt relief and financial-health app (consumer)
+**Brand URL:** https://www.creditgenie.com
+
+**User journey (one sentence):**
+A consumer seeking debt relief taps once to onboard with Plaid Layer — a single session that shares their prefilled identity and permissions their bank — and Credit Genie generates a Plaid Consumer Report (CRA) server-side to size a personalized debt-relief plan on 365 days of verified cash flow plus CRA Cashflow Insights.
+
+**Story arc (short prose):**
+Marcus Bell is juggling several payments and wants a realistic plan, fast. Credit Genie's signup loses people to long forms, so it leads with Plaid Layer: in one tap Marcus reviews his prefilled name, email, phone, and address AND permissions his bank — a single Layer session, no second connection step. Credit Genie writes that identity to the Plaid user record and generates his Consumer Report server-side. It then reads the **CRA Base Report** (365-day cash flow — inflows, outflows, stable balances, zero NSFs) and **CRA Cashflow Insights** (income stream, recurring obligations, free cash flow) to size a debt-relief plan that fits what Marcus can actually afford. Compliance-safe language only ("can help," "typically," "up to").
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Layer, CRA Base Report, CRA Cashflow Insights
+(canonical: Plaid Consumer Report — use the contiguous phrases "CRA Base Report" and "CRA Cashflow Insights" verbatim in labels + narration)
+
+**Solutions supported:** Account Opening / Onboarding, Credit Scoring & Underwriting, Consumer Report Underwriting
+
+**Primary product family:** `cra_base_report`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-cra-cashflow-insights.md` and `inputs/products/plaid-layer.md`)
+
+**Canonical flow:** `.claude/skills/plaid-layer-cra-onboarding/SKILL.md` — Layer + CRA is ONE Layer session; the report is generated server-side. NO separate CRA Plaid Link launch.
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **EXACTLY ONE launch — the Plaid Layer session.** `plaidPhase:"launch"` appears on the Layer step ONLY. Do NOT author a separate CRA Plaid Link launch; the single Layer session both shares identity AND permissions accounts.
+  [x] **Layer session (CRA-enabled):** `POST /user/create` → `POST /session/token/create` with the **CRA Layer template** (`CRA_LAYER_TEMPLATE`, resolved server-side) and `user.user_id` = the Plaid `user_id`; `Plaid.create` → `submit(phone)` first → `open()` on `LAYER_READY`. Sandbox eligible phone **+14155550011**. CRA API calls use `CRA_CLIENT_ID`/`CRA_SECRET` (resolved server-side).
+  [x] **Server-side report generation (NOT a launch):** after Layer, `POST /user_account/session/get` → `POST /user/update` (populate `name`, `date_of_birth`, `emails`, `phone_numbers`, `addresses`) → `POST /cra/check_report/create` → wait `USER_CHECK_REPORT_READY`.
+  [x] **Reports retrieved by `user_id`** (NOT access_token): `POST /cra/check_report/base_report/get` and `POST /cra/check_report/cashflow_insights/get` after report-ready.
+  [x] **Sandbox / persona** — Layer eligible phone +14155550011; identity prefilled by Layer.
+
+Link/Layer narration boundary: the pre-Layer step ends on the tap ("…he taps Continue with Plaid."); the Layer step narrates content visible inside the modal only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | host | Credit Genie app — Marcus starts a **debt-relief plan**. A short "Get started" card; one-tap **Continue with Plaid** instead of a long form. Ends on the tap. | `POST /user/create`; `POST /session/token/create` (CRA Layer template) | `Continue with Plaid` |
+| 2 | layer-launch | Live **Plaid Layer** session (the ONLY launch): phone-first, eligibility-gated; he reviews prefilled **name, email, phone, address** and permissions his bank in one tap. `plaidPhase:"launch"`. | `Plaid.create` → `submit(phone)` → `open()` on `LAYER_READY` | Identity shared + bank permissioned |
+| 3 | host | "Building your plan…" async state — Credit Genie writes Layer identity to the user record and generates the Consumer Report server-side. | `POST /user_account/session/get`; `POST /user/update`; `POST /cra/check_report/create`; webhook `USER_CHECK_REPORT_READY` | Report ready |
+| 4 | insight | **CRA Base Report** card + JSON panel: 365-day cash flow — total inflow **$72,540.18**, total outflow **$64,985.42**, **nsf_overdraft_transactions_count: 0**, current balance **$3,210.66**, days_available 365. | `POST /cra/check_report/base_report/get` (`user_id`) | "365 days of cash flow, zero NSFs" |
+| 5 | insight | **CRA Cashflow Insights** card + JSON panel: detected income stream, recurring obligations, and estimated monthly **free cash flow $just over six hundred** — the affordability signal that sizes the plan. | `POST /cra/check_report/cashflow_insights/get` (`user_id`) | "Affordability from real cash flow" |
+| 6 | host | **Your plan is ready.** A debt-relief plan sized to Marcus's verified cash flow — an affordable monthly amount, no long form. | (plan derived from CRA data) | `View my plan` |
+
+**Product-specific reminders:**
+- ONE launch only (Layer). The report-generation beat (step 3) is a server-side async state, NOT a `plaidPhase` launch.
+- Layer identity is user-permissioned; written to the Plaid user record via `/user/update` before report generation. Frame as "shared / permissioned," not document-verified KYC.
+- CRA Cashflow Insights / Base Report are FCRA consumer-report products — compliance-safe, "can help"/"typically" framing; happy path only. Cashflow Insights retrieved via `/cra/check_report/cashflow_insights/get`, NOT `/credit/bank_income/get`.
+- Every insight step id MUST contain the substring `insight`.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Marcus Bell — consumer seeking a personalized debt-relief plan.
+**Sample fields that must appear on screen (use verbatim — non-round):**
+- CRA Base Report: total inflow $72,540.18 · total outflow $64,985.42 · current balance $3,210.66 · 0 NSF/overdraft · 365 days
+- CRA Cashflow Insights: estimated monthly free cash flow $612.40 · regular income stream detected
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Credit Genie-style friendly consumer financial-health surface (white/light background, approachable accent). A debt-relief signup flow, a one-tap Plaid Layer onboarding, a plan-building async state, two consumer-report insight beats, and a plan-ready summary. The CRA insights use Plaid dark navy/teal in the global `#api-response-panel`. Raw JSON only in that panel.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] EXACTLY ONE plaidPhase:"launch" — the Plaid Layer session (no separate CRA Link)
+  [x] Family cra_base_report; reports retrieved by user_id via /cra/check_report/*
+  [x] Layer eligible phone +14155550011; async report-ready beat present
+  [x] Product names/family match `CLAUDE.md`
+  [x] **FULL pipeline run** — build, record, voiceover/narration, render to the final produced video
+
+END OF SPECIFICATION

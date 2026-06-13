@@ -347,8 +347,10 @@
       "observed": {
         "p50TransitionMs": 250,
         "p90TransitionMs": 250,
-        "samples": 1,
+        "samples": 3,
         "recent": [
+          250,
+          250,
           250
         ]
       },
@@ -356,8 +358,8 @@
       "notes": "_idvComplete set by host onSuccess. Status via /identity_verification/get steps{}."
     }
   ],
-  "verifiedRuns": 2,
-  "lastVerifiedAt": "2026-06-12T22:01:09.913Z",
+  "verifiedRuns": 4,
+  "lastVerifiedAt": "2026-06-13T04:18:59.209Z",
   "lastBrokenAt": "2026-06-12T19:27:09.121Z",
   "knowledgeConfidence": 0.81,
   "notes": "IDV sessions RESUME by phone-linked identity: a re-launch with the same phone (+12345678909) skips already-completed steps (observed resume at SMS and at doc-QR). Calibration/re-records start mid-flow after a prior partial session."

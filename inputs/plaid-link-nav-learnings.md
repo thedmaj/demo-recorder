@@ -2352,3 +2352,10 @@ Findings gathered for the human-like navigation system (nav profiles in `inputs/
 - 2026-06-12 [nav-feedback] cra-link run=2026-06-10-Cashrepublic-CRA-Auth-Identity-v1 completed=true style=human screensMerged=0 humanDwell=+19s
 - 2026-06-12 [nav-feedback] idv run=2026-06-10-Gringo-Coin-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=1 humanDwell=+2s
 - 2026-06-12 [nav-feedback] embedded-link run=2026-06-12-Ally-Bank-Auth-Identity-Signal-Transfer-Statements-v1 completed=true style=human screensMerged=1 humanDwell=+5s
+- 2026-06-12 [nav-feedback] idv run=2026-06-12-Scrub-Io-CRA-Identity-Assets-v2 completed=true style=human screensMerged=1 humanDwell=+24s
+- 2026-06-13 [nav-feedback] idv run=2026-06-13-Scrub-Io-CRA-Auth-Identity-Assets-v1 completed=true style=human screensMerged=1 humanDwell=+26s
+- 2026-06-13 [nav-feedback] classic-link run=2026-06-13-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+18s
+- 2026-06-13 [nav-feedback] classic-link run=2026-06-13-Td-Bank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+15s
+- 2026-06-13 [nav-feedback] cra-link run=2026-06-13-Zip-CRA-Auth-Signal-v1 completed=true style=human screensMerged=1 humanDwell=+2s
+- 2026-06-13 [nav-feedback] classic-link run=2026-06-13-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+18s
+- 2026-06-13 [nav-feedback] classic-link run=2026-06-13-Chase-Bank-Auth-Identity-Signal-Transfer-v3 completed=true style=human screensMerged=2 humanDwell=+19s

@@ -15,7 +15,7 @@ use_cases:
   - "mortgage-voa"
   - "mortgage-employment-refresh"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-10T05:53:46.949Z"
+last_ai_update: "2026-06-13T08:24:55.477Z"
 needs_review: true
 approved: true
 version: 1
@@ -240,6 +240,27 @@ Host/consumer screens must read like a real product a borrower/applicant uses. T
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-13 — Run: 2026-06-13-Credit-Genie-CRA-Identity-Signal-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Plaid Layer pairs with CRA so one Plaid relationship covers both front-of-funnel onboarding and underwriting in a single session.","status":"high"}
+- [high] {"claim":"CRA Base Report and CRA Cashflow Insights ride the same single Plaid Layer connection, so layering affordability/free-cash-flow on top of cash-flow underwriting reuses one connection — no second consent.","status":"high"}
+- [high] {"claim":"Most new customers should use Consumer Report by Plaid Check instead of legacy Assets — FCRA-compliant with underwriting scores and insights.","source":"Plaid Assets docs, 2026-03-05","status":"DRAFT"}
+
+### 2026-06-13 — Run: 2026-06-13-Spring-Eq-CRA-Identity-Signal-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Plaid Layer pairs with CRA so one Plaid relationship covers both front-of-funnel onboarding and underwriting in a single session.","status":"high"}
+- [high] {"claim":"CRA Base Report and CRA LendScore ride the same single Plaid Link connection, so layering a cash-flow risk score on top of cash-flow underwriting reuses existing infrastructure.","status":"high"}
+- [high] {"claim":"Mortgage/home lending is asset + income verification, not a cash-flow score; for a HELOC, LendScore is a complementary cash-flow risk signal, not a mortgage underwriting score.","status":"qualitative-field-framing"}
+
+### 2026-06-12 — Run: 2026-06-12-Scrub-Io-CRA-Identity-Assets-v2 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] Cross-border underwriting unlock
+- [high] One connection, income + assets
 
 ### 2026-06-10 — Run: 2026-06-10-Cashrepublic-CRA-Auth-Identity-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

@@ -1,0 +1,99 @@
+================================================================================
+TD Bank — Instant External Account Funding — Fund a TD account from any bank in seconds, with ownership + ACH-risk checks built in
+================================================================================
+
+**Host:** **TD Bank** — U.S. retail banking (consumer deposit account funding)
+**Canonical URL:** https://www.td.com
+**Brand URL:** https://www.td.com
+
+**User journey (one sentence):**
+A new TD customer funds their TD checking account from an external bank by connecting it with Plaid, and TD instantly verifies the account belongs to them, pulls the ACH rails, and clears the transfer for ACH-return risk before approving the funds.
+
+**Story arc (short prose):**
+Opening a deposit account is easy — funding it is where customers stall on slow micro-deposits and where fraud and ACH returns creep in. TD drops in Plaid: the customer links their external bank in one tap, and behind the scenes TD confirms the accountholder matches its KYC (Identity Match), pulls account + routing rails (Auth), captures the amount, and risk-scores that specific transfer (Signal). Low risk → funds approved instantly, no micro-deposits. Close on the value: faster funded accounts, fewer returns, less fraud.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Identity (Identity Match), Plaid Signal
+
+**Solutions supported:** Account Funding
+
+**Primary product family:** `funding`
+
+**Primary messaging file for this demo:** `inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link** — real SDK, single `plaidPhase: "launch"` step per `CLAUDE.md`
+  [ ] Plaid Layer / OAuth / IDV — N/A
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md` (First Platypus Bank, `user_good`/`pass_good`); external institution name + account mask come from Link `onSuccess` metadata only — never hardcode them.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+Backend order after Link is **ownership -> rails -> amount -> risk**: Identity Match, then Auth, then the host amount capture, then Signal. Never show Auth before Identity Match.
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | TD funding home (host) | TD-branded "Add money to your checking account" screen | The funding stall problem; one-tap fix | "Link an external bank" button |
+| 2 | Plaid Link (launch) | Real Plaid Link modal | Narrate inside the modal: select bank, log in, choose account | account linked |
+| 3 | identity-match-insight | Plaid insight screen (dark navy/teal) | Confirm the right person owns the account; fuzzy match tolerates formatting | strong name/address/phone match; email mismatch surfaced |
+| 4 | auth-insight | Plaid insight screen | Pull ACH account + routing for the funding leg | ACH rails retrieved |
+| 5 | funding-amount (host) | TD UX: enter amount to move | Customer-entered amount feeds the risk check | $2,500.00 entered |
+| 6 | signal-insight | Plaid insight screen | Score ACH-return risk for THIS transfer/amount | low risk -> ACCEPT |
+| 7 | funds-approved (host) | TD UX: funds approved instantly | No micro-deposits; good users approved on the spot | "Funds available" |
+| 8 | value summary (slide) | Plaid value slide | Faster funded accounts, fewer returns, less fraud | CTA |
+
+**Product-specific reminders:**
+- Signal: low score = low ACH return risk; happy path **ACCEPT** with low scores (customer-initiated 12, bank-initiated 10). `ruleset.result` in {ACCEPT, REVIEW, REROUTE} — happy path ACCEPT.
+- Identity Match: scores 0–100; name/address/phone strong, email weak to show nuance. Never label scores "Trust Index".
+- Link: the pre-Link step ends on the **button** ("…taps Link an external bank."); the Link step narrates content **inside** the modal only.
+- Consumer TD screens never show raw JSON; the JSON belongs only in the global `#api-response-panel`.
+
+**Compliance / user data (one line):** N/A — funding flow (no consumer-report permissible purpose).
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Robert Donnelly — new TD checking customer funding his account
+**Company / context:** Personal consumer; external bank = the linked institution (from Link `onSuccess`)
+**Sample fields that must appear on screen:**
+- Identity Match (deliberate formatting mismatch, strong overall): external "Robert Timothy Donnelly" vs TD KYC "Robert T. Donnelly" (name score ~85); 1200 Market Street Apt 4B vs 1200 Market St #4B, Philadelphia, PA 19107 (address high); +12155550100 vs (215) 555-0100 (phone high); email mismatch rdonnelly.bank@example.com vs r.donnelly@personal.example (email low, 0–40).
+- Funding amount: **$2,500.00**
+- Signal: `customer_initiated_return_risk.score` 12, `bank_initiated_return_risk.score` 10, `ruleset.result` ACCEPT.
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+TD-branded host (TD green nav, light/white background) with a simple "Add money to your TD Checking" funding screen and a clear "Link an external bank" CTA that opens Plaid Link. Return to TD chrome for the amount entry and the instant-approval outcome. Plaid insight screens use Plaid dark navy/teal — distinct from TD host chrome.
+
+**Viewport:** 1440x900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Up to 5 slides: (1) exec problem/outcome value slide (no JSON); (2-4) one technical slide each for Identity Match, Auth, and Signal with a "Sample API response" JSON rail mirroring that step's apiResponse; Plaid-only styling (dark navy/teal), no TD chrome on technical slides. Place each technical slide adjacent to its matching insight beat.
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for stats (`inputs/plaid-value-props.md`)
+  [x] Product names and family match `CLAUDE.md` (funding; Auth, Identity, Signal, Link)
+  [x] Storyboard order matches goToStep flow (ownership -> rails -> amount -> risk)
+  [x] Live Link (real SDK), sandbox per pipeline env
+
+END OF SPECIFICATION
