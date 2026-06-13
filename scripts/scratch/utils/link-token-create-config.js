@@ -170,6 +170,24 @@ function sanitizeProductsForLinkTokenMix(products, intent = 'auto') {
     result = filtered;
   }
 
+  // Layer 3: a CRA link token only accepts cra_* products. Plaid rejects
+  // mixed tokens outright ("cannot configure assets along with cra_*
+  // products" — observed 400, Scrub.io 2026-06-12, products
+  // [cra_base_report, cra_income_insights, identity, transactions, assets]).
+  // When cra_* products survive the layers above, drop every non-CRA
+  // companion rather than shipping a token Plaid will refuse.
+  if (result.some((p) => CRA_LINK_PRODUCTS.has(p))) {
+    const filtered = [];
+    for (const p of result) {
+      if (CRA_LINK_PRODUCTS.has(p)) {
+        filtered.push(p);
+      } else {
+        droppedNonCraIncomeIncompatible.push(p);
+      }
+    }
+    result = filtered;
+  }
+
   return { products: result, droppedCra, droppedNonCraIncomeIncompatible };
 }
 
@@ -593,7 +611,13 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
   // Count a Protect signal only when at least one mention sits in a clean
   // (non-negated) ~60-char window of the whitespace-collapsed prompt.
   const collapsedPrompt = lcPrompt.replace(/\s+/g, ' ');
-  const PROTECT_NEG = /\bnot\b|\bnever\b|n['’]t\b|\bwithout\b|\bexclud\w*|\bavoid\b|\bdon't\b|\bdo not\b/i;
+  // \bno\b is load-bearing: prompts exclude Protect terms with "No 'Trust Index'
+  // terminology" / "no Plaid Protect". Without \bno\b that reads as AFFIRMATIVE
+  // Protect intent, keeping protect_linked_bank and 400'ing /link/token/create
+  // (observed: Chase funding rebuild, 2026-06-13). The affirmative matcher scans
+  // every occurrence, so a real Protect demo (multiple non-negated mentions)
+  // still resolves true.
+  const PROTECT_NEG = /\bnot\b|\bno\b|\bnever\b|n['’]t\b|\bwithout\b|\bexclud\w*|\bavoid\b|\bdon't\b|\bdo not\b/i;
   const protectIntentAffirmative = (re) => {
     const gre = new RegExp(re.source, 'gi');
     let mm;
@@ -609,9 +633,16 @@ async function resolveLinkTokenCreateConfig(opts = {}) {
     protectIntentAffirmative(/\bplaid\s+protect\b/) || protectIntentAffirmative(/\btrust\s+index\b/) ||
     protectIntentAffirmative(/\bti2\b/) || protectIntentAffirmative(/\bprotect_linked_bank\b/) ||
     /\/protect\/event\/send\b/.test(lcPrompt) || /\/protect\/user\/insights\b/.test(lcPrompt);
-  const isProtectFamily = /protect|trust_index/.test(String(productFamily).toLowerCase());
+  // NOTE: do NOT trust a research-RESOLVED productFamily of "plaid_protect" as
+  // a reason to KEEP protect_linked_bank. Research circularly resolves the
+  // family TO plaid_protect *because* it spuriously added protect_linked_bank
+  // to a funding/Signal demo — so an isProtectFamily escape hatch let an
+  // un-enabled product through and 400'd /link/token/create (observed: Chase
+  // funding rebuild, 2026-06-13, "not enabled for protect_linked_bank"). Gate
+  // the strip on genuine PROMPT intent only; a real Protect demo always says
+  // "Plaid Protect" / "Trust Index" / uses /protect/* endpoints affirmatively.
   const droppedProtect = [];
-  if (!genuineProtectIntent && !isProtectFamily && Array.isArray(merged.products)) {
+  if (!genuineProtectIntent && Array.isArray(merged.products)) {
     merged.products = merged.products.filter((p) => {
       const drop = /^(?:protect_linked_bank|protect_transactions|monitor)$/.test(String(p));
       if (drop) droppedProtect.push(p);

@@ -44,6 +44,18 @@ function isCraLikeProduct(input) {
   return /\b(cra|consumer report|base report|income insights|cra income insights|cra base report|credit)\b/.test(normalized);
 }
 
+/**
+ * Endpoint-precise CRA test. Endpoints must NOT go through the keyword
+ * matcher: the legacy non-CRA income family lives under `/credit/*`
+ * (/credit/bank_income/get, /credit/payroll_income/get, …) and the bare word
+ * "credit" in isCraLikeProduct mis-routed those to the CRA credential scope
+ * (observed: /credit/bank_income/get 400 "access_token not recognized",
+ * scope=cra, Scrub.io 2026-06-12). Real CRA endpoints are /cra/* only.
+ */
+function isCraEndpoint(endpoint) {
+  return /^\/?cra\//.test(String(endpoint || '').toLowerCase());
+}
+
 function hasCraProducts(products) {
   return Array.isArray(products) && products.some(isCraLikeProduct);
 }
@@ -53,7 +65,7 @@ function resolveCredentialScope(opts = {}) {
   if (explicit === 'cra' || explicit === 'credit') return 'cra';
   if (explicit === 'default' || explicit === 'plaid') return 'default';
 
-  if (isCraLikeProduct(opts.productFamily) || isCraLikeProduct(opts.endpoint)) {
+  if (isCraLikeProduct(opts.productFamily) || isCraEndpoint(opts.endpoint)) {
     return 'cra';
   }
   if (Array.isArray(opts.products) && opts.products.some(isCraLikeProduct)) {
@@ -151,9 +163,29 @@ function companyFromUrl(rawUrl) {
   }
 }
 
+// Parse the prompt's authoritative "Host:" line → the HOST brand (the app the
+// user is in). This is the correct client_name for /link/token/create — NOT
+// the persona's employer (an SMB demo's persona.company is the small business,
+// e.g. "Pixel & Paper Co", while the host is "KeyBank"). Handles markdown bold
+// and trailing descriptors: "**Host:** **KeyBank** — ...", "Host: Chase Bank — ...",
+// "**Host:** **Zip** (Zip Co US Inc.) — ...".
+function extractHostBrandFromText(text) {
+  const m = String(text || '').match(/^\s*\*{0,2}\s*Host\s*\*{0,2}\s*:\s*(.+)$/im);
+  if (!m || !m[1]) return null;
+  let line = m[1].trim();
+  // Drop everything from the first descriptor delimiter onward.
+  line = line.split(/\s+[—–-]\s+| \(| · /)[0];
+  // Strip surrounding markdown bold/asterisks and quotes.
+  line = line.replace(/\*\*/g, '').replace(/^['"`]+|['"`]+$/g, '').trim();
+  return line || null;
+}
+
 function extractCompanyNameFromText(text) {
   const raw = String(text || '');
   if (!raw.trim()) return null;
+  // HOST line first — most authoritative for demo prompts.
+  const host = extractHostBrandFromText(raw);
+  if (host) return host;
   const companyMatch = raw.match(/^\s*Company(?:\s+name)?\s*:\s*(.+)$/im);
   if (companyMatch && companyMatch[1]) {
     const line = companyMatch[1].trim().split(/\r?\n/)[0].trim();
@@ -170,17 +202,50 @@ function extractCompanyNameFromText(text) {
 function resolvePromptDerivedClientName(opts = {}) {
   const projectRoot = path.resolve(__dirname, '../../..');
   const runDir = firstNonEmpty(opts.runDir, process.env.PIPELINE_RUN_DIR) || null;
-  const candidates = [
-    runDir ? path.join(runDir, 'pipeline-run-context.json') : null,
-    runDir ? path.join(runDir, 'ingested-inputs.json') : null,
-    path.join(projectRoot, 'inputs', 'prompt.txt'),
-  ].filter(Boolean);
+  // CROSS-RUN CONTAMINATION GUARD (2026-06-13): the project-global
+  // inputs/prompt.txt is a shared, mutable file — whatever prompt was authored
+  // last. Reading it for a RUN-SCOPED call leaked a different run's brand into
+  // /link/token/create (observed: "Spring EQ" client_name on a Scrub.io run).
+  // When a runDir is known, resolve ONLY from that run's own artifacts; return
+  // null on miss so the caller falls back to the request-supplied clientName
+  // (this run's HTML-baked brand). The global prompt.txt is consulted ONLY for
+  // ad-hoc, run-less invocations.
+  // demo-script.json FIRST: persona.company is the canonical, reliably-set
+  // brand (script stage writes it; brand-extract consumes it). pipeline-run-context
+  // often lacks company fields and the prompt-text extractor can miss an
+  // unconventional header — both caused a "Plaid Demo" default fallback on a
+  // Scrub.io run (2026-06-13) even with the correct demo-script present.
+  // client_name must be the HOST brand (the app the user is in), NOT the
+  // persona's employer. Resolution order, host-brand-first:
+  //   1. pipeline-run-context.json brand.company (brand-extract host brand)
+  //   2. the prompt's authoritative "Host:" line (via ingested-inputs.json)
+  //   3. demo-script.json brand.company / host
+  //   4. demo-script.json persona.company — LAST resort only (it is the SMB/
+  //      customer company, e.g. "Pixel & Paper Co" on a KeyBank host demo).
+  // The shared global inputs/prompt.txt is used ONLY for run-less calls.
+  const candidates = runDir
+    ? [
+        path.join(runDir, 'pipeline-run-context.json'),
+        path.join(runDir, 'ingested-inputs.json'),
+        path.join(runDir, 'demo-script.json'),
+      ]
+    : [path.join(projectRoot, 'inputs', 'prompt.txt')];
 
   for (const file of candidates) {
     if (!fs.existsSync(file)) continue;
     try {
       const raw = fs.readFileSync(file, 'utf8');
-      if (file.endsWith('ingested-inputs.json')) {
+      if (file.endsWith('demo-script.json')) {
+        const parsed = JSON.parse(raw);
+        const name = firstNonEmpty(
+          parsed?.brand?.company,
+          typeof parsed?.host === 'string' ? parsed.host : parsed?.host?.company,
+          parsed?.company,
+          extractHostBrandFromText(parsed?.prompt || parsed?.sourcePrompt || ''),
+          parsed?.persona?.company // last resort — SMB/customer company, not the host
+        );
+        if (name) return name;
+      } else if (file.endsWith('ingested-inputs.json')) {
         const parsed = JSON.parse(raw);
         const promptText = (parsed.texts || [])
           .filter((t) => /prompt\.txt$/i.test(String(t.filename || '')))
@@ -192,9 +257,9 @@ function resolvePromptDerivedClientName(opts = {}) {
         const parsed = JSON.parse(raw);
         const name = firstNonEmpty(
           parsed?.brand?.company,
-          parsed?.persona?.company,
           parsed?.company,
           parsed?.run?.company
+          // NOTE: persona.company intentionally NOT used here — host brand only.
         );
         if (name) return name;
       } else {

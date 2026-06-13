@@ -3324,8 +3324,22 @@ async function runScratchPipeline({
       }
 
       try {
-        // Bust require cache so edits to record-local.js take effect without restarting
-        delete require.cache[require.resolve('./scratch/record-local')];
+        // Bust require cache so edits to record-local.js (and the modules it
+        // pulls in for live Plaid automation — backend token/brand resolution,
+        // app server, browser agent, pacing) take effect without restarting the
+        // orchestrator. record-local alone was insufficient: a mid-run edit to
+        // plaid-backend (client_name host-brand resolution, 2026-06-13) did NOT
+        // apply because record-local re-loaded but plaid-backend stayed cached.
+        for (const mod of [
+          './scratch/record-local',
+          './utils/plaid-backend',
+          './utils/app-server',
+          './utils/plaid-browser-agent',
+          './utils/human-pacing',
+          './utils/plaid-nav-profile',
+        ]) {
+          try { delete require.cache[require.resolve(mod)]; } catch (_) {}
+        }
         await require('./scratch/record-local').main({ iteration: iter });
       } catch (err) {
         cliError(`[record] iteration ${iter} failed: ${err.message}`);

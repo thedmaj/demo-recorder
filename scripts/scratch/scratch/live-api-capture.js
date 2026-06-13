@@ -94,6 +94,11 @@ async function callEndpoint(plaid, p, ctx) {
     }
     case /\/cra\/check_report\//.test(p):
       throw new Error('CRA Consumer Report requires a user_token + async report-ready flow (not standalone)');
+    case /\/credit\/(bank_income|payroll_income)\//.test(p):
+      // Legacy non-CRA income endpoints take a user_token from a COMPLETED
+      // income Link session — none exists at capture time. Skip honestly
+      // instead of POSTing { access_token } and surfacing a misleading 400.
+      throw new Error('Bank/Payroll Income requires a user_token from a completed income Link session (not standalone)');
     default: {
       // Generic best-effort: most read routes accept { access_token }.
       const data = await plaid.plaidRequest(p, { access_token: token });

@@ -264,7 +264,31 @@ function detectProductSlug(promptContent) {
 // ── Load research context from inputs ─────────────────────────────────────────
 
 function loadResearchContext() {
-  // Try prompt.txt first (preferred)
+  // RUN-SCOPED FIRST (2026-06-13): the global inputs/prompt.txt is a shared,
+  // mutable file. On `resume --from=research` it holds whatever prompt was
+  // authored last — a DIFFERENT run's content — which leaked Zip's CRA
+  // LendScore prompt into a Chase funding re-run. Always prefer this run's own
+  // snapshot. ingested-inputs.json is authoritative (written once at ingest,
+  // never mutated; present on resume); inputs/prompt.txt is the startup
+  // snapshot (present on fresh `new` before ingest has run). Mirrors
+  // story-echo-check.js readPromptText().
+  const runDir = process.env.PIPELINE_RUN_DIR;
+  if (runDir) {
+    try {
+      const ing = JSON.parse(fs.readFileSync(path.join(runDir, 'ingested-inputs.json'), 'utf8'));
+      const t = ing && Array.isArray(ing.texts) && ing.texts[0]
+        ? String(ing.texts[0].content || ing.texts[0].text || '')
+        : '';
+      if (t.trim()) return { type: 'prompt', content: t.trim() };
+    } catch (_) {}
+    const runPromptFile = path.join(runDir, 'inputs', 'prompt.txt');
+    if (fs.existsSync(runPromptFile)) {
+      const text = fs.readFileSync(runPromptFile, 'utf8').trim();
+      if (text) return { type: 'prompt', content: text };
+    }
+  }
+
+  // Global inputs/prompt.txt — only when no run-scoped snapshot exists (ad-hoc).
   const promptFile = path.join(INPUTS_DIR, 'prompt.txt');
   if (fs.existsSync(promptFile)) {
     return { type: 'prompt', content: fs.readFileSync(promptFile, 'utf8').trim() };
