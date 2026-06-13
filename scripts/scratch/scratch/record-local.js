@@ -1200,6 +1200,89 @@ async function executeLayerOrIdvLaunch(page, product) {
 }
 
 /**
+ * Option B — CRA modal-hold (recorder-only; no app/build change).
+ *
+ * The CRA / Plaid Check (Passport) flow tears its modal down within ~7s of
+ * opening: onSuccess/HANDOFF calls handler.destroy() + goToStep('generating-report'),
+ * faster than the recorder can capture the modal — so the launch step recorded
+ * pure host UI (Zip + Scrub.io CRA, 2026-06-13). This HOLDS the modal visible:
+ * it defers BOTH the first post-link goToStep AND the Plaid handler teardown for
+ * a hold window, marks institution-list-shown immediately (modal on screen, so
+ * the post-process keep-window lands on the modal), dwells so the modal is
+ * visibly recorded, marks confirm-clicked while still held, then RELEASES the
+ * hold so the app advances normally. Recording-stage only; the app is untouched.
+ * Disable with PLAID_CRA_MODAL_HOLD=false.
+ */
+async function executeCraModalHold(page) {
+  const HOLD_MS = parseInt(process.env.PLAID_CRA_MODAL_HOLD_MS || '10000', 10);
+  console.log(`  [Plaid Link] CRA modal-hold: defer teardown + post-link transition for up to ${HOLD_MS}ms so the modal is recorded`);
+  // Install: defer the first post-link goToStep and the Plaid handler.destroy()
+  // until released. Exposes __craReleaseHold() to flush + restore.
+  await page.evaluate(() => {
+    if (window.__craHoldInstalled) return;
+    window.__craHoldInstalled = true;
+    const origGoTo = window.goToStep;
+    let pendingStep = null;
+    window.goToStep = function (id) {
+      if (pendingStep === null && typeof id === 'string') {
+        // First post-link advance during the hold — queue it, don't run yet.
+        pendingStep = id;
+        return;
+      }
+      return origGoTo.apply(window, arguments);
+    };
+    const patchDestroy = () => {
+      const h = window._plaidHandler;
+      if (h && typeof h.destroy === 'function' && !h.__holdPatched) {
+        const od = h.destroy.bind(h);
+        h.__holdPatched = true;
+        h.__origDestroy = od;
+        h.destroy = function () { h.__destroyRequested = true; };
+      }
+    };
+    patchDestroy();
+    const iv = setInterval(patchDestroy, 150);
+    window.__craReleaseHold = function () {
+      clearInterval(iv);
+      window.goToStep = origGoTo;
+      const h = window._plaidHandler;
+      if (h && h.__origDestroy) { try { h.destroy = h.__origDestroy; if (h.__destroyRequested) h.destroy(); } catch (_) {} }
+      if (pendingStep !== null) { try { origGoTo.call(window, pendingStep); } catch (_) {} }
+    };
+  });
+
+  // Modal is open + visible → mark institution-list-shown NOW (early, accurate).
+  markPlaidStep('institution-list-shown', page);
+
+  // Light progression so multiple modal panes are recorded (best-effort; the
+  // hold keeps the modal up regardless of whether these clicks land).
+  const frame = page.frameLocator(PLAID_IFRAME_SELECTOR);
+  const CTA = ['button:has-text("Continue")', 'button:has-text("Share")', 'button:has-text("Confirm")',
+    'button:has-text("Allow")', 'button:has-text("Agree")', 'button[type="submit"]'];
+  const deadline = Date.now() + HOLD_MS - 1500;
+  let clicks = 0;
+  while (Date.now() < deadline && clicks < 3) {
+    const dwell = getPacer().isHuman ? getPacer().screenDwellMs({ fallbackMs: 2600 }) : 2600;
+    await page.waitForTimeout(dwell);
+    let clicked = false;
+    for (const sel of CTA) {
+      const b = frame.locator(sel).first();
+      if (await b.isVisible({ timeout: 700 }).catch(() => false)) {
+        await b.click({ force: true, timeout: 3000 }).catch(() => {});
+        clicked = true; clicks += 1; break;
+      }
+    }
+    if (clicks === 1 && plaidLinkTimings['confirm-clicked'] == null) markPlaidStep('confirm-clicked', page);
+    if (!clicked && clicks === 0) { /* modal idle on one pane — keep dwelling, it's still visibly recorded */ }
+  }
+  if (plaidLinkTimings['confirm-clicked'] == null) markPlaidStep('confirm-clicked', page);
+
+  // Release: flush the deferred teardown + transition so the app proceeds.
+  await page.evaluate(() => { if (window.__craReleaseHold) window.__craReleaseHold(); }).catch(() => {});
+  console.log(`  [Plaid Link] CRA modal-hold released (${clicks} progression click(s))`);
+}
+
+/**
  * Execute the live Plaid Link actions for a given phase.
  *
  * When USE_BROWSER_AGENT=true (default when PLAID_LINK_LIVE + ANTHROPIC_API_KEY):
@@ -1373,7 +1456,17 @@ async function executePlaidLinkPhase(page, phase) {
         const plaidRecipe = process.env.PLAID_RECIPES_DISABLED === 'true'
           ? null
           : loadPlaidRecipe(plaidLinkFlow);
-        if (plaidRecipe) {
+        // CRA / Plaid Check: the modal tears down ~7s after opening, faster than
+        // capture. Hold it visible (Option B, recorder-only) instead of the CSS
+        // waterfall whose selectors miss the varying CRA/Passport panes and which
+        // mis-timed the markers. Disable with PLAID_CRA_MODAL_HOLD=false.
+        if (plaidLinkFlow === 'cra' && process.env.PLAID_CRA_MODAL_HOLD !== 'false') {
+          try {
+            await executeCraModalHold(page);
+          } catch (err) {
+            console.warn(`  [Plaid Link] CRA modal-hold error (non-fatal): ${err.message}`);
+          }
+        } else if (plaidRecipe) {
           try {
             console.log(`  [Plaid Link] Using recipe: ${plaidLinkFlow} (${plaidRecipe.screens.length} screens, ~${(plaidRecipe.totalEstimatedDwellMs || 0) / 1000}s budgeted)`);
             await executePlaidRecipe({
