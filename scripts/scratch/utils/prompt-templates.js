@@ -1129,13 +1129,37 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `NARRATION FLOW RULE (scene-to-scene continuity — read narrations as ONE script):\n` +
       `The narration track is heard as one continuous voiceover, so write it as one story, not\n` +
       `eleven isolated captions. Before finalizing, read all narrations in sequence aloud:\n` +
-      `- CONNECT each beat to the previous one. At least half the steps should open with connective\n` +
-      `  tissue that carries the action forward ("With the account linked…", "That score clears the\n` +
-      `  way for…", "Behind that confirmation…", "Now that ownership is settled…") instead of\n` +
-      `  restarting cold.\n` +
+      `- CONNECT EVERY SCENE CHANGE. Default: every step after the first opens with connective\n` +
+      `  tissue that carries the previous beat's outcome forward. A cold open is allowed only when\n` +
+      `  deliberate — the opening step, or a hard act break where a reset sharpens the story.\n` +
+      `  YOU choose the connective phrasing — creative freedom is expected. Vary the form:\n` +
+      `    temporal   ("Once…", "Now that…", "With identity settled…")\n` +
+      `    causal     ("That score clears the way for…", "That session returns…")\n` +
+      `    spatial    ("Back in the app…", "Inside the underwriter's view…")\n` +
+      `    revelation ("Behind that confirmation…", "Behind that single consent…")\n` +
+      `- BEHIND-THE-SCENES handoff (the prime transition site): when the next step is an API\n` +
+      `  insight beat, bridge from the on-screen outcome the viewer just watched into the\n` +
+      `  off-screen API work. Model (adapt freely, never reuse verbatim across steps):\n` +
+      `  "Once Plaid Link has authenticated the bank account successfully, behind the scenes\n` +
+      `  the /auth/get API returns verified routing and account numbers in one call."\n` +
+      `  Endpoint names belong only in these insight-step transitions — never in host-step narration.\n` +
+      `- GOOD transitions (from real shipped scripts):\n` +
+      `  ✓ "That session returns a verdict straight from Plaid's identity check — status success…"\n` +
+      `  ✓ "With identity settled, one question remains: can he repay?…"\n` +
+      `  ✓ "Behind that single consent, Bank Income detects a regular income stream…"\n` +
+      `- BAD cold starts (real failures — do not do this):\n` +
+      `  ✗ "The lender writes the identity to the user record…" (backend jump with no bridge from\n` +
+      `    the session the viewer just watched)\n` +
+      `  ✗ "The report-ready webhook fires —…" (developer jargon as an opener, zero connective tissue)\n` +
+      `- The transition lives INSIDE the 20–35 word budget: a short connective clause (3–8 words),\n` +
+      `  then the step's own content. Do not pad a narration to fit a transition in.\n` +
+      `- The Plaid Link boundary rule still holds: the step BEFORE a launch ends on the tap; the\n` +
+      `  launch step opens INSIDE the modal. The step AFTER a Link/IDV/Layer session is the prime\n` +
+      `  transition site ("Once Plaid Link has authenticated…", "That session returns…").\n` +
       `- VARY sentence openers: never start two consecutive narrations with the same word, the\n` +
-      `  persona's name, or "Plaid". Use the persona's first name in at most 3 narrations total —\n` +
-      `  pronouns and role words ("she", "the owner", "the applicant") carry the rest.\n` +
+      `  same connective form, the persona's name, or "Plaid". Use the persona's first name in at\n` +
+      `  most 3 narrations total — pronouns and role words ("she", "the owner", "the applicant")\n` +
+      `  carry the rest.\n` +
       `- NO TEMPLATE STAMPING: do not reuse the same sentence skeleton ("X does Y — Z happens")\n` +
       `  across steps. Alternate rhythm: a short punchy line (8-12 words) after every 2-3 longer ones.\n` +
       `- HAND OFF forward: when a beat sets up the next screen, let the last clause lean into it\n` +
@@ -2960,14 +2984,23 @@ function buildNarrationPolishPrompt(steps, productResearch) {
     `- Confident, precise, outcome-focused.\n` +
     `- Active voice. Quantified outcomes where possible.\n` +
     `- Never: "simply", "just", "unfortunately", "robust", "seamless".\n` +
-    `- Use approved product names only.`;
+    `- Use approved product names only.\n` +
+    `- Narrations play back-to-back as ONE continuous voiceover. PRESERVE each step's\n` +
+    `  transitional opener — the clause connecting it to the previous step ("Once Plaid Link\n` +
+    `  has authenticated…", "With identity settled…", "That session returns…"). Never delete\n` +
+    `  a transition to hit word count; tighten elsewhere in the sentence. You may improve a\n` +
+    `  transition, never strip it.`;
 
-  // Build per-step instructions with max word count derived from duration
-  const stepInstructions = steps.map((step) => {
+  // Build per-step instructions with max word count derived from duration.
+  // Neighboring narrations are included so the polish pass can see (and must
+  // preserve) the scene-to-scene transitions at each seam.
+  const stepInstructions = steps.map((step, i) => {
     const maxWords = Math.floor((step.durationMs / 1000 / 60) * 150);
     return (
       `Step "${step.id}" (${step.durationMs}ms, max ${maxWords} words):\n` +
-      `Original: ${step.narration}`
+      `Previous narration: ${steps[i - 1]?.narration ?? '(first step)'}\n` +
+      `Original: ${step.narration}\n` +
+      `Next narration: ${steps[i + 1]?.narration ?? '(final step)'}`
     );
   }).join('\n\n');
 
@@ -3073,6 +3106,18 @@ function buildScriptCritiquePrompt(demoScript, productResearch) {
     `- Active voice only (flag passive constructions)\n` +
     `- No banned words: "simply", "just", "unfortunately", "robust", "seamless"\n` +
     `- Quantified outcomes in the key reveal step\n\n` +
+    `Continuity (read the narrations in step order, as ONE continuous voiceover):\n` +
+    `- Each scene change should open with connective tissue carrying the previous beat's\n` +
+    `  outcome forward ("Once…", "That session returns…", "With identity settled…",\n` +
+    `  "Behind that consent…"). Flag any step that starts cold — restarting the story with\n` +
+    `  no reference to what just happened — as severity "warning", rule "narration-continuity".\n` +
+    `  Exceptions: the opening step, and a deliberate hard act break. Use judgment, not\n` +
+    `  pattern-matching — a step connects if its first clause clearly continues the prior\n` +
+    `  beat, even without a stock opener.\n` +
+    `- Flag two consecutive steps opening with the same word or same connective form ("warning").\n` +
+    `- Pay special attention to transitions INTO insight/API steps: the narration should bridge\n` +
+    `  the on-screen outcome into the off-screen API work (e.g. "Once Plaid Link has\n` +
+    `  authenticated the bank account, behind the scenes the /auth/get API…").\n\n` +
     `Structure:\n` +
     `- 8–14 steps total\n` +
     `- Must follow narrative arc: Problem → Solution entry → Frictionless experience → Key reveal → Outcome\n` +

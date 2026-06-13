@@ -129,3 +129,22 @@ The Plaid Link step narration must begin describing content VISIBLE INSIDE the m
 - ✅ "Recognized as a returning user, she confirms with a one-time code..."
 - ❌ "Plaid Link opens. She taps..." (never narrate the trigger in the Link step)
 - ❌ "She clicks the button and Plaid Link opens..." (same violation)
+
+## Narration Transitions — Connect Every Scene Change
+
+Narration is one continuous voiceover. By default, **every step after the first opens with a
+short connective clause** (3–8 words, inside the 20–35 word budget) that carries the previous
+beat's outcome forward. The writer has creative freedom over phrasing — vary temporal
+("Once…", "With identity settled…"), causal ("That session returns…"), spatial ("Back in
+the app…"), and revelation ("Behind that single consent…") forms; never stamp one template.
+Cold opens are reserved for the opening step and deliberate act breaks.
+
+The prime transition site is the step AFTER a Plaid session, especially into a
+behind-the-scenes/API insight beat:
+- ✅ "Once Plaid Link has authenticated the bank account successfully, behind the scenes
+  the /auth/get API returns verified routing and account numbers."
+- ❌ "The report-ready webhook fires — the Consumer Report is ready." (cold start + dev jargon)
+
+This composes with the boundary rule above: the transition INTO a Link step still never
+narrates the button tap. Endpoint names belong only in insight-step transitions, never in
+host-step narration. Script-critique flags cold starts as `narration-continuity` warnings.
