@@ -286,6 +286,54 @@ async function reviewStep(client, step, stepId, frames, demoContext = {}) {
 }
 
 /**
+ * Verify a Plaid modal was actually CAPTURED for the live-Plaid launch step(s),
+ * using the CDP screenshots record-local takes at each markPlaidStep
+ * (plaid-frames/{link-consent,link-otp,link-account-select,link-success}-mid.png).
+ * The live-Plaid auto-score (85) skips frame scoring on the assumption the modal
+ * occupies the segment — but a launch step can record pure HOST UI with no modal
+ * (Zip CRA: every captured frame was the host "Generating your report" screen;
+ * the modal never rendered, yet it auto-passed 85, 2026-06-13). Returns
+ * { modalRecorded, evidence }. Defaults to true (pass) when no frames exist or
+ * the vision call fails, so this only ever ADDS a failure signal, never a flake.
+ */
+async function verifyPlaidModalRecorded(client, outDir) {
+  const dir = path.join(outDir, 'plaid-frames');
+  let files = [];
+  try { files = fs.readdirSync(dir).filter((f) => /-mid\.png$/.test(f)); } catch (_) { return { modalRecorded: true, evidence: 'no plaid-frames dir — skip' }; }
+  if (!files.length) return { modalRecorded: true, evidence: 'no captured frames — skip' };
+  const blocks = [{ type: 'text', text: [
+    'These are screenshots captured DURING a live Plaid Link / Layer / IDV launch step.',
+    'A Plaid modal is a centered overlay/sheet (often Plaid-branded) showing institution',
+    'search/list, a data-sharing CONSENT screen, phone/OTP entry, bank credential login,',
+    'account selection, or a Layer/IDV identity-review pane — distinct from the HOST app\'s',
+    'own pages (dashboards, "add a bank account" cards, "generating your report"/loading',
+    'screens, success/result pages).',
+    'Is a Plaid modal visibly present in AT LEAST ONE of these frames?',
+    'Return STRICT JSON only: {"modalRecorded": true|false, "evidence": "<≤120 chars>"}',
+  ].join('\n') }];
+  for (const f of files.slice(0, 6)) {
+    try {
+      const b64 = fs.readFileSync(path.join(dir, f)).toString('base64');
+      blocks.push({ type: 'text', text: `Frame: ${f}` });
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } });
+    } catch (_) {}
+  }
+  try {
+    const resp = await client.messages.create({
+      model: QA_MODEL, max_tokens: 200,
+      messages: [{ role: 'user', content: blocks }],
+    });
+    const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return { modalRecorded: true, evidence: 'verifier parse-failure — default pass' };
+    const parsed = JSON.parse(m[0]);
+    return { modalRecorded: parsed.modalRecorded !== false, evidence: String(parsed.evidence || '').slice(0, 120) };
+  } catch (e) {
+    return { modalRecorded: true, evidence: `verifier error: ${e.message.slice(0, 60)} — default pass` };
+  }
+}
+
+/**
  * Run async tasks with a fixed concurrency (pool). Preserves result order.
  * @template T,R
  * @param {number} concurrency
@@ -452,6 +500,9 @@ async function main(opts = {}) {
 
   const stepResults  = [];
   const allStepScores = {};
+  // Memoized live-Plaid modal-presence verdict (one vision check over the run's
+  // plaid-frames, shared by all live-Plaid launch steps). undefined = not yet checked.
+  let _plaidModalCheck;
   const diagByStep = new Map();
   for (const diag of buildQaDiagnostics) {
     if (!diag || !diag.stepId) continue;
@@ -540,8 +591,35 @@ async function main(opts = {}) {
     const isLivePlaidSimStep = PLAID_LINK_LIVE && PLAID_SIM_STEP_PATTERN.test(stepId) && !hasCdpScreenshot;
 
     if (isLivePlaidLaunchStep || isLivePlaidSimStep) {
+      // Before granting the auto-pass, verify a Plaid modal was actually
+      // captured (a launch step can record pure host UI — Zip CRA, 2026-06-13).
+      // Memoized: one vision check over the run's plaid-frames covers all
+      // live-Plaid steps.
+      if (isLivePlaidLaunchStep) {
+        if (_plaidModalCheck === undefined) {
+          _plaidModalCheck = await verifyPlaidModalRecorded(client, OUT_DIR);
+        }
+        if (!_plaidModalCheck.modalRecorded) {
+          // Below threshold (surfaces as a failing step + triggers the record
+          // refinement loop) but NOT critical:true — a hard halt on every CRA
+          // demo while the modal-recording defect is unfixed would block the
+          // pipeline. Low score forces attention + a re-record attempt.
+          const result = {
+            stepId,
+            score: 35,
+            issues: [`Live Plaid launch step recorded NO visible Plaid modal — captured frames show host UI only (${_plaidModalCheck.evidence}). The Plaid Link/Layer/IDV modal did not render on screen.`],
+            suggestions: ['Re-record: ensure the launch CTA opens a VISIBLE Plaid modal before the app advances; verify handler.open() fires and the app does not cover/replace the modal with a host loading/result screen.'],
+            categories: ['plaid-modal-missing'],
+            critical: false,
+            _qaConsoleLabel: 'LIVE-PLAID-NO-MODAL',
+          };
+          pipelineEntries.push({ kind: 'resolved', stepId, result });
+          console.warn(`  [QA] ${stepId}: LIVE-PLAID-NO-MODAL — ${_plaidModalCheck.evidence}`);
+          continue;
+        }
+      }
       const autoNote = isLivePlaidLaunchStep
-        ? `Auto-scored: LIVE Plaid flow step (${Math.round(stepTiming.durationMs / 1000)}s). Frame-content scoring skipped — real Plaid SDK auth flow occupies this segment.`
+        ? `Auto-scored: LIVE Plaid flow step (${Math.round(stepTiming.durationMs / 1000)}s), modal verified on screen. Frame-content scoring skipped — real Plaid SDK auth flow occupies this segment.`
         : `Auto-scored: LIVE Plaid sim step (${stepId}). No CDP screenshot available — frame timing unreliable.`;
       const result = {
         stepId,

@@ -154,6 +154,38 @@ function parseSceneMatchJson(text) {
   try { return JSON.parse(m[0]); } catch (_) { return null; }
 }
 
+// Verify a Plaid Link / Layer / IDV MODAL is actually visible in a launch
+// step's frames. The live-plaid auto-pass (85) exists so we don't false-flag
+// the modal-journey narration against a single sub-screen frame — but it must
+// NOT blindly trust that the modal recorded. A launch step can show pure host
+// UI with no modal (Zip CRA recorded the host "Generating your report" screen
+// for its entire 107s window; the modal never rendered, yet it auto-passed 85,
+// 2026-06-13). Confirm a modal is on screen before granting the exemption.
+async function verifyPlaidModalVisible(client, frameImages) {
+  const system = [
+    'You verify whether a Plaid Link / Plaid Layer / Identity Verification MODAL is visibly on screen.',
+    'A Plaid modal is a centered overlay/sheet (often with a Plaid logo) showing ONE of:',
+    'institution search or a bank list, a data-sharing CONSENT screen, phone/OTP entry,',
+    'bank credential login, account selection, or a Layer/IDV identity-review pane.',
+    'It is visually distinct from the HOST app\'s own pages (dashboards, "add a bank account"',
+    'marketing cards, "generating your report" / loading screens, success/result pages).',
+    'Across the supplied frames, is the Plaid modal visibly present in AT LEAST ONE frame?',
+    'Return STRICT JSON only: {"modalVisible": true|false, "evidence": "<≤120 chars: which frame + what you saw>"}',
+  ].join('\n');
+  const blocks = [{ type: 'text', text: 'Frames in time order across the launch step:' }];
+  for (const f of frameImages) {
+    blocks.push({ type: 'text', text: `Frame ${f.label} (t=${f.t.toFixed(2)}s)` });
+    blocks.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: f.base64 } });
+  }
+  const resp = await client.messages.create({
+    model: QA_MODEL, max_tokens: 200, system, messages: [{ role: 'user', content: blocks }],
+  });
+  const text = (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  const parsed = parseSceneMatchJson(text);
+  if (!parsed) return { modalVisible: true, evidence: 'verifier parse-failure — defaulting to pass', uncertain: true };
+  return { modalVisible: parsed.modalVisible !== false, evidence: String(parsed.evidence || '').slice(0, 120) };
+}
+
 async function scoreSegment(client, segment, frameImages) {
   const system = buildSystemPrompt();
   const messages = buildUserPrompt(segment, frameImages);
@@ -237,17 +269,40 @@ async function main(runDir) {
       continue;
     }
     if (livePlaidSteps.has(segment.stepId)) {
-      results.push({
-        stepId: segment.stepId,
-        compStartMs: segment.startMs,
-        compEndMs: segment.endMs,
-        narration: segment.narration,
-        score: 85,
-        verdict: 'live-plaid-auto',
-        explanation: 'Live Plaid modal segment (plaidPhase:launch) — narration spans the whole modal journey; auto-scored like qa-review LIVE-PLAID-AUTO.',
-        passed: true,
-      });
-      console.log(`  ${segment.stepId.padEnd(34)}  85/${MIN_SCORE} ✓ live-plaid-auto`);
+      // Exemption from narration-vs-frame scoring (the modal-journey narration
+      // spans many sub-screens) — but ONLY after confirming a Plaid modal is
+      // actually on screen. Sample frames across the window and verify.
+      const lpFrameTimes = frameTimesForSegment(segment);
+      const lpFrames = [];
+      for (const ft of lpFrameTimes) {
+        const outPath = path.join(framesDir, `${segment.stepId}-${ft.label}.png`);
+        if (extractFrame(videoPath, ft.t, outPath)) {
+          lpFrames.push({ label: ft.label, t: ft.t, base64: fs.readFileSync(outPath).toString('base64'), path: outPath });
+        }
+      }
+      let modalCheck = { modalVisible: true, evidence: 'no frames extracted — defaulting to pass', uncertain: true };
+      if (lpFrames.length) {
+        try { modalCheck = await verifyPlaidModalVisible(client, lpFrames); }
+        catch (e) { modalCheck = { modalVisible: true, evidence: `verifier error: ${e.message.slice(0,80)} — defaulting to pass`, uncertain: true }; }
+      }
+      if (modalCheck.modalVisible) {
+        results.push({
+          stepId: segment.stepId, compStartMs: segment.startMs, compEndMs: segment.endMs,
+          narration: segment.narration, score: 85, verdict: 'live-plaid-auto',
+          explanation: `Live Plaid modal verified on screen — ${modalCheck.evidence}`.slice(0, 140),
+          passed: true, modalVerified: !modalCheck.uncertain,
+        });
+        console.log(`  ${segment.stepId.padEnd(34)}  85/${MIN_SCORE} ✓ live-plaid-auto (modal verified)`);
+      } else {
+        // The launch step recorded NO visible Plaid modal — host UI only.
+        results.push({
+          stepId: segment.stepId, compStartMs: segment.startMs, compEndMs: segment.endMs,
+          narration: segment.narration, score: 25, verdict: 'plaid-modal-missing',
+          explanation: `Launch step shows NO Plaid modal — host UI only. ${modalCheck.evidence}`.slice(0, 140),
+          passed: false,
+        });
+        console.log(`  ${segment.stepId.padEnd(34)}  25/${MIN_SCORE} ✗ plaid-modal-missing (${modalCheck.evidence})`);
+      }
       continue;
     }
 
