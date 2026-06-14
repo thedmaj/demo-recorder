@@ -1503,13 +1503,78 @@ input[type="checkbox"]:checked + .toggle-switch::after {
   background: rgba(255, 255, 255, 0.02);
 }
 
-.sb-live-iframe {
+/* Live preview wrap: the demo app / slide is authored at 1440×900. We pin the
+   iframe to 1440×900 and scale it via JS transform so the WHOLE app/slide is
+   visible (no more clipping). The wrap is the measured/scrollable viewport. */
+.sb-live-preview-wrap {
+  position: relative;
+  overflow: hidden;
   width: 100%;
-  min-height: 360px;
   height: 56vh;
+  min-height: 360px;
+  background: #0d1117;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.sb-live-resize-handle {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 16px;
+  height: 16px;
+  cursor: ns-resize;
+  border-radius: 3px;
+  background:
+    linear-gradient(135deg, transparent 0 45%, rgba(255,255,255,0.35) 45% 55%, transparent 55% 100%),
+    linear-gradient(135deg, transparent 0 70%, rgba(255,255,255,0.35) 70% 80%, transparent 80% 100%);
+  z-index: 3;
+}
+
+.sb-live-iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1440px;
+  height: 900px;
   border: none;
   display: block;
   background: #fff;
+  transform-origin: top left;
+  /* transform: scale(...) is set by JS based on the wrap's measured size. */
+}
+
+.sb-zoom-group { display: inline-flex; gap: 2px; }
+.sb-zoom-btn.is-active {
+  background: rgba(0, 166, 126, 0.22);
+  border-color: rgba(0, 166, 126, 0.5);
+  color: #00d99c;
+}
+
+/* Maximize: full-viewport split — large preview left, narration editor right. */
+.storyboard-live-workspace.sb-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  margin: 0;
+  border-radius: 0;
+  overflow: auto;
+  background: #0b1018;
+  display: flex;
+  flex-direction: column;
+}
+.storyboard-live-workspace.sb-fullscreen .storyboard-live-grid {
+  grid-template-columns: minmax(0, 1fr) 420px;
+  flex: 1;
+  min-height: 0;
+}
+.storyboard-live-workspace.sb-fullscreen .sb-live-preview-wrap {
+  height: 100%;
+  resize: none;
+}
+.storyboard-live-workspace.sb-fullscreen .sb-live-narration,
+.storyboard-live-workspace.sb-fullscreen #sb-live-narration {
+  min-height: 50vh;
 }
 
 .sb-live-empty {
@@ -4097,3 +4162,30 @@ pre.json-preview {
 }
 .dep-row.met { color: #34d399; }
 .dep-row.unmet { color: #f87171; }
+
+/* ── Demo Apps: score popover + tech chips ─────────────────────────────── */
+.demo-score-popover {
+  position: fixed;
+  z-index: 4000;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 10px 12px;
+  background: #0b1018;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.demo-app-score-chip:focus-visible {
+  outline: 2px solid rgba(0, 166, 126, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.demo-suggested-step code::-webkit-scrollbar { height: 4px; }
+.demo-suggested-step code::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }

@@ -3,7 +3,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   let currentRunId = null;
-  let currentTab = 'overview';
+  let currentTab = 'demo-apps';
   /** Open this valueprop file on next loadValueProps (from ?vp= or Overview deep link). */
   let _vpPendingOpenName = null;
   /** If set, switchTab runs once after loadRuns (from ?tab=). */
@@ -453,6 +453,8 @@
         if (_urlInitialTab) {
           switchTab(_urlInitialTab);
           _urlInitialTab = null;
+        } else {
+          switchTab('demo-apps'); // default landing tab (loads even with zero runs)
         }
         return;
       }
@@ -472,6 +474,8 @@
       if (_urlInitialTab) {
         switchTab(_urlInitialTab);
         _urlInitialTab = null;
+      } else {
+        switchTab('demo-apps'); // default landing tab
       }
     } catch (e) {
       showToast('Failed to load runs: ' + e.message, 'error');
@@ -1661,13 +1665,25 @@
     const selectedStep = steps.find((s) => s.id === storyboardSelectedStepId);
     const selectedNarration = selectedStep ? String(selectedStep.narration || '') : '';
     const iframeHtml = liveUrl
-      ? `<iframe id="sb-live-iframe" class="sb-live-iframe" src="${esc(liveUrl)}" title="Live demo app preview"></iframe>`
+      ? `<div class="sb-live-preview-wrap" id="sb-live-preview-wrap">
+           <iframe id="sb-live-iframe" class="sb-live-iframe" src="${esc(liveUrl)}" title="Live demo app preview"></iframe>
+           <div class="sb-live-resize-handle" id="sb-live-resize-handle" title="Drag to resize the preview height"></div>
+         </div>`
       : `<div class="sb-live-empty">Build app preview not available yet. Run build stage, then reload Storyboard.</div>`;
     return `
-      <div class="card storyboard-live-workspace">
+      <div class="card storyboard-live-workspace" id="storyboard-live-workspace">
         <div class="storyboard-live-header">
           <div class="card-title" style="margin:0">Live Storyboard Workspace</div>
           <span class="chip">Step: <span id="sb-live-selected-step">${esc(storyboardSelectedStepId || 'none')}</span></span>
+          <div class="sb-live-controls" style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <div class="sb-zoom-group" role="group" aria-label="Preview zoom">
+              <button type="button" class="btn btn-sm sb-zoom-btn is-active" data-zoom="fit" title="Fit the whole app/slide in the pane">Fit</button>
+              <button type="button" class="btn btn-sm sb-zoom-btn" data-zoom="0.75" title="75% scale">75%</button>
+              <button type="button" class="btn btn-sm sb-zoom-btn" data-zoom="1" title="100% (actual size)">100%</button>
+            </div>
+            <button type="button" class="btn btn-sm" id="sb-add-slide-btn" title="Insert a slide from the template library after the selected step">+ Add slide</button>
+            <button type="button" class="btn btn-sm" id="sb-fullscreen-btn" title="Maximize the preview for easier narration editing (Esc to exit)">⤢ Maximize</button>
+          </div>
         </div>
         <div class="storyboard-live-grid">
           <div class="storyboard-live-preview">${iframeHtml}</div>
@@ -2298,6 +2314,76 @@
           }
           if (liveNarration) liveNarration.value = value;
           postStoryboardPreviewMessage({ type: 'STORYBOARD_SYNC_NARRATION', stepId: sid, narration: value });
+        });
+      }
+
+      // ── Live preview: scale to fit (no more clipping), zoom, resize, fullscreen ──
+      if (document.getElementById('sb-live-preview-wrap')) {
+        setupScaledPreview('sb-live-preview-wrap', 'sb-live-iframe');
+
+        // Zoom preset buttons (Fit / 75% / 100%).
+        document.querySelectorAll('.sb-zoom-btn').forEach((zb) => {
+          zb.addEventListener('click', () => {
+            const z = zb.dataset.zoom === 'fit' ? 'fit' : Number(zb.dataset.zoom);
+            setScaledPreviewZoom('sb-live-preview-wrap', z);
+            document.querySelectorAll('.sb-zoom-btn').forEach((b) => b.classList.toggle('is-active', b === zb));
+          });
+        });
+
+        // Drag-to-resize the preview height (Fit mode re-fits via ResizeObserver).
+        const handle = document.getElementById('sb-live-resize-handle');
+        const wrapEl = document.getElementById('sb-live-preview-wrap');
+        if (handle && wrapEl) {
+          let startY = 0, startH = 0, dragging = false;
+          const onMove = (ev) => {
+            if (!dragging) return;
+            const next = Math.max(220, startH + (ev.clientY - startY));
+            wrapEl.style.height = next + 'px';
+          };
+          const onUp = () => {
+            dragging = false;
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = '';
+          };
+          handle.addEventListener('mousedown', (ev) => {
+            dragging = true;
+            startY = ev.clientY;
+            startH = wrapEl.clientHeight;
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+            ev.preventDefault();
+          });
+        }
+
+        // Fullscreen (maximize) toggle — split preview + docked narration editor.
+        const fsBtn = document.getElementById('sb-fullscreen-btn');
+        const workspace = document.getElementById('storyboard-live-workspace');
+        if (fsBtn && workspace) {
+          const exitFs = () => {
+            workspace.classList.remove('sb-fullscreen');
+            fsBtn.textContent = '⤢ Maximize';
+            document.removeEventListener('keydown', onEsc);
+            requestAnimationFrame(() => applyScaledPreview('sb-live-preview-wrap', 'sb-live-iframe'));
+          };
+          const onEsc = (ev) => { if (ev.key === 'Escape') exitFs(); };
+          fsBtn.addEventListener('click', () => {
+            const entering = !workspace.classList.contains('sb-fullscreen');
+            workspace.classList.toggle('sb-fullscreen', entering);
+            fsBtn.textContent = entering ? '⤡ Exit' : '⤢ Maximize';
+            if (entering) document.addEventListener('keydown', onEsc);
+            else document.removeEventListener('keydown', onEsc);
+            requestAnimationFrame(() => applyScaledPreview('sb-live-preview-wrap', 'sb-live-iframe'));
+          });
+        }
+      }
+
+      // Add-slide from library, anchored to the currently selected step.
+      const addSlideBtn = document.getElementById('sb-add-slide-btn');
+      if (addSlideBtn) {
+        addSlideBtn.addEventListener('click', () => {
+          openSlideLibraryModal(storyboardSelectedStepId || '');
         });
       }
 
@@ -3607,47 +3693,70 @@
   // sidebar / DevTools / resizes the window.
   const SLIDE_PREVIEW_TARGET_W = 1440;
   const SLIDE_PREVIEW_TARGET_H = 900;
-  let _slideTemplatePreviewResizeObserver = null;
 
-  function applySlideTemplatePreviewScale() {
-    const wrap = document.getElementById('slide-templates-preview-wrap');
-    const frame = document.getElementById('slide-templates-preview-frame');
+  // Generic 1440×900 preview scaler, shared by the slide-template pane and the
+  // storyboard live workspace. Per-wrap state holds the chosen zoom mode
+  // ('fit' = letterbox to fit; a number = fixed scale with scroll) and the
+  // active ResizeObserver so it can be torn down when the pane re-renders.
+  const _scaledPreview = {}; // wrapId -> { zoom, observer, frameId }
+
+  function applyScaledPreview(wrapId, frameId) {
+    const wrap = document.getElementById(wrapId);
+    const frame = document.getElementById(frameId);
     if (!wrap || !frame) return;
     const w = wrap.clientWidth;
     const h = wrap.clientHeight;
     if (w <= 0 || h <= 0) return;
-    // Fit the entire 1440×900 inside the wrap. Use the smaller axis so we
-    // never crop content; centering happens via top/left offsets so the
-    // letterboxed area sits evenly around the slide.
-    const scale = Math.max(0.05, Math.min(w / SLIDE_PREVIEW_TARGET_W, h / SLIDE_PREVIEW_TARGET_H));
+    const st = _scaledPreview[wrapId] || { zoom: 'fit' };
+    let scale;
+    if (st.zoom === 'fit') {
+      // Fit the entire 1440×900 inside the wrap (smaller axis → never crop).
+      scale = Math.max(0.05, Math.min(w / SLIDE_PREVIEW_TARGET_W, h / SLIDE_PREVIEW_TARGET_H));
+    } else {
+      scale = Number(st.zoom) || 1;
+    }
     const scaledW = SLIDE_PREVIEW_TARGET_W * scale;
     const scaledH = SLIDE_PREVIEW_TARGET_H * scale;
     frame.style.transform = `scale(${scale})`;
-    frame.style.left = `${Math.max(0, Math.round((w - scaledW) / 2))}px`;
-    frame.style.top = `${Math.max(0, Math.round((h - scaledH) / 2))}px`;
+    // Center when fitting; pin to top-left when zoomed so the wrap can scroll.
+    frame.style.left = st.zoom === 'fit' ? `${Math.max(0, Math.round((w - scaledW) / 2))}px` : '0px';
+    frame.style.top = st.zoom === 'fit' ? `${Math.max(0, Math.round((h - scaledH) / 2))}px` : '0px';
   }
 
-  function setupSlideTemplatePreviewScaling() {
-    const wrap = document.getElementById('slide-templates-preview-wrap');
+  function setupScaledPreview(wrapId, frameId) {
+    const wrap = document.getElementById(wrapId);
     if (!wrap) return;
-    // Tear down a previously-attached observer (the pane's HTML is
-    // replaced on every slide selection, so the old observer would be
-    // pointing at a detached node).
-    if (_slideTemplatePreviewResizeObserver) {
-      try { _slideTemplatePreviewResizeObserver.disconnect(); } catch (_) {}
-      _slideTemplatePreviewResizeObserver = null;
-    }
-    // Initial scale once the iframe element is in layout. requestAnimationFrame
-    // gives the browser one frame to paint so clientWidth/clientHeight are
-    // populated; without it we race the layout pass and apply scale=0.
-    requestAnimationFrame(applySlideTemplatePreviewScale);
+    const prev = _scaledPreview[wrapId];
+    if (prev && prev.observer) { try { prev.observer.disconnect(); } catch (_) {} }
+    _scaledPreview[wrapId] = { zoom: (prev && prev.zoom) || 'fit', observer: null, frameId };
+    const apply = () => applyScaledPreview(wrapId, frameId);
+    // requestAnimationFrame gives the browser one frame to paint so
+    // clientWidth/clientHeight are populated; without it we'd apply scale=0.
+    requestAnimationFrame(apply);
     if (typeof ResizeObserver === 'function') {
-      _slideTemplatePreviewResizeObserver = new ResizeObserver(applySlideTemplatePreviewScale);
-      _slideTemplatePreviewResizeObserver.observe(wrap);
+      const ob = new ResizeObserver(apply);
+      ob.observe(wrap);
+      _scaledPreview[wrapId].observer = ob;
     } else {
-      // Fallback for old browsers: re-apply on window resize.
-      window.addEventListener('resize', applySlideTemplatePreviewScale);
+      window.addEventListener('resize', apply);
     }
+  }
+
+  function setScaledPreviewZoom(wrapId, zoom) {
+    const st = _scaledPreview[wrapId] || (_scaledPreview[wrapId] = { zoom: 'fit' });
+    st.zoom = zoom;
+    const wrap = document.getElementById(wrapId);
+    if (wrap) wrap.style.overflow = zoom === 'fit' ? 'hidden' : 'auto';
+    applyScaledPreview(wrapId, st.frameId);
+  }
+
+  // Backwards-compatible wrappers for the slide-template pane (call sites
+  // unchanged elsewhere in the file).
+  function applySlideTemplatePreviewScale() {
+    applyScaledPreview('slide-templates-preview-wrap', 'slide-templates-preview-frame');
+  }
+  function setupSlideTemplatePreviewScaling() {
+    setupScaledPreview('slide-templates-preview-wrap', 'slide-templates-preview-frame');
   }
 
   // ── Copy slide ID for hand-off to an AI agent (Claude Code / Cursor) ─────
@@ -4912,12 +5021,123 @@
     return base;
   }
 
+  // Technologies chips (Tailwind) — the Plaid products/flow for a demo, derived
+  // server-side (app.techChips).
+  function _techChipsHtml(app) {
+    const chips = Array.isArray(app && app.techChips) ? app.techChips : [];
+    if (!chips.length) return '';
+    return `<div class="demo-tech-chips flex flex-wrap gap-1 mt-1">` +
+      chips.map((c) =>
+        `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
+               style="background:rgba(0,166,126,0.12);color:#00d99c;border:1px solid rgba(0,166,126,0.28)">${esc(c)}</span>`
+      ).join('') +
+      `</div>`;
+  }
+
+  // Rich score popover content (HTML) for the hover/focus tooltip.
+  function _scorePopoverHtml(app) {
+    const o = app || {};
+    const ts = o.tierSummary || {};
+    const row = (label, tier) => {
+      if (!tier) return '';
+      if (tier.skipped) return `<div class="flex justify-between gap-4"><span class="opacity-60">${label}</span><span class="opacity-50">skipped</span></div>`;
+      const avg = tier.avgScore != null ? Math.round(tier.avgScore) : '—';
+      const min = tier.minScore != null ? Math.round(tier.minScore) : '—';
+      const pass = tier.passed === false ? '<span style="color:#f87171">✗</span>' : tier.passed === true ? '<span style="color:#00d99c">✓</span>' : '';
+      const fails = Array.isArray(tier.failingStepIds) && tier.failingStepIds.length
+        ? `<div class="opacity-50 text-[10px] mt-0.5">fails: ${esc(tier.failingStepIds.slice(0, 4).join(', '))}${tier.failingStepIds.length > 4 ? '…' : ''}</div>` : '';
+      return `<div class="flex justify-between gap-4"><span class="opacity-70">${label} ${pass}</span><span>avg ${avg} · min ${min}</span></div>${fails}`;
+    };
+    const parts = [];
+    if (o.qaScore != null) parts.push(`<div class="flex justify-between gap-4 font-semibold"><span>Overall</span><span>${Math.round(o.qaScore)}</span></div>`);
+    parts.push(row('App', ts.app));
+    if (ts.slide) parts.push(row('Slides', ts.slide));
+    if (o.sceneMatch && o.sceneMatch.avgScore != null) {
+      parts.push(`<div class="flex justify-between gap-4"><span class="opacity-70">Scene-match</span><span>avg ${o.sceneMatch.avgScore} · min ${o.sceneMatch.minScore}</span></div>`);
+    }
+    if (!parts.filter(Boolean).length) return '<div class="opacity-60">No QA scores yet</div>';
+    return parts.filter(Boolean).join('');
+  }
+
+  // Suggested-next-step callout: when a tier is failing / below threshold, surface
+  // the exact copy/paste recovery command (app-touchup / slide-fix).
+  function _suggestedStepHtml(app) {
+    const o = app || {};
+    const cmd = o.nextRecoveryCommand;
+    if (!cmd) return '';
+    const rec = String(o.recommendedRecovery || '');
+    const fixLane = rec === 'app-touchup' || rec === 'slide-fix'
+      || rec === 'app-touchup+slide-fix' || rec === 'fullbuild';
+    // Only surface a callout when the demo genuinely needs work — a tier scored
+    // below threshold / failed, OR the build-qa report recommended a fix lane.
+    // (Most runs carry a generic "resume the pipeline" nextRecoveryCommand from
+    // computeStatus; those should NOT light up every card.)
+    const appLow = o.qaAppPassed === false || (o.qaAppScore != null && o.qaAppScore < 80);
+    const slideLow = o.qaSlidePassed === false
+      || (o.qaSlideScore != null && !o.qaSlideSkipped && o.qaSlideScore < 80);
+    if (!appLow && !slideLow && !fixLane) return '';
+    const label = rec === 'app-touchup' ? 'App needs touch-up'
+      : rec === 'slide-fix' ? 'Slides need a fix'
+      : rec === 'app-touchup+slide-fix' ? 'App + slides need fixing'
+      : rec === 'fullbuild' ? 'Build needs a full rebuild'
+      : (appLow && slideLow) ? 'App + slides scored low'
+      : appLow ? 'App scored low'
+      : slideLow ? 'Slides scored low'
+      : 'Suggested next step';
+    return `<div class="demo-suggested-step mt-2 rounded-md p-2" style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25)">
+        <div class="flex items-center gap-2 text-[11px] font-semibold" style="color:#fbbf24">⚡ ${esc(label)}</div>
+        <div class="flex items-center gap-2 mt-1">
+          <code class="flex-1 text-[10px] font-mono px-2 py-1 rounded overflow-x-auto whitespace-nowrap" style="background:rgba(0,0,0,0.3);color:rgba(255,255,255,0.8)">${esc(cmd)}</code>
+          <button class="demo-suggested-copy btn btn-sm" data-cmd="${esc(cmd)}" title="Copy command">Copy</button>
+        </div>
+      </div>`;
+  }
+
+  // Shared body-level popover for score chips. Re-wired on every list render;
+  // looks up the app by data-run and positions itself under/over the chip.
+  function _wireScorePopover(listEl, apps) {
+    if (!listEl) return;
+    const byRun = new Map((Array.isArray(apps) ? apps : []).map((a) => [String(a.runId), a]));
+    let pop = document.getElementById('demo-score-popover');
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.id = 'demo-score-popover';
+      pop.className = 'demo-score-popover';
+      pop.style.display = 'none';
+      document.body.appendChild(pop);
+    }
+    const hide = () => { pop.style.display = 'none'; };
+    const show = (chip) => {
+      const app = byRun.get(String(chip.dataset.run));
+      if (!app) return;
+      pop.innerHTML = _scorePopoverHtml(app);
+      pop.style.display = 'block';
+      // Measure then position: prefer below the chip, flip above if it would clip.
+      const r = chip.getBoundingClientRect();
+      const pr = pop.getBoundingClientRect();
+      let top = r.bottom + 8;
+      if (top + pr.height > window.innerHeight - 8) top = Math.max(8, r.top - pr.height - 8);
+      let left = r.left;
+      if (left + pr.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pr.width - 8);
+      pop.style.top = `${top}px`;
+      pop.style.left = `${left}px`;
+    };
+    listEl.querySelectorAll('.demo-app-score-chip').forEach((chip) => {
+      chip.addEventListener('mouseenter', () => show(chip));
+      chip.addEventListener('mouseleave', hide);
+      chip.addEventListener('focus', () => show(chip));
+      chip.addEventListener('blur', hide);
+    });
+  }
+
   function _matchesSearch(app, needle) {
     if (!needle) return true;
     const hay = [
       app.displayName,
       app.runId,
       app.plaidLinkMode,
+      app.techLabel,
+      Array.isArray(app.techChips) ? app.techChips.join(' ') : '',
       app.script && app.script.product,
       app.script && app.script.company,
       app.script && app.script.persona,
@@ -5033,7 +5253,7 @@
       const card = document.createElement('div');
       card.dataset.runId = app.runId;
       card.dataset.displayName = app.displayName || app.runId;
-      card.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;display:flex;align-items:center;gap:12px';
+      card.style.cssText = 'background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;align-items:stretch;gap:0';
 
       const statusDot = app.running
         ? '<span style="width:8px;height:8px;border-radius:50%;background:#00A67E;flex-shrink:0;display:inline-block;box-shadow:0 0 6px #00A67E"></span>'
@@ -5076,13 +5296,17 @@
         title="Copy the process ID if you want an agent to modify this demo in Claude Code / Cursor"
         style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer">Copy PID</button>`;
 
+      const scoreChip = qaBadge
+        ? `<span class="demo-app-score-chip" data-run="${esc(app.runId)}" tabindex="0" style="display:inline-flex;align-items:center;gap:4px;cursor:help">${qaBadge}</span>`
+        : '';
       card.innerHTML = `
+        <div class="demo-card-main" style="display:flex;align-items:center;gap:12px">
         ${statusDot}
         <div style="flex:1;min-width:0">
           <div class="demo-app-name-row" style="display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap">
             <div class="demo-app-display-name" style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(_displayNameWithSuffix(app))}</div>
             ${recBadge}
-            ${qaBadge}
+            ${scoreChip}
             ${buildBadge}
             ${ownerBadge}
             <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button"
@@ -5114,6 +5338,9 @@
         </div>
         <div style="display:flex;gap:8px;flex-shrink:0">
           ${copyPidBtn}
+          <button class="demo-app-storyboard-btn" data-run="${esc(app.runId)}" type="button"
+            title="Open this demo in the Storyboard editor — preview every step at full size and edit narration."
+            style="padding:5px 10px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:5px;color:rgba(255,255,255,0.75);font-size:12px;cursor:pointer">Storyboard</button>
           ${promptBtn}
           ${publishBtn}
           <a class="btn btn-sm btn-secondary"
@@ -5140,6 +5367,9 @@
             : ''
           }
         </div>
+        </div>
+        ${_techChipsHtml(app)}
+        ${_suggestedStepHtml(app)}
       `;
       list.appendChild(card);
     });
@@ -5160,6 +5390,38 @@
         }
       });
     });
+
+    // Open this demo in the Storyboard editor — select the run, then switch tabs.
+    list.querySelectorAll('.demo-app-storyboard-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const runId = btn.dataset.run;
+        if (!runId) return;
+        currentRunId = runId;
+        storyboardLivePreviewUrl = null;
+        storyboardSelectedStepId = null;
+        localStorage.setItem('lastRunId', runId);
+        const label = document.getElementById('build-selector-label');
+        const card = btn.closest('[data-run-id]');
+        if (label) label.textContent = (card && card.dataset.displayName) || runId;
+        loadCurrentRun();
+        switchTab('storyboard');
+      });
+    });
+
+    // Suggested-next-step copy button — copies the recovery CLI command.
+    list.querySelectorAll('.demo-suggested-copy').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cmd = btn.dataset.cmd;
+        if (cmd) copyCliCommand(cmd, { title: 'Copied recovery command' });
+      });
+    });
+
+    // Rich score popover — one shared element appended to <body>, positioned on
+    // hover/focus of a score chip. Using a body-level popover avoids clipping by
+    // the scrolling card list.
+    _wireScorePopover(list, filtered);
 
     // Delete demo build — permanently removes the run dir (typed confirm).
     // Server refuses while a pipeline is actively running the run (HTTP 409).

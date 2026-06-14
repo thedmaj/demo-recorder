@@ -325,8 +325,8 @@
       "notes": "Report generation is server-side and async after Link — the host app waits for CHECK_REPORT_READY; not part of the Link surface."
     }
   ],
-  "verifiedRuns": 7,
-  "lastVerifiedAt": "2026-06-13T09:23:19.100Z",
-  "lastBrokenAt": "2026-06-12T18:44:27.565Z",
+  "verifiedRuns": 10,
+  "lastVerifiedAt": "2026-06-13T17:59:22.383Z",
+  "lastBrokenAt": "2026-06-13T17:59:22.383Z",
   "knowledgeConfidence": 0.95
 }

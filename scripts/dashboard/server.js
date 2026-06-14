@@ -732,11 +732,78 @@ function getRunScriptSummary(runId) {
   if (!script || typeof script !== 'object') return null;
   const persona = script.persona && typeof script.persona === 'object' ? script.persona : {};
   const personaLabel = [persona.name, persona.role].filter(Boolean).join(' · ');
+  const sandboxProducts = Array.isArray(script.plaidSandboxConfig?.products)
+    ? script.plaidSandboxConfig.products.map((p) => String(p)) : [];
+  const techChips = deriveTechChips({
+    product: script.product || '',
+    title: script.title || '',
+    sandboxProducts,
+    plaidLinkMode: String(script.plaidLinkMode || '').toLowerCase(),
+  });
   return {
     product: script.product || '',
     company: persona.company || '',
     persona: personaLabel,
+    sandboxProducts,
+    techChips,
+    techLabel: techChips.join(' · '),
   };
+}
+
+// Map a demo's Plaid usage → short human chips for the Demo Apps listing.
+// Derived from existing demo-script data (plaidSandboxConfig.products + the
+// free-text product/title + plaidLinkMode) — demo-script.json has no canonical
+// products[]/plaidLinkFlow field.
+const _PRODUCT_CODE_LABELS = {
+  auth: 'Auth', identity: 'Identity', identity_match: 'Identity Match', signal: 'Signal',
+  transfer: 'Transfer', transactions: 'Transactions', balance: 'Balance', assets: 'Assets',
+  liabilities: 'Liabilities', investments: 'Investments', income_verification: 'Bank Income',
+  employment: 'Employment', identity_verification: 'IDV',
+  cra_base_report: 'CRA Base Report', cra_income_insights: 'CRA Income Insights',
+  cra_cashflow_insights: 'CRA Cashflow Insights', cra_partner_insights: 'CRA Network Insights',
+  protect_linked_bank: 'Protect',
+};
+function deriveTechChips({ product = '', title = '', sandboxProducts = [], plaidLinkMode = '' } = {}) {
+  const chips = [];
+  const seen = new Set();
+  const push = (label) => { if (label && !seen.has(label)) { seen.add(label); chips.push(label); } };
+  const text = `${product} ${title}`.toLowerCase();
+
+  // Flow-level signals (from the prose) first — they frame the demo.
+  if (/\blayer\b/.test(text)) push('Plaid Layer');
+  if (plaidLinkMode === 'embedded') push('Embedded Link');
+  if (/\bidv\b|identity verification/.test(text)) push('IDV');
+
+  // Structured sandbox products (authoritative when present).
+  for (const code of sandboxProducts) {
+    const lc = String(code).toLowerCase();
+    if (_PRODUCT_CODE_LABELS[lc]) { push(_PRODUCT_CODE_LABELS[lc]); continue; }
+    if (lc.startsWith('cra_')) push('CRA');
+  }
+
+  // CRA / LendScore prose detection (CRA products are often not in sandbox products[]).
+  if (/\bcra\b|consumer report/.test(text)) {
+    push('CRA Base Report');
+    if (/lendscore|lend score/.test(text)) push('LendScore');
+  }
+
+  // Enrich from the free-text product list whenever there are no structured
+  // sandbox products (older runs). Runs alongside any flow chips above, so e.g.
+  // an embedded run still lists Auth · Identity Match · Signal.
+  // Only for plain Link demos (Auth/Identity/Signal etc.) — CRA/Layer demos
+  // have descriptive product sentences that already yielded clean chips above.
+  if (sandboxProducts.length === 0 && product && !/\bcra\b|consumer report|\blayer\b/.test(text)) {
+    String(product).split(/[,+/&]| and /i).map((s) => s.trim()).filter(Boolean)
+      .forEach((s) => {
+        let label = s.replace(/^plaid\s+/i, '').replace(/\s*\((?:embedded|standard)[^)]*\)/i, '').trim();
+        const m = label.match(/^Identity\s*\(([^)]+)\)$/i); // "Identity (Identity Match)" → "Identity Match"
+        if (m) label = m[1].trim();
+        if (/^identity verification$/i.test(label)) label = 'IDV'; // dedup vs the IDV flow chip
+        const ok = label && label.length <= 22 && !/^embedded\b/i.test(label) && !/:/.test(label);
+        if (ok) push(label);
+      });
+  }
+  return chips.slice(0, 6);
 }
 
 /**
@@ -882,6 +949,58 @@ function getLatestQaReport(runId) {
 
 function qaScoresForRun(runId) {
   return extractDashboardQaScores(getLatestQaReport(runId));
+}
+
+// Full tier detail + scene-match summary for the score hover popover. Reads the
+// latest QA report's tierSummary (app/slide {passed,minScore,avgScore,
+// failingStepIds,criticalStepIds,skipped}) and the scene-match report if present.
+function qaTierDetailForRun(runId) {
+  const report = getLatestQaReport(runId);
+  let tierSummary = report && typeof report.tierSummary === 'object' ? report.tierSummary : null;
+  // Post-record QA reports don't carry tierSummary — it's written by the
+  // build-qa stage. Fall back to qa-report-build.json so the score popover can
+  // still show per-tier avg/min for fully-recorded runs.
+  if (!tierSummary) {
+    try {
+      const build = safeReadJson(path.join(DEMOS_DIR, runId, 'qa-report-build.json'));
+      if (build && typeof build.tierSummary === 'object') tierSummary = build.tierSummary;
+    } catch (_) { /* optional */ }
+  }
+  let sceneMatch = null;
+  try {
+    const sm = safeReadJson(path.join(DEMOS_DIR, runId, 'scene-match-report.json'));
+    const segs = sm && (Array.isArray(sm.segments) ? sm.segments : Array.isArray(sm.results) ? sm.results : null);
+    if (segs && segs.length) {
+      const scores = segs.map((s) => Number(s.score)).filter((n) => Number.isFinite(n));
+      const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+      const min = scores.length ? Math.min(...scores) : null;
+      sceneMatch = { avgScore: avg, minScore: min, segmentCount: segs.length };
+    }
+  } catch (_) { /* optional */ }
+  return { tierSummary, sceneMatch };
+}
+
+// Tier-scoped recovery command + recommendation for the "suggested next step"
+// card. Reuses the CLI's computeStatus (single source of truth) so the dashboard
+// shows the exact command the operator would run. Best-effort: never throws.
+let _stageStateMod = null;
+function recoveryForRun(runId) {
+  try {
+    if (!_stageStateMod) _stageStateMod = require('../scratch/utils/stage-state');
+    const runDir = path.join(DEMOS_DIR, runId);
+    if (typeof _stageStateMod.computeStatus === 'function') {
+      const st = _stageStateMod.computeStatus(runDir) || {};
+      return {
+        recommendedRecovery: st.recommendedRecovery || null,
+        nextRecoveryCommand: st.nextRecoveryCommand || null,
+      };
+    }
+    if (typeof _stageStateMod.resolveTierRecoveryCommand === 'function') {
+      const cmd = _stageStateMod.resolveTierRecoveryCommand(runDir, runId);
+      return { recommendedRecovery: null, nextRecoveryCommand: cmd || null };
+    }
+  } catch (_) { /* best-effort */ }
+  return { recommendedRecovery: null, nextRecoveryCommand: null };
 }
 
 /**
@@ -4567,6 +4686,8 @@ app.get('/api/demo-apps', (req, res) => {
         fs.existsSync(path.join(dir, 'recording.webm'));
       const hasFinalMp4 = fs.existsSync(path.join(dir, 'demo-scratch.mp4'));
       const hasFinalVideo = hasFinalMp4 || fs.existsSync(path.join(dir, 'demo-mcp-edit.mp4'));
+      const tierDetail = qaTierDetailForRun(runId);   // tierSummary + sceneMatch for the score popover
+      const recovery = recoveryForRun(runId);         // recommendedRecovery + nextRecoveryCommand (cached behind this scan)
       return {
         runId,
         displayName: resolveDemoDisplayName(runId, namesMap),
@@ -4584,6 +4705,16 @@ app.get('/api/demo-apps', (req, res) => {
           const qa = getLatestQaReport(runId);
           return qa ? !!qa.passed : null;
         })(),
+        // Technologies (derived from existing demo-script data)
+        products: script ? script.sandboxProducts : [],
+        techChips: script ? script.techChips : [],
+        techLabel: script ? script.techLabel : '',
+        // Score-hover detail
+        tierSummary: tierDetail.tierSummary,
+        sceneMatch: tierDetail.sceneMatch,
+        // Suggested next step
+        recommendedRecovery: recovery.recommendedRecovery,
+        nextRecoveryCommand: recovery.nextRecoveryCommand,
         owner,
         source: 'local',
         promptPath: promptExists ? `/api/runs/${encodeURIComponent(runId)}/prompt` : null,

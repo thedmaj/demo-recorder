@@ -4,6 +4,32 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Plaid Demo Pipeline</title>
+  <!-- Tailwind Play CDN (local dev dashboard — no build step). Loaded BEFORE
+       dashboard.css so the hand-written CSS wins specificity ties; preflight is
+       DISABLED so Tailwind's reset never clobbers the existing tabs' base styles.
+       Tailwind utilities only take effect where we add classes (Demo Apps cards +
+       storyboard preview). If the CDN is unreachable offline, cards keep their
+       inline styles and remain legible. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    if (window.tailwind) {
+      window.tailwind.config = {
+        corePlugins: { preflight: false },
+        theme: {
+          extend: {
+            colors: {
+              ink: '#0d1117', inkPanel: '#090e14', teal: '#00A67E', tealBright: '#00d99c',
+              amber: '#fbbf24', danger: '#f87171',
+            },
+            fontFamily: {
+              sans: ['system-ui', '-apple-system', '"Helvetica Neue"', 'Arial', 'sans-serif'],
+              mono: ['"SF Mono"', '"Fira Code"', '"Cascadia Code"', 'monospace'],
+            },
+          },
+        },
+      };
+    }
+  </script>
   <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
@@ -22,7 +48,7 @@
   <div id="layout">
     <!-- Sidebar -->
     <nav id="sidebar">
-      <div class="nav-item active" data-tab="overview">
+      <div class="nav-item" data-tab="overview">
         <span class="nav-icon">◈</span> Overview
       </div>
       <div class="nav-item" data-tab="config">
@@ -34,7 +60,7 @@
       <div class="nav-item" data-tab="valueprop" title="inputs/products markdown and Fact inbox">
         <span class="nav-icon">📝</span> Product knowledge
       </div>
-      <div class="nav-item" data-tab="demo-apps">
+      <div class="nav-item active" data-tab="demo-apps">
         <span class="nav-icon">▣</span> Demo Apps
       </div>
 
@@ -46,7 +72,7 @@
     <!-- Main content -->
     <main id="main">
       <!-- Overview Tab -->
-      <div class="tab-panel active" id="tab-overview">
+      <div class="tab-panel" id="tab-overview">
         <div id="overview-content">
           <div class="empty-state">Select a run to view overview</div>
         </div>
@@ -89,8 +115,8 @@
         </div>
       </div>
 
-      <!-- Demo Apps Tab -->
-      <div class="tab-panel" id="tab-demo-apps">
+      <!-- Demo Apps Tab (default landing tab) -->
+      <div class="tab-panel active" id="tab-demo-apps">
         <div id="demo-apps-content">
           <div class="empty-state">Loading…</div>
         </div>

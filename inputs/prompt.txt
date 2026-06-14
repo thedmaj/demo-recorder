@@ -1,219 +1,124 @@
 ================================================================================
-Chase Bank Online Transfers — Fund Instantly, Verify Ownership, Prevent Fraud
+Zip BNPL — Plaid LendScore + Network Insights for near-prime underwriting
 ================================================================================
 
-Host: Chase Bank — U.S. retail banking / Banking segment
-Canonical URL: https://www.chase.com
-Brand URL: https://www.chase.com
+**Host:** **Zip** (Zip Co US Inc.) — BNPL / consumer installment lending
+**Canonical URL:** https://zip.co/
+**Brand URL** (for `brand-extract`): https://zip.co/
 
-User journey (one sentence):
-A Chase customer adds an external bank account and initiates a transfer using
-standard Plaid Link to verify account ownership with Identity Match, retrieve
-ACH details with Auth, and risk-score the transaction with Signal — converting
-funding attempts while blocking fraud.
+**Opportunity context (Salesforce — open, Glean salescloud):**
+- Opportunity: `Fintech | Upsell | Zip | Network Insights + Lendscore` (`006UV00000Z2XoaYAF`)
+- URL: https://plaidinc.lightning.force.com/lightning/r/Opportunity/006UV00000Z2XoaYAF/view
+- Stage: `Discovery`  •  Forecast: `Pipeline`  •  Close Date: `2026-07-31`
+- Primary products (SFDC): `LendScore`, `Network Insights`, `LendScore Refresh`, `Network Insights Refresh`
+- Use case: `Credit Scoring & Underwriting`
+- Revenue uplift (SFDC): Moving LendScore + Network Insights upfunnel could pull base reports against ~200k users/mo
+- Pain (verbatim): They don't yet know how well Plaid's composite score and network-level attributes will separate good vs bad risk for their underserved, near-prime customers.
+- Situation (SFDC): Zip is actively evaluating LendScore and Network Insights to power BNPL underwriting and repayment strategy.
+- Impact: Proving lift would let Zip safely approve more customers, optimize lines, lower losses, and set up a future Plaid Qualify rollout.
+- Critical event: Complete production-scale retros on LendScore and Network Insights so leadership can make a go/no-go on live decisioning.
+- Decision process: Kris, Rob, and credit/data science review retro results and attribute-level insights, then recommend production rollout to Rory and John.
+- AE: Matthew Stein  •  Manager: Xander O'Han  •  Account: Zip Co US Inc. (~1,066 employees, Strategic Fintech)
 
-Story arc (short prose):
-Chase wants to grow inbound ACH funding volumes without absorbing return risk
-or building friction that kills conversion. Today, account-funding flows ask
-customers to wait days for micro-deposit confirmation or abandon the flow
-entirely. Plaid enters at the "Add External Account" CTA on the Chase Transfers
-screen. Standard Plaid Link connects the external bank in seconds. Identity
-Match confirms the account belongs to the Chase customer on record — not a
-fraudster using stolen credentials. Auth retrieves verified account and routing
-numbers instantly. The customer enters the transfer amount, and Signal Evaluate
-risk-scores that specific transaction. Low-risk users are approved and funded
-immediately; Chase releases funds same-session without a micro-deposit wait.
-The result: higher conversion, higher funding rates, and a strong fraud gate —
-all from a single Plaid integration.
+**User journey (one sentence):**
+A near-prime Zip shopper applying for a $800 BNPL plan links checking via Plaid CRA Link; when the report is ready, Zip underwriting sees a strong LendScore and supportive network attributes, then approves a line the bureau alone would have declined.
+
+**Story arc (short prose):**
+Jordan wants to split a $800 purchase at checkout. Zip's host flow explains that cash-flow and network signals help approve more creditworthy near-prime shoppers responsibly. She taps Link Your Bank on the pre-Link screen. Inside Plaid Link she completes CRA consent, OTP, and selects checking. A brief report-generating beat sets expectations. LendScore returns **78** (low default risk) with reason codes; Network Insights show stable fintech-connection patterns. Zip approves the plan with a higher limit than bureau-only rules would allow — quantifying the retro story Zip's team is running in Salesforce.
 
 -------------------------------------------------------------------------------
 PRODUCTS & FAMILY
 -------------------------------------------------------------------------------
 
-Products featured (approved names only):
-Plaid Link (standard modal), Plaid Identity Match, Plaid Auth, Plaid Signal.
+**Products featured (approved names only):**
+Plaid Link (CRA / Check), **Plaid CRA Base Report** (foundation), **Plaid LendScore** (beta — hero), **Plaid Network Insights** (beta — supporting)
 
-Solutions supported (used to query Solutions Master):
-Inbound bank payments
+**Solutions supported** (Solutions Master):
+Credit Scoring & Underwriting, Consumer Report Underwriting
 
-Segment: Banking
+**Primary product family** (pick one — aligns with pipeline profiles):
+`cra_lend_score`
 
-Primary product family: funding
+**Primary messaging file for this demo:**
+`inputs/products/plaid-cra-base-report.md` (CRA flow + underwriting family). Use GTM-approved LendScore stats below; do not duplicate conflicting stats from value-props.
 
-Primary messaging file for this demo (owns stats):
-inputs/plaid-value-props.md
+**Research depth:** gapfill
 
-Research depth: gapfill
-
--------------------------------------------------------------------------------
-CONNECTION & RECORDING (CHECKLIST)
--------------------------------------------------------------------------------
-
-[x] Live Plaid Link — standard MODAL Link (NOT embedded).
-    Single `plaidPhase: "launch"` step. The host app renders a CTA button
-    (`data-testid="link-external-account-btn"`) inside the initiate-link step.
-    onclick: `if (window._plaidHandler) window._plaidHandler.open();`
-    Do NOT use `Plaid.createEmbedded`. Do NOT render an embedded container.
-
-[ ] Plaid Layer / OAuth / IDV — not required for this core flow
-[x] Sandbox / persona — defaults per `inputs/plaid-link-sandbox.md`
-    Institution: First Platypus Bank (ins_109508), non-OAuth
-    Credentials: user_good / pass_good
-
-Link token products:
-- `"products": ["auth", "signal"]`
-- `"optional_products": ["identity"]` or
-  `"required_if_supported_products": ["identity"]`
-  (so Identity Match works without blocking on institutions that don't support it)
+**Approved marketing stats (use at most one each in narration/slides):**
+- Up to **25%** lift in predictive performance vs traditional credit data alone (LendScore GTM)
+- **20%** relative risk reduction for some subprime and near-prime segments (LendScore GTM)
 
 -------------------------------------------------------------------------------
-MANDATORY FLOW ORDER (STORYBOARD + NARRATION)
+CONNECTION & RECORDING (checklist)
 -------------------------------------------------------------------------------
 
-| # | Beat type   | What the viewer sees                                                        | Key API / UX                              |
-|---|-------------|-----------------------------------------------------------------------------|-------------------------------------------|
-| 1 | host        | Chase Transfers screen — account list, balance, CTA to add external account | Entry point: "Add External Account" btn   |
-| 2 | host        | "Link external bank" initiate step — trust messaging + Plaid Link button    | CTA: `link-external-account-btn`          |
-| 3 | link        | Standard Plaid Link modal — consent → OTP → institution → account select    | `plaidPhase: "launch"`, modal SDK         |
-| 4 | host        | External account connected — Identity Match result shown                    | `POST /identity/match` — per-attr scores  |
-| 5 | host        | Auth confirmation — ACH account + routing numbers retrieved                 | `POST /auth/get` — numbers + institution  |
-| 6 | host        | Enter transfer amount + destination account                                 | User input, prefilled sender/receiver     |
-| 7 | host        | Signal risk check — animated evaluation → ACCEPT result                    | `POST /signal/evaluate` — score + ACCEPT  |
-| 8 | host        | Transfer approved — funds available today                                   | Outcome: confirmation + availability      |
-
-Hard rules:
-- The Plaid Link step is a single `"plaidPhase": "launch"` step — no sub-steps.
-- Pre-Link step narration MUST end with the action that opens the modal
-  (e.g. "...she taps Add External Account.").
-- Plaid Link step narration describes content VISIBLE INSIDE the modal only —
-  never the act of opening it (per CLAUDE.md Plaid Link narration boundary rule).
-- Identity Match scores: realistic values (name 94, address 91, phone 88).
-  Do NOT use 100/100. Show per-attribute score breakdown.
-- Signal score: realistic low-risk ACCEPT value (consumer_initiated: 12,
-  bank_initiated: 7). Higher score = higher ACH return risk. ACCEPT = low score.
-  Do NOT use "Trust Index" — use "ACH return risk score" in narration.
-- Signal ACCEPT result must be fully resolved on screen before advancing —
-  never leave a spinner in the final frame of the signal step.
-- After Plaid onSuccess fires, use `window._plaidInstitutionName`,
-  `window._plaidAccountName`, `window._plaidAccountMask` for display labels.
-  Never hardcode bank names in HTML.
+  [x] **Live Plaid Link CRA** — single `plaidPhase: "launch"` step; narrate inside modal only
+  [x] **Sandbox:** CRA persona per `inputs/plaid-link-sandbox.md` (`user_credit_profile_good` / `pass_good`, non-OAuth institution)
+  [x] **Async report-ready** beat before `/cra/check_report/lend_score/get` and optional `/cra/check_report/network_insights/get`
+  [x] **FCRA:** consumer-report permissible purpose; `/user/create` before Link token
 
 -------------------------------------------------------------------------------
-NARRATIVE THEMES (drive narration + on-screen callouts)
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
 -------------------------------------------------------------------------------
 
-1. Increase conversion — remove micro-deposit friction; users connect and fund
-   in the same session without abandonment.
-2. Increase funding rates — instant ACH rail access via Auth means funds move
-   faster; no 1–2 day verification delay.
-3. Reduce fraud — Identity Match confirms ownership before any money moves;
-   Signal gates the transaction with 80+ ACH risk signals.
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | slide | Plaid deck opener — BNPL underwriting challenge for near-prime (T1 or T3) | Frame Zip's retro: separate good vs bad risk beyond bureau snapshots. | — |
+| 2 | host | Zip-branded checkout / apply screen: $800 purchase, installment option, light neutral host background | Jordan wants Pay in 4; Zip needs cash-flow + network signal for near-prime. | `Apply with Zip` |
+| 3 | host | Pre-Link explainer card on Zip host: secure bank link for underwriting | End narration on CTA that opens Link. | `Link your bank` |
+| 4 | link | Real Plaid Link CRA flow (consent → OTP → institution → account) | Narrate only modal-visible steps. | Link `onSuccess` |
+| 5 | host | Zip "Generating your report" progress state (host-branded, white/light background) | Set async CRA expectation (~seconds). | — |
+| 6 | slide | Plaid insight slide: report ready / CHECK_REPORT_READY lifecycle (not Zip chrome) | Report is consumer-permissioned and ready for scoring modules. | — |
+| 7 | host | Zip underwriting review screen with **API panel** showing `POST /cra/check_report/lend_score/get` — **LendScore 78**, decision **APPROVE**, 2–3 `reason_codes` | Hero reveal: higher score = lower default risk; map to approve more near-prime safely. Call out **beta** in UI microcopy. | `Approve plan` |
+| 8 | slide | Plaid slide: Network Insights attribute callout (one network_attribute + why it matters for BNPL) | Complement LendScore with network behavior signal Zip cannot get from bureau alone. | — |
+| 9 | host | Zip approval success: $800 plan approved, limit shown, summary line referencing score + network | Outcome: more approvals without more losses; tee future Plaid Qualify. | `Continue to checkout` |
+| 10 | slide | Value summary / CTA slide (T11-style): retro next steps for Zip leadership | Close with retro → production decision narrative matching SFDC critical event. | — |
 
-Approved messaging angles (use verbatim or close):
-- "Over 95% of U.S. depository accounts reachable via Plaid Link."
-- "Identity Match compares your KYC record to bank-held data — confirming
-  ownership without additional user friction."
-- "Signal evaluates ACH return risk across 80+ signals in real time, so
-  low-risk transfers are approved instantly."
-- "The result: higher funding conversion, faster settlement, and a strong fraud
-  gate — all from a single Plaid integration."
+**Insight presentation rules:**
+- LendScore and Network Insights API JSON use global `#api-response-panel` on host steps 7 (and optionally 8 if host beat).
+- Report-ready beat (6) is `sceneType: "slide"` with Plaid deck chrome per new slide design system.
+- Do **not** use Plaid Signal, EWA Score, or Auth-only funding flows — this is CRA LendScore.
 
-Compliance-safe wording:
-- Prefer "can help," "supports," "designed to," "reduces risk of."
-- Do not promise fraud elimination, 100% coverage, or instant settlement SLAs.
-- Signal ACCEPT = low return risk indication, not a guarantee funds will clear.
+**Compliance / user data:**
+CRA permissible purpose for credit underwriting; `/user/create` + `user_token` before `/link/token/create` with `cra_base_report` (and CRA modules as research resolves).
 
 -------------------------------------------------------------------------------
 PERSONA & SAMPLE DATA
 -------------------------------------------------------------------------------
 
-Name: Marcus Chen
-Role: Chase checking customer, transferring $1,500 from an external savings
-      account to fund a new Chase investment account.
-Company / context: Chase Bank retail online banking
-
-Sample on-screen fields:
-
-| Field                  | Value                        | Notes                        |
-|------------------------|------------------------------|------------------------------|
-| Transfer amount        | $1,500.00                    | Round number, realistic      |
-| Destination            | Chase Total Checking ····3847| Chase BofA-style mask        |
-| Source (post-Link)     | window._plaidAccountName     | Dynamic from onSuccess       |
-| Account mask (source)  | window._plaidAccountMask     | Dynamic from onSuccess       |
-| Identity: name match   | 94 / 100                     | Green badge                  |
-| Identity: address match| 91 / 100                     | Green badge                  |
-| Identity: phone match  | 88 / 100                     | Green badge                  |
-| Signal score           | 12 (consumer_initiated)      | ACCEPT — low return risk     |
-| Signal: bank_initiated | 7                            | ACCEPT                       |
-| Funds available        | Today                        | Same-session approval        |
-| Confirmation number    | CHZ-TRF-20260427-7B2A        | Realistic format             |
+**Name / role:** Jordan Lee — near-prime shopper, first-time Zip Pay in 4 applicant
+**Company / context:** Zip BNPL at retail checkout, $800 cart
+**Sample fields that must appear on screen:**
+- Purchase amount `$800.00`
+- LendScore **`78`** with lender action **APPROVE** (or equivalent approved state)
+- At least two literal `reason_codes` (e.g. PCS-prefixed codes) in API panel
+- One Network Insights attribute key visible on slide or JSON (e.g. `plaid_conn_user_lifetime_personal_lending_flag` or similar documented key)
+- Beta badge or footnote on LendScore UI: "LendScore — beta"
 
 -------------------------------------------------------------------------------
 HOST CHROME (LIGHT TOUCH)
 -------------------------------------------------------------------------------
 
-Chase-branded retail banking UI — clean, trust-forward, navy/white palette.
-Top navigation bar: Chase logo, primary nav links (Accounts, Pay & Transfer,
-Investing, More), user avatar. Main content area: white cards on light grey
-background. Primary CTA color: Chase blue (#117ACA or brand-extracted equiv).
-No dark mode. The "Add External Account" button is the hero CTA on step 2.
+Zip consumer checkout / apply experience: top nav with Zip wordmark, white or light gray page background, accent pink/purple brand color on primary CTAs (from brand-extract). **Host nav (customer app only):** Shop | Pay in 4 | Help | Business on checkout screens; Underwriting | Queue | Policies | Help on underwriting console — do **not** use zip.co marketing mega-menu labels. **Footer (verbatim):** NMLS ID 1963958 on at least one host screen. Entry: installment selection at checkout. Primary Link CTA label: **Link your bank**. Underwriting screen shows decision card with **520px** clearance for `#api-response-panel`; `data-testid="approve-plan-cta"` fully visible.
 
-Side panels (follow CLAUDE.md defaults):
-- `#link-events-panel`: hidden by default (display:none) — developer artifact.
-- `#api-response-panel`: hidden by default; shown on Identity Match, Auth, and
-  Signal steps with JSON collapsed by default (class `api-json-collapsed`).
-
-Viewport: 1440×900.
+**Viewport:** 1440×900.
 
 -------------------------------------------------------------------------------
-API RESPONSE WIRING (for build agent accuracy)
+OPTIONAL: SLIDE SUPPLEMENT
 -------------------------------------------------------------------------------
 
-Step 4 — Identity Match:
-- Endpoint: `POST /identity/match`
-- Show per-attribute match scores (name, address, phone_number)
-- Status: `"status": "MATCH"` or equivalent success state
-- Panel: visible, JSON collapsed by default
-
-Step 5 — Auth:
-- Endpoint: `POST /auth/get`
-- Show account number (masked), routing number, account type
-- Institution name from `window._plaidInstitutionName`
-- Panel: visible, JSON collapsed by default
-
-Step 7 — Signal:
-- Endpoint: `POST /signal/evaluate`
-- `scores.customer_initiated_risk_level.score`: 12
-- `scores.bank_initiated_risk_level.score`: 7
-- `core_attributes.days_since_first_plaid_connection`: realistic (e.g. 412)
-- `request_decision`: `"APPROVE"`
-- Animation: show 3 check rows resolving sequentially, then ACCEPT badge
-- Panel: visible, JSON collapsed by default
-- CRITICAL: ACCEPT badge must be fully visible in the final frame of the step
+[[SLIDE_OUTPUT_BEGIN]]
+Include **4 marketing slides** in `sceneType: "slide"` steps using Plaid Deck Design System (T1 title, T3 statement, T4 or T5 for stats, T11 CTA). Steps: opener, report-ready insight, network-insights explainer, closing retro CTA. Use `data-slide-template` T1/T3/T4/T11. JSON on slides only when illustrating API shape — otherwise keep JSON in `#api-response-panel` on host steps.
+[[SLIDE_OUTPUT_END]]
 
 -------------------------------------------------------------------------------
-NO-SLIDE REQUIREMENT (KEEP THIS IN PROMPT)
+PRE-FLIGHT
 -------------------------------------------------------------------------------
 
-This demo is APP-ONLY. Do not generate `sceneType: "slide"` steps.
-Do not add a final value-summary slide.
-End on the transfer-approved host step with confirmation number and CTA.
-
--------------------------------------------------------------------------------
-PRE-FLIGHT CHECKLIST
--------------------------------------------------------------------------------
-
-[x] Standard modal Plaid Link (NOT embedded) — `link-external-account-btn` present
-[x] Single `plaidPhase: "launch"` Link step
-[x] Pre-Link step narration ends on user action ("...she taps Add External Account.")
-[x] Plaid Link narration starts inside modal — never narrates the trigger
-[x] Identity Match scores realistic (no 100/100)
-[x] Signal score in ACCEPT range (5–20), ACCEPT badge fully resolved on screen
-[x] No "Trust Index" terminology — use "ACH return risk score"
-[x] Auth routing/account numbers shown post-Link using dynamic window globals
-[x] api-response-panel hidden by default; shown + collapsed on insight steps
-[x] link-events-panel hidden always
-[x] No slide beats included
+  [x] Stats sourced from LendScore GTM (25% lift, 20% risk reduction) — not duplicated elsewhere
+  [x] Product family `cra_lend_score`; endpoints `/cra/check_report/lend_score/get` + optional `network_insights/get`
+  [x] Live CRA Link; no simulated Link divs
+  [x] Slides enabled via SLIDE_OUTPUT block
 
 ================================================================================
 END OF SPECIFICATION

@@ -3,67 +3,74 @@
 
 const STEP_TIMING = [
   {
-    "id": "transfers-home",
-    "label": "Chase Transfers — account overview",
-    "startFrame": 9,
-    "endFrame": 383,
-    "audioEndFrame": 300
+    "id": "opening-slide",
+    "label": "The near-prime underwriting problem",
+    "startFrame": 0,
+    "endFrame": 350,
+    "audioEndFrame": 334
   },
   {
-    "id": "initiate-link",
-    "label": "Connect external bank — trust messaging",
-    "startFrame": 383,
-    "endFrame": 726,
-    "audioEndFrame": 739
+    "id": "lendscore-explainer-slide",
+    "label": "What LendScore is",
+    "startFrame": 350,
+    "endFrame": 702,
+    "audioEndFrame": 731
   },
   {
-    "id": "plaid-link",
-    "label": "Plaid Link — connect external account",
-    "startFrame": 726,
-    "endFrame": 2155,
-    "audioEndFrame": 1023
+    "id": "zip-checkout",
+    "label": "Zip checkout — $800 Pay in 4",
+    "startFrame": 702,
+    "endFrame": 1067,
+    "audioEndFrame": 1041
   },
   {
-    "id": "identity-match",
-    "label": "Identity Match — confirm ownership",
-    "startFrame": 2155,
-    "endFrame": 2538,
-    "audioEndFrame": 2543
+    "id": "cra-link-launch",
+    "label": "Plaid Link — CRA consent flow",
+    "startFrame": 1067,
+    "endFrame": 2358,
+    "audioEndFrame": 1357
   },
   {
-    "id": "auth-details",
-    "label": "Auth — verified ACH details",
-    "startFrame": 2538,
-    "endFrame": 2858,
-    "audioEndFrame": 2864
+    "id": "report-generating",
+    "label": "Generating the consumer report",
+    "startFrame": 2358,
+    "endFrame": 2719,
+    "audioEndFrame": 2721
   },
   {
-    "id": "transfer-amount",
-    "label": "Enter transfer amount",
-    "startFrame": 2858,
-    "endFrame": 3220,
-    "audioEndFrame": 3244
+    "id": "base-report-ready-slide",
+    "label": "Report ready — Base Report foundation",
+    "startFrame": 2719,
+    "endFrame": 3071,
+    "audioEndFrame": 3078
   },
   {
-    "id": "signal-evaluate",
-    "label": "Signal — ACH return risk check",
-    "startFrame": 3220,
-    "endFrame": 3604,
-    "audioEndFrame": 3592
+    "id": "lendscore-review",
+    "label": "LendScore reveal — underwriting review",
+    "startFrame": 3071,
+    "endFrame": 3475,
+    "audioEndFrame": 3461
   },
   {
-    "id": "transfer-approved",
-    "label": "Transfer approved — funds today",
-    "startFrame": 3604,
-    "endFrame": 3923,
-    "audioEndFrame": 4056
+    "id": "network-insights-slide",
+    "label": "Network Insights — cross-network signal",
+    "startFrame": 3475,
+    "endFrame": 3848,
+    "audioEndFrame": 3860
+  },
+  {
+    "id": "plan-approved",
+    "label": "Plan approved",
+    "startFrame": 3848,
+    "endFrame": 4242,
+    "audioEndFrame": 4211
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 3923,
-    "endFrame": 4307,
-    "audioEndFrame": 4323
+    "startFrame": 4242,
+    "endFrame": 4626,
+    "audioEndFrame": 4635
   }
 ];
 
