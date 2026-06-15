@@ -10,7 +10,7 @@ use_cases:
   - "consumer-report-income-review"
   - "income-stability-assessment"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-12T23:12:41.623Z"
+last_ai_update: "2026-06-15T12:52:10.313Z"
 needs_review: true
 approved: true
 version: 1
@@ -165,6 +165,15 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-15 — Run: 2026-06-15-Scrub-Io-CRA-Auth-Identity-Assets-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Keep income-oriented report context inside the same Plaid Check consumer-report workflow.","status":"approved"}
+- [high] {"claim":"Avoid blending consumer-report review with separate traditional income-verification product flows.","status":"approved"}
+- [high] {"claim":"Model-driven income insights on ability-to-pay: historical average monthly income (gross & net), forecasted income (next 3 months), predicted next payment date, employer name / income provider, and 13+ income type categories.","status":"DRAFT","source":"CRA Income Insights Model Fact Sheet, Nov 2025"}
+- [high] {"claim":"Built as an FCRA-compliant upgrade to Bank Income; GTM advises migrating US Bank Income users to CRA Income Insights when using data for underwriting or income verification.","status":"DRAFT","source":"Glean GTM research, Oct 2025"}
+- [high] {"claim":"Plaid IDV runs as its own mutually-exclusive Link session (KYC: accept_tos + SMS + KYC check + optional documentary verification) and verifies identity without manual ID emailing.","status":"approved","source":"AskBill / Plaid IDV docs"}
+- [high] {"claim":"One bank connection serves both income (CRA Income Insights) and balances/cash flow (CRA Base Report) — no separate Assets link product.","status":"approved","source":"Brief + AskBill / Plaid CRA docs"}
 
 ### 2026-06-12 — Run: 2026-06-12-Scrub-Io-CRA-Identity-Assets-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

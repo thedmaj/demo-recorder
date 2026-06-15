@@ -15,7 +15,7 @@ use_cases:
   - "mortgage-voa"
   - "mortgage-employment-refresh"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-13T08:24:55.477Z"
+last_ai_update: "2026-06-15T15:07:06.598Z"
 needs_review: true
 approved: true
 version: 1
@@ -240,6 +240,14 @@ Host/consumer screens must read like a real product a borrower/applicant uses. T
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-15 — Run: 2026-06-15-Upgrade-CRA-Auth-Identity-Signal-Transfer-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"A reusable consumer-report workflow built on consumer-permissioned bank-account data.","status":"approved"}
+- [high] {"claim":"Balances, ownership, and cash-flow context in one report surface instead of fragmented checks.","status":"approved"}
+- [high] {"claim":"Plaid Layer pairs with CRA so one Plaid relationship covers both front-of-funnel onboarding and underwriting in a single session.","status":"high"}
+- [high] {"claim":"CRA Base Report, LendScore, Network Insights, and Cash Flow Insights ride the same single Plaid Layer connection, so layering richer underwriting on cash-flow data reuses one connection — no second consent.","status":"high"}
+- [high] {"claim":"Qualify enables an identity-only, no-bank prequalification (bureau_pull_type, is_eligible, early LendScore) up-funnel, then a Layer session enhances the decision with bank-verified data — one continuous waterfall.","status":"high"}
 
 ### 2026-06-13 — Run: 2026-06-13-Credit-Genie-CRA-Identity-Signal-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

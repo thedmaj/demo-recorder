@@ -1460,7 +1460,20 @@ async function executePlaidLinkPhase(page, phase) {
         // capture. Hold it visible (Option B, recorder-only) instead of the CSS
         // waterfall whose selectors miss the varying CRA/Passport panes and which
         // mis-timed the markers. Disable with PLAID_CRA_MODAL_HOLD=false.
-        if (plaidLinkFlow === 'cra' && process.env.PLAID_CRA_MODAL_HOLD !== 'false') {
+        //
+        // Detect a CRA launch ROBUSTLY: prefer the explicit plaidSandboxConfig
+        // flow, but fall back to the launch step id (e.g. "cra-link-launch",
+        // "plaid-cra-link") so the hold still fires when the script generator
+        // didn't stamp plaidLinkFlow:"cra". Scrub.io (2026-06-15) regressed exactly
+        // this way — plaidLinkFlow defaulted to "standard" → hold skipped → modal
+        // not captured → QA LIVE-PLAID-NO-MODAL (35). detectLaunchProduct() never
+        // returns 'cra', so the step id is the reliable signal here.
+        const isCraLaunch = plaidLinkFlow === 'cra'
+          || /\bcra\b|cra[-_]link|consumer[-_ ]?report|credit[-_ ]?profile|check[-_ ]?report/i.test(_currentStepId || '');
+        if (isCraLaunch && process.env.PLAID_CRA_MODAL_HOLD !== 'false') {
+          if (plaidLinkFlow !== 'cra') {
+            console.log(`  [Plaid Link] CRA launch detected from step id "${_currentStepId}" (plaidLinkFlow="${plaidLinkFlow}") — engaging modal-hold`);
+          }
           try {
             await executeCraModalHold(page);
           } catch (err) {

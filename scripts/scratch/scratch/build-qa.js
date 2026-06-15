@@ -2028,6 +2028,24 @@ async function evaluateStepState(page, stepId) {
           slideClippedText = (txt || (n.tagName.toLowerCase() + (n.className ? '.' + String(n.className).split(' ')[0] : ''))).slice(0, 60);
         }
       }
+      // Container-level overflow catch. The element-rect scan above misses a
+      // common clip: raw bullet/list text (text nodes + <br>, no per-line
+      // element) inside a flex-constrained card whose BORDER stays within the
+      // canvas — the text spills past the card's content box and is clipped by
+      // the .frame's overflow:hidden, yet no leaf-element or visual-box edge
+      // crosses the slide-root rect. The clipping canvas still reports the true
+      // content height via scrollHeight, so measure that directly on .frame and
+      // .slide-root. (This is exactly the "comparison card list clipped" bug.)
+      const _frameEl = slideRoot.querySelector('.frame') || slideRoot;
+      const _scrollOver = Math.max(
+        _frameEl.scrollHeight - _frameEl.clientHeight,
+        slideRoot.scrollHeight - slideRoot.clientHeight
+      );
+      if (_scrollOver > slideContentOverflowPx) {
+        slideContentOverflowPx = _scrollOver;
+        slideClippedKind = slideClippedKind || 'overflow';
+        slideClippedText = slideClippedText || '(canvas content overflow — content taller than the slide)';
+      }
       slideContentOverflowPx = Math.round(slideContentOverflowPx);
     }
     const slideBody = active ? active.querySelector('.slide-body') : null;

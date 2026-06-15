@@ -3,74 +3,74 @@
 
 const STEP_TIMING = [
   {
-    "id": "opening-slide",
-    "label": "The near-prime underwriting problem",
-    "startFrame": 0,
-    "endFrame": 350,
-    "audioEndFrame": 334
+    "id": "waterfall-architecture-slide",
+    "label": "The three-stage waterfall",
+    "startFrame": 9,
+    "endFrame": 468,
+    "audioEndFrame": 444
   },
   {
-    "id": "lendscore-explainer-slide",
-    "label": "What LendScore is",
-    "startFrame": 350,
-    "endFrame": 702,
-    "audioEndFrame": 731
+    "id": "apply-and-qualify",
+    "label": "Apply + Plaid Qualify",
+    "startFrame": 468,
+    "endFrame": 881,
+    "audioEndFrame": 821
   },
   {
-    "id": "zip-checkout",
-    "label": "Zip checkout — $800 Pay in 4",
-    "startFrame": 702,
-    "endFrame": 1067,
-    "audioEndFrame": 1041
+    "id": "plaid-layer-launch",
+    "label": "Plaid Layer (live launch)",
+    "startFrame": 881,
+    "endFrame": 3221,
+    "audioEndFrame": 1218
   },
   {
-    "id": "cra-link-launch",
-    "label": "Plaid Link — CRA consent flow",
-    "startFrame": 1067,
-    "endFrame": 2358,
-    "audioEndFrame": 1357
+    "id": "verifying-finances-auth",
+    "label": "Verifying finances + Auth numbers",
+    "startFrame": 3221,
+    "endFrame": 3595,
+    "audioEndFrame": 3535
   },
   {
-    "id": "report-generating",
-    "label": "Generating the consumer report",
-    "startFrame": 2358,
-    "endFrame": 2719,
-    "audioEndFrame": 2721
+    "id": "consumer-report-generating",
+    "label": "Consumer Report generating (async)",
+    "startFrame": 3595,
+    "endFrame": 3989,
+    "audioEndFrame": 3929
   },
   {
-    "id": "base-report-ready-slide",
-    "label": "Report ready — Base Report foundation",
-    "startFrame": 2719,
-    "endFrame": 3071,
-    "audioEndFrame": 3078
+    "id": "bank-data-lift-slide",
+    "label": "What bank data adds over Qualify-only",
+    "startFrame": 3989,
+    "endFrame": 4408,
+    "audioEndFrame": 4378
   },
   {
-    "id": "lendscore-review",
-    "label": "LendScore reveal — underwriting review",
-    "startFrame": 3071,
-    "endFrame": 3475,
-    "audioEndFrame": 3461
+    "id": "enhanced-underwriting-reveal",
+    "label": "Enhanced underwriting reveal",
+    "startFrame": 4408,
+    "endFrame": 4831,
+    "audioEndFrame": 4771
   },
   {
-    "id": "network-insights-slide",
-    "label": "Network Insights — cross-network signal",
-    "startFrame": 3475,
-    "endFrame": 3848,
-    "audioEndFrame": 3860
+    "id": "enhanced-loan-offer",
+    "label": "Enhanced loan offer",
+    "startFrame": 4831,
+    "endFrame": 5257,
+    "audioEndFrame": 5227
   },
   {
-    "id": "plan-approved",
-    "label": "Plan approved",
-    "startFrame": 3848,
-    "endFrame": 4242,
-    "audioEndFrame": 4211
+    "id": "funds-on-the-way",
+    "label": "Funds on the way",
+    "startFrame": 5257,
+    "endFrame": 5624,
+    "audioEndFrame": 5594
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 4242,
-    "endFrame": 4626,
-    "audioEndFrame": 4635
+    "startFrame": 5624,
+    "endFrame": 6075,
+    "audioEndFrame": 6045
   }
 ];
 

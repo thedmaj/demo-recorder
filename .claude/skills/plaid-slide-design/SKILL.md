@@ -86,6 +86,20 @@ content-heavy slides clipped at the bottom (2026-05-29). Frame padding is `--pad
 slide content extends beyond the `.slide-root` edge (clipped by `overflow:hidden`). If content still
 overflows, **trim the content** (drop/shorten the lowest row — e.g. a stat callout — tighten body
 copy, reduce spacing); do NOT rely on the letterbox to hide overflow, and do NOT add font-clamps.
+The detector measures BOTH (a) element-rect edges crossing the canvas AND (b) the canvas
+**`.frame.scrollHeight − clientHeight`** (container scroll-overflow). (b) was added 2026-06-15 after a
+two-column comparison slide (`bank-data-lift-slide`) clipped its card bullet lists by ~140px yet
+passed QA: the overflowing lines were **raw text nodes + `<br>` inside a flex-constrained card whose
+border stayed inside the frame**, so no element edge crossed the canvas — only the scrollHeight check
+catches that. Any `> 6px` canvas overflow now fails the slide.
+
+**Comparison / bullet-list card rule (prevents the above clip):** in `.sc-row` / `.sc-card` (or any
+multi-line list card), content MUST fit the canvas — `align-items: stretch` sizes both cards to the
+tallest, so the densest card is the binding constraint. Keep bullets **short enough to sit on one
+line** at the 24px body floor, cap list **`line-height` at ~1.4–1.5** (NOT 1.7 — loose leading on a
+5+ line mono block is exactly what overflowed here), and prefer ≤5 short bullets per card. Never drop
+body text below the **24px floor** to fit — shorten wording or tighten line-height/padding instead.
+`slide-fix` must re-check `.frame` scroll-overflow after editing any list/comparison slide.
 
 `scanSlideCanvasSize` (critical blocker, `app+slides` only) measures the rendered `.slide-root`
 and fails if **width < 75% viewport**, **height < 67% viewport**, or **aspect outside [1.40, 1.85]**
