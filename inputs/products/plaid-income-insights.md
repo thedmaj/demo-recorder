@@ -10,7 +10,7 @@ use_cases:
   - "consumer-report-income-review"
   - "income-stability-assessment"
 last_human_review: "2026-03-26"
-last_ai_update: "2026-06-15T12:52:10.313Z"
+last_ai_update: "2026-06-17T13:59:38.242Z"
 needs_review: true
 approved: true
 version: 1
@@ -165,6 +165,13 @@ Docs: [Plaid Sandbox test credentials](https://plaid.com/docs/sandbox/test-crede
 <!-- 🤖 AI-OWNED — auto-populated by research.js after each pipeline run.
      Human reviews but does not need to edit. Entries accumulate — do not remove.
      Only findings at or above the confidence threshold are appended (default: medium). -->
+
+### 2026-06-17 — Run: 2026-06-17-Cox-Automotive-Auth-Identity-Signal-Income-Statements-v1 (min_confidence: medium)
+**Competitive Differentiators (AI-synthesized)**
+- [high] {"claim":"Traditional Bank Income verifies income directly from connected bank transaction data — no document upload, no manual review at the dealer finance desk","source":"AskBill / Plaid docs + per-product KB","status":"approved"}
+- [high] {"claim":"This is traditional Plaid Bank Income (income_verification, POST /credit/bank_income/get) — distinct from Plaid Check / CRA Income Insights (cra_base_report, cra_income_insights). The income_verification Link token ONLY accepts {income_verification} or {income_verification, employment}; do not bundle auth, identity, signal, transactions, or cra_* into it.","source":"AskBill / Plaid docs + brief CRITICAL note","status":"approved"}
+- [high] {"claim":"Traditional Bank Income (income_source_types ['bank']) returns synchronously after Link onSuccess — no INCOME_VERIFICATION report-ready webhook gate, unlike Document/Payroll Income.","source":"AskBill / Plaid Bank Income + Income docs","status":"approved"}
+- [high] {"claim":"Non-FCRA income-awareness product — keep claims verification/awareness framed, not a regulated credit decision; outcomes depend on data availability and Cox's own credit policy.","source":"Brief compliance note + per-product KB","status":"approved"}
 
 ### 2026-06-15 — Run: 2026-06-15-Scrub-Io-CRA-Auth-Identity-Assets-v1 (min_confidence: medium)
 **Competitive Differentiators (AI-synthesized)**

@@ -123,7 +123,13 @@ function inferLaunchProductLocal(step) {
   if (!step) return 'link';
   const text = [step.launchProduct, step.id, step.label, step.visualState, step.narration]
     .filter(Boolean).join(' ').toLowerCase();
-  if (/\blayer\b/.test(text)) return 'layer';
+  // Mirror of generate-script.inferLaunchProduct — Layer match must not trip on
+  // incidental prose ("connection layer"); require Plaid-Layer-as-product.
+  const strong = [step.launchProduct, step.id].filter(Boolean).join(' ').toLowerCase();
+  const isLayer = /\blayer\b/.test(strong)
+    || /\bplaid[\s-]?layer\b/.test(text)
+    || /\blayer[\s-]?(?:launch|session|token|template|prefill|eligib|modal|flow)\b/.test(text);
+  if (isLayer) return 'layer';
   if (/\bidv\b|identity[\s-]?verification/.test(text)) return 'idv';
   if (/\bcra\b|consumer[\s-]?report|income[\s-]?insights|base[\s-]?report|check[\s-]?report/.test(text)) return 'cra';
   return 'link';

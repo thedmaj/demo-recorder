@@ -1,0 +1,148 @@
+================================================================================
+Citi Account Opening + Instant Funding — Inbound Bank Payments
+================================================================================
+
+Brand URL: https://www.citibank.com
+
+**Host:** **Citi** — consumer banking / digital account opening
+**Canonical URL:** https://www.citibank.com
+**Brand URL** (optional): https://www.citibank.com
+
+**User journey (one sentence):**
+A new Citi customer opens a checking account online and funds it instantly by linking
+an external bank account through Plaid, with risk-aware decisioning before the inbound
+transfer is finalized.
+
+**Story arc (short prose):**
+A new customer starts in Citi's account-opening funnel and reaches the funding step,
+where multi-day micro-deposits would normally stall activation. Citi offers external
+bank funding as the fastest path to activate the account. The customer launches real
+Plaid Link once, connects their existing bank, and behind the scenes Citi pulls verified
+ACH rails (Auth), confirms account ownership (Identity Match), and scores ACH return
+risk (Signal) — supporting a confident auto-approve of the inbound transfer. The account
+is activated in seconds instead of days.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Auth, Plaid Identity Match, Plaid Signal
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):
+Inbound Bank Payments
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`funding`
+
+**Primary messaging file for this demo** (pick one to own stats):
+`inputs/plaid-value-props.md`
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link launch(es)** — real SDK (`plaidPhase: "launch"`). ONE launch step:
+      a single bank Link session (Auth + Identity Match are resolved from this one connection;
+      Signal is evaluated server-side on the linked account). No second launch.
+  [ ] **Plaid Identity Verification (IDV)** — NOT featured. This demo uses **Plaid Identity
+      Match** (`POST /identity/match`, an Auth-family KYC-vs-bank ownership check), which is a
+      behind-the-scenes API call on the linked account — NOT IDV (`/identity_verification/*`).
+      Do not add an IDV `plaidPhase: "launch"` step or an "identity verified" host screen.
+  [ ] **Plaid Layer / OAuth** — N/A.
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | Citi account-opening welcome and product selection | Digital onboarding starts in Citi's branded flow | `Open account` |
+| 2 | host | Personal details + KYC entry, completed state | Identity details are captured once for onboarding and funding readiness | `Continue` |
+| 3 | host | Funding method selection with external bank transfer recommended | External bank funding is framed as the fastest activation path | `Fund from external bank` |
+| 4 | host | Single pre-Link explainer: what data is used and why | Consent framing, security reassurance, and the next step — narration ends on the button | CTA ends narration: `Link your bank` |
+| 5 | link | Real Plaid Link flow (remember-me/OTP, institution select, account select, success) | Narrate only what is visible inside the modal | Link complete |
+| 6 | slide | Plaid insight slide: `POST /identity/match` with per-attribute match scores | Identity Match confirms account ownership before funding | Match scores shown |
+| 7 | slide | Plaid insight slide: `POST /auth/get` with account/routing ACH rails | Citi retrieves the ACH rails needed to execute inbound funding | Rails verified |
+| 8 | slide | Plaid insight slide: `POST /signal/evaluate` with risk score + decision | Low return-risk score supports the auto-approve path for inbound funding | `ACCEPT` recommendation |
+| 9 | host | Citi funding confirmation: amount, source account + mask, posted status | Funding is approved and the account is activated, with transparent details | `Finish setup` |
+
+**Product-specific reminders** (delete if N/A):
+- Link: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"` step.
+- Link: pre-step narration ends on the **button** (`Link your bank`); the Link step narrates
+  content **inside** the modal only — never the act of opening it.
+- Identity Match: per-attribute scores are 0–100 (70+ = Pass; 100 = exact). Surface a realistic
+  mixed result (most attributes pass, one weaker) so the approval decision reads as a real judgment.
+- Signal: low score = low ACH return risk. Use a low-risk **ACCEPT** path with score in the **5–20**
+  range; never 82–97. `ruleset.result` ∈ {ACCEPT, REVIEW, REROUTE} — never `REJECT`.
+
+**Compliance / user data (one line):**
+Treat Identity Match and Signal outputs as policy inputs to funding risk controls (not sole
+decision makers); present ACH funding as a customer-authorized inbound transfer.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Taylor Brooks, new retail banking customer
+**Company / context:** Opening a Citi checking account and funding it immediately from an
+existing external bank account.
+**Sample fields that must appear on screen:** full name, email, phone, DOB, address, initial
+funding amount, selected external account name + mask, Auth ACH rails (account/routing)
+confirmation, Identity Match per-attribute scores, Signal risk score + ACCEPT recommendation.
+
+Recommended structured data:
+- `client_user_id`: `citi-taylor-001`
+- `funding_amount`: `500.00`
+- `legal_name`: `Taylor Brooks`
+- `email`: `taylor.brooks@example.com`
+- `phone`: `+14155550122`
+- Identity Match (illustrative, mixed-pass): name 90, address 90, phone 80, email 0 — overall Pass
+- Signal: `scores.customer_initiated_return_risk_score` low (e.g. 12); `ruleset.result`: `ACCEPT`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use Citibank-inspired banking UI conventions: clean white/blue surfaces, clear form hierarchy,
+strong trust language, and concise regulatory-safe labels. The funding-step CTA `Link your bank`
+opens real Plaid Link. Keep host steps on a white/light-neutral, customer-branded background and
+reserve Plaid-dark styling for the Plaid API insight slides only.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Create 3 Plaid-branded API insight slides using `templates/slide-template/slide.css` +
+`PIPELINE_SLIDE_SHELL_RULES.md`:
+1) Identity Match (`POST /identity/match`) — per-attribute match scores (name, address, phone,
+   email) and overall Pass
+2) Auth (`POST /auth/get`) — account/routing availability, account subtype, mask
+3) Signal (`POST /signal/evaluate`) — risk score (low, 5–20), `ACCEPT` recommendation, top
+   risk drivers
+
+JSON panel contract:
+- Global `#api-response-panel` only
+- body collapsed by default
+- panel shell itself collapsible
+- request/response fields must align with the slide narrative claims
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (value-props **or** product KB — not duplicated)
+  [x] Product names and family match `CLAUDE.md` (corrected: Identity Match, not IDV)
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

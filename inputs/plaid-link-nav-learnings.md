@@ -2364,3 +2364,9 @@ Findings gathered for the human-like navigation system (nav profiles in `inputs/
 - 2026-06-13 [nav-feedback] cra-link run=2026-06-13-Zip-CRA-Auth-Signal-v1 completed=true style=human screensMerged=0 humanDwell=+9s
 - 2026-06-13 [nav-feedback] classic-link run=2026-06-13-Zip-CRA-Auth-Signal-v2 completed=true style=human screensMerged=1 humanDwell=+16s
 - 2026-06-15 [nav-feedback] idv run=2026-06-15-Scrub-Io-CRA-Auth-Identity-Assets-v1 completed=true style=human screensMerged=1 humanDwell=+30s
+- 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+16s
+- 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Citi-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+17s
+- 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Cox-Automotive-Auth-Identity-Signal-Income-Statements-v1 completed=true style=human screensMerged=1 humanDwell=+18s
+- 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Ynab-Identity-Assets-Monitor-Income-v1 completed=true style=human screensMerged=2 humanDwell=+10s
+- 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Current-CRA-Auth-Identity-Signal-Protect-v1 completed=true style=human screensMerged=2 humanDwell=+20s
+- 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+16s

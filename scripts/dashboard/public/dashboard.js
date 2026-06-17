@@ -1667,6 +1667,8 @@
     const iframeHtml = liveUrl
       ? `<div class="sb-live-preview-wrap" id="sb-live-preview-wrap">
            <iframe id="sb-live-iframe" class="sb-live-iframe" src="${esc(liveUrl)}" title="Live demo app preview"></iframe>
+           <button type="button" class="sb-scene-nav sb-scene-prev" id="sb-scene-prev" aria-label="Previous scene" title="Previous scene">‹</button>
+           <button type="button" class="sb-scene-nav sb-scene-next" id="sb-scene-next" aria-label="Next scene" title="Next scene">›</button>
            <div class="sb-live-resize-handle" id="sb-live-resize-handle" title="Drag to resize the preview height"></div>
          </div>`
       : `<div class="sb-live-empty">Build app preview not available yet. Run build stage, then reload Storyboard.</div>`;
@@ -2386,6 +2388,32 @@
           openSlideLibraryModal(storyboardSelectedStepId || '');
         });
       }
+
+      // Scene prev/next chevrons overlaid on the preview edges — page through
+      // scenes in script order. Ordering comes from the step <select> options.
+      const sceneSel = document.getElementById('sb-live-step-select');
+      const scenePrev = document.getElementById('sb-scene-prev');
+      const sceneNext = document.getElementById('sb-scene-next');
+      const sceneIds = () => (sceneSel ? Array.from(sceneSel.options).map((o) => o.value) : []);
+      const updateSceneNavDisabled = () => {
+        const ids = sceneIds();
+        const i = ids.indexOf(storyboardSelectedStepId);
+        if (scenePrev) scenePrev.disabled = i <= 0;
+        if (sceneNext) sceneNext.disabled = i < 0 || i >= ids.length - 1;
+      };
+      const goScene = (delta) => {
+        const ids = sceneIds();
+        const i = ids.indexOf(storyboardSelectedStepId);
+        if (i < 0) return;
+        const j = i + delta;
+        if (j < 0 || j >= ids.length) return;
+        setStoryboardSelectedStep(ids[j], el);
+        updateSceneNavDisabled();
+      };
+      if (scenePrev) scenePrev.addEventListener('click', (e) => { e.stopPropagation(); goScene(-1); });
+      if (sceneNext) sceneNext.addEventListener('click', (e) => { e.stopPropagation(); goScene(1); });
+      if (sceneSel) sceneSel.addEventListener('change', updateSceneNavDisabled);
+      updateSceneNavDisabled();
 
       // Capture screenshots button
       const captureBtn = document.getElementById('capture-screenshots-btn');

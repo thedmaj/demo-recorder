@@ -3,74 +3,74 @@
 
 const STEP_TIMING = [
   {
-    "id": "waterfall-architecture-slide",
-    "label": "The three-stage waterfall",
+    "id": "keybank-post-kyb-home",
+    "label": "KeyBank — Business Verified, Fund Your Account",
     "startFrame": 9,
-    "endFrame": 468,
-    "audioEndFrame": 444
+    "endFrame": 425,
+    "audioEndFrame": 409
   },
   {
-    "id": "apply-and-qualify",
-    "label": "Apply + Plaid Qualify",
-    "startFrame": 468,
-    "endFrame": 881,
-    "audioEndFrame": 821
+    "id": "plaid-link-launch",
+    "label": "Plaid Link — Connect the Business Bank Account",
+    "startFrame": 425,
+    "endFrame": 1409,
+    "audioEndFrame": 772
   },
   {
-    "id": "plaid-layer-launch",
-    "label": "Plaid Layer (live launch)",
-    "startFrame": 881,
-    "endFrame": 3221,
-    "audioEndFrame": 1218
+    "id": "identity-match-insight",
+    "label": "Identity Match — Confirm Ownership",
+    "startFrame": 1409,
+    "endFrame": 1829,
+    "audioEndFrame": 1847
   },
   {
-    "id": "verifying-finances-auth",
-    "label": "Verifying finances + Auth numbers",
-    "startFrame": 3221,
-    "endFrame": 3595,
-    "audioEndFrame": 3535
+    "id": "identity-match-slide",
+    "label": "How Name Matching Works",
+    "startFrame": 1829,
+    "endFrame": 2298,
+    "audioEndFrame": 2253
   },
   {
-    "id": "consumer-report-generating",
-    "label": "Consumer Report generating (async)",
-    "startFrame": 3595,
-    "endFrame": 3989,
-    "audioEndFrame": 3929
+    "id": "auth-insight",
+    "label": "Auth — Pull the ACH Rails",
+    "startFrame": 2298,
+    "endFrame": 2715,
+    "audioEndFrame": 2633
   },
   {
-    "id": "bank-data-lift-slide",
-    "label": "What bank data adds over Qualify-only",
-    "startFrame": 3989,
-    "endFrame": 4408,
-    "audioEndFrame": 4378
+    "id": "auth-slide",
+    "label": "Auth — Business Account on the Rail",
+    "startFrame": 2715,
+    "endFrame": 3068,
+    "audioEndFrame": 3152
   },
   {
-    "id": "enhanced-underwriting-reveal",
-    "label": "Enhanced underwriting reveal",
-    "startFrame": 4408,
-    "endFrame": 4831,
-    "audioEndFrame": 4771
+    "id": "funding-amount",
+    "label": "KeyBank — Enter Funding Amount",
+    "startFrame": 3068,
+    "endFrame": 3341,
+    "audioEndFrame": 3387
   },
   {
-    "id": "enhanced-loan-offer",
-    "label": "Enhanced loan offer",
-    "startFrame": 4831,
-    "endFrame": 5257,
-    "audioEndFrame": 5227
+    "id": "signal-insight",
+    "label": "Signal — Score This Transfer",
+    "startFrame": 3341,
+    "endFrame": 3629,
+    "audioEndFrame": 3852
   },
   {
-    "id": "funds-on-the-way",
-    "label": "Funds on the way",
-    "startFrame": 5257,
-    "endFrame": 5624,
-    "audioEndFrame": 5594
+    "id": "funds-approved",
+    "label": "KeyBank — Funds Available Instantly",
+    "startFrame": 3629,
+    "endFrame": 3865,
+    "audioEndFrame": 3960
   },
   {
     "id": "value-summary-slide",
     "label": "Value Summary",
-    "startFrame": 5624,
-    "endFrame": 6075,
-    "audioEndFrame": 6045
+    "startFrame": 3865,
+    "endFrame": 4139,
+    "audioEndFrame": 4302
   }
 ];
 

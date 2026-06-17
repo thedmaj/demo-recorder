@@ -432,7 +432,18 @@ function inferLaunchProduct(step) {
   if (!step) return 'link';
   const text = [step.launchProduct, step.id, step.label, step.visualState, step.narration]
     .filter(Boolean).join(' ').toLowerCase();
-  if (/\blayer\b/.test(text)) return 'layer';
+  // Layer detection must NOT trip on incidental prose like "connection layer"
+  // or "layer of security" (2026-06-17: a Citi Auth launch whose visualState
+  // said "Plaid as the secure connection layer" was misclassified as a Plaid
+  // Layer launch → plaid-link-qa demanded /api/create-session-token and failed).
+  // Require Plaid-Layer-AS-PRODUCT phrasing: an explicit launchProduct/id signal
+  // (authored ids like "layer-launch"), "plaid layer", or "layer" adjacent to a
+  // Layer keyword (launch/session/token/template/prefill/eligible/modal/flow).
+  const strong = [step.launchProduct, step.id].filter(Boolean).join(' ').toLowerCase();
+  const isLayer = /\blayer\b/.test(strong)
+    || /\bplaid[\s-]?layer\b/.test(text)
+    || /\blayer[\s-]?(?:launch|session|token|template|prefill|eligib|modal|flow)\b/.test(text);
+  if (isLayer) return 'layer';
   if (/\bidv\b|identity[\s-]?verification/.test(text)) return 'idv';
   if (/\bcra\b|consumer[\s-]?report|income[\s-]?insights|base[\s-]?report|check[\s-]?report/.test(text)) return 'cra';
   return 'link';
@@ -446,9 +457,10 @@ function isLayerUseCase(demoScript) {
     .map((step) => [step?.id, step?.label, step?.narration, step?.visualState].filter(Boolean).join(' '))
     .join(' ')
     .toLowerCase();
-  // Keep broad "layer" matching for backwards compatibility with existing step IDs
-  // like "layer-launch" and "layer-confirm" in mobile Layer demos.
-  return /\blayer\b/.test(`${header} ${stepsText}`);
+  // Match Plaid-Layer-as-product, not incidental prose ("connection layer").
+  // Authored Layer step ids ("layer-launch"/"layer-confirm") still match via the
+  // adjacent-keyword form; "plaid layer" in the header already returned above.
+  return /\bplaid[\s-]?layer\b|\blayer[\s-]?(?:launch|confirm|session|token|template|prefill|eligib|modal|flow)\b/.test(`${header} ${stepsText}`);
 }
 
 function enforceCanonicalLaunchInteraction(demoScript) {

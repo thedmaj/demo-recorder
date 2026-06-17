@@ -1489,12 +1489,28 @@ async function executePlaidLinkPhase(page, phase) {
               markPlaidStep,
               runDir: process.env.PIPELINE_RUN_DIR || null,
               // Human style: profile pacing overrides recipe dwell constants
-              // (before = pre-click hesitation, after = read/settle dwell).
+              // (before = pre-action hesitation, after = read/settle dwell).
               // fast → null → raw recipe constants, unchanged.
+              // Per operator request (2026-06-17): the phone number is typed AS
+              // SOON AS Plaid Link loads — no "read the screen" hesitation before
+              // it (PLAID_PHONE_BEFORE_MS, default 0) — and the OTP is entered
+              // after a short ~1.5s "receive the code" pause once the phone is
+              // submitted (PLAID_OTP_BEFORE_MS, default 1500). Typing itself stays
+              // at human keystroke speed via the pacer's typeInto.
               pacingResolver: getPacer().isHuman
-                ? ({ screen, phase, defaultMs }) => (phase === 'before'
-                    ? Math.max(defaultMs, getPacer().hesitateMs('primary', screen.id))
-                    : getPacer().screenDwellMs({ screenId: screen.id, fallbackMs: defaultMs }))
+                ? ({ screen, phase, defaultMs }) => {
+                    const id = String((screen && screen.id) || '').toLowerCase();
+                    if (phase === 'before') {
+                      if (/phone/.test(id)) {
+                        return parseInt(process.env.PLAID_PHONE_BEFORE_MS || '0', 10);
+                      }
+                      if (/\botp\b|one[-\s]?time|verif|\bcode\b/.test(id)) {
+                        return parseInt(process.env.PLAID_OTP_BEFORE_MS || '1500', 10);
+                      }
+                      return Math.max(defaultMs, getPacer().hesitateMs('primary', screen.id));
+                    }
+                    return getPacer().screenDwellMs({ screenId: screen.id, fallbackMs: defaultMs });
+                  }
                 : null,
               hooks: {
                 visionFallback: async ({ page: p, screenId, actionType, hint }) => {

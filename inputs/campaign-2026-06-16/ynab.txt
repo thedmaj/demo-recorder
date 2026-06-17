@@ -1,0 +1,165 @@
+================================================================================
+YNAB Personal Financial Insights — One Connected View Of Your Money
+================================================================================
+
+Brand URL: https://www.ynab.com/
+
+**Host:** **YNAB** — personal finance / budgeting (PFM) app
+**Canonical URL:** https://www.ynab.com/
+**Brand URL** (optional): https://www.ynab.com/
+
+**User journey (one sentence):**
+A digital-native young professional links her financial accounts in YNAB with a single
+Plaid Link to see spending, investments, and liabilities in one unified money dashboard.
+
+**Story arc (short prose):**
+Maya starts with YNAB's core budgeting promise — "give every dollar a job" — but her
+spending, brokerage, and mortgage live in separate apps. She connects her accounts once
+through Plaid Link, and synced transaction data keeps the budget current without manual
+cleanup. From there YNAB expands beyond budgeting into a full financial picture, layering
+in investment holdings and mortgage liabilities, and closes with proactive "what to do
+next" guidance that makes YNAB feel like a long-term financial command center.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, Plaid Transactions, Plaid Liabilities, Plaid Investments
+(LIT bundle — Liabilities + Investments + Transactions — on ONE Link token / one access_token.)
+
+**Solutions supported** (one or multiple; used to query Solutions Master foundation):
+Personal Financial Insights
+
+**Primary product family** (pick one — aligns with pipeline profiles):
+`transactions`
+
+**Primary messaging file for this demo** (pick one to own stats):
+`inputs/products/plaid-liabilities.md` (owns LIT-bundle / net-worth proof points incl. the
+YNAB PFM reference; Investments facts from `inputs/products/plaid-investments.md`)
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link launch(es)** — real SDK (`plaidPhase: "launch"`). **Exactly ONE launch
+      step** — a single standard Plaid Link session carrying the LIT bundle
+      (`products: ["liabilities", "transactions", "investments"]`). No additional launches.
+  [ ] **Plaid Identity Verification (IDV)** — N/A (not featured).
+  [ ] **Plaid Layer / OAuth** — N/A. Use the standard (non-OAuth) sandbox bank so the flow
+      can be automated end-to-end.
+  [x] **Sandbox / persona** — defaults per `inputs/plaid-link-sandbox.md`
+      (First Platypus Bank `ins_109508`, `user_good` / `pass_good`, OTP `1234`).
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+List **screens / beats** in order. For each: **intent**, **narration angle** (not full VO),
+and **reveal** if any. Avoid pasting raw API JSON here.
+
+| # | Beat | What the viewer sees | Narration focus | Reveal / CTA |
+|---|------|----------------------|-----------------|--------------|
+| 1 | host | YNAB welcome and "Connect your accounts" onboarding panel | Position YNAB as a financial command center, not just a budgeting tracker | `Get started` |
+| 2 | host | Budget overview: income vs spending trend card and category totals | Show the "living budget" value — categories stay current from fresh transaction sync | `Link an account` |
+| 3 | host | Single pre-Link explainer: secure connection and what data powers the insights | Trust + value framing before Link launch; narration ENDS on the button | She taps `Continue with Plaid` |
+| 4 | link | Real Plaid Link modal (remember-me/OTP, institution select, account select, success) | Narrate only what is VISIBLE inside the modal — bank search, account selection, success | Accounts connected |
+| 5 | slide | Transactions insight: `POST /transactions/sync` — category, merchant logo/name, amount, date, pending/posted | Budget trust comes from clean merchant + category detail and sync deltas (added/modified/removed) | Category + merchant insight |
+| 6 | slide | Investments insight: `POST /investments/holdings/get` — account type, ticker, quantity, current price, market value | Move from spending-only to asset visibility and allocation clarity (read-only holdings; NO account numbers) | Portfolio clarity |
+| 7 | slide | Liabilities insight: `POST /liabilities/get` — mortgage interest rate (APR), next payment due date, last statement vs current balance | Show debt structure and cost-of-debt context, not just total balance; data refreshes ~daily, not live | Liability transparency |
+| 8 | host | Unified accounts view: account name/type, cash flow, investments, liabilities, and next-step recommendations | Turn fragmented data into proactive plan decisions (spend, save, payoff priorities); net worth = assets − debts | `Review plan` |
+| 9 | slide | Final value-summary slide with top research-backed messaging for Personal Financial Insights | Close on outcomes: less app switching, faster clarity, better month-to-month decisions | `Start budgeting with confidence` |
+
+**Product-specific reminders** (delete if N/A):
+- Link: exactly one pre-Link host screen and exactly one `plaidPhase: "launch"` step;
+  pre-Link narration ends on the **button**, Link step narrates **inside** the modal only.
+- Transactions: emphasize merchant name/logo, category (primary + detailed if present),
+  amount, date, pending vs posted, and sync updates (added/modified/removed) via
+  `/transactions/sync`. No real-time freshness claims beyond what sync supports.
+- Investments: read-only HOLDINGS only — `/investments/holdings/get` returns account type,
+  ticker symbol, quantity, current price, and market value. **Show NO account numbers / DTC /
+  ACATS and NO per-lot tax data** (those are Investments Move, a different product). Use
+  product string `investments`, never `investments_auth`.
+- Liabilities: emphasize mortgage interest rate, next payment due date, minimum/last payment,
+  and last-statement vs current balance. **NO federal student loans** (gone since Aug 2024 /
+  Stop Act — Mohela, Nelnet, Aidvantage, EdFinancial, CRI). Mortgage + credit-card data only
+  for this demo (private servicers if any student loan appears). Liabilities refreshes ~once
+  per day — do not promise live freshness; source "just paid" from Transactions if needed.
+- Non-FCRA, non-underwriting framing throughout — this is PFM / financial wellness, not
+  credit decisioning. Do not mix `cra_*` products into the Link token.
+
+**Compliance / user data (one line):**
+Use representative user-consented account data; frame outputs as budgeting/planning insight
+tools (non-FCRA, no advisory guarantees) — N/A for CRA permissible purpose.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Chen, 28, product designer (digital-native young professional)
+**Company / context:** Uses YNAB to manage her monthly budget, monitor brokerage holdings,
+and track her mortgage liability in one dashboard.
+**Sample fields that must appear on screen:** account name, account type, transaction
+category, merchant name/logo, amount, date, holding ticker, quantity, current price, market
+value, mortgage interest rate (APR), last statement balance, current balance, next payment
+due date.
+
+Recommended structured data:
+- `client_user_id`: `ynab-maya-001`
+- `user_name`: `Maya Chen`
+- `monthly_income`: `7800.00`
+- `monthly_spending`: `6125.42`
+- `mortgage_opening_balance`: `420000.00`
+- `mortgage_current_balance`: `397845.12`
+- `mortgage_apr`: `5.62`
+
+-------------------------------------------------------------------------------
+HOST CHROME (LIGHT TOUCH)
+-------------------------------------------------------------------------------
+
+Use YNAB-style modern consumer-finance UI patterns: clean cards, strong information
+hierarchy, calm trust language, and clear budget-first framing. The host nav and entry
+screens are YNAB-branded on a light/neutral background; the CTA that opens Plaid Link reads
+`Continue with Plaid`. Reserve Plaid-dark styling for the Plaid-specific API insight/summary
+slides only — never let it bleed onto host screens.
+
+**Viewport:** 1440×900.
+
+-------------------------------------------------------------------------------
+OPTIONAL: SLIDE SUPPLEMENT
+-------------------------------------------------------------------------------
+
+[[SLIDE_OUTPUT_BEGIN]]
+Create 4 Plaid-branded slides using `templates/slide-template/slide.css` +
+`PIPELINE_SLIDE_SHELL_RULES.md`:
+1) Transactions (`POST /transactions/sync`) — category, merchant logo/name, amount, date,
+   pending/posted, sync deltas (added/modified/removed)
+2) Investments (`POST /investments/holdings/get`) — ticker, quantity, current price, market
+   value (no account numbers, no per-lot tax data)
+3) Liabilities (`POST /liabilities/get`) — mortgage interest rate, last statement balance,
+   current balance, next payment due date (mortgage + credit cards only; no federal student loans)
+4) Final value-summary slide — top research-backed value propositions for Personal Financial
+   Insights (net worth = assets − debts; one connection, three endpoints)
+
+JSON panel contract:
+- Global `#api-response-panel` only
+- hidden by default on page load
+- once visible, JSON body is immediately visible (no JSON toggle/collapse controls)
+- panel body scrolls for long payloads
+- request/response fields must align with slide narrative claims
+[[SLIDE_OUTPUT_END]]
+
+-------------------------------------------------------------------------------
+PRE-FLIGHT
+-------------------------------------------------------------------------------
+
+  [x] One primary source for **stats** (value-props **or** product KB — not duplicated)
+  [x] Product names and family match `CLAUDE.md`
+  [x] Storyboard order matches intended `goToStep` flow
+  [x] Live Link vs mock consistent with pipeline env
+
+================================================================================
+END OF SPECIFICATION
+================================================================================
