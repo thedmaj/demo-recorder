@@ -830,6 +830,47 @@ async function plaidLinkSelectAccount(page) {
   const frame = getPlaidLinkFrame(page);
   console.log('  [Plaid Link] Selecting first account...');
 
+  // Scroll-free DOM-dispatch first. Playwright's frameLocator.click() runs
+  // scrollIntoViewIfNeeded, which scrolls the modal's (scrollable) account list
+  // up/down to bring the checkbox / Confirm button into view — the visible
+  // "scroll jitter before selecting a bank" (2026-06-17). A DOM .click() inside
+  // the iframe selects + confirms WITHOUT scrolling (same pattern already used by
+  // plaidSelectSavedInstitution). Falls through to the Playwright path on miss.
+  const plaidFrame = page.frames().find(f => /plaid\.com/.test(f.url()));
+  if (plaidFrame) {
+    try {
+      const picked = await plaidFrame.evaluate(() => {
+        const vis = (el) => el && el.offsetParent !== null;
+        for (const s of ['input[type="checkbox"]', '[data-testid="account-select"]', '[role="checkbox"]', '[class*="AccountItem"]', 'li[role="listitem"]']) {
+          const el = document.querySelector(s);
+          if (vis(el)) { el.click(); return s; }
+        }
+        return null;
+      });
+      if (picked) {
+        await page.waitForTimeout(1000);
+        const cont = await plaidFrame.evaluate(() => {
+          const vis = (el) => el && el.offsetParent !== null;
+          const btns = Array.from(document.querySelectorAll('button'));
+          for (const t of ['Confirm', 'Continue', 'Link account', 'Connect']) {
+            const b = btns.find((x) => vis(x) && (x.textContent || '').trim().includes(t));
+            if (b) { b.click(); return t; }
+          }
+          const sub = document.querySelector('button[type="submit"]');
+          if (vis(sub)) { sub.click(); return 'submit'; }
+          return null;
+        });
+        if (cont) {
+          console.log(`  [Plaid Link] Account+Continue via scroll-free DOM dispatch (${picked} → ${cont})`);
+          await page.waitForTimeout(2000);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn(`  [Plaid Link] scroll-free account select failed, falling back to selectors: ${e.message}`);
+    }
+  }
+
   // Plaid Link shows account checkboxes or clickable rows
   const accountSelectors = [
     'input[type="checkbox"]:first-of-type',
@@ -1307,6 +1348,38 @@ async function executePlaidLinkPhase(page, phase) {
     mfa: _sandboxConfig?.mfa != null && _sandboxConfig.mfa !== '' ? _sandboxConfig.mfa : base.mfa,
   };
 
+  // ── Scroll diagnostic (env-gated: PLAID_SCROLL_TRACE=1) ───────────────────
+  // Polls host + Plaid-iframe scroll position every 150ms during the Link phase
+  // and writes plaid-scroll-trace.json, to pinpoint the source of the mid-flow
+  // "scroll up/down before selecting a bank" jitter. Fire-and-forget; self-stops
+  // on _plaidLinkComplete or after 100s. Zero effect when the flag is unset.
+  if (process.env.PLAID_SCROLL_TRACE === '1') {
+    (async () => {
+      const trace = [];
+      const t0 = Date.now();
+      while (Date.now() - t0 < 100000) {
+        const host = await page.evaluate(() => window.scrollY).catch(() => null);
+        let frameY = null;
+        try {
+          const fr = page.frames().find(f => /plaid\.com/.test(f.url()));
+          if (fr) frameY = await fr.evaluate(() => {
+            const se = document.scrollingElement || document.documentElement;
+            const sc = Array.from(document.querySelectorAll('*')).reduce((m, el) => Math.max(m, el.scrollTop || 0), 0);
+            return { doc: se ? se.scrollTop : 0, maxInner: sc };
+          }).catch(() => null);
+        } catch (_) {}
+        trace.push({ t: Date.now() - t0, host, frameY });
+        if (await page.evaluate(() => window._plaidLinkComplete === true).catch(() => false)) break;
+        await page.waitForTimeout(150);
+      }
+      try {
+        const outDir = process.env.PIPELINE_RUN_DIR || OUT_DIR;
+        require('fs').writeFileSync(require('path').join(outDir, 'plaid-scroll-trace.json'), JSON.stringify(trace, null, 1));
+        console.log(`  [ScrollTrace] wrote ${trace.length} samples → plaid-scroll-trace.json`);
+      } catch (_) {}
+    })();
+  }
+
   // ── LIVE PLAID LINK MODE ─────────────────────────────────────────────────
   // The built app has a single initiate-link step with a button that calls handler.open().
   // The real Plaid SDK opens its own iframe. The automation here:
@@ -1618,27 +1691,44 @@ async function executePlaidLinkPhase(page, phase) {
               if (!typed) await otpInput.fill(String(otp)).catch(() => {});
               await page.waitForTimeout(1000);
               markPlaidStep('otp-filled');
-              for (const btnSel of ['button[type="submit"]', 'button:has-text("Continue")', 'button:has-text("Verify")', 'button:has-text("Confirm")']) {
-                const btn = frame.locator(btnSel).first();
-                if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-                  try { await btn.click({ timeout: 5000 }); } catch (_) { await otpInput.press('Enter', { timeout: 1500 }).catch(() => {}); }
-                  markPlaidStep('otp-submitted', page);
-                  otpSubmittedWallMs = Date.now();
-                  // List DOM usually beats the next TRANSITION_VIEW; avoid waiting on count here.
-                  await page.waitForTimeout(250);
-                  otpDone = true;
-                  console.log(`  [Plaid Link] OTP filled via "${otpSel}" + submitted`);
-                  break;
+              // Submit SCROLL-FREE. The OTP input is already focused from typing,
+              // so press Enter (no scroll). Clicking the submit button via
+              // frameLocator runs scrollIntoViewIfNeeded, bouncing the modal's
+              // inner scroll container 0↔80px — the visible "scroll up/down before
+              // the bank list" (2026-06-17, trace-confirmed in plaid-scroll-trace.json).
+              await otpInput.press('Enter', { timeout: 1500 }).catch(() => {});
+              await page.waitForTimeout(450);
+              // If the OTP pane is still up, submit via in-iframe DOM .click()
+              // (still scroll-free); frameLocator click only as a last resort.
+              const stillOtp = await otpInput.isVisible({ timeout: 500 }).catch(() => false);
+              if (stillOtp) {
+                const plaidFr = page.frames().find(f => /plaid\.com/.test(f.url()));
+                let domSubmitted = false;
+                if (plaidFr) {
+                  domSubmitted = await plaidFr.evaluate(() => {
+                    const vis = (el) => el && el.offsetParent !== null;
+                    const btns = Array.from(document.querySelectorAll('button'));
+                    for (const t of ['Verify', 'Confirm', 'Continue']) {
+                      const b = btns.find((x) => vis(x) && (x.textContent || '').trim().includes(t));
+                      if (b) { b.click(); return true; }
+                    }
+                    const sub = document.querySelector('button[type="submit"]');
+                    if (vis(sub)) { sub.click(); return true; }
+                    return false;
+                  }).catch(() => false);
+                }
+                if (!domSubmitted) {
+                  const btn = frame.locator('button[type="submit"], button:has-text("Continue"), button:has-text("Verify"), button:has-text("Confirm")').first();
+                  if (await btn.isVisible({ timeout: 1000 }).catch(() => false)) {
+                    await btn.click({ timeout: 5000 }).catch(() => {});
+                  }
                 }
               }
-              if (!otpDone) {
-                await otpInput.press('Enter', { timeout: 1500 }).catch(() => {});
-                markPlaidStep('otp-submitted', page);
-                otpSubmittedWallMs = Date.now();
-                await page.waitForTimeout(250);
-                otpDone = true;
-                console.log(`  [Plaid Link] OTP filled via "${otpSel}" + Enter`);
-              }
+              markPlaidStep('otp-submitted', page);
+              otpSubmittedWallMs = Date.now();
+              await page.waitForTimeout(250);
+              otpDone = true;
+              console.log(`  [Plaid Link] OTP submitted scroll-free (Enter${stillOtp ? ' + DOM-click fallback' : ''})`);
               break;
             }
           }
