@@ -265,6 +265,29 @@ adds/removes/reorders steps), **re-record from `--from=set-recording-dwells` or 
 `reconcileRecordingScript('<runDir>')` yourself. New slides also need their `.slide-root` built
 (`post-slides`) and, when the run was already recorded, clear `post-record-freeze.sentinel` first.
 
+## Plaid Link integrity gates — modal RECORDED, not CLIPPED, PRESENT in final video
+
+A `plaidPhase:"launch"` step can fail silently three ways, checked via
+`scripts/scratch/utils/plaid-link-integrity.js` (report: `plaid-link-integrity.json`). **Only the
+first HALTS; the other two WARN (recoverable/patchable):**
+1. **Modal not recorded — HARD HALT (strict by default).** The CDP/vision automation runs and
+   markers fire, but the modal never composites into the video (frames show host UI only).
+   Post-record QA flags category `plaid-modal-missing`; the gate (after `qa`, reading the
+   post-record `qa-report-N.json` — NOT build-qa's token-only report) halts before post-process/
+   render. This is the Cox Automotive 2026-06-18 failure. Root cause is almost always patchable:
+   a `/link/token/create` error or Plaid SDK init / `handler.open()` failure, or the app covering
+   the modal — patch the app + re-record (`--from=record`).
+2. **Clipped by post-process — WARN only.** Markers too sparse, so the cut keeps
+   `< PLAID_LINK_MIN_KEEP_S` (4s) of the launch window. Recoverable: re-run `--from=post-process`.
+3. **Missing in final video — WARN only.** Vision-samples `demo-scratch.mp4`'s launch window (from
+   `remotion-props.json` `scratchSteps`). Recoverable: re-render / re-record.
+
+**Build-side prevention (do this in the host app):** the launch CTA must call `handler.open()` and
+show a VISIBLE Plaid modal that stays on screen until `onSuccess`; the app must NOT cover/replace it
+with a host loading/result screen, and must not `goToStep`/`handler.destroy()` before the modal is
+recorded. Recovery: re-record (`--from=record`); for clipping, `--from=post-process` (e.g. larger
+`--max-institution`). Override only with `PLAID_LINK_STRICT=false` / `PLAID_LINK_BYPASS=true`.
+
 ## Plaid Link event names (use exactly — never invent)
 
 ```

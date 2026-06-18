@@ -232,6 +232,11 @@ When a run hits trouble, choose one of these in order:
    - Retry that stage alone first: `npm run pipe -- stage <firstFailed> <RUN_ID>`.
    - Only escalate to `resume --from=…` if the single-stage retry succeeds but downstream stages also need to re-run.
 
+3b. **Plaid Link integrity** (`plaid-link-integrity.json`) — only ONE branch halts:
+   - **`CRITICAL: PLAID_LINK_MODAL_MISSING`** (post-record, **the only hard halt**): the `plaidPhase:"launch"` step recorded host UI only — the modal never rendered on screen (Cox Automotive, 2026-06-18). The cause is almost always **patchable**: a `/link/token/create` error or Plaid SDK init / `handler.open()` failure, or the app covering the modal with a host loading/result screen. **Patch the app's link-token request / SDK launch, then re-record** (`resume --from=record`). In agent mode the gate pauses for the patch; in non-interactive it exits CRITICAL. Override only with `PLAID_LINK_BYPASS=true` (ships without Plaid Link). Note: reads post-record `qa-report-N.json`, not build-qa's token-only report — so it does NOT fire on the normal build-qa pass.
+   - **CLIPPED** (post-process, **warn-only, patchable**): launch kept `< PLAID_LINK_MIN_KEEP_S` (4s). Re-run `resume --from=post-process` (larger `--max-institution`) or re-record. Logged + in the report; does not halt.
+   - **FINAL_MISSING** (post-render, **warn-only, patchable**): the rendered video's launch window has no modal — investigate recording/cut, then re-render. Logged + in the report; does not halt.
+
 4. **QA threshold miss** (qa-report-* shows score below threshold):
    - Adjust the threshold: `--qa-threshold=N` on the retry.
    - Or raise refinement iterations: `--max-refinement-iterations=N`.

@@ -3581,6 +3581,48 @@ async function runScratchPipeline({
     } // end else (non-studio Playwright path)
   }
 
+  // ── HARD GATE (the ONLY Plaid-Link halt): modal missing in the RECORD step ─
+  // A live plaidPhase:"launch" step that captured host UI only (no visible
+  // modal) must NOT be post-processed/rendered into a Plaid-less demo. Detected
+  // by the post-record QA (category `plaid-modal-missing`); reads the
+  // post-record qa-report-N.json only (NOT build-qa's token-only report), so it
+  // never fires during the typical build-qa pass. Cox Automotive shipped a
+  // Plaid-less video on 2026-06-18 because this finding was non-critical.
+  // The root cause is almost always PATCHABLE (a /link/token/create failure or
+  // Plaid SDK init/`handler.open()` problem, or the app covering the modal with
+  // a host loading/result screen) — the gate halts so an agent/human can patch
+  // it and re-record. Strict by default; PLAID_LINK_STRICT=false /
+  // PLAID_LINK_BYPASS=true to override.
+  if (shouldRun('qa')) {
+    try {
+      const { checkPlaidLinkIntegrity, isStrict } = require('./utils/plaid-link-integrity');
+      const integ = await checkPlaidLinkIntegrity(versionedDir, { phase: 'post-record' });
+      const rec = (integ.violations || []).filter(v => v.kind === 'modal-missing');
+      if (rec.length) {
+        const stepList = rec.map(v => v.stepId).join(', ');
+        const msg = `[plaid-link] ${rec.length} launch step(s) recorded NO visible Plaid modal: ${stepList}. The Plaid modal did not render on screen.`;
+        const fixHint = 'Likely cause (patchable): a /link/token/create error or Plaid SDK init / handler.open() failure, ' +
+          'or the host app covered the modal with a loading/result screen. Patch the app (link-token request / SDK launch), then re-record (--from=record).';
+        const bypass = parseBoolEnv(process.env.PLAID_LINK_BYPASS, false);
+        if (isStrict() && !bypass) {
+          if (isAgentContext().enabled && !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)) {
+            cliWarn(`${msg} Pausing for fix.`);
+            cliLog(`[Orchestrator]   ${fixHint}`);
+            cliLog('[Orchestrator]   See plaid-link-integrity.json. Override: PLAID_LINK_BYPASS=true.');
+            await promptContinue('[plaid-link] Plaid modal missing in recording — patch link-token/SDK launch + re-record.');
+          } else {
+            throw new Error(`CRITICAL: PLAID_LINK_MODAL_MISSING — ${msg} ${fixHint} Override with PLAID_LINK_BYPASS=true. See plaid-link-integrity.json.`);
+          }
+        } else {
+          cliWarn(`${msg} Advancing (PLAID_LINK_STRICT=false / PLAID_LINK_BYPASS=true). See plaid-link-integrity.json.`);
+        }
+      }
+    } catch (e) {
+      if (/^CRITICAL:/.test(e.message)) throw e;
+      cliWarn(`[plaid-link] post-record integrity check error (non-fatal): ${e.message}`);
+    }
+  }
+
   // Stage: figma-review (optional — only runs when FIGMA_REVIEW=true)
   if (shouldRun('figma-review')) {
     await runStage('figma-review', async () => {
@@ -3731,6 +3773,26 @@ async function runScratchPipeline({
         console.log('[post-process] Existing sync-map.json preserved (edit to change speed/freeze windows)');
       }
     }, timer);
+  }
+
+  // ── CHECK (non-halting): Plaid Link clipped by the post-process cut ────────
+  // After the cut, each plaidPhase:"launch" step should retain >= PLAID_LINK_MIN_KEEP_S
+  // of footage. Clipping is RECOVERABLE (re-run --from=post-process / tune
+  // --max-institution), so this WARNS + records it for an agent/human to patch
+  // — it does NOT halt (only a modal missing in the record step halts).
+  if (shouldRun('post-process')) {
+    try {
+      const { checkPlaidLinkIntegrity } = require('./utils/plaid-link-integrity');
+      const integ = await checkPlaidLinkIntegrity(versionedDir, { phase: 'post-process' });
+      const clipped = (integ.violations || []).filter(v => v.kind === 'clipped');
+      if (clipped.length) {
+        cliWarn(`[plaid-link] ${clipped.length} launch step(s) clipped below the ${process.env.PLAID_LINK_MIN_KEEP_S || 4}s keep floor by post-process: ` +
+          clipped.map(v => `${v.stepId} (${v.keptS}s)`).join(', ') + '.');
+        cliLog('[plaid-link]   Patchable: re-run `--from=post-process` (e.g. larger `--max-institution`) or re-record. See plaid-link-integrity.json.');
+      }
+    } catch (e) {
+      cliWarn(`[plaid-link] post-process integrity check error (non-fatal): ${e.message}`);
+    }
   }
 
   // Stage: measure-sync-debt — classify per-step drift between recorded video and
@@ -4211,6 +4273,25 @@ async function runScratchPipeline({
         renderViaRemotion();
       }
     }, timer);
+
+    // ── POST-EDIT DETECTION (non-halting): Plaid Link present in FINAL video ──
+    // Last-line confirmation that the modal survived recording + cut + render.
+    // Vision-samples the launch window of demo-scratch.mp4. WARNS + records for
+    // an agent/human to patch (re-render / re-cut) — does NOT halt (the
+    // record-step modal-missing gate is the only hard halt).
+    try {
+      const { checkPlaidLinkIntegrity } = require('./utils/plaid-link-integrity');
+      const integ = await checkPlaidLinkIntegrity(versionedDir, { phase: 'final-video' });
+      const v = (integ.violations || []).filter(x => x.kind === 'final-video-no-modal');
+      if (v.length) {
+        cliWarn(`[plaid-link] Final video is MISSING the Plaid modal in launch window(s): ${v.map(x => x.stepId).join(', ')}.`);
+        cliLog('[plaid-link]   Patchable: investigate the recording/cut, then re-render (or re-record). See plaid-link-integrity.json.');
+      } else if (!integ.skipped) {
+        cliLog('[plaid-link] Final-video check: Plaid modal present in launch window(s). ✓');
+      }
+    } catch (e) {
+      cliWarn(`[plaid-link] final-video integrity check error (non-fatal): ${e.message}`);
+    }
   }
 
   // Stage: scene-match-check — multimodal validator. Extracts frames from the

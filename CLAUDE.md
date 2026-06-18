@@ -84,6 +84,18 @@ These are the highest-blast-radius mistakes; the owning file has the full rules.
   first run `pipe stage set-recording-dwells` or
   `node -e "require('./scripts/scratch/utils/sync-recording-script').reconcileRecordingScript('<runDir>')"`.
   → [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md)
+- **Plaid Link integrity — modal RECORDED (hard gate), not CLIPPED / present in final (warn).** A
+  `plaidPhase:"launch"` step can record host UI only (modal never composites), shipping a Plaid-less
+  demo (Cox Automotive, 2026-06-18). Checks (`scripts/scratch/utils/plaid-link-integrity.js`, report
+  `plaid-link-integrity.json`): **post-record** (QA category `plaid-modal-missing`) — **the ONLY
+  hard halt** (strict by default); reads the post-record `qa-report-N.json`, NOT build-qa's
+  token-only report, so it never fires on the typical build-qa pass. **post-process** (launch kept
+  `< PLAID_LINK_MIN_KEEP_S`=4s → clipped) and **final-video** (vision-samples `demo-scratch.mp4`'s
+  launch window) **WARN only** — recoverable/patchable, not halts. The modal-missing root cause is
+  almost always patchable (a `/link/token/create` error or Plaid SDK init / `handler.open()`
+  failure, or the app covering the modal): an agent/human patches the app + re-records
+  (`--from=record`). Clipping → re-run `--from=post-process` (larger `--max-institution`). Override
+  the halt only with `PLAID_LINK_STRICT=false` / `PLAID_LINK_BYPASS=true`. → [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md)
 
 ---
 
