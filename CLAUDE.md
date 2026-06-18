@@ -74,6 +74,16 @@ These are the highest-blast-radius mistakes; the owning file has the full rules.
   the modal — never the act of opening it. → [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md)
 - **Host app background:** default host/customer screens to white/light neutral; reserve
   Plaid-dark for Plaid-specific contexts. → [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md)
+- **Adding/removing a step after build ⇒ re-sync the recording nav script.** The recorder
+  iterates **`scratch-app/playwright-script.json`** (NOT `demo-script.json`), and that nav script
+  is generated **once at build**. Any step you add later (agent edit + `post-slides`, hand edit) is
+  silently **skipped by `record`** unless the nav script is reconciled — a slide inserted at index 0
+  records *last* or not at all. Reconcile is automatic in **`set-recording-dwells`** (runs before
+  every `record`) and in the dashboard storyboard insert/remove endpoints, so **re-record from
+  `--from=set-recording-dwells` (or earlier), NOT `--from=record`.** Direct `pipe stage record`:
+  first run `pipe stage set-recording-dwells` or
+  `node -e "require('./scripts/scratch/utils/sync-recording-script').reconcileRecordingScript('<runDir>')"`.
+  → [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md)
 
 ---
 
@@ -89,6 +99,12 @@ Full reference: [`inputs/plaid-link-sandbox.md`](inputs/plaid-link-sandbox.md). 
   `user_bank_income` (that is **Bank Income** — see [`inputs/products/plaid-bank-income.md`](inputs/products/plaid-bank-income.md))
 - IDV persona: Leslie Knope — see `inputs/plaid-link-sandbox.md § 5`
 - Always skip the Remember Me phone screen via "Continue without phone number"
+- **OTP entry (classic Link AND Layer/IDV modals):** wait **≤1.5s** ("receive the code" beat)
+  before entry begins, then **human-type** the sandbox OTP (`123456`) at keystroke speed and
+  submit **scroll-free** (Enter; in-iframe DOM `.click()` fallback — never a `frameLocator` click,
+  which scroll-jitters the modal). Classic Link: `PLAID_OTP_BEFORE_MS` (default 1500). Layer/IDV
+  modal: `PLAID_LAYER_OTP_BEFORE_MS` (default 1500, hard-capped at 1500) via
+  `enterModalOtpIfPresent` in the Layer/IDV nav loop.
 - **Human-like nav pacing is the DEFAULT** (`PLAID_NAV_STYLE=human`; `fast` = legacy machine
   speed). Per-experience screen graphs + pacing live in `inputs/plaid-nav-profiles/*.json`
   (classic-link, embedded-link, layer, cra-link, idv); calibrate with

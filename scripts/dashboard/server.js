@@ -30,6 +30,7 @@ const chokidar = require('chokidar');
 const { loadTimingContract } = require('../timing-contract');
 const { processedToCompMs } = require('../sync-map-utils');
 const { deriveStepKind } = require('../scratch/utils/step-kind');
+const { reconcileRecordingScript } = require('../scratch/utils/sync-recording-script');
 const { readRunManifest: readRunManifestSafe, writeRunManifest: writeRunManifestSafe } = require('../scratch/utils/run-io');
 const { resolveIdentity: resolveDashIdentity } = require('../scratch/utils/identity');
 const { extractDashboardQaScores } = require('../scratch/utils/qa-tier-summary');
@@ -3351,6 +3352,20 @@ app.post('/api/runs/:runId/insert-step', async (req, res) => {
       }
     }
 
+    // Immediately sync the recorder's navigation script so the inserted step
+    // is recorded in storyboard order. The recorder iterates
+    // playwright-script.json (NOT demo-script.json); without this the new step
+    // would be silently skipped on the next `record` run. prune:false — an
+    // insert never removes other steps' rows.
+    try {
+      const recordingSync = reconcileRecordingScript(dir, { prune: false });
+      if (recordingSync.changed) {
+        console.log(`[InsertStep] Recording script synced (+${recordingSync.added.length}: ${recordingSync.added.join(', ')})`);
+      }
+    } catch (syncErr) {
+      console.warn(`[InsertStep] Recording-script sync failed (non-fatal): ${syncErr.message}`);
+    }
+
     // Notify any open browser tab for this run that demo-script.json
     // changed. The dashboard's storyboard re-fetches frames as part of
     // loadStoryboard() so the new thumbnail (if any) shows up on next
@@ -3489,6 +3504,21 @@ app.post('/api/runs/:runId/insert-library-slide', async (req, res) => {
       }
     } catch (spliceErr) {
       console.warn(`[SlideLibrary] Splice raised: ${spliceErr.message}`);
+    }
+
+    // Immediately sync the recorder's navigation script so the new slide is
+    // recorded in storyboard order on the next `record` run. The recorder
+    // iterates playwright-script.json (NOT demo-script.json); without this the
+    // inserted slide would be silently skipped (build-time nav script is
+    // stale). prune:false — an insert never removes other steps' rows.
+    let recordingSync = { changed: false, added: [] };
+    try {
+      recordingSync = reconcileRecordingScript(dir, { prune: false });
+      if (recordingSync.changed) {
+        console.log(`[SlideLibrary] Recording script synced (+${recordingSync.added.length}: ${recordingSync.added.join(', ')})`);
+      }
+    } catch (syncErr) {
+      console.warn(`[SlideLibrary] Recording-script sync failed (non-fatal): ${syncErr.message}`);
     }
 
     // Push a hot-reload event to any open browser tab for this run.

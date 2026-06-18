@@ -1161,6 +1161,88 @@ function detectLaunchProduct(stepId, target) {
 }
 
 /**
+ * Human-like OTP entry INSIDE a live Plaid Layer / IDV modal.
+ *
+ * The Layer returning-user sandbox flow (eligible phone +14155550011) shows a
+ * phone-verification OTP screen inside the modal before the prefilled review.
+ * The generic vision-click nav loop in executeLayerOrIdvLaunch can't fill it, so
+ * it would just dwell on the OTP pane — the "Layer OTP entry too long" symptom
+ * (Credit Genie, 2026-06-17: ~5–6s read-dwells sat on the code screen).
+ *
+ * RULE (moving forward): when an OTP input appears in the Layer/IDV modal, wait
+ * AT MOST 1.5s before entry begins (PLAID_LAYER_OTP_BEFORE_MS, default 1500,
+ * HARD-CAPPED at 1500ms — a "receive the code" beat), then human-type the
+ * sandbox OTP (123456) at keystroke speed and submit SCROLL-FREE (Enter; in-
+ * iframe DOM .click() fallback) — same scroll-free contract as classic Link
+ * (never a frameLocator click, whose scrollIntoViewIfNeeded bounces the modal's
+ * inner scroll container).
+ *
+ * Lean, fast probe (canonical Plaid OTP attributes only) so it adds negligible
+ * latency on screens with no OTP (e.g. IDV). Guards against the phone field
+ * (type=tel/numeric also match it) via the ≥7-digit heuristic.
+ *
+ * @returns {Promise<boolean>} true if an OTP screen was found and filled.
+ */
+async function enterModalOtpIfPresent(page, { label = 'Layer' } = {}) {
+  const frame = page.frameLocator(PLAID_IFRAME_SELECTOR);
+  // Canonical Plaid OTP attributes, probed fast (most-specific first).
+  const otpSelectors = [
+    ['input[autocomplete*="one-time-code"]', 400],
+    ['input[inputmode="numeric"]', 250],
+    ['input[type="tel"]', 200],
+  ];
+  for (const [otpSel, timeout] of otpSelectors) {
+    const otpInput = frame.locator(otpSel).first();
+    if (!(await otpInput.isVisible({ timeout }).catch(() => false))) continue;
+    // Guard: type=tel / numeric also match the PHONE input. ≥7 digits = phone.
+    const existing = (await otpInput.inputValue().catch(() => '')).replace(/\D/g, '');
+    if (existing.length >= 7) continue;
+
+    // NEW RULE: at most 1.5s "receive the code" beat before entry begins.
+    const beforeCap = Math.min(
+      Math.max(0, parseInt(process.env.PLAID_LAYER_OTP_BEFORE_MS || '1500', 10) || 0),
+      1500,
+    );
+    markPlaidStep('otp-screen', page);
+    if (beforeCap > 0) await page.waitForTimeout(beforeCap);
+    await otpInput.click({ force: true, timeout: 3000 }).catch(() => {});
+    await recordPlaidInteraction(page, otpInput, 'otp-screen').catch(() => {});
+    const otp = _sandboxConfig?.otp || '123456';
+    const typed = await getPacer().humanType(otpInput, String(otp), {
+      kind: 'numeric', screenId: 'otp-screen', fastDelayMs: 220,
+    }).then(() => true).catch(() => false);
+    if (!typed) await otpInput.fill(String(otp)).catch(() => {});
+    markPlaidStep('otp-filled');
+
+    // Submit SCROLL-FREE — Enter on the focused input, then an in-iframe DOM
+    // .click() fallback. Never frameLocator click (scrollIntoViewIfNeeded jitter).
+    await otpInput.press('Enter', { timeout: 1500 }).catch(() => {});
+    await page.waitForTimeout(450);
+    const stillOtp = await otpInput.isVisible({ timeout: 500 }).catch(() => false);
+    if (stillOtp) {
+      const plaidFr = page.frames().find(f => /plaid\.com/.test(f.url()));
+      if (plaidFr) {
+        await plaidFr.evaluate(() => {
+          const vis = (el) => el && el.offsetParent !== null;
+          const btns = Array.from(document.querySelectorAll('button'));
+          for (const t of ['Verify', 'Confirm', 'Continue']) {
+            const b = btns.find((x) => vis(x) && (x.textContent || '').trim().includes(t));
+            if (b) { b.click(); return; }
+          }
+          const sub = document.querySelector('button[type="submit"]');
+          if (vis(sub)) sub.click();
+        }).catch(() => {});
+      }
+    }
+    markPlaidStep('otp-submitted', page);
+    await page.waitForTimeout(250);
+    console.log(`  [Plaid ${label}] OTP entered human-style (≤${beforeCap}ms pre-delay) + submitted scroll-free`);
+    return true;
+  }
+  return false;
+}
+
+/**
  * Launch a LIVE Plaid Layer or IDV modal (real Plaid SDK) and — above all —
  * VERIFY the modal loads. Mirrors the verified app behavior: the CTA onclick
  * opens the modal (Layer: eligibility ran on load → open on Continue; IDV:
@@ -1215,9 +1297,19 @@ async function executeLayerOrIdvLaunch(page, product) {
           getScreenPacing: navProfile.getScreenPacing,
         })
       : null;
+    let otpHandled = false;
     for (let i = 0; i < 6; i++) {
       const done = await page.evaluate((f) => window[f] === true, doneFlag).catch(() => false);
       if (done) break;
+      // OTP screen inside the modal → type it human-style (≤1.5s pre-delay,
+      // scroll-free) instead of letting the vision loop dwell on it. OTP appears
+      // early (first few panes); probe only until handled to keep IDV fast.
+      if (!otpHandled && i < 4) {
+        if (await enterModalOtpIfPresent(page, { label: product }).catch(() => false)) {
+          otpHandled = true;
+          continue;
+        }
+      }
       const waitAfterMs = productPacer ? productPacer.screenDwellMs({ fallbackMs: 1800 }) : 1800;
       await agent.visionClick(
         page,

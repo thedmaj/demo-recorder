@@ -216,6 +216,32 @@ the modal — never the act of opening it. Full rule + examples: `saas-demo-desi
 Plaid" phone screen is auto-dismissed. Saved-institution-list dwell + selection: see
 `inputs/plaid-link-sandbox.md`.
 
+## Recording nav script (`playwright-script.json`) — keep it in sync with `demo-script.json`
+
+`record-local.js` records by iterating **`scratch-app/playwright-script.json`**, NOT
+`demo-script.json`. That nav script is generated **once by `build-app`** (one row per step:
+`{id, action, target, waitMs}` — `goToStep` for slide/host steps, `click` for the
+`plaidPhase:"launch"` step). **Steps added or reordered AFTER build are invisible to the recorder
+until the nav script is reconciled** — a slide inserted at index 0 of `demo-script.json` records
+*last* or not at all (observed 2026-06-17: recorder logged "Loaded playwright-script.json: 9 steps"
+and opened on the Plaid step, skipping the new index-0 slide).
+
+**Application logic (already wired — don't bypass):**
+- **`set-recording-dwells`** calls `reconcileRecordingScript(runDir)` before sizing dwells, so
+  **every `record` run** first rebuilds the nav script in `demo-script.json` order (adds missing
+  rows, prunes orphans, clears `dwellPlanAt`). This is the universal guarantee.
+- The dashboard storyboard endpoints (`insert-step`, `insert-library-slide`, `remove-step`) sync
+  the nav script immediately on edit.
+- Helper: `scripts/scratch/utils/sync-recording-script.js` →
+  `reconcileRecordingScript(runDir, { prune })`, `makeRecordingRowForStep(step)`.
+
+**Agent-mode rule:** after editing `demo-script.json` steps + `post-slides` (or any hand edit that
+adds/removes/reorders steps), **re-record from `--from=set-recording-dwells` or earlier — never
+`--from=record`** (which skips the reconcile and records the stale step set). If you must run
+`pipe stage record` directly, first run `pipe stage set-recording-dwells`, or call
+`reconcileRecordingScript('<runDir>')` yourself. New slides also need their `.slide-root` built
+(`post-slides`) and, when the run was already recorded, clear `post-record-freeze.sentinel` first.
+
 ## Plaid Link event names (use exactly — never invent)
 
 ```

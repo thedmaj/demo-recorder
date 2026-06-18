@@ -42,6 +42,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { reconcileRecordingScript } = require('../utils/sync-recording-script');
 
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const RUN_DIR = process.env.PIPELINE_RUN_DIR || path.join(PROJECT_ROOT, 'out');
@@ -137,6 +138,27 @@ async function main(runDir) {
     console.log('[set-recording-dwells] playwright-script.json missing — skipping (run build first).');
     return { skipped: true, reason: 'no-playwright-script' };
   }
+
+  // Reconcile the recording script with demo-script.json BEFORE sizing dwells.
+  // The recorder iterates playwright-script.json (NOT demo-script.json), and
+  // that nav script is generated once at build time — so any step added later
+  // (storyboard insert, agent edit, hand edit) is invisible to the recorder
+  // unless we re-sync here. This is the universal guarantee: every demo step
+  // gets a recording row, in storyboard order, before each record. See
+  // utils/sync-recording-script.js. New/removed rows are then sized below.
+  try {
+    const sync = reconcileRecordingScript(outDir, { prune: true });
+    if (sync.changed) {
+      const bits = [];
+      if (sync.added.length) bits.push(`added ${sync.added.length} (${sync.added.join(', ')})`);
+      if (sync.pruned.length) bits.push(`pruned ${sync.pruned.length} (${sync.pruned.join(', ')})`);
+      if (sync.reordered && !sync.added.length && !sync.pruned.length) bits.push('reordered to storyboard order');
+      console.log(`[set-recording-dwells] Recording script reconciled with demo-script.json: ${bits.join('; ')}.`);
+    }
+  } catch (err) {
+    console.warn(`[set-recording-dwells] Recording-script reconcile failed (non-fatal): ${err.message}`);
+  }
+
   const playwrightScript = safeReadJson(playwrightScriptPath);
   if (!playwrightScript || !Array.isArray(playwrightScript.steps)) {
     console.log('[set-recording-dwells] playwright-script.json has no steps[].');
