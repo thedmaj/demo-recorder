@@ -115,9 +115,9 @@
         ]
       },
       "observed": {
-        "p50TransitionMs": 6807,
+        "p50TransitionMs": 6647,
         "p90TransitionMs": 13300,
-        "samples": 15,
+        "samples": 17,
         "recent": [
           8522,
           8542,
@@ -133,7 +133,9 @@
           6815,
           13560,
           6533,
-          6441
+          6441,
+          6441,
+          1875
         ]
       },
       "optional": true,
@@ -309,9 +311,9 @@
         ]
       },
       "observed": {
-        "p50TransitionMs": 78,
+        "p50TransitionMs": 75,
         "p90TransitionMs": 9378,
-        "samples": 16,
+        "samples": 18,
         "recent": [
           9091,
           9378,
@@ -328,14 +330,16 @@
           65,
           251,
           46,
-          65
+          65,
+          61,
+          60
         ]
       },
       "markPlaidStep": "link-complete"
     }
   ],
-  "verifiedRuns": 18,
-  "lastVerifiedAt": "2026-06-17T16:09:43.872Z",
+  "verifiedRuns": 20,
+  "lastVerifiedAt": "2026-06-18T00:37:29.553Z",
   "lastBrokenAt": "2026-06-12T18:33:38.564Z",
   "knowledgeConfidence": 0.95
 }

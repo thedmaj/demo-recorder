@@ -2370,3 +2370,5 @@ Findings gathered for the human-like navigation system (nav profiles in `inputs/
 - 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Ynab-Identity-Assets-Monitor-Income-v1 completed=true style=human screensMerged=2 humanDwell=+10s
 - 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Current-CRA-Auth-Identity-Signal-Protect-v1 completed=true style=human screensMerged=2 humanDwell=+20s
 - 2026-06-17 [nav-feedback] classic-link run=2026-06-17-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+16s
+- 2026-06-18 [nav-feedback] classic-link run=2026-06-17-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+16s
+- 2026-06-18 [nav-feedback] classic-link run=2026-06-17-Keybank-Auth-Identity-Signal-Transfer-v1 completed=true style=human screensMerged=2 humanDwell=+16s
