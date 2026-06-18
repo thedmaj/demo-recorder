@@ -265,6 +265,18 @@ if (T['phone-submitted'] != null) {
   } else {
     console.log(`  [PostProcess] No phone marker (mode=${plaidLinkMode || 'unknown'}): keeping pre-link app screens [0 → ${T['institution-list-shown'].toFixed(3)}s]`);
   }
+} else if (T['otp-screen'] != null && T['otp-screen'] > 0.5) {
+  // Layer / IDV returning-user modal flow: the phone is submitted through the
+  // Plaid SDK (submit(phone)) before open() — there is NO recorded phone screen
+  // (so 'phone-submitted' never fires) and accounts are prefilled (so there is
+  // NO 'institution-list-shown'). Without a Range-1 keep here, ALL video before
+  // the OTP screen is cut — including any host/slide steps BEFORE the launch
+  // (e.g. an opening scenario slide). Observed 2026-06-17 (Credit Genie): the
+  // setup slide collapsed to start==end and its narration played over the OTP
+  // screen. Keep from 0 → OTP-appear so the pre-link lead-in survives; the OTP
+  // windows below then trim the fill wait.
+  addKeep(0, T['otp-screen'] - 0.2, 'app/slide screens (pre-link, layer/idv)');
+  console.log(`  [PostProcess] No phone/institution marker (mode=${plaidLinkMode || 'unknown'}): keeping pre-link content [0 → ${(T['otp-screen'] - 0.2).toFixed(3)}s] (layer/idv lead-in)`);
 }
 
 // ── Range 2a: OTP screen appearing (brief) ───────────────────────────────────
