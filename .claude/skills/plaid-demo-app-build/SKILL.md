@@ -105,6 +105,29 @@ delegates to `post-panels.buildPanelPatchScript()`). The emitted shell uses thes
   `.slide-root` (`scanPanelOverlayContract` blocker). Violations are auto-patched by
   `api-panel-toggle-latest` on the next run.
 
+### Panel JSON accuracy — `api-panel-audit` stage (after `post-panels`)
+
+The `apiResponse.response` JSON you author in `demo-script.json` is shown on-screen verbatim, so
+it must match Plaid's REAL contract. The `api-panel-audit` stage validates every block against:
+live-capture (`artifacts/live-api-responses.json`, authoritative → HIGH), AskBill `json_sample`
+(cached in `inputs/api-contracts-cache.json` for live-skipped endpoints like async CRA → MED), and
+deterministic rules (masked Auth `numbers.ach[].account`, spaced `request_id`, ellipsized ids,
+Signal 1–99 range + `ruleset.result` enum + `triggered_rule_details` object-vs-array → HIGH).
+**Engine:** `scripts/scratch/utils/api-panel-validator.js`; **stage:** `scripts/scratch/scratch/api-panel-audit.js`.
+
+- **Flag-only — never auto-rewritten.** Findings land in `api-panel-audit.json` + an agent-ready
+  `api-panel-audit-task.md` (per-finding path, problem, corrected shape, source). Curated VALUES
+  (names, amounts, scores) are never flagged — only field names/types/shape.
+- **Agent fix procedure:** apply the task md to `demo-script.json` `apiResponse` →
+  `npm run pipe -- stage post-panels <runId>` (re-injects verbatim) → re-record from
+  `--from=set-recording-dwells` if already recorded → re-run `pipe stage api-panel-audit <runId>`.
+- **Common real fixes:** Auth returns the FULL `numbers.ach[].account` (masking only in
+  `accounts[].mask`); CRA `/cra/check_report/create` returns only `request_id` (async via
+  `USER_CHECK_REPORT_READY`); CRA base report cash-flow lives in `report.attributes`
+  (`total_inflow_amount` money objects), not a `summary` of scalars; never fabricate fields.
+- Gating: warn + advance by default (pauses for the agent in interactive mode);
+  `API_PANEL_AUDIT_STRICT=true` hard-fails on HIGH.
+
 ### onSuccess callback panel (v6+)
 
 When the script has a `plaidPhase: "launch"` step, the **immediately following host step** is the

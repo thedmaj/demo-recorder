@@ -208,6 +208,9 @@ const STAGES = [
   'build-qa',
   'post-slides',             // Agent-driven per-slide insertion (runs only when slide-kind steps exist)
   'post-panels',             // Deterministic JSON side-panel normalizer (idempotent)
+  'api-panel-audit',         // Validate apiResponse JSON vs Plaid contracts (live-capture +
+                             //   AskBill + deterministic rules). Flag-only; agent fixes via
+                             //   api-panel-audit-task.md. API_PANEL_AUDIT_STRICT=true hard-fails.
   'app-touchup',             // Tier-scoped app recovery lane — patches + post-panels +
                              //   app-scoped build-qa + agent qa-app-touchup-task.md. No build-app.
   'slide-fix',               // Tier-scoped slide recovery lane — patches + strip + post-slides
@@ -3163,6 +3166,39 @@ async function runScratchPipeline({
     }, timer).catch(() => {});
   } else if (shouldRun('post-panels')) {
     cliLog('[Orchestrator] post-panels stage skipped — panels disabled (--no-panels).');
+  }
+
+  // ── API panel accuracy audit (api-panel-audit) ──────────────────────────
+  // Validates demo-script.json apiResponse blocks against Plaid's real
+  // contracts (live-capture diff + AskBill cache + deterministic rules).
+  // Flag-only: never rewrites curated values. Warn + agent-task by default;
+  // API_PANEL_AUDIT_STRICT=true hard-fails on HIGH-severity inaccuracies.
+  if (shouldRun('api-panel-audit') && isPanelsEnabled(versionedDir)) {
+    await runStage('api-panel-audit', async () => {
+      delete require.cache[require.resolve('./scratch/api-panel-audit')];
+      const auditReport = await require('./scratch/api-panel-audit').main();
+      if (!auditReport || auditReport.skipped || auditReport.passed) return;
+      const runDir = requireRunDir(PROJECT_ROOT, 'orchestrator');
+      const runId = path.basename(runDir);
+      const s = auditReport.summary || {};
+      const taskRel = auditReport.taskPath ? path.relative(PROJECT_ROOT, auditReport.taskPath) : 'api-panel-audit-task.md';
+      const msg = `[api-panel-audit] ${s.high || 0} HIGH + ${s.med || 0} MED API-panel inaccuracy(ies) ` +
+        `across ${s.major || 0} MAJOR / ${s.minor || 0} MINOR block(s).`;
+      if (parseBoolEnv(process.env.API_PANEL_AUDIT_STRICT, false)) {
+        cliError(`${msg} API_PANEL_AUDIT_STRICT=true — failing. See ${taskRel}.`);
+        throw new Error(`CRITICAL: api-panel-audit found ${s.high || 0} HIGH API-panel inaccuracies. See ${taskRel}.`);
+      }
+      const ctx = isAgentContext();
+      if (ctx.enabled && !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)) {
+        cliWarn(`${msg} Pausing for agent fix.`);
+        cliLog(`[Orchestrator]   task: ${taskRel}`);
+        cliLog(`[Orchestrator]   apply the fixes in demo-script.json, then: npm run pipe -- stage post-panels ${runId}`);
+        cliLog(`[Orchestrator]   then run: npm run pipe -- continue ${runId}`);
+        await promptContinue(`[api-panel-audit] API-panel inaccuracies found — fix per ${taskRel}.`);
+      } else {
+        cliWarn(`${msg} Advancing (SCRATCH_AUTO_APPROVE). Fix checklist: ${taskRel}.`);
+      }
+    }, timer).catch(() => {});
   }
 
   // ── Tier-scoped recovery lanes (app-touchup, slide-fix) ─────────────────

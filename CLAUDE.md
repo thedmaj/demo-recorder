@@ -201,10 +201,18 @@ counts, the exit threshold, or explicitly request recording/render (e.g. "render
 "5 touchups", "no touchups"). Procedure detail: [`pipeline-cli`](.claude/skills/pipeline-cli/SKILL.md).
 
 Canonical stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`,
-`embed-script-validate`, `build`, `build-qa`, `post-slides`, `post-panels`, `app-touchup`,
-`slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`, `coverage-check`,
-`auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`, `render`, `ppt`,
-`touchup`.
+`embed-script-validate`, `build`, `build-qa`, `post-slides`, `post-panels`, `api-panel-audit`,
+`app-touchup`, `slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`,
+`coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`,
+`render`, `ppt`, `touchup`.
+
+**`api-panel-audit`** (after `post-panels`): validates each step's `apiResponse` JSON against
+Plaid's real contracts — live-capture diff (`artifacts/live-api-responses.json`) + AskBill
+`json_sample` (cached in `inputs/api-contracts-cache.json`) + deterministic rules. **Flag-only:**
+writes `api-panel-audit.json` + an agent-ready `api-panel-audit-task.md` (corrected shapes); warns
+and advances by default (pauses for the supervising agent in interactive agent mode).
+`API_PANEL_AUDIT_STRICT=true` hard-fails on HIGH. Fix by editing `demo-script.json` `apiResponse`
+(copied verbatim into the app) then `pipe stage post-panels`. → [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md)
 
 ---
 

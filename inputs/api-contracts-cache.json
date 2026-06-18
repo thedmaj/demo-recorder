@@ -1,0 +1,1623 @@
+{
+  "_comment": "AskBill-sourced canonical JSON samples per Plaid endpoint, used by the api-panel-audit stage for endpoints live-api-capture cannot exercise (async CRA reports, etc.). Auto-populated and refreshed (TTL via API_PANEL_AUDIT_CACHE_TTL_DAYS). Safe to delete to force a refresh.",
+  "contracts": {
+    "/signal/evaluate": {
+      "sample": {
+        "scores": {
+          "customer_initiated_return_risk": {
+            "score": 9
+          },
+          "bank_initiated_return_risk": {
+            "score": 82
+          }
+        },
+        "core_attributes": {
+          "available_balance": 2200,
+          "current_balance": 2000
+        },
+        "ruleset": {
+          "ruleset_key": "normal_risk",
+          "result": "REROUTE",
+          "triggered_rule_details": {
+            "internal_note": "Rerouting customer to different payment method, since bank risk score is too high",
+            "custom_action_key": "alternative_payment_method"
+          }
+        },
+        "warnings": [],
+        "request_id": "mdqfuVxeoza6mhu"
+      },
+      "fetchedAt": "2026-06-18T03:44:26.395Z"
+    },
+    "/cra/check_report/create": {
+      "sample": {
+        "request_id": "LhQf0THi8SH1yJm"
+      },
+      "fetchedAt": "2026-06-18T03:44:40.522Z"
+    },
+    "/cra/check_report/base_report/get": {
+      "sample": {
+        "report": {
+          "report_id": "f3bb434f-1c9b-4ef2-b76c-3d1fd08156ec",
+          "date_generated": "2024-07-16T01:52:42.912331716Z",
+          "days_requested": 365,
+          "client_report_id": "loan_app_123abc",
+          "items": [
+            {
+              "institution_name": "Houndstooth Bank",
+              "institution_id": "ins_109512",
+              "date_last_updated": "2024-07-16T01:52:42.912331716Z",
+              "item_id": "NZzx4oRPkAHzyRekpG4PTZkDNkQW93tWnyGeA",
+              "accounts": [
+                {
+                  "account_id": "NZzx4oRPkAHzyRekpG4PTZkoGpNAR4uypaj1E",
+                  "balances": {
+                    "available": 5000,
+                    "current": 5000,
+                    "limit": null,
+                    "iso_currency_code": "USD",
+                    "unofficial_currency_code": null,
+                    "average_balance": 4956.12,
+                    "average_monthly_balances": [
+                      {
+                        "start_date": "2024-07-01",
+                        "end_date": "2024-07-31",
+                        "average_balance": {
+                          "amount": 4956.12,
+                          "iso_currency_code": "USD",
+                          "unofficial_currency_code": null
+                        }
+                      }
+                    ],
+                    "most_recent_thirty_day_average_balance": 4956.125
+                  },
+                  "mask": "1208",
+                  "metadata": {
+                    "start_date": "2024-01-01",
+                    "end_date": "2024-07-16"
+                  },
+                  "name": "Checking",
+                  "official_name": "Plaid checking",
+                  "type": "depository",
+                  "subtype": "checking",
+                  "days_available": 365,
+                  "transactions": [
+                    {
+                      "account_id": "NZzx4oRPkAHzyRekpG4PTZkoGpNAR4uypaj1E",
+                      "amount": 37.07,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null,
+                      "original_description": "AMZN Mktp US*11111111 Amzn.com/bill WA AM",
+                      "credit_category": {
+                        "primary": "GENERAL_MERCHANDISE",
+                        "detailed": "GENERAL_MERCHANDISE_ONLINE_MARKETPLACES"
+                      },
+                      "check_number": null,
+                      "date": "2024-07-12",
+                      "date_transacted": "2024-07-12",
+                      "location": {
+                        "address": null,
+                        "city": null,
+                        "region": null,
+                        "postal_code": null,
+                        "country": null,
+                        "lat": null,
+                        "lon": null,
+                        "store_number": null
+                      },
+                      "merchant_name": "Amazon",
+                      "pending": false,
+                      "account_owner": null,
+                      "transaction_id": "XA7ZLy8rXzt7D3j9B6LMIgv5VxyQkAhbKjzmp"
+                    },
+                    {
+                      "account_id": "NZzx4oRPkAHzyRekpG4PTZkoGpNAR4uypaj1E",
+                      "amount": -1077.93,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null,
+                      "original_description": "LYFT TRANSFER",
+                      "credit_category": {
+                        "primary": "INCOME",
+                        "detailed": "INCOME_OTHER"
+                      },
+                      "check_number": null,
+                      "date": "2024-07-14",
+                      "date_transacted": "2024-07-14",
+                      "location": {
+                        "address": null,
+                        "city": null,
+                        "region": null,
+                        "postal_code": null,
+                        "country": null,
+                        "lat": null,
+                        "lon": null,
+                        "store_number": null
+                      },
+                      "merchant_name": "Lyft",
+                      "pending": false,
+                      "account_owner": null,
+                      "transaction_id": "3Ej78yKJlQu1Abw7xzo4U4JR6pmwzntZlbKDK"
+                    }
+                  ],
+                  "owners": [
+                    {
+                      "names": [
+                        "Alberta Bobbeth Charleson"
+                      ],
+                      "phone_numbers": [
+                        {
+                          "data": "+1111-555-3333",
+                          "primary": false,
+                          "type": "home"
+                        },
+                        {
+                          "data": "+1111-555-5555",
+                          "primary": false,
+                          "type": "mobile"
+                        }
+                      ],
+                      "emails": [
+                        {
+                          "data": "accountholder0@example.com",
+                          "primary": true,
+                          "type": "primary"
+                        },
+                        {
+                          "data": "accountholder1@example.com",
+                          "primary": false,
+                          "type": "secondary"
+                        }
+                      ],
+                      "addresses": [
+                        {
+                          "data": {
+                            "city": "Malakoff",
+                            "region": "NY",
+                            "street": "2992 Cameron Road",
+                            "postal_code": "14236",
+                            "country": "US"
+                          },
+                          "primary": true
+                        }
+                      ]
+                    }
+                  ],
+                  "ownership_type": null,
+                  "consumer_disputes": [],
+                  "account_insights": {
+                    "oldest_transaction_date": "2024-07-12",
+                    "most_recent_transaction_date": "2024-07-16",
+                    "days_available": 365,
+                    "average_days_between_transactions": 0.15,
+                    "longest_gaps_between_transactions": [
+                      {
+                        "start_date": "2024-07-01",
+                        "end_date": "2024-07-31",
+                        "days": 1
+                      },
+                      {
+                        "start_date": "2024-08-01",
+                        "end_date": "2024-08-31",
+                        "days": 2
+                      }
+                    ],
+                    "number_of_inflows": [
+                      {
+                        "start_date": "2024-07-01",
+                        "end_date": "2024-07-31",
+                        "count": 1
+                      }
+                    ],
+                    "average_inflow_amounts": [
+                      {
+                        "start_date": "2024-07-01",
+                        "end_date": "2024-07-31",
+                        "total_amount": {
+                          "amount": 1077.93,
+                          "iso_currency_code": "USD",
+                          "unofficial_currency_code": null
+                        }
+                      }
+                    ],
+                    "number_of_outflows": [
+                      {
+                        "start_date": "2024-07-01",
+                        "end_date": "2024-07-31",
+                        "count": 27
+                      }
+                    ],
+                    "average_outflow_amounts": [
+                      {
+                        "start_date": "2024-07-01",
+                        "end_date": "2024-07-31",
+                        "total_amount": {
+                          "amount": 34.95,
+                          "iso_currency_code": "USD",
+                          "unofficial_currency_code": null
+                        }
+                      }
+                    ],
+                    "number_of_days_no_transactions": 0
+                  },
+                  "attributes": {
+                    "is_primary": true,
+                    "is_primary_score": 0.98,
+                    "nsf_count": 0,
+                    "nsf_count_30d": 0,
+                    "nsf_count_60d": 0,
+                    "nsf_count_90d": 0,
+                    "total_inflow_amount": {
+                      "amount": -1077.93,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_inflow_amount_30d": {
+                      "amount": -1077.93,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_inflow_amount_60d": {
+                      "amount": -1077.93,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_inflow_amount_90d": {
+                      "amount": -1077.93,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_outflow_amount": {
+                      "amount": 37.07,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_outflow_amount_30d": {
+                      "amount": 37.07,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_outflow_amount_60d": {
+                      "amount": 37.07,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    "total_outflow_amount_90d": {
+                      "amount": 37.07,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    }
+                  }
+                }
+              ]
+            }
+          ],
+          "attributes": {
+            "nsf_count": 0,
+            "nsf_count_30d": 0,
+            "nsf_count_60d": 0,
+            "nsf_count_90d": 0,
+            "total_inflow_amount": {
+              "amount": -1077.93,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_inflow_amount_30d": {
+              "amount": -1077.93,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_inflow_amount_60d": {
+              "amount": -1077.93,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_inflow_amount_90d": {
+              "amount": -1077.93,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_outflow_amount": {
+              "amount": 37.07,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_outflow_amount_30d": {
+              "amount": 37.07,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_outflow_amount_60d": {
+              "amount": 37.07,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "total_outflow_amount_90d": {
+              "amount": 37.07,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            }
+          }
+        },
+        "warnings": [],
+        "request_id": "FibfL8t3s71KJnj"
+      },
+      "fetchedAt": "2026-06-18T03:45:03.176Z"
+    },
+    "/cra/check_report/cashflow_insights/get": {
+      "sample": {
+        "request_id": "LhQf0THi8SH1yJm",
+        "report": {
+          "report_id": "vzeNDwK7KQIm4yEog683uElbp9GRLEFXGK98D",
+          "generated_time": "2025-06-18T14:22:31Z",
+          "attributes": {
+            "cash_reliance_atm_withdrawal_amt_cv_90d": 180.1
+          }
+        }
+      },
+      "fetchedAt": "2026-06-18T03:45:08.293Z"
+    },
+    "/credit/bank_income/get": {
+      "sample": {
+        "bank_income": [
+          {
+            "bank_income_id": "dacc92a0-cb59-43a5-ba24-1b1c07a03f28",
+            "generated_time": "2024-08-21T18:10:46.293199Z",
+            "days_requested": 15,
+            "items": [
+              {
+                "bank_income_accounts": [
+                  {
+                    "account_id": "G1L9oybBrKSMPmBdPzXoFN8oo16rqqC6PwkA5",
+                    "mask": "9217",
+                    "name": "Checking",
+                    "official_name": "Plaid checking",
+                    "subtype": "checking",
+                    "type": "depository",
+                    "owners": [
+                      {
+                        "names": [
+                          "Jane Doe"
+                        ],
+                        "phone_numbers": [],
+                        "emails": [],
+                        "addresses": []
+                      }
+                    ]
+                  }
+                ],
+                "bank_income_sources": [
+                  {
+                    "income_source_id": "0e9d6fbc-29de-4225-9843-2f71e02a54d1",
+                    "income_description": "PLAID PAYROLL",
+                    "income_category": "SALARY",
+                    "account_id": "G1L9oybBrKSMPmBdPzXoFN8oo16rqqC6PwkA5",
+                    "start_date": "2024-08-15",
+                    "end_date": "2024-08-15",
+                    "pay_frequency": "UNKNOWN",
+                    "total_amount": 1000.7,
+                    "transaction_count": 1,
+                    "historical_summary": [
+                      {
+                        "total_amount": 1000.7,
+                        "iso_currency_code": "USD",
+                        "unofficial_currency_code": null,
+                        "total_amounts": [
+                          {
+                            "amount": 1000.7,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ],
+                        "start_date": "2024-08-06",
+                        "end_date": "2024-08-21",
+                        "transactions": [
+                          {
+                            "amount": 1000.7,
+                            "date": "2024-08-15",
+                            "name": "PLAID PAYROLL",
+                            "original_description": "PLAID PAYROLL",
+                            "pending": false,
+                            "transaction_id": "G1L9oybBrKSMPmBdPzXoFN8aGGE7gXC6MeoQB",
+                            "check_number": null,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "income_source_id": "88bc00d8-2bb1-42d0-a054-db3f20948283",
+                    "income_description": "SSI TREAS310 XXSUPP SEC PPD ID:1234567890",
+                    "income_category": "LONG_TERM_DISABILITY",
+                    "account_id": "G1L9oybBrKSMPmBdPzXoFN8oo16rqqC6PwkA5",
+                    "start_date": "2024-08-15",
+                    "end_date": "2024-08-15",
+                    "pay_frequency": "UNKNOWN",
+                    "total_amount": 824.2,
+                    "transaction_count": 1,
+                    "historical_summary": [
+                      {
+                        "total_amount": 824.2,
+                        "iso_currency_code": "USD",
+                        "unofficial_currency_code": null,
+                        "total_amounts": [
+                          {
+                            "amount": 824.2,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ],
+                        "start_date": "2024-08-06",
+                        "end_date": "2024-08-21",
+                        "transactions": [
+                          {
+                            "amount": 824.2,
+                            "date": "2024-08-15",
+                            "name": "SSI TREAS310 XXSUPP SEC PPD ID:1234567890",
+                            "original_description": "SSI TREAS310 XXSUPP SEC PPD ID:1234567890",
+                            "pending": false,
+                            "transaction_id": "nWLlwMm1qxi8DomvDXP3FaGjXX5bm9TAlyQnk",
+                            "check_number": null,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "income_source_id": "063689af-7299-4327-b71f-9d8849a40c0e",
+                    "income_description": "AIRBNB PAYMENTS PPD ID:1234567890",
+                    "income_category": "RENTAL",
+                    "account_id": "G1L9oybBrKSMPmBdPzXoFN8oo16rqqC6PwkA5",
+                    "start_date": "2024-08-08",
+                    "end_date": "2024-08-08",
+                    "pay_frequency": "UNKNOWN",
+                    "total_amount": 1525,
+                    "transaction_count": 1,
+                    "historical_summary": [
+                      {
+                        "total_amount": 1525,
+                        "iso_currency_code": "USD",
+                        "unofficial_currency_code": null,
+                        "total_amounts": [
+                          {
+                            "amount": 1525,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ],
+                        "start_date": "2024-08-06",
+                        "end_date": "2024-08-21",
+                        "transactions": [
+                          {
+                            "amount": 1525,
+                            "date": "2024-08-08",
+                            "name": "AIRBNB PAYMENTS PPD ID:1234567890",
+                            "original_description": "AIRBNB PAYMENTS PPD ID:1234567890",
+                            "pending": false,
+                            "transaction_id": "Wr6jzLwg1qs6ag9Xa8BrCpBAPPxnEXF6ZmjDR",
+                            "check_number": null,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "income_source_id": "ce160170-49d0-4811-b58e-cb4878d05f83",
+                    "income_description": "TWC-BENEFITS/UI BENEFIT",
+                    "income_category": "UNEMPLOYMENT",
+                    "account_id": "G1L9oybBrKSMPmBdPzXoFN8oo16rqqC6PwkA5",
+                    "start_date": "2024-08-12",
+                    "end_date": "2024-08-12",
+                    "pay_frequency": "UNKNOWN",
+                    "total_amount": 500,
+                    "transaction_count": 1,
+                    "historical_summary": [
+                      {
+                        "total_amount": 500,
+                        "iso_currency_code": "USD",
+                        "unofficial_currency_code": null,
+                        "total_amounts": [
+                          {
+                            "amount": 500,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ],
+                        "start_date": "2024-08-06",
+                        "end_date": "2024-08-21",
+                        "transactions": [
+                          {
+                            "amount": 500,
+                            "date": "2024-08-12",
+                            "name": "TWC-BENEFITS/UI BENEFIT",
+                            "original_description": "TWC-BENEFITS/UI BENEFIT",
+                            "pending": false,
+                            "transaction_id": "Aj7Apx5bDyIA3VRl35yqC18wXXorBgI9rX5dp",
+                            "check_number": null,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "income_source_id": "c8e1576e-9de4-47b4-ad55-3f7b068cc863",
+                    "income_description": "TEXAS OAG CHILD SUPPORT",
+                    "income_category": "CHILD_SUPPORT",
+                    "account_id": "G1L9oybBrKSMPmBdPzXoFN8oo16rqqC6PwkA5",
+                    "start_date": "2024-08-07",
+                    "end_date": "2024-08-21",
+                    "pay_frequency": "UNKNOWN",
+                    "total_amount": 240.24,
+                    "transaction_count": 2,
+                    "historical_summary": [
+                      {
+                        "total_amount": 240.24,
+                        "iso_currency_code": "USD",
+                        "unofficial_currency_code": null,
+                        "total_amounts": [
+                          {
+                            "amount": 240.24,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ],
+                        "start_date": "2024-08-06",
+                        "end_date": "2024-08-21",
+                        "transactions": [
+                          {
+                            "amount": 120.12,
+                            "date": "2024-08-07",
+                            "name": "TEXAS OAG CHILD SUPPORT",
+                            "original_description": "TEXAS OAG CHILD SUPPORT",
+                            "pending": false,
+                            "transaction_id": "EZMmvwREqlSGmlRam7bzFKyBll3kJjU4xKm1w",
+                            "check_number": null,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          },
+                          {
+                            "amount": 120.12,
+                            "date": "2024-08-21",
+                            "name": "TEXAS OAG CHILD SUPPORT",
+                            "original_description": "TEXAS OAG CHILD SUPPORT",
+                            "pending": false,
+                            "transaction_id": "b7dkg6eQbPFQeRvVeZlxcqxZooa7nWSmb47dj",
+                            "check_number": null,
+                            "iso_currency_code": "USD",
+                            "unofficial_currency_code": null
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "last_updated_time": "2024-08-21T18:10:47.367335Z",
+                "institution_id": "ins_20",
+                "institution_name": "Citizens Bank",
+                "item_id": "L8EKo4GydxSKmJQGmXyPuDkeNn4rg9fP3MKLv"
+              }
+            ],
+            "bank_income_summary": {
+              "total_amount": 4090.14,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null,
+              "total_amounts": [
+                {
+                  "amount": 4090.14,
+                  "iso_currency_code": "USD",
+                  "unofficial_currency_code": null
+                }
+              ],
+              "start_date": "2024-08-07",
+              "end_date": "2024-08-21",
+              "income_sources_count": 5,
+              "income_categories_count": 5,
+              "income_transactions_count": 6,
+              "historical_summary": [
+                {
+                  "total_amount": 4090.14,
+                  "iso_currency_code": "USD",
+                  "unofficial_currency_code": null,
+                  "total_amounts": [
+                    {
+                      "amount": 4090.14,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    }
+                  ],
+                  "start_date": "2024-08-06",
+                  "end_date": "2024-08-21",
+                  "transactions": [
+                    {
+                      "amount": 120.12,
+                      "date": "2024-08-07",
+                      "name": "TEXAS OAG CHILD SUPPORT",
+                      "original_description": "TEXAS OAG CHILD SUPPORT",
+                      "pending": false,
+                      "transaction_id": "EZMmvwREqlSGmlRam7bzFKyBll3kJjU4xKm1w",
+                      "check_number": null,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    {
+                      "amount": 1525,
+                      "date": "2024-08-08",
+                      "name": "AIRBNB PAYMENTS PPD ID:1234567890",
+                      "original_description": "AIRBNB PAYMENTS PPD ID:1234567890",
+                      "pending": false,
+                      "transaction_id": "Wr6jzLwg1qs6ag9Xa8BrCpBAPPxnEXF6ZmjDR",
+                      "check_number": null,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    {
+                      "amount": 500,
+                      "date": "2024-08-12",
+                      "name": "TWC-BENEFITS/UI BENEFIT",
+                      "original_description": "TWC-BENEFITS/UI BENEFIT",
+                      "pending": false,
+                      "transaction_id": "Aj7Apx5bDyIA3VRl35yqC18wXXorBgI9rX5dp",
+                      "check_number": null,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    {
+                      "amount": 1000.7,
+                      "date": "2024-08-15",
+                      "name": "PLAID PAYROLL",
+                      "original_description": "PLAID PAYROLL",
+                      "pending": false,
+                      "transaction_id": "G1L9oybBrKSMPmBdPzXoFN8aGGE7gXC6MeoQB",
+                      "check_number": null,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    {
+                      "amount": 824.2,
+                      "date": "2024-08-15",
+                      "name": "SSI TREAS310 XXSUPP SEC PPD ID:1234567890",
+                      "original_description": "SSI TREAS310 XXSUPP SEC PPD ID:1234567890",
+                      "pending": false,
+                      "transaction_id": "nWLlwMm1qxi8DomvDXP3FaGjXX5bm9TAlyQnk",
+                      "check_number": null,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    },
+                    {
+                      "amount": 120.12,
+                      "date": "2024-08-21",
+                      "name": "TEXAS OAG CHILD SUPPORT",
+                      "original_description": "TEXAS OAG CHILD SUPPORT",
+                      "pending": false,
+                      "transaction_id": "b7dkg6eQbPFQeRvVeZlxcqxZooa7nWSmb47dj",
+                      "check_number": null,
+                      "iso_currency_code": "USD",
+                      "unofficial_currency_code": null
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "request_id": "MLM1fFu4fbVg7KR"
+      },
+      "fetchedAt": "2026-06-18T04:37:50.283Z"
+    },
+    "/user_account/session/get": {
+      "sample": {
+        "identity": {
+          "name": {
+            "first_name": "Leslie",
+            "last_name": "Knope"
+          },
+          "address": {
+            "street": "123 Main St.",
+            "street2": "",
+            "city": "Pawnee",
+            "region": "IN",
+            "postal_code": "41006",
+            "country": "US"
+          },
+          "email": "leslie@knope.com",
+          "phone_number": "+14157452130",
+          "date_of_birth": "1975-01-18",
+          "ssn": "987654321",
+          "ssn_last_4": "4321"
+        },
+        "identity_edit_history": {
+          "name": {
+            "edits_current": 0,
+            "edits_1d": 0,
+            "edits_30d": 1,
+            "edits_365d": 1,
+            "edits_all_time": 1
+          },
+          "address": {
+            "edits_current": 1,
+            "edits_1d": 1,
+            "edits_30d": 2,
+            "edits_365d": 2,
+            "edits_all_time": 2
+          },
+          "email": {
+            "edits_current": 0,
+            "edits_1d": 0,
+            "edits_30d": 0,
+            "edits_365d": 0,
+            "edits_all_time": 0
+          },
+          "date_of_birth": {
+            "edits_current": 0,
+            "edits_1d": 0,
+            "edits_30d": 0,
+            "edits_365d": 0,
+            "edits_all_time": 0
+          },
+          "official_document": {
+            "ssn": {
+              "edits_current": 0,
+              "edits_1d": 0,
+              "edits_30d": 0,
+              "edits_365d": 0,
+              "edits_all_time": 0
+            }
+          }
+        },
+        "items": [
+          {
+            "item_id": "Ed6bjNrDLJfGvZWwnkQlfxwoNz54B5C97ejBr",
+            "access_token": "access-sandbox-435beced-94e8-4df3-a181-1dde1cfa19f0"
+          }
+        ],
+        "request_id": "m8MDnv9okwxFNBV"
+      },
+      "fetchedAt": "2026-06-18T05:17:12.184Z"
+    },
+    "/identity/match": {
+      "sample": {
+        "accounts": [
+          {
+            "account_id": "BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp",
+            "balances": {
+              "available": null,
+              "current": null,
+              "iso_currency_code": null,
+              "limit": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "0000",
+            "name": "Plaid Checking",
+            "official_name": "Plaid Gold Standard0% Interest Checking",
+            "legal_name": {
+              "score": 90,
+              "is_nickname_match": true,
+              "is_first_name_or_last_name_match": true,
+              "is_business_name_detected": false
+            },
+            "phone_number": {
+              "score": 100
+            },
+            "email_address": {
+              "score": 100
+            },
+            "address": {
+              "score": 100,
+              "is_postal_code_match": true
+            },
+            "subtype": "checking",
+            "type": "depository"
+          },
+          {
+            "account_id": "3gE5gnRzNyfXpBK5wEEKcymJ5albGVUqg77gr",
+            "balances": {
+              "available": null,
+              "current": null,
+              "iso_currency_code": null,
+              "limit": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "1111",
+            "name": "Plaid Saving",
+            "official_name": "Plaid Silver Standard0.1% Interest Saving",
+            "legal_name": {
+              "score": 30,
+              "is_first_name_or_last_name_match": false
+            },
+            "phone_number": {
+              "score": 100
+            },
+            "email_address": null,
+            "address": {
+              "score": 100,
+              "is_postal_code_match": true
+            },
+            "subtype": "savings",
+            "type": "depository"
+          }
+        ],
+        "item": {
+          "available_products": [
+            "balance",
+            "investments"
+          ],
+          "billed_products": [
+            "assets",
+            "auth",
+            "identity",
+            "liabilities",
+            "transactions"
+          ],
+          "consent_expiration_time": null,
+          "error": null,
+          "institution_id": "ins_3",
+          "institution_name": "Chase",
+          "item_id": "eVBnVMp7zdTJLkRNr33Rs6zr7KNJqBFL9DrE6",
+          "update_type": "background",
+          "webhook": "https://www.genericwebhookurl.com/webhook",
+          "auth_method": "INSTANT_AUTH"
+        },
+        "request_id": "3nARps6TOYtbACO"
+      },
+      "fetchedAt": "2026-06-18T06:49:11.729Z"
+    },
+    "/auth/get": {
+      "sample": {
+        "accounts": [
+          {
+            "account_id": "vzeNDwK7KQIm4yEog683uElbp9GRLEFXGK98D",
+            "balances": {
+              "available": 100,
+              "current": 110,
+              "limit": null,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "mask": "9606",
+            "name": "Plaid Checking",
+            "official_name": "Plaid Gold Checking",
+            "subtype": "checking",
+            "type": "depository"
+          }
+        ],
+        "numbers": {
+          "ach": [
+            {
+              "account_id": "vzeNDwK7KQIm4yEog683uElbp9GRLEFXGK98D",
+              "account": "9900009606",
+              "is_tokenized_account_number": false,
+              "routing": "011401533",
+              "wire_routing": "021000021"
+            }
+          ],
+          "eft": [
+            {
+              "account_id": "vzeNDwK7KQIm4yEog683uElbp9GRLEFXGK98D",
+              "account": "111122223333",
+              "institution": "021",
+              "branch": "01140"
+            }
+          ],
+          "international": [
+            {
+              "account_id": "vzeNDwK7KQIm4yEog683uElbp9GRLEFXGK98D",
+              "iban": "GB29NWBK60161331926819",
+              "bic": "NWBKGB21"
+            }
+          ],
+          "bacs": [
+            {
+              "account_id": "vzeNDwK7KQIm4yEog683uElbp9GRLEFXGK98D",
+              "account": "31926819",
+              "sort_code": "601613"
+            }
+          ]
+        },
+        "item": {
+          "available_products": [
+            "balance",
+            "identity",
+            "payment_initiation",
+            "transactions"
+          ],
+          "billed_products": [
+            "assets",
+            "auth"
+          ],
+          "consent_expiration_time": null,
+          "error": null,
+          "institution_id": "ins_117650",
+          "institution_name": "Royal Bank of Plaid",
+          "item_id": "DWVAAPWq4RHGlEaNyGKRTAnPLaEmo8Cvq7na6",
+          "update_type": "background",
+          "webhook": "https://www.genericwebhookurl.com/webhook",
+          "auth_method": "INSTANT_AUTH"
+        },
+        "request_id": "m8MDnv9okwxFNBV"
+      },
+      "fetchedAt": "2026-06-18T06:49:20.974Z"
+    },
+    "/transactions/sync": {
+      "sample": {
+        "accounts": [
+          {
+            "account_id": "BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp",
+            "balances": {
+              "available": 110.94,
+              "current": 110.94,
+              "limit": null,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "mask": "0000",
+            "name": "Plaid Checking",
+            "official_name": "Plaid Gold Standard0% Interest Checking",
+            "type": "depository",
+            "subtype": "checking"
+          },
+          {
+            "account_id": "w7qN6v4P3xHz7QJ5dLL9tAq8mZp1rXH9k2B3C",
+            "balances": {
+              "available": 2400.12,
+              "current": 2400.12,
+              "limit": null,
+              "iso_currency_code": "USD",
+              "unofficial_currency_code": null
+            },
+            "mask": "1111",
+            "name": "Plaid Savings",
+            "official_name": "Plaid Silver Standard Savings",
+            "type": "depository",
+            "subtype": "savings"
+          }
+        ],
+        "added": [
+          {
+            "account_id": "BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp",
+            "amount": 72.1,
+            "iso_currency_code": "USD",
+            "unofficial_currency_code": null,
+            "check_number": null,
+            "date": "2023-09-24",
+            "location": {
+              "address": "13425 Community Rd",
+              "city": "Poway",
+              "region": "CA",
+              "postal_code": "92064",
+              "country": "US",
+              "lat": 32.959068,
+              "lon": -117.037666,
+              "store_number": "1700"
+            },
+            "name": "PURCHASE WM SUPERCENTER #1700",
+            "merchant_name": "Walmart",
+            "payment_meta": {
+              "reference_number": null,
+              "ppd_id": null,
+              "payee": null,
+              "by_order_of": null,
+              "payer": null,
+              "payment_method": null,
+              "payment_processor": null,
+              "reason": null
+            },
+            "pending": false,
+            "pending_transaction_id": "no86Eox18VHMvaOVL7gPUM9ap3aR1LsAVZ5nc",
+            "account_owner": null,
+            "transaction_id": "lPNjeW1nR6CDn5okmGQ6hEpMo4lLNoSrzqDje",
+            "transaction_type": "place",
+            "logo_url": "https://plaid-merchant-logos.plaid.com/walmart_1100.png",
+            "website": "walmart.com",
+            "authorized_date": "2023-09-22",
+            "authorized_datetime": "2023-09-22T10:34:50Z",
+            "datetime": "2023-09-24T11:01:01Z",
+            "payment_channel": "in store",
+            "personal_finance_category": {
+              "primary": "GENERAL_MERCHANDISE",
+              "detailed": "GENERAL_MERCHANDISE_SUPERSTORES",
+              "confidence_level": "VERY_HIGH"
+            },
+            "personal_finance_category_icon_url": "https://plaid-category-icons.plaid.com/PFC_GENERAL_MERCHANDISE.png",
+            "transaction_code": null,
+            "counterparties": [
+              {
+                "name": "Walmart",
+                "entity_id": "O5W5j4dN9OR3E6ypQmjdkWZZRoXEzVMz2ByWM",
+                "type": "merchant",
+                "website": "walmart.com",
+                "logo_url": "https://plaid-merchant-logos.plaid.com/walmart_1100.png",
+                "confidence_level": "VERY_HIGH"
+              }
+            ],
+            "merchant_entity_id": "O5W5j4dN9OR3E6ypQmjdkWZZRoXEzVMz2ByWM"
+          },
+          {
+            "account_id": "w7qN6v4P3xHz7QJ5dLL9tAq8mZp1rXH9k2B3C",
+            "amount": -1800,
+            "iso_currency_code": "USD",
+            "unofficial_currency_code": null,
+            "check_number": null,
+            "date": "2023-09-29",
+            "location": {
+              "address": null,
+              "city": null,
+              "region": null,
+              "postal_code": null,
+              "country": null,
+              "lat": null,
+              "lon": null,
+              "store_number": null
+            },
+            "name": "ACME PAYROLL",
+            "merchant_name": "ACME Payroll",
+            "payment_meta": {
+              "reference_number": null,
+              "ppd_id": "PAYROLL123",
+              "payee": null,
+              "by_order_of": null,
+              "payer": "ACME CORP",
+              "payment_method": "ACH",
+              "payment_processor": null,
+              "reason": "Payroll"
+            },
+            "pending": false,
+            "pending_transaction_id": null,
+            "account_owner": null,
+            "transaction_id": "M6rQx7nA0Xf9kP2LwE4cVb8DqJ1sTz5YhN3uK",
+            "transaction_type": "special",
+            "logo_url": null,
+            "website": null,
+            "authorized_date": null,
+            "authorized_datetime": null,
+            "datetime": "2023-09-29T08:30:00Z",
+            "payment_channel": "other",
+            "personal_finance_category": {
+              "primary": "INCOME",
+              "detailed": "INCOME_WAGES",
+              "confidence_level": "HIGH"
+            },
+            "personal_finance_category_icon_url": "https://plaid-category-icons.plaid.com/PFC_INCOME.png",
+            "transaction_code": null,
+            "counterparties": [
+              {
+                "name": "ACME CORP",
+                "entity_id": null,
+                "type": "income_source",
+                "website": null,
+                "logo_url": null,
+                "confidence_level": "HIGH"
+              }
+            ],
+            "merchant_entity_id": null
+          }
+        ],
+        "modified": [
+          {
+            "account_id": "BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp",
+            "amount": 28.34,
+            "iso_currency_code": "USD",
+            "unofficial_currency_code": null,
+            "check_number": null,
+            "date": "2023-09-28",
+            "location": {
+              "address": null,
+              "city": null,
+              "region": null,
+              "postal_code": null,
+              "country": null,
+              "lat": null,
+              "lon": null,
+              "store_number": null
+            },
+            "name": "Dd Doordash Burgerkin",
+            "merchant_name": "Burger King",
+            "payment_meta": {
+              "reference_number": null,
+              "ppd_id": null,
+              "payee": null,
+              "by_order_of": null,
+              "payer": null,
+              "payment_method": null,
+              "payment_processor": null,
+              "reason": null
+            },
+            "pending": true,
+            "pending_transaction_id": null,
+            "account_owner": null,
+            "transaction_id": "yhnUVvtcGGcCKU0bcz8PDQr5ZUxUXebUvbKC0",
+            "transaction_type": "digital",
+            "logo_url": "https://plaid-merchant-logos.plaid.com/burger_king_155.png",
+            "website": "burgerking.com",
+            "authorized_date": "2023-09-27",
+            "authorized_datetime": "2023-09-27T08:01:58Z",
+            "datetime": "2023-09-28T15:10:09Z",
+            "payment_channel": "online",
+            "personal_finance_category": {
+              "primary": "FOOD_AND_DRINK",
+              "detailed": "FOOD_AND_DRINK_FAST_FOOD",
+              "confidence_level": "VERY_HIGH"
+            },
+            "personal_finance_category_icon_url": "https://plaid-category-icons.plaid.com/PFC_FOOD_AND_DRINK.png",
+            "transaction_code": null,
+            "counterparties": [
+              {
+                "name": "DoorDash",
+                "entity_id": "YNRJg5o2djJLv52nBA1Yn1KpL858egYVo4dpm",
+                "type": "marketplace",
+                "website": "doordash.com",
+                "logo_url": "https://plaid-counterparty-logos.plaid.com/doordash_1.png",
+                "confidence_level": "HIGH"
+              },
+              {
+                "name": "Burger King",
+                "entity_id": "mVrw538wamwdm22mK8jqpp7qd5br0eeV9o4a1",
+                "type": "merchant",
+                "website": "burgerking.com",
+                "logo_url": "https://plaid-merchant-logos.plaid.com/burger_king_155.png",
+                "confidence_level": "VERY_HIGH"
+              }
+            ],
+            "merchant_entity_id": "mVrw538wamwdm22mK8jqpp7qd5br0eeV9o4a1"
+          }
+        ],
+        "removed": [
+          {
+            "transaction_id": "CmdQTNgems8BT1B7ibkoUXVPyAeehT3Tmzk0l",
+            "account_id": "BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp"
+          }
+        ],
+        "next_cursor": "tVUUL15lYQN5rBnfDIc1I8xudpGdIlw9nsgeXWvhOfkECvUeR663i3Dt1uf/94S8ASkitgLcIiOSqNwzzp+bh89kirazha5vuZHBb2ZA5NtCDkkV",
+        "has_more": false,
+        "request_id": "Wvhy9PZHQLV8njG",
+        "transactions_update_status": "HISTORICAL_UPDATE_COMPLETE"
+      },
+      "fetchedAt": "2026-06-18T06:59:32.185Z"
+    },
+    "/investments/holdings/get": {
+      "sample": {
+        "accounts": [
+          {
+            "account_id": "5Bvpj4QknlhVWk7GygpwfVKdd133GoCxB814g",
+            "balances": {
+              "available": 43200,
+              "current": 43200,
+              "iso_currency_code": "USD",
+              "limit": null,
+              "margin_loan_amount": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "4444",
+            "name": "Plaid Money Market",
+            "official_name": "Plaid Platinum Standard1.85% Interest Money Market",
+            "subtype": "money market",
+            "type": "depository"
+          },
+          {
+            "account_id": "JqMLm4rJwpF6gMPJwBqdh9ZjjPvvpDcb7kDK1",
+            "balances": {
+              "available": null,
+              "current": 110.01,
+              "iso_currency_code": "USD",
+              "limit": null,
+              "margin_loan_amount": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "5555",
+            "name": "Plaid IRA",
+            "official_name": null,
+            "subtype": "ira",
+            "type": "investment"
+          },
+          {
+            "account_id": "k67E4xKvMlhmleEa4pg9hlwGGNnnEeixPolGm",
+            "balances": {
+              "available": null,
+              "current": 24580.0605,
+              "iso_currency_code": "USD",
+              "limit": null,
+              "margin_loan_amount": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "6666",
+            "name": "Plaid401k",
+            "official_name": null,
+            "subtype": "401k",
+            "type": "investment"
+          }
+        ],
+        "holdings": [
+          {
+            "account_id": "JqMLm4rJwpF6gMPJwBqdh9ZjjPvvpDcb7kDK1",
+            "cost_basis": 1,
+            "institution_price": 1,
+            "institution_price_as_of": "2021-04-13",
+            "institution_price_datetime": null,
+            "institution_value": 0.01,
+            "iso_currency_code": "USD",
+            "quantity": 0.01,
+            "security_id": "d6ePmbPxgWCWmMVv66q9iPV94n91vMtov5Are",
+            "unofficial_currency_code": null,
+            "vested_quantity": null,
+            "vested_value": null
+          },
+          {
+            "account_id": "JqMLm4rJwpF6gMPJwBqdh9ZjjPvvpDcb7kDK1",
+            "cost_basis": 0.01,
+            "institution_price": 0.011,
+            "institution_price_as_of": "2021-04-13",
+            "institution_price_datetime": null,
+            "institution_value": 110,
+            "iso_currency_code": "USD",
+            "quantity": 10000,
+            "security_id": "8E4L9XLl6MudjEpwPAAgivmdZRdBPJuvMPlPb",
+            "unofficial_currency_code": null,
+            "vested_quantity": null,
+            "vested_value": null
+          },
+          {
+            "account_id": "k67E4xKvMlhmleEa4pg9hlwGGNnnEeixPolGm",
+            "cost_basis": 23,
+            "institution_price": 27,
+            "institution_price_as_of": "2021-04-13",
+            "institution_price_datetime": null,
+            "institution_value": 636.309,
+            "iso_currency_code": "USD",
+            "quantity": 23.567,
+            "security_id": "JDdP7XPMklt5vwPmDN45t3KAoWAPmjtpaW7DP",
+            "unofficial_currency_code": null,
+            "vested_quantity": null,
+            "vested_value": null
+          },
+          {
+            "account_id": "k67E4xKvMlhmleEa4pg9hlwGGNnnEeixPolGm",
+            "cost_basis": 948.08,
+            "institution_price": 94.808,
+            "institution_price_as_of": "2023-11-02",
+            "institution_price_datetime": null,
+            "institution_value": 948.08,
+            "iso_currency_code": "USD",
+            "quantity": 10,
+            "security_id": "Lxe4yz4XQEtwb2YArO7RFMpPDvPxy7FALRyea",
+            "unofficial_currency_code": null,
+            "vested_quantity": null,
+            "vested_value": null
+          }
+        ],
+        "item": {
+          "available_products": [
+            "balance",
+            "identity",
+            "liabilities",
+            "transactions"
+          ],
+          "billed_products": [
+            "assets",
+            "auth",
+            "investments"
+          ],
+          "consent_expiration_time": null,
+          "error": null,
+          "institution_id": "ins_3",
+          "institution_name": "Chase",
+          "item_id": "4z9LPae1nRHWy8pvg9jrsgbRP4ZNQvIdbLq7g",
+          "webhook": "https://www.genericwebhookurl.com/webhook",
+          "auth_method": "INSTANT_AUTH",
+          "update_type": "background"
+        },
+        "request_id": "l68wb8zpS0hqmsJ",
+        "securities": [
+          {
+            "close_price": 1,
+            "close_price_as_of": null,
+            "cusip": null,
+            "institution_id": null,
+            "institution_security_id": null,
+            "is_cash_equivalent": true,
+            "isin": null,
+            "iso_currency_code": "USD",
+            "name": "U S Dollar",
+            "proxy_security_id": null,
+            "security_id": "d6ePmbPxgWCWmMVv66q9iPV94n91vMtov5Are",
+            "sedol": null,
+            "ticker_symbol": "USD",
+            "type": "cash",
+            "subtype": "cash",
+            "unofficial_currency_code": null,
+            "update_datetime": null,
+            "market_identifier_code": null,
+            "sector": null,
+            "industry": null,
+            "cfi_code": null,
+            "option_contract": null,
+            "fixed_income": null
+          },
+          {
+            "close_price": 0.011,
+            "close_price_as_of": "2021-04-13",
+            "cusip": null,
+            "institution_id": null,
+            "institution_security_id": null,
+            "is_cash_equivalent": false,
+            "isin": null,
+            "iso_currency_code": "USD",
+            "name": "Nflx Feb01'18 $355 Call",
+            "proxy_security_id": null,
+            "security_id": "8E4L9XLl6MudjEpwPAAgivmdZRdBPJuvMPlPb",
+            "sedol": null,
+            "ticker_symbol": "NFLX180201C00355000",
+            "type": "derivative",
+            "subtype": "option",
+            "unofficial_currency_code": null,
+            "update_datetime": null,
+            "market_identifier_code": "XNAS",
+            "sector": "Technology Services",
+            "industry": "Internet Software or Services",
+            "cfi_code": "OCASPS",
+            "option_contract": {
+              "contract_type": "call",
+              "expiration_date": "2018-02-01",
+              "strike_price": 355,
+              "underlying_security_ticker": "NFLX"
+            },
+            "fixed_income": null
+          },
+          {
+            "close_price": 27,
+            "close_price_as_of": null,
+            "cusip": "577130834",
+            "institution_id": null,
+            "institution_security_id": null,
+            "is_cash_equivalent": false,
+            "isin": "US5771308344",
+            "iso_currency_code": "USD",
+            "name": "Matthews Pacific Tiger Fund Insti Class",
+            "proxy_security_id": null,
+            "security_id": "JDdP7XPMklt5vwPmDN45t3KAoWAPmjtpaW7DP",
+            "sedol": null,
+            "ticker_symbol": "MIPTX",
+            "type": "mutual fund",
+            "subtype": "mutual fund",
+            "unofficial_currency_code": null,
+            "update_datetime": null,
+            "market_identifier_code": "XNAS",
+            "sector": "Miscellaneous",
+            "industry": "Investment Trusts or Mutual Funds",
+            "cfi_code": "CIOGES",
+            "option_contract": null,
+            "fixed_income": null
+          },
+          {
+            "close_price": 94.808,
+            "close_price_as_of": "2023-11-02",
+            "cusip": "912797HE0",
+            "institution_id": null,
+            "institution_security_id": null,
+            "is_cash_equivalent": false,
+            "isin": null,
+            "iso_currency_code": "USD",
+            "name": "US Treasury Bill -5.43%31/10/2024 USD100",
+            "proxy_security_id": null,
+            "security_id": "Lxe4yz4XQEtwb2YArO7RFMpPDvPxy7FALRyea",
+            "sedol": null,
+            "ticker_symbol": null,
+            "type": "fixed income",
+            "subtype": "bill",
+            "unofficial_currency_code": null,
+            "update_datetime": null,
+            "market_identifier_code": null,
+            "sector": "Government",
+            "industry": "Sovereign Government",
+            "cfi_code": "DYZTXR",
+            "option_contract": null,
+            "fixed_income": {
+              "face_value": 100,
+              "issue_date": "2023-11-02",
+              "maturity_date": "2024-10-31",
+              "yield_rate": {
+                "percentage": 5.43,
+                "type": "coupon_equivalent"
+              }
+            }
+          }
+        ]
+      },
+      "fetchedAt": "2026-06-18T06:59:56.757Z"
+    },
+    "/liabilities/get": {
+      "sample": {
+        "accounts": [
+          {
+            "account_id": "dVzbVMLjrxTnLjX4G66XUp5GLklm4oiZy88yK",
+            "balances": {
+              "available": null,
+              "current": 410,
+              "iso_currency_code": "USD",
+              "limit": 2000,
+              "unofficial_currency_code": null
+            },
+            "mask": "3333",
+            "name": "Plaid Credit Card",
+            "official_name": "Plaid Diamond12.5% APR Interest Credit Card",
+            "subtype": "credit card",
+            "type": "credit"
+          },
+          {
+            "account_id": "Pp1Vpkl9w8sajvK6oEEKtr7vZxBnGpf7LxxLE",
+            "balances": {
+              "available": null,
+              "current": 65262,
+              "iso_currency_code": "USD",
+              "limit": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "7777",
+            "name": "Plaid Student Loan",
+            "official_name": null,
+            "subtype": "student",
+            "type": "loan"
+          },
+          {
+            "account_id": "BxBXxLj1m4HMXBm9WZJyUg9XLd4rKEhw8Pb1J",
+            "balances": {
+              "available": null,
+              "current": 56302.06,
+              "iso_currency_code": "USD",
+              "limit": null,
+              "unofficial_currency_code": null
+            },
+            "mask": "8888",
+            "name": "Plaid Mortgage",
+            "official_name": null,
+            "subtype": "mortgage",
+            "type": "loan"
+          }
+        ],
+        "item": {
+          "available_products": [
+            "balance",
+            "investments"
+          ],
+          "billed_products": [
+            "assets",
+            "auth",
+            "identity",
+            "liabilities",
+            "transactions"
+          ],
+          "consent_expiration_time": null,
+          "error": null,
+          "institution_id": "ins_3",
+          "institution_name": "Chase",
+          "item_id": "eVBnVMp7zdTJLkRNr33Rs6zr7KNJqBFL9DrE6",
+          "update_type": "background",
+          "webhook": "https://www.genericwebhookurl.com/webhook",
+          "auth_method": "INSTANT_AUTH"
+        },
+        "liabilities": {
+          "credit": [
+            {
+              "account_id": "dVzbVMLjrxTnLjX4G66XUp5GLklm4oiZy88yK",
+              "aprs": [
+                {
+                  "apr_percentage": 15.24,
+                  "apr_type": "balance_transfer_apr",
+                  "balance_subject_to_apr": 1562.32,
+                  "interest_charge_amount": 130.22
+                },
+                {
+                  "apr_percentage": 27.95,
+                  "apr_type": "cash_apr",
+                  "balance_subject_to_apr": 56.22,
+                  "interest_charge_amount": 14.81
+                },
+                {
+                  "apr_percentage": 12.5,
+                  "apr_type": "purchase_apr",
+                  "balance_subject_to_apr": 157.01,
+                  "interest_charge_amount": 25.66
+                },
+                {
+                  "apr_percentage": 0,
+                  "apr_type": "special",
+                  "balance_subject_to_apr": 1000,
+                  "interest_charge_amount": 0
+                }
+              ],
+              "is_overdue": false,
+              "last_payment_amount": 168.25,
+              "last_payment_date": "2019-05-22",
+              "last_statement_issue_date": "2019-05-28",
+              "last_statement_balance": 1708.77,
+              "minimum_payment_amount": 20,
+              "next_payment_due_date": "2020-05-28"
+            }
+          ],
+          "mortgage": [
+            {
+              "account_id": "BxBXxLj1m4HMXBm9WZJyUg9XLd4rKEhw8Pb1J",
+              "account_number": "3120194154",
+              "current_late_fee": 25,
+              "escrow_balance": 3141.54,
+              "has_pmi": true,
+              "has_prepayment_penalty": true,
+              "interest_rate": {
+                "percentage": 3.99,
+                "type": "fixed"
+              },
+              "last_payment_amount": 3141.54,
+              "last_payment_date": "2019-08-01",
+              "loan_term": "30 year",
+              "loan_type_description": "conventional",
+              "maturity_date": "2045-07-31",
+              "next_monthly_payment": 3141.54,
+              "next_payment_due_date": "2019-11-15",
+              "origination_date": "2015-08-01",
+              "origination_principal_amount": 425000,
+              "past_due_amount": 2304,
+              "property_address": {
+                "city": "Malakoff",
+                "country": "US",
+                "postal_code": "14236",
+                "region": "NY",
+                "street": "2992 Cameron Road"
+              },
+              "ytd_interest_paid": 12300.4,
+              "ytd_principal_paid": 12340.5
+            }
+          ],
+          "student": [
+            {
+              "account_id": "Pp1Vpkl9w8sajvK6oEEKtr7vZxBnGpf7LxxLE",
+              "account_number": "4277075694",
+              "disbursement_dates": [
+                "2002-08-28"
+              ],
+              "expected_payoff_date": "2032-07-28",
+              "guarantor": "DEPT OF ED",
+              "interest_rate_percentage": 5.25,
+              "is_overdue": false,
+              "last_payment_amount": 138.05,
+              "last_payment_date": "2019-04-22",
+              "last_statement_balance": 1708.77,
+              "last_statement_issue_date": "2019-04-28",
+              "loan_name": "Consolidation",
+              "loan_status": {
+                "end_date": "2032-07-28",
+                "type": "repayment"
+              },
+              "minimum_payment_amount": 25,
+              "next_payment_due_date": "2019-05-28",
+              "origination_date": "2002-08-28",
+              "origination_principal_amount": 25000,
+              "outstanding_interest_amount": 6227.36,
+              "payment_reference_number": "4277075694",
+              "repayment_plan": {
+                "description": "Standard Repayment",
+                "type": "standard"
+              },
+              "sequence_number": "1",
+              "servicer_address": {
+                "city": "San Matias",
+                "country": "US",
+                "postal_code": "99415",
+                "region": "CA",
+                "street": "123 Relaxation Road"
+              },
+              "ytd_interest_paid": 280.55,
+              "ytd_principal_paid": 271.65
+            }
+          ]
+        },
+        "request_id": "dTnnm60WgKGLnKL"
+      },
+      "fetchedAt": "2026-06-18T07:00:09.996Z"
+    }
+  },
+  "updatedAt": "2026-06-18T07:00:09.996Z"
+}

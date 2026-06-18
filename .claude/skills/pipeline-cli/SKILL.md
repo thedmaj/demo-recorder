@@ -43,7 +43,16 @@ npm run pipe -- qa-touchup  [RUN_ID] [--tier=app|slide]
 ```
 
 Run IDs default to the latest run when omitted. Stage names are the canonical stages from [CLAUDE.md](../../../CLAUDE.md):
-`research, ingest, script, brand-extract, script-critique, embed-script-validate, build, plaid-link-qa, build-qa, post-slides, post-panels, app-touchup, slide-fix, record, qa, figma-review, post-process, voiceover, coverage-check, auto-gap, resync-audio, embed-sync, audio-qa, ai-suggest-overlays, render, ppt, touchup`
+`research, ingest, script, brand-extract, script-critique, embed-script-validate, build, plaid-link-qa, build-qa, post-slides, post-panels, api-panel-audit, app-touchup, slide-fix, record, qa, figma-review, post-process, voiceover, coverage-check, auto-gap, resync-audio, embed-sync, audio-qa, ai-suggest-overlays, render, ppt, touchup`
+
+**`api-panel-audit`** (after `post-panels`): validates `demo-script.json` `apiResponse` JSON vs
+Plaid's real contracts (live-capture diff + AskBill `json_sample` cached in
+`inputs/api-contracts-cache.json` + deterministic rules). **Flag-only** — writes
+`api-panel-audit.json` + `api-panel-audit-task.md`; warns and advances under
+`--non-interactive`/`SCRATCH_AUTO_APPROVE`, pauses on a continue-gate in interactive agent mode.
+`API_PANEL_AUDIT_STRICT=true` hard-fails on HIGH. **Agent fix:** apply `api-panel-audit-task.md`
+to `demo-script.json` → `pipe stage post-panels <RUN_ID>` → re-record from `set-recording-dwells`
+if already recorded → `pipe stage api-panel-audit <RUN_ID>` to confirm. Never edits curated values.
 
 ## `npm run demo` aliases + build mode
 
