@@ -270,6 +270,23 @@ async function main(opts = {}) {
     console.log(`[render-moviepy] concatenating ${segClipIds.length} segment clips...`);
     let finalId = await client.callTool('concatenate_video_clips', { clip_ids: segClipIds }, 180000);
 
+    // Normalize the assembled video to EXACTLY the comp duration. moviepy clip
+    // durations are frame-quantized, so per-segment rounding (subclip / vfx_freeze /
+    // vfx_multiply_speed) accumulates ~1 frame each and overshoots the comp by
+    // ~1.4s across ~17 segments. That tripped the ±0.3s durationOk assertion and
+    // forced a SILENT Remotion fallback on every build after 2026-06-17. The comp
+    // (totalFrames/FPS == sync-map + voiceover length) is the source of truth and
+    // the overshoot lives entirely in the final freeze/hold tail, so this trim is
+    // lossless. Best-effort (try/catch): if subclip ever rejects it, we fall
+    // through to the prior behavior + assertion rather than break the render.
+    try {
+      finalId = await client.callTool('subclip', { clip_id: finalId, start_time: 0, end_time: compDurationSec }, 60000);
+      console.log(`[render-moviepy] trimmed assembled clip to comp duration ${compDurationSec.toFixed(3)}s (was frame-rounded longer)`);
+      report.trimmedToCompSec = Number(compDurationSec.toFixed(3));
+    } catch (e) {
+      console.warn(`[render-moviepy] comp-duration trim skipped (${e.message}) — proceeding with assembled length`);
+    }
+
     if (hasVoiceover) {
       const aId = await client.callTool('audio_file_clip', { filename: wsAudio }, 60000);
       finalId = await client.callTool('set_audio', { clip_id: finalId, audio_clip_id: aId }, 60000);
