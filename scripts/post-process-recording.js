@@ -61,10 +61,11 @@ const TIMING_PATH = getArg('--timing', path.join(OUT_DIR, 'step-timing.json'));
 // Explicit CLI flags always win over the preset.
 const CUT_PRESET = String(getArg('--cut-preset', process.env.PLAID_CUT_PRESET || 'tight')).toLowerCase();
 const PRESET_DEFAULTS = {
-  tight:   { otpKeep: '2.5', successKeep: '4.0', phoneTail: '0.5', maxInst: '5.0' },
+  // Operator-set pane durations (2026-06-17): OTP hold 1.7s, success 1.5s.
+  tight:   { otpKeep: '1.7', successKeep: '1.5', phoneTail: '0.5', maxInst: '5.0' },
   relaxed: { otpKeep: '4.0', successKeep: '4.0', phoneTail: '1.0', maxInst: '8.0' },
-  natural: { otpKeep: '2.5', successKeep: '4.0', phoneTail: '0.5', maxInst: '5.0' }, // unused — natural bypasses cutting
-}[CUT_PRESET] || { otpKeep: '2.5', successKeep: '4.0', phoneTail: '0.5', maxInst: '5.0' };
+  natural: { otpKeep: '1.7', successKeep: '1.5', phoneTail: '0.5', maxInst: '5.0' }, // unused — natural bypasses cutting
+}[CUT_PRESET] || { otpKeep: '1.7', successKeep: '1.5', phoneTail: '0.5', maxInst: '5.0' };
 const NATURAL_MODE = CUT_PRESET === 'natural';
 if (CUT_PRESET !== 'tight') console.log(`[PostProcess] Cut preset: ${CUT_PRESET}`);
 
@@ -72,6 +73,11 @@ if (CUT_PRESET !== 'tight') console.log(`[PostProcess] Cut preset: ${CUT_PRESET}
 const OTP_KEEP     = parseFloat(getArg('--otp-keep',       PRESET_DEFAULTS.otpKeep));
 const SUCCESS_KEEP = parseFloat(getArg('--success-keep',   PRESET_DEFAULTS.successKeep));
 const PHONE_TAIL   = parseFloat(getArg('--phone-tail',     PRESET_DEFAULTS.phoneTail));
+// Per-pane caps for the Plaid Link saved-account/institution section (operator-set
+// 2026-06-17): the bank/saved-account list pane and the account-select+confirm pane
+// each get an explicit duration in the cut, replacing the old 40/60 budget split.
+const LIST_KEEP    = parseFloat(getArg('--list-keep',     '3.3'));  // saved-account / institution list pane
+const ACCOUNT_KEEP = parseFloat(getArg('--account-keep',  '2.8'));  // account-select + confirm pane
 // Institution list hard cap: entire list→confirm section must fit within this many seconds.
 // Must be ≥ 2×MIN_PLAID_SCREEN_S + LEAD_IN + TAIL = 2+2+0.2+0.5 = 4.7s.
 // Default raised to 5.0s so each of the two sub-parts (list-appear, account+confirm)
@@ -349,9 +355,11 @@ if (T['otp-screen'] != null) {
     // screens get meaningful screen time in the processed video. Without this,
     // modal flows with missing markers collapse to ~5s of institution-list
     // only, hiding the actual Plaid Link interaction.
-    const effectiveCap = (confirmEndSource === 'link-complete-fallback' && plaidLinkMode !== 'embedded')
-      ? Math.max(MAX_INST_S * 2.4, 12.0)  // ~12s modal-flow budget
-      : MAX_INST_S;
+    // Section target = the explicit per-pane caps (LIST_KEEP + ACCOUNT_KEEP) plus
+    // lead-in/tail. Anything longer splits into exactly those two panes (2026-06-17
+    // operator request: list 3.3s, account+confirm 2.8s), regardless of flow/marker
+    // source — replaces the old 12s modal-flow budget + 40/60 split.
+    const effectiveCap = LIST_KEEP + ACCOUNT_KEEP + LEAD_IN + TAIL;
 
     if (rawDur <= effectiveCap + 0.05) {
       // Already within budget — single range
@@ -364,10 +372,11 @@ if (T['otp-screen'] != null) {
       //   CONFIRM_PART_S = remaining budget (min MIN_PLAID_SCREEN_S) — account + confirm click
       // With effectiveCap=5.0: budget=4.3s → LIST=max(2.0,1.72)=2.0s, CONFIRM=2.3s
       // With effectiveCap=12.0 (modal fallback): budget=11.3s → LIST=4.5s, CONFIRM=6.8s
-      const budget         = effectiveCap - LEAD_IN - TAIL;  // content seconds available
-      const MIN_PART_S     = MIN_PLAID_SCREEN_MS / 1000;
-      const LIST_PART_S    = Math.max(MIN_PART_S, budget * 0.40);
-      const CONFIRM_PART_S = Math.max(MIN_PART_S, budget - LIST_PART_S);
+      // Explicit per-pane targets (operator-set). Clamp to the raw footage
+      // available for each sub-part so we never request more than was recorded.
+      const rawListAvail    = confirmEnd - TAIL - (listStart - LEAD_IN);
+      const LIST_PART_S     = Math.min(LIST_KEEP, Math.max(0.8, rawListAvail - 0.8));
+      const CONFIRM_PART_S  = Math.min(ACCOUNT_KEEP, Math.max(0.8, rawListAvail - LIST_PART_S));
 
       const headLabel = confirmEndSource === 'link-complete-fallback' ? 'modal: list + credentials' : 'institution list (capped)';
       const tailLabel = confirmEndSource === 'link-complete-fallback' ? 'modal: account + confirm' : 'account → confirm (capped)';
@@ -538,12 +547,12 @@ console.log(`  Input:  ${totalDuration.toFixed(2)}s  →  Output est: ${keptTota
   for (const { phase, stepId, nextPhase } of phaseMap) {
     if (T[phase] == null) continue;
     const rawStartS = T[phase];
-    // link-success has no nextPhase — use at least MIN_PLAID_SCREEN_S of footage.
-    // In normal flows there are 90+ seconds of raw video after link-complete, so
-    // this never hits the end of recording.
+    // link-success has no nextPhase — its pane duration is exactly SUCCESS_KEEP
+    // (operator-set 2026-06-17: 1.5s). Floored at 0.8s, not MIN_PLAID_SCREEN_S, so
+    // success can be shorter than the 2s general minimum when requested.
     const rawEndS = nextPhase && T[nextPhase] != null
       ? T[nextPhase]
-      : rawStartS + Math.max(MIN_PLAID_SCREEN_MS / 1000, SUCCESS_KEEP);
+      : rawStartS + Math.max(0.8, SUCCESS_KEEP);
     const startMs = rawToProcessedMs(rawStartS);
     const endMs   = rawToProcessedMs(rawEndS);
     const durationMs = endMs - startMs;
