@@ -279,29 +279,26 @@ if (T['phone-submitted'] != null) {
   console.log(`  [PostProcess] No phone/institution marker (mode=${plaidLinkMode || 'unknown'}): keeping pre-link content [0 → ${(T['otp-screen'] - 0.2).toFixed(3)}s] (layer/idv lead-in)`);
 }
 
-// ── Range 2a: OTP screen appearing (brief) ───────────────────────────────────
-// Shows the OTP entry screen arriving. Cut before the long fill() wait.
-// Hard cut from Range 1 removes the phone→OTP loading (~12s).
-if (T['otp-screen'] != null) {
-  addKeep(
-    T['otp-screen'] - 0.2,
-    T['otp-screen'] + 0.5,
-    'otp screen appear'
-  );
-}
-
-// ── Range 2b: OTP digits visible for 1s ──────────────────────────────────────
-// Anchored to 'otp-filled' (recorded right after fill+1s pause).
-// Hard cut from Range 2a removes the ~28s fill() wait.
-// Falls back to otp-submitted if otp-filled is absent (older timing files).
+// ── Range 2: OTP screen (appear → type → hold) ───────────────────────────────
+// CLASSIC Link has a long (~28s) fill() wait between the OTP screen appearing
+// and the digits landing, so it's split into two windows ("appear" + "digits")
+// with the wait cut between. But the LAYER / IDV modal flow types the OTP in the
+// modal with only a ~3s appear→fill gap — splitting THAT shows the OTP screen
+// TWICE (a duplicate OTP scene; Layer+CRA Credit Genie, 2026-06-18). So merge
+// into ONE continuous window when the gap is small; split + cut only when large.
 {
-  const anchor = T['otp-filled'] ?? T['otp-submitted'];
-  if (anchor != null) {
-    addKeep(
-      anchor - 0.2,           // tiny lead-in: show digits appearing
-      anchor + OTP_KEEP,      // then 1s (default) of filled digits visible
-      'otp digits + hold'
-    );
+  const otpScreen = T['otp-screen'];
+  const otpAnchor = T['otp-filled'] ?? T['otp-submitted']; // filled preferred; submitted fallback (older timing files)
+  const otpGap = (otpScreen != null && otpAnchor != null) ? (otpAnchor - otpScreen) : null;
+  const OTP_MERGE_MAX_GAP_S = parseFloat(getArg('--otp-merge-gap', '6'));
+  if (otpScreen != null && otpAnchor != null && otpGap != null && otpGap >= 0 && otpGap <= OTP_MERGE_MAX_GAP_S) {
+    // Fast OTP (Layer/IDV): one continuous window — appear, type, hold. No cut,
+    // no duplicate. (~3s fill has no dead time worth removing.)
+    addKeep(otpScreen - 0.2, otpAnchor + OTP_KEEP, 'otp screen + digits (continuous)');
+  } else {
+    // Classic Link: split and cut the long fill() wait between the two windows.
+    if (otpScreen != null) addKeep(otpScreen - 0.2, otpScreen + 0.5, 'otp screen appear');
+    if (otpAnchor != null) addKeep(otpAnchor - 0.2, otpAnchor + OTP_KEEP, 'otp digits + hold');
   }
 }
 

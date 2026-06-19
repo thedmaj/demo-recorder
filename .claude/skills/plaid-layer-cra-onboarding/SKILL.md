@@ -114,6 +114,49 @@ extraction too early can cause CRA report generation to fail.
   written into the user record before report generation). KYC document/selfie is a
   separate concern — see [`plaid-layer-idv-onboarding`](../plaid-layer-idv-onboarding/SKILL.md).
 
+## On-screen modal screens + recording/QA expectations (Layer + CRA)
+
+Inside the **one** Layer session, the live modal shows these screens **in order** (this is
+what the recorder captures and QA should expect). Sandbox returning-user phone
+`+14155550011`, OTP `123456`:
+
+**Layer base screens (ALWAYS — any Layer session):**
+1. Layer welcome → **Continue** (phone is submitted via the SDK before `open()`, so there is
+   no separate phone-entry screen).
+2. **OTP verification** — "Enter the code we sent to your phone (•••) ••• 0011" → enter code.
+   **Exactly ONE OTP entry — there must be no second/duplicate OTP screen.**
+3. Prefilled identity review (name / email / phone / address from Layer) → **Continue with Plaid**.
+4. Bank account permission / data sharing → **Share**.
+5. Confirm sharing details with the host → confirm.
+
+**CRA-only screens (ONLY when CRA is in the Layer session init):**
+6. **Plaid Check — "Share consumer report"** (CRA permissible-purpose consent) → **Confirm**.
+   This is the CRA consent **inside the same Layer modal** — NOT a separate CRA Link launch.
+7. `onSuccess` → modal closes → host **"Generating your Consumer Report…"** (report generated
+   server-side). The report-ready beat is a HOST screen, never a modal screen.
+
+> **Screens 6–7 are CONDITIONAL on the session init.** They appear *only* because the Layer
+> session was created with CRA products (`CRA_LAYER_TEMPLATE` / `cra_base_report` etc. — see
+> "Required config"). A **plain (non-CRA) Layer** session has **no** Plaid Check / "Share consumer
+> report" screen and **no** "Generating your Consumer Report" beat — it completes at step 5 and the
+> host moves straight to its post-link state. So: only expect (or author) the CRA consent screen +
+> report-ready beat when CRA is initialized in the Layer session; never add them to a non-CRA Layer
+> demo. (Other product combos add their own init-conditional consent screens; the rule is the same —
+> the modal only shows what the session was initialized for.)
+
+**Recording / QA invariants (a violation = a bug):**
+- Exactly **one** `plaidPhase:"launch"` step; the "Share consumer report"/Plaid Check screen is
+  part of that same modal, never a second launch.
+- The `otp-screen` / `otp-filled` / `otp-submitted` markers fire **once**. A second set, or two
+  OTP scenes in the video, means a duplicate — investigate the recorder + the post-process cut.
+- The recorder enters the modal OTP **once** via `enterModalOtpIfPresent` (≤1.5s pre-delay,
+  human-typed, scroll-free). Do not re-enter.
+- **Post-process keeps the OTP as ONE continuous window** ("otp screen + digits (continuous)").
+  The Layer/IDV fast fill (gap ≤ `--otp-merge-gap`, default 6s) is intentionally NOT split into
+  "appear" + "digits" windows — that classic-Link split produced a **duplicate OTP scene** on
+  Layer+CRA (Credit Genie, 2026-06-18, fixed in `post-process-recording.js`). Classic Link's slow
+  (~28s) fill is still split + cut.
+
 Related: per-product facts in [`inputs/products/plaid-layer.md`](../../../inputs/products/plaid-layer.md),
 [`plaid-cra-base-report.md`](../../../inputs/products/plaid-cra-base-report.md),
 [`plaid-cra-cashflow-insights.md`](../../../inputs/products/plaid-cra-cashflow-insights.md),
