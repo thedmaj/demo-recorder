@@ -6,9 +6,13 @@ Build hyper-realistic Plaid demo **apps** (real host UI + a live Plaid Link inte
 
 ---
 
-## 0. Quick start — paste this as your first message to Claude Code
+## 0. Quick start — how this guide runs in Claude Code
 
-Once you've installed Claude Code, authenticated to GitHub Enterprise, and cloned the repo (§2–4 below), open Claude Code **inside the repo folder** (`cd plaid-demo-recorder && claude`) and paste the block below as your **first message**. The agent then drives the rest of this guide — install, secrets handoff, validation, and your first demo — pausing only where it needs you. (Also saved in the repo as [`ONBOARDING-bootstrap.txt`](ONBOARDING-bootstrap.txt).)
+On the share page, click **Copy ONBOARDING.md** (top right) — that copies this **entire guide**. Then open Claude Code **inside the repo folder** (`cd plaid-demo-recorder && claude`) and **paste the whole guide as your first message**. The agent reads all of it; the **operating instructions below** tell it to drive setup → secrets → validation → your first demo, pausing only where it needs you.
+
+> First time? Two prerequisites the share page can't do for you: (1) if you don't have Claude Code, run the install commands at the bottom of the share page; (2) if you haven't cloned the repo yet, do **§2–4** first (Claude Code must be running *inside* the cloned repo before you paste). The operating instructions below also exist as [`ONBOARDING-bootstrap.txt`](ONBOARDING-bootstrap.txt) if you'd rather paste just them.
+
+**Operating instructions (the agent follows these first):**
 
 ```text
 You are my onboarding guide for the Plaid Demo Recorder. Use ONBOARDING.md in this
