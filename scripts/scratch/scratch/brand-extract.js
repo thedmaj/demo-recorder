@@ -260,6 +260,102 @@ async function captureBrandSiteReferenceScreenshot(url, outPath) {
 }
 
 /**
+ * Brandfetch-independent logo extraction — ALWAYS a real crop / real downloaded
+ * asset, NEVER a generated image (per operator directive 2026-06-23). When
+ * Brandfetch is unavailable (e.g. 429 quota), pull the brand's actual logo from
+ * its own site:
+ *   1. Screenshot the real rendered logo ELEMENT in the header/nav (a true,
+ *      pixel-perfect crop — handles SVG / CSS-background logos that downloads miss).
+ *   2. Fall back to downloading the apple-touch-icon (a real square logo asset).
+ * Both are real pixels from the brand. Returns { ok, method } and writes outPath.
+ * @param {string} url     brand site URL
+ * @param {string} outPath absolute PNG path to write the logo to
+ */
+async function extractLogoCropFromSite(url, outPath) {
+  if (!url) return { ok: false, method: 'no-url' };
+  let browser;
+  try {
+    const { chromium } = require('playwright');
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    // networkidle so lazy-loaded logos finish loading before we crop (a
+    // domcontentloaded crop captured a 178-byte placeholder on ynab.com).
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const MIN_BYTES = 800; // reject near-empty/placeholder crops
+
+    // 1) Real crop of the rendered logo element (preferred — it IS the logo on screen).
+    const LOGO_SELECTORS = [
+      'header a[href="/"] img', 'header a[href="/"] svg',
+      '[data-testid*="logo" i] img', 'a[class*="logo" i] img', '[class*="logo" i] img',
+      'header img[alt*="logo" i]', 'nav img[alt*="logo" i]', 'img[alt*="logo" i]',
+      'header img[src*="logo" i]', 'nav img[src*="logo" i]',
+      'header [class*="logo" i] svg', 'nav [class*="logo" i] svg',
+      'header img', 'nav img',
+    ];
+    for (const sel of LOGO_SELECTORS) {
+      try {
+        const el = page.locator(sel).first();
+        if (!(await el.isVisible({ timeout: 600 }).catch(() => false))) continue;
+        // Skip <img> that hasn't actually loaded (placeholder/lazy) — naturalWidth.
+        const loaded = await el.evaluate(n => n.tagName !== 'IMG' || (n.complete && n.naturalWidth > 1)).catch(() => true);
+        if (!loaded) continue;
+        const box = await el.boundingBox().catch(() => null);
+        // Logo-sized sanity: not a 1px tracker, not a full-width hero/banner.
+        if (!box || box.width < 24 || box.height < 14 || box.width > 520 || box.height > 200) continue;
+        await el.screenshot({ path: outPath, omitBackground: false });
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size >= MIN_BYTES) {
+          console.log(`[BrandExtract] Logo crop: screenshotted real element "${sel}" (${Math.round(box.width)}×${Math.round(box.height)})`);
+          return { ok: true, method: `element-crop:${sel}` };
+        }
+      } catch (_) { /* try next selector */ }
+    }
+
+    // 2) Real asset fallback: apple-touch-icon (a genuine square logo file).
+    const iconHref = await page.evaluate(() => {
+      const sel = 'link[rel="apple-touch-icon"], link[rel="apple-touch-icon-precomposed"], link[rel*="icon"][sizes]';
+      const links = Array.from(document.querySelectorAll(sel));
+      const best = links.map(l => ({ href: l.href, size: parseInt((l.getAttribute('sizes') || '0').split('x')[0], 10) || 0 }))
+        .filter(x => x.href).sort((a, b) => b.size - a.size)[0];
+      return best ? best.href : null;
+    }).catch(() => null);
+    if (iconHref) {
+      const resp = await page.request.get(iconHref, { timeout: 15000 }).catch(() => null);
+      if (resp && resp.ok()) {
+        fs.writeFileSync(outPath, await resp.body());
+        if (fs.statSync(outPath).size >= MIN_BYTES) {
+          console.log(`[BrandExtract] Logo crop: downloaded real apple-touch-icon (${iconHref})`);
+          return { ok: true, method: 'apple-touch-icon' };
+        }
+      }
+    }
+
+    // 3) Last real-asset fallback: og:image (real brand image, sometimes a banner).
+    const ogHref = await page.evaluate(() => {
+      const m = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+      return m ? m.content : null;
+    }).catch(() => null);
+    if (ogHref) {
+      const resp = await page.request.get(ogHref, { timeout: 15000 }).catch(() => null);
+      if (resp && resp.ok()) {
+        fs.writeFileSync(outPath, await resp.body());
+        if (fs.statSync(outPath).size >= MIN_BYTES) {
+          console.log(`[BrandExtract] Logo crop: downloaded real og:image (${ogHref})`);
+          return { ok: true, method: 'og:image' };
+        }
+      }
+    }
+    console.warn('[BrandExtract] Logo crop: no real logo element or icon found — leaving logo empty (never generated).');
+    return { ok: false, method: 'not-found' };
+  } catch (err) {
+    console.warn(`[BrandExtract] Logo crop failed: ${err.message}`);
+    return { ok: false, method: 'error' };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
  * Crawls a URL with Playwright and extracts CSS design tokens.
  * Returns a raw token object or null on failure.
  */
@@ -865,6 +961,26 @@ async function main() {
     return null;
   }
 
+  // Ask for the website when the prompt didn't supply one (operator directive
+  // 2026-06-23): without a brand URL we can't fetch a real logo or accurate
+  // colors/fonts. In agent mode, pause so the agent can ask the user for it and
+  // add `Brand URL: https://…` to inputs/prompt.txt; non-agent runs warn + proceed
+  // with built-in defaults. Override the gate with BRAND_URL_REQUIRED=false.
+  if (!url && companyName && companyName !== 'Unknown') {
+    const agentMode = String(process.env.PIPE_AGENT_MODE || '').trim() === '1'
+      && String(process.env.SCRATCH_AUTO_APPROVE || '').toLowerCase() !== 'true';
+    const required = String(process.env.BRAND_URL_REQUIRED || 'true').toLowerCase() !== 'false';
+    console.warn(`[BrandExtract] No Brand URL for "${companyName}". A website is required for a real logo + accurate brand colors/fonts.`);
+    writeRunMeta({ ok: false, skipped: false, slug, reason: 'needs-brand-url', company: companyName, needsBrandUrl: true });
+    if (agentMode && required) {
+      console.warn('[BrandExtract] AGENT: ask the user for the company website, add `Brand URL: https://…` to inputs/prompt.txt, then re-run brand-extract.');
+      const e = new Error(`CRITICAL: BRAND_URL_REQUIRED — no website provided for "${companyName}". Ask the user for the company website, add "Brand URL: https://…" to inputs/prompt.txt, then re-run brand-extract. Override with BRAND_URL_REQUIRED=false.`);
+      e.isBrandUrlRequired = true;
+      throw e;
+    }
+    // Non-interactive / not required: fall through to guessDomain (Brandfetch only).
+  }
+
   fs.mkdirSync(BRAND_DIR, { recursive: true });
 
   const siteRefPath = path.join(BRAND_DIR, 'site-reference.png');
@@ -891,6 +1007,24 @@ async function main() {
     const playwrightTokens = await extractWithPlaywright(url);
     if (playwrightTokens) {
       rawData = { source: 'playwright', name: companyName, domain, ...playwrightTokens };
+    }
+  }
+
+  // ── 2b. Real logo crop (Brandfetch-independent) ────────────────────────────
+  // When Brandfetch gave no usable logo (failure / 429 quota), pull the brand's
+  // ACTUAL logo from its site — a real element crop or downloaded icon, never a
+  // generated image. Captured into brand/<slug>-logo.png and surfaced to the
+  // build via profile.logo._localSource (build-app copies it to brand-logo.png).
+  let localLogoPath = null;
+  const brandfetchHasLogo = !!(rawData && (rawData.logoImageUrl || rawData.iconImageUrl));
+  if (url && !brandfetchHasLogo) {
+    const logoOut = path.join(BRAND_DIR, `${slug}-logo.png`);
+    const logoRes = await extractLogoCropFromSite(url, logoOut);
+    if (logoRes.ok && fs.existsSync(logoOut) && fs.statSync(logoOut).size > 0) {
+      localLogoPath = logoOut;
+      // Ensure a rawData object exists even if both Brandfetch + Playwright tokens failed.
+      if (!rawData) rawData = { source: 'playwright-logo', name: companyName, domain };
+      rawData.logoLocalFile = logoOut;
     }
   }
 
@@ -921,6 +1055,12 @@ async function main() {
   profile._extractDomain = domain;
   mergeFetchedLogoUrls(profile, rawData);
   if (!profile.logo || typeof profile.logo !== 'object') profile.logo = {};
+  // Real logo crop from the brand's own site → build-app copies it to
+  // brand-logo.png and injects it into the host nav. Real pixels only.
+  if (localLogoPath) {
+    profile.logo._localSource = localLogoPath;
+    console.log(`[BrandExtract] Using real logo crop: ${path.relative(PROJECT_ROOT, localLogoPath)}`);
+  }
   enforceLogoContrast(profile, rawData);
 
   // Compute host-banner recommendation so downstream build prompts can pick
