@@ -1258,6 +1258,48 @@ function plaidModalPresent(page) {
 }
 
 /**
+ * Launch-step lock: during a live Plaid launch, prevent the host app from
+ * advancing to a DIFFERENT step while the modal is being recorded. The app's
+ * onSuccess (or a stray timer) can call goToStep(postLink) mid-flow, painting a
+ * post-link insight/result screen over the modal — the recorder then captures
+ * host UI instead of the modal and the integrity gate halts (Citi Auth+Identity,
+ * 2026-06-23: identity-match screen advanced over the live Plaid Link modal).
+ * This wraps goToStep so calls to the launch step pass through but calls to any
+ * other step are CAPTURED (deferred), then flushed on release so the app advances
+ * to the correct post-link step AFTER the modal recording completes. Generalizes
+ * the CRA modal-hold's goToStep defer to classic Link + Layer/IDV. Idempotent.
+ */
+async function installPlaidLaunchLock(page, launchStepId) {
+  if (!launchStepId) return;
+  await page.evaluate((id) => {
+    if (window.__plaidLaunchLock) return;
+    const orig = window.goToStep;
+    if (typeof orig !== 'function') return;
+    window.__plaidLaunchOrigGoToStep = orig;
+    window.__plaidLaunchLock = { launchStepId: id, pending: null };
+    window.goToStep = function (target) {
+      if (target === id) return orig.apply(window, arguments); // re-assert launch step is fine
+      window.__plaidLaunchLock.pending = target;               // defer advancing away
+      return undefined;
+    };
+  }, launchStepId).catch(() => {});
+}
+
+/** Release the launch-step lock and flush the deferred post-link advance (if any). */
+async function releasePlaidLaunchLock(page) {
+  await page.evaluate(() => {
+    const lock = window.__plaidLaunchLock;
+    const orig = window.__plaidLaunchOrigGoToStep;
+    if (orig) window.goToStep = orig;
+    delete window.__plaidLaunchLock;
+    delete window.__plaidLaunchOrigGoToStep;
+    if (lock && lock.pending && typeof orig === 'function') {
+      try { orig.call(window, lock.pending); } catch (_) {}
+    }
+  }).catch(() => {});
+}
+
+/**
  * Click the primary CTA inside the live Plaid modal DETERMINISTICALLY via in-iframe
  * DOM .click() (scroll-free) — no vision. Returns the clicked label, or null if no
  * known CTA is visible. Makes Share/Confirm/Continue an explicit part of the
@@ -1400,16 +1442,23 @@ async function executeCraModalHold(page) {
   await page.evaluate(() => {
     if (window.__craHoldInstalled) return;
     window.__craHoldInstalled = true;
+    // The generic launch-step lock (installPlaidLaunchLock) already defers
+    // goToStep during the launch; only wrap goToStep here when it ISN'T present,
+    // so we don't double-wrap. The handler.destroy() defer below always applies
+    // (it's CRA-specific and the generic lock doesn't do it).
+    const genericLock = !!window.__plaidLaunchLock;
     const origGoTo = window.goToStep;
     let pendingStep = null;
-    window.goToStep = function (id) {
-      if (pendingStep === null && typeof id === 'string') {
-        // First post-link advance during the hold — queue it, don't run yet.
-        pendingStep = id;
-        return;
-      }
-      return origGoTo.apply(window, arguments);
-    };
+    if (!genericLock) {
+      window.goToStep = function (id) {
+        if (pendingStep === null && typeof id === 'string') {
+          // First post-link advance during the hold — queue it, don't run yet.
+          pendingStep = id;
+          return;
+        }
+        return origGoTo.apply(window, arguments);
+      };
+    }
     const patchDestroy = () => {
       const h = window._plaidHandler;
       if (h && typeof h.destroy === 'function' && !h.__holdPatched) {
@@ -1423,10 +1472,12 @@ async function executeCraModalHold(page) {
     const iv = setInterval(patchDestroy, 150);
     window.__craReleaseHold = function () {
       clearInterval(iv);
-      window.goToStep = origGoTo;
+      if (!genericLock) {
+        window.goToStep = origGoTo;
+        if (pendingStep !== null) { try { origGoTo.call(window, pendingStep); } catch (_) {} }
+      }
       const h = window._plaidHandler;
       if (h && h.__origDestroy) { try { h.destroy = h.__origDestroy; if (h.__destroyRequested) h.destroy(); } catch (_) {} }
-      if (pendingStep !== null) { try { origGoTo.call(window, pendingStep); } catch (_) {} }
     };
   });
 
@@ -3299,6 +3350,14 @@ async function main(opts = {}) {
         await page.evaluate(`window.goToStep('${goToStepId}')`).catch(() => {});
         await page.waitForTimeout(500);
 
+        // Lock the launch step so the app can't advance away (covering the modal
+        // with a post-link screen) mid-recording. Released after the modal closes;
+        // the deferred post-link advance is flushed then. CRA modal-hold yields to
+        // this lock (it keeps its own handler.destroy() defer).
+        if (plaidPhase === 'launch') {
+          await installPlaidLaunchLock(page, goToStepId);
+        }
+
         // Multi-launch / product-aware live modal. A demo may launch Plaid Link,
         // Plaid Layer, AND/OR live IDV — each is a real Plaid modal. Layer/IDV use
         // a different open contract and completion flag than classic Link, so they
@@ -3328,6 +3387,10 @@ async function main(opts = {}) {
             return false;
           }, launchProduct).catch(() => false);
           if (closed) console.log(`  [Plaid ${launchProduct}] Ensured modal closed after launch phase.`);
+          // Release the launch-step lock and flush the deferred post-link advance
+          // so the app proceeds to the correct first post-link step now that the
+          // modal recording is complete.
+          await releasePlaidLaunchLock(page);
         }
 
         // Add a short tail wait so the Plaid modal fade-out doesn't bleed into
