@@ -255,7 +255,12 @@ async function main() {
   // Build report
   const report = {
     generatedAt:           new Date().toISOString(),
-    model:                 'multimodalembedding@001',
+    // Reflect the actual embedding model: Gemini API (gemini-embedding-2) when
+    // GOOGLE_API_KEY is set, else the legacy Vertex multimodalembedding@001.
+    model:                 (process.env.GOOGLE_API_KEY && String(process.env.GOOGLE_API_KEY).trim()
+                              && String(process.env.EMBED_BACKEND || '').toLowerCase() !== 'vertex')
+                              ? (process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-2')
+                              : 'multimodalembedding@001',
     threshold:             THRESHOLD,
     overallAlignment,
     stepsNeedingCorrection,

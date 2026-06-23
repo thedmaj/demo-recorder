@@ -3,19 +3,26 @@
  * vertex-embed.js
  * Shared Vertex AI embedding client for the Plaid demo pipeline.
  *
- * Provides:
- *   embedVideo(buffer)         → Float32Array[1408]  multimodalembedding@001
- *   embedImage(buffer)         → Float32Array[1408]  multimodalembedding@001
- *   embedAudioAsVideo(buffer)  → Float32Array[1408]  multimodalembedding@001 (audio-in-black-video)
- *   embedTextMultimodal(text)  → Float32Array[1408]  multimodalembedding@001
- *   embedTextDense(text)       → Float32Array[768]   text-embedding-004
+ * Default path (2026-06-23): when GOOGLE_API_KEY is set, ALL routes use the
+ * Gemini API model gemini-embedding-2 (natively multimodal, 3072-dim) via the
+ * API key — NO service account / VERTEX_AI_PROJECT_ID required. The legacy
+ * Vertex models (multimodalembedding@001 1408-dim, text-embedding-004 768-dim,
+ * OAuth/service-account) are the fallback when GOOGLE_API_KEY is unset OR
+ * EMBED_BACKEND=vertex. Within one run all comparisons use one model, so the
+ * dimension difference between paths is internally consistent.
+ *
+ * Provides (dim = Gemini API / legacy Vertex):
+ *   embedVideo(buffer[,mime])  → Float32Array  3072 / 1408
+ *   embedImage(buffer[,mime])  → Float32Array  3072 / 1408
+ *   embedAudioAsVideo(buffer)  → Float32Array  3072 / 1408 (audio-in-black-video)
+ *   embedTextMultimodal(text)  → Float32Array  3072 / 1408
+ *   embedTextDense(text)       → Float32Array  3072 / 768
  *   cosineSimilarity(a, b)     → number
  *   getAccessToken()           → string
  *
- * Rate-limited to 120 req/min (Vertex AI multimodalembedding@001 limit).
- * All functions throw when VERTEX_AI_PROJECT_ID is not set.
+ * Rate-limited to 120 req/min.
  *
- * OAuth2 service account (Vertex when GOOGLE_API_KEY is unset), priority:
+ * Legacy-Vertex OAuth2 service account (only when GOOGLE_API_KEY is unset), priority:
  *   1. GCP_SERVICE_ACCOUNT_JSON_B64 — base64 of the standard GCP JSON key file (single .env line)
  *   2. GCP_SERVICE_ACCOUNT_JSON — same JSON as a single-line string (escaped newlines in private_key)
  *   3. GOOGLE_APPLICATION_CREDENTIALS — filesystem path to that JSON (Google ADC default)
@@ -26,8 +33,23 @@ const { GoogleAuth } = require('google-auth-library');
 
 const PROJECT_ID  = process.env.VERTEX_AI_PROJECT_ID;
 const REGION      = process.env.VERTEX_AI_REGION || 'us-central1';
-const MM_MODEL    = 'multimodalembedding@001';
-const TEXT_MODEL  = 'text-embedding-004';
+const MM_MODEL    = 'multimodalembedding@001';   // legacy Vertex (OAuth/service-account only)
+const TEXT_MODEL  = 'text-embedding-004';        // legacy Vertex text
+
+// Gemini Embedding 2 — natively multimodal (text/image/video/audio → ONE 3072-dim
+// space), reachable via the Gemini API with a plain GOOGLE_API_KEY (no service
+// account). This is the default for ALL embedding routes when GOOGLE_API_KEY is
+// set, which retires the service-account JSON dependency. Connectivity verified
+// 2026-06-23: text + image + interleaved all return 3072-dim via API key.
+// Override the model with GEMINI_EMBED_MODEL; force the legacy Vertex path with
+// EMBED_BACKEND=vertex.
+const GEMINI_EMBED_MODEL = process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-2';
+
+/** Use the Gemini API (API-key) path? True when GOOGLE_API_KEY is set and not forced to Vertex. */
+function useGeminiApi() {
+  const k = process.env.GOOGLE_API_KEY;
+  return !!(k && String(k).trim()) && String(process.env.EMBED_BACKEND || '').toLowerCase() !== 'vertex';
+}
 
 const CLOUD_PLATFORM_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 
@@ -118,14 +140,42 @@ async function _callMM(instances) {
   return resp.json();
 }
 
+// ── Internal: Gemini API embedContent (API-key, natively multimodal) ──────────
+// parts: array of { text } and/or { inline_data: { mime_type, data(base64) } }.
+// Returns a single Float32Array (interleaved parts → one aggregated embedding).
+// No taskType: keeps text/image/video/audio in ONE comparable space for the
+// cross-modal alignment embed-sync needs.
+async function _geminiEmbedContent(parts) {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error('GOOGLE_API_KEY not set — Gemini API embedding unavailable');
+  const url  = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:embedContent?key=${apiKey}`;
+  const resp = await rateLimitedFetch(url, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ model: `models/${GEMINI_EMBED_MODEL}`, content: { parts } }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Gemini API ${GEMINI_EMBED_MODEL} embedContent failed (${resp.status}): ${txt.substring(0, 300)}`);
+  }
+  const data = await resp.json();
+  const vals = data?.embedding?.values;
+  if (!vals) throw new Error(`No embedding.values in Gemini API ${GEMINI_EMBED_MODEL} response`);
+  return new Float32Array(vals);
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
  * Embed a video clip.
  * @param {Buffer} videoBuffer  Raw .webm/.mp4 bytes
- * @returns {Promise<Float32Array>} 1408-dim embedding
+ * @param {string} [mime='video/webm']  inline-data mime for the Gemini API path
+ * @returns {Promise<Float32Array>} embedding (Gemini API: 3072-dim; legacy Vertex: 1408-dim)
  */
-async function embedVideo(videoBuffer) {
+async function embedVideo(videoBuffer, mime = 'video/webm') {
+  if (useGeminiApi()) {
+    return _geminiEmbedContent([{ inline_data: { mime_type: mime, data: videoBuffer.toString('base64') } }]);
+  }
   const b64  = videoBuffer.toString('base64');
   const data = await _callMM([{ video: { bytesBase64Encoded: b64, videoSegmentConfig: { startOffsetSec: 0 } } }]);
   const vals = data?.predictions?.[0]?.videoEmbeddings?.[0]?.embedding;
@@ -136,9 +186,13 @@ async function embedVideo(videoBuffer) {
 /**
  * Embed a still image (PNG/JPEG).
  * @param {Buffer} imageBuffer
- * @returns {Promise<Float32Array>} 1408-dim embedding
+ * @param {string} [mime='image/png']  inline-data mime for the Gemini API path
+ * @returns {Promise<Float32Array>} embedding (Gemini API: 3072-dim; legacy Vertex: 1408-dim)
  */
-async function embedImage(imageBuffer) {
+async function embedImage(imageBuffer, mime = 'image/png') {
+  if (useGeminiApi()) {
+    return _geminiEmbedContent([{ inline_data: { mime_type: mime, data: imageBuffer.toString('base64') } }]);
+  }
   const b64  = imageBuffer.toString('base64');
   const data = await _callMM([{ image: { bytesBase64Encoded: b64 } }]);
   const vals = data?.predictions?.[0]?.imageEmbedding;
@@ -147,23 +201,28 @@ async function embedImage(imageBuffer) {
 }
 
 /**
- * Embed audio by wrapping it in a black-video container.
- * (multimodalembedding@001 has no standalone audio endpoint.)
- * NOTE: The caller is responsible for creating the wrapped .webm via ffmpeg before calling this.
- * @param {Buffer} audioVideoBuffer  .webm file with audio track on black video
- * @returns {Promise<Float32Array>} 1408-dim embedding
+ * Embed audio. On the Gemini API path (gemini-embedding-2) audio is native, but
+ * the caller passes audio pre-wrapped in a black-video .webm, which the model
+ * ingests directly (it reads the audio track) — so we route the same buffer as
+ * video. On the legacy Vertex path multimodalembedding@001 has no audio endpoint,
+ * hence the black-video wrap. Caller creates the wrapped .webm via ffmpeg first.
+ * @param {Buffer} audioVideoBuffer  .webm with audio track on black video
+ * @returns {Promise<Float32Array>} embedding (Gemini API: 3072-dim; legacy Vertex: 1408-dim)
  */
 async function embedAudioAsVideo(audioVideoBuffer) {
-  return embedVideo(audioVideoBuffer);
+  return embedVideo(audioVideoBuffer, 'video/webm');
 }
 
 /**
- * Embed text in the multimodal (1408-dim) embedding space.
- * Use when comparing against image/video embeddings.
+ * Embed text in the multimodal embedding space (comparable to image/video/audio
+ * embeddings from this module).
  * @param {string} text
- * @returns {Promise<Float32Array>} 1408-dim embedding
+ * @returns {Promise<Float32Array>} embedding (Gemini API: 3072-dim; legacy Vertex: 1408-dim)
  */
 async function embedTextMultimodal(text) {
+  if (useGeminiApi()) {
+    return _geminiEmbedContent([{ text }]);
+  }
   const data = await _callMM([{ text }]);
   const vals = data?.predictions?.[0]?.textEmbedding;
   if (!vals) throw new Error('No textEmbedding in Vertex AI response');
@@ -187,7 +246,7 @@ async function embedTextDense(text) {
   // Google AI Studio path — accepts API keys, no OAuth2 needed
   // Uses gemini-embedding-001 (3072-dim); falls back to text-embedding-004 if not available.
   if (apiKey) {
-    const AI_MODEL = process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-2-preview';
+    const AI_MODEL = GEMINI_EMBED_MODEL;
     const url  = `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:embedContent?key=${apiKey}`;
     const resp = await rateLimitedFetch(url, {
       method:  'POST',
@@ -262,7 +321,8 @@ async function verifyVertexConnectivity() {
       ok: true,
       mode: 'api_key',
       message:
-        'GOOGLE_API_KEY is set — embedding routes that support API keys will use x-goog-api-key.',
+        `GOOGLE_API_KEY is set — ALL embedding routes (text + multimodal) use the Gemini API ` +
+        `(${GEMINI_EMBED_MODEL}) via API key; no service account needed.`,
     };
   }
   if (!hasVertexServiceAccountEnv()) {
