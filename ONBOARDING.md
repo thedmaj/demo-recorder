@@ -51,7 +51,7 @@ git clone https://github.plaid.com/dmajetic/plaid-demo-recorder.git
 cd plaid-demo-recorder
 ```
 
-> You'll be added as a **collaborator** (ask the owner). You don't fork — you push branches to this repo and open PRs (see §10).
+> You'll be added as a **collaborator** (ask the owner). You don't fork — you push branches to this repo and open PRs (see §13).
 
 ## 5. One-command install + secrets
 
@@ -171,7 +171,59 @@ You speak the left column; the agent runs the right. (You can type the command y
 
 ---
 
-## 10. Submitting enhancements (PRs)
+## 10. Tutorial: build a demo end-to-end (through record + video)
+
+The default `npm run demo` stops at **build-qa** (fast app-only iteration, **no video**). To get a finished video you run the **full** pipeline. In agent mode you just say *"build the full video for …"*; here's what happens and the commands behind it.
+
+**A. Kick it off (agent mode)**
+```bash
+cd plaid-demo-recorder && claude
+```
+Then tell the agent your scenario (or run `npm run quickstart` first). To go all the way to a rendered video:
+
+| You say | Agent runs | Result |
+|---|---|---|
+| "Build the full video for <story>" | `npm run demo:full` (app-only, through render) | `demo-scratch.mp4` |
+| "Full video **with slides**" | `npm run demo:with-slides` (slides + render) | `demo-scratch.mp4` with deck |
+| "Just iterate the app first" | `npm run demo` (stops at build-qa) | no video yet |
+
+**B. What the pipeline does (watch live at `npm run dashboard` → :4040)**
+`research → script → build → build-qa` (auto touch-up loop to score ≥85) `→ post-slides/post-panels → record → qa → post-process → voiceover → render → demo-scratch.mp4`.
+- **record** opens a real Chromium window and drives **live Plaid Link** (~1–2 min — let it run; it's not stuck).
+- The agent posts heartbeat status the whole time; if a continue-gate fires it opens the task `.md`, makes the edit, and runs `pipe continue`.
+
+**C. When it finishes** — "open the demo" → the agent plays `demo-scratch.mp4`. To redo just the recording later: *"re-record"* → `npm run pipe -- resume --from=record`.
+
+> If you edited the storyboard (narration, added a slide) **after** the first build, re-record from `--from=set-recording-dwells` (not `--from=record`) — the agent handles this; it re-syncs the recording script + dwells to your new narration.
+
+---
+
+## 11. Manual touch-ups (app tier & slide tier)
+
+After `build-qa`, the pipeline auto-runs **up to 2 app-touchup + 2 slide-fix** iterations and stops once the score hits **≥85**. You can also drive them yourself — in agent mode just say *"fix the app"* or *"fix the slides."* They are **surgical** (they never regenerate the whole app/deck):
+
+- **App tier — `npm run pipe -- app-touchup <run-id>`**: repairs the host app (DOM contract, API panel visibility, Plaid Link CTA, link-token products). Applies deterministic patches → `post-panels` → re-scores **app steps only**. Anything it can't auto-fix is written to **`qa-app-touchup-task.md`** — open it in agent mode, make the listed edits to `demo-script.json` / the app HTML, then `npm run pipe -- continue <run-id>`.
+- **Slide tier — `npm run pipe -- slide-fix <run-id>`**: repairs **slides only** (app+slides builds). Patches → regenerates the flagged slides → re-scores slide steps. Residual items go to **`qa-slide-fix-task.md`**. It **refuses to run while the app tier is still failing** — fix the app first.
+- **Storyboard edits** (rewrite narration, insert/remove a slide, reorder) live in the dashboard **Storyboard** tab. After changing narration, the demo must be re-recorded (`--from=set-recording-dwells`) so timing matches — the agent does this for you.
+
+Rule of thumb: 2 app + 2 slide iterations, exit at ≥85; a passing build below 85 is still shippable — don't grind.
+
+---
+
+## 12. Basic video editing — speed, freeze, crop
+
+The recorded screen video is automatically **retimed to fit the narration** (the *sync-map*). The golden rule: **narration is ground truth; the video is warped to fit it** — so length-changing edits (speed/freeze) go through the sync-map, while overlay edits (crop/zoom) are applied at render.
+
+- **Speed** — compress a too-long screen (e.g. play a slow multi-field form at 1.5×) so it doesn't drag.
+- **Freeze** — hold a frame: linger on a score/decision reveal, or pad a too-fast screen. *(The pipeline already auto-freezes any Plaid Link screen shorter than 2s.)*
+- **Where:** speed/freeze are segments in **`sync-map.json`**, edited visually in the dashboard **Timeline Editor** (or the agent adds them — each segment is `{compStart, compEnd, videoStart, mode: speed|freeze|normal, speed?}`). **After any speed/freeze change, run Resync Audio** (`npm run pipe -- stage resync-audio`) so the voiceover re-aligns — the dashboard flags a sync-map that changed without a resync.
+- **Crop / zoom** — *not* a one-click control; it's a render effect (MoviePy `vfx_crop` / zoom-punch). Ask the agent: *"zoom in on the identity-match score from 0:42–0:48"* and it applies the crop on the next render. Crop/zoom don't change scene length, so they're safe to add without touching the sync-map.
+
+In agent mode you describe the edit in plain English (*"slow the form-fill scene, freeze on the approval, and zoom the score"*) — the agent translates speed/freeze into sync-map segments (+ resync) and crop/zoom into render effects, then re-renders.
+
+---
+
+## 13. Submitting enhancements (PRs)
 
 Two kinds of changes follow two review paths. Both: branch off `main`, push to this repo (you're a collaborator), open a PR — `main` requires a PR + code-owner approval.
 
@@ -182,7 +234,7 @@ Two kinds of changes follow two review paths. Both: branch off `main`, push to t
 
 ---
 
-## 11. Troubleshooting & help
+## 14. Troubleshooting & help
 
 - **Anything fails?** `npm run pipe -- validate-env` first — most issues are a missing/blank key.
 - **Build looks stuck:** it isn't if heartbeats are ticking; ask the agent "what's the status?" (vision QA can take ~20 min silently).
