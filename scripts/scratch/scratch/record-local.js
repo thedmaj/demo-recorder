@@ -1252,6 +1252,36 @@ async function enterModalOtpIfPresent(page, { label = 'Layer' } = {}) {
  * the priority is capturing the live modal loading.
  * @param {'layer'|'idv'} product
  */
+/** Is the live Plaid modal iframe still on screen? */
+function plaidModalPresent(page) {
+  return !!page.frames().find(f => /plaid\.com/.test(f.url()));
+}
+
+/**
+ * Click the primary CTA inside the live Plaid modal DETERMINISTICALLY via in-iframe
+ * DOM .click() (scroll-free) — no vision. Returns the clicked label, or null if no
+ * known CTA is visible. Makes Share/Confirm/Continue an explicit part of the
+ * Layer/IDV nav path: the old vision-only loop was non-deterministic and stalled
+ * ~30 min when the Anthropic vision API degraded (Credit Genie Layer+CRA hung on
+ * the "Confirm the details to share with Acme Co." screen, 2026-06-23). Labels are
+ * matched most-specific-first so "Continue with Plaid" wins over "Continue".
+ */
+async function clickModalCtaDeterministic(page, labels) {
+  const plaidFr = page.frames().find(f => /plaid\.com/.test(f.url()));
+  if (!plaidFr) return null;
+  try {
+    return await plaidFr.evaluate((wanted) => {
+      const vis = (el) => el && el.offsetParent !== null && !el.disabled;
+      const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+      for (const label of wanted) {
+        const b = btns.find((x) => vis(x) && (x.textContent || '').trim().toLowerCase().includes(label.toLowerCase()));
+        if (b) { b.click(); return label; }
+      }
+      return null;
+    }, labels);
+  } catch (_) { return null; }
+}
+
 async function executeLayerOrIdvLaunch(page, product) {
   const isIdv = product === 'idv';
   const ctaSelectors = isIdv
@@ -1285,10 +1315,15 @@ async function executeLayerOrIdvLaunch(page, product) {
     console.warn(`  [Plaid ${product}] modal did not load within timeout: ${e.message}`);
   }
 
-  // 3. Optional vision navigation of the modal screens (best effort).
-  if (modalLoaded && USE_BROWSER_AGENT) {
-    // Human style: per-iteration wait becomes a read dwell from the product's
-    // nav profile (layer/idv) instead of the uniform 1.8s.
+  // 3. Modal navigation — DETERMINISTIC in-iframe CTA clicks first (scroll-free),
+  //    vision only as a bounded last resort. The Layer/IDV modal screens
+  //    (welcome → OTP → identity review → Share → CRA "Share consumer report"
+  //    Confirm) are driven by clicking their known buttons, so Share/Confirm are
+  //    always in the nav path and we never depend on (slow, degradation-prone)
+  //    vision for the happy path. Breaks as soon as the modal closes.
+  if (modalLoaded) {
+    // Most-specific-first so "Continue with Plaid" wins over "Continue".
+    const MODAL_CTAS = ['Continue with Plaid', 'Share', 'Confirm', 'Allow', 'Agree', 'Get started', 'Continue', 'Done', 'Submit'];
     const productPacer = getPacer().isHuman
       ? createPacer({
           style: 'human',
@@ -1297,30 +1332,41 @@ async function executeLayerOrIdvLaunch(page, product) {
           getScreenPacing: navProfile.getScreenPacing,
         })
       : null;
+    const dwell = (fallbackMs) => productPacer ? productPacer.screenDwellMs({ fallbackMs }) : fallbackMs;
     let otpHandled = false;
-    for (let i = 0; i < 6; i++) {
+    let visionFallbacks = 0;
+    for (let i = 0; i < 8; i++) {
       const done = await page.evaluate((f) => window[f] === true, doneFlag).catch(() => false);
       if (done) break;
-      // OTP screen inside the modal → type it human-style (≤1.5s pre-delay,
-      // scroll-free) instead of letting the vision loop dwell on it. OTP appears
-      // early (first few panes); probe only until handled to keep IDV fast.
-      if (!otpHandled && i < 4) {
-        if (await enterModalOtpIfPresent(page, { label: product }).catch(() => false)) {
-          otpHandled = true;
-          continue;
-        }
+      if (!plaidModalPresent(page)) break;               // modal closed → flow complete
+      // OTP screen → human-type it (≤1.5s pre-delay, scroll-free); once.
+      if (!otpHandled && await enterModalOtpIfPresent(page, { label: product }).catch(() => false)) {
+        otpHandled = true;
+        await page.waitForTimeout(dwell(1200));
+        continue;
       }
-      const waitAfterMs = productPacer ? productPacer.screenDwellMs({ fallbackMs: 1800 }) : 1800;
-      await agent.visionClick(
-        page,
-        'Inside the Plaid modal, click the primary action button to proceed — it may say ' +
-        '"Continue", "Allow", "Agree", "Share", "Submit", "Get started", "Take photo", or "Done". ' +
-        'Click only inside the Plaid modal/sheet, not the host page behind it.',
-        { retries: 2, waitAfterMs }
-      ).catch(() => {});
+      // Deterministic CTA click (Share / Confirm / Continue …).
+      const clickedLabel = await clickModalCtaDeterministic(page, MODAL_CTAS);
+      if (clickedLabel) {
+        console.log(`  [Plaid ${product}] clicked modal CTA "${clickedLabel}" (deterministic)`);
+        await page.waitForTimeout(dwell(1500));
+        continue;
+      }
+      // No known CTA visible — bounded vision fallback (≤2, retries:1) so a
+      // degraded vision API can't stall the recording.
+      if (USE_BROWSER_AGENT && visionFallbacks < 2) {
+        visionFallbacks += 1;
+        await agent.visionClick(
+          page,
+          'Inside the Plaid modal, click the primary action button to proceed ' +
+          '(Continue, Continue with Plaid, Share, Confirm, Allow, Agree, Done). ' +
+          'Click only inside the Plaid modal/sheet, not the host page behind it.',
+          { retries: 1, waitAfterMs: 800 }
+        ).catch(() => {});
+      } else {
+        await page.waitForTimeout(1000);
+      }
     }
-    // Fold the product pacer's dwell ledger into the main manifest so
-    // plaid-pacing-manifest.json covers Layer/IDV launches too.
     if (productPacer) getPacer().absorb(productPacer);
   }
 

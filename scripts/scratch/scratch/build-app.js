@@ -719,7 +719,7 @@ async function hydrateApiSamplesForRelevantSlides(demoScript, productFamily) {
 
 // ── Model config ──────────────────────────────────────────────────────────────
 
-const { OPUS_PRIMARY, OPUS_PRIMARY_BETAS } = require('../utils/anthropic-models');
+const { OPUS_PRIMARY, OPUS_FALLBACK, OPUS_PRIMARY_BETAS } = require('../utils/anthropic-models');
 // Route Opus calls through the beta Messages endpoint when betas are enabled
 // (e.g. the 1M-context window). Falls back to the standard endpoint otherwise.
 const OPUS_BETAS = Array.isArray(OPUS_PRIMARY_BETAS) && OPUS_PRIMARY_BETAS.length ? OPUS_PRIMARY_BETAS : null;
@@ -756,6 +756,13 @@ const BUILD_OVERLOADED_MAX_MS = Math.max(
   BUILD_OVERLOADED_BASE_MS,
   parseInt(process.env.BUILD_OVERLOADED_MAX_MS || '90000', 10) || 90000
 );
+// After the primary (Opus 4.8) exhausts its retries on a transient error /
+// stream stall, give the Opus FALLBACK (4.7) this many additional attempts
+// before failing the build.
+const BUILD_FALLBACK_MAX_RETRIES = Math.max(
+  0,
+  parseInt(process.env.BUILD_FALLBACK_MAX_RETRIES || '2', 10) || 2
+);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -788,26 +795,40 @@ function isTransientApiError(err) {
  * @param {() => Promise<*>} fn
  */
 async function withAnthropicOverloadedRetry(label, fn) {
+  // fn(modelOverride): when modelOverride is set, the call must use it instead of
+  // its default Opus model. Attempts 0..BUILD_OVERLOADED_MAX_RETRIES use the
+  // primary (Opus 4.8); once those are exhausted on a transient error / stream
+  // stall, the next BUILD_FALLBACK_MAX_RETRIES attempts use OPUS_FALLBACK (4.7)
+  // so an Opus-4.8 availability blip downgrades the build instead of failing it.
+  const TOTAL = BUILD_OVERLOADED_MAX_RETRIES + BUILD_FALLBACK_MAX_RETRIES;
   let attempt = 0;
   while (true) {
+    const useFallback = attempt > BUILD_OVERLOADED_MAX_RETRIES;
     try {
-      return await fn();
+      return await fn(useFallback ? OPUS_FALLBACK : null);
     } catch (err) {
       // Retry on Anthropic overloaded_error AND on a stalled stream (idle-timeout) —
       // the streaming model occasionally opens a stream then stops emitting tokens
       // (observed with claude-opus-4-8 during availability blips), which would
       // otherwise hang the build forever. Both are transient; back off and retry.
       const retryable = isTransientApiError(err) || err.isStreamIdleTimeout;
-      if (!retryable || attempt >= BUILD_OVERLOADED_MAX_RETRIES) {
+      if (!retryable || attempt >= TOTAL) {
         throw err;
+      }
+      // Transition point: primary retries just exhausted → announce fallback.
+      if (attempt === BUILD_OVERLOADED_MAX_RETRIES && BUILD_FALLBACK_MAX_RETRIES > 0) {
+        console.warn(
+          `[Build] ${label}: ${BUILD_MODEL} exhausted ${BUILD_OVERLOADED_MAX_RETRIES} retr${BUILD_OVERLOADED_MAX_RETRIES === 1 ? 'y' : 'ies'} — falling back to ${OPUS_FALLBACK} for up to ${BUILD_FALLBACK_MAX_RETRIES} more attempt(s).`
+        );
       }
       const delayMs = Math.min(
         BUILD_OVERLOADED_BASE_MS * Math.pow(2, attempt),
         BUILD_OVERLOADED_MAX_MS
       );
       attempt += 1;
+      const modelNote = attempt > BUILD_OVERLOADED_MAX_RETRIES ? ` [${OPUS_FALLBACK}]` : '';
       console.warn(
-        `[Build] ${label}: transient API error (${String(err?.message || err?.error?.type || '').slice(0, 60)}) — retry ${attempt}/${BUILD_OVERLOADED_MAX_RETRIES} in ${Math.round(delayMs / 1000)}s`
+        `[Build] ${label}: transient API error (${String(err?.message || err?.error?.type || '').slice(0, 60)}) — retry ${attempt}/${TOTAL}${modelNote} in ${Math.round(delayMs / 1000)}s`
       );
       await sleep(delayMs);
     }
@@ -2202,9 +2223,9 @@ async function getArchitectureBrief(client, demoScript, briefOpts = {}) {
     pipelineAppOnlyHostUi: !!briefOpts.pipelineAppOnlyHostUi,
   });
 
-  const response = await withAnthropicOverloadedRetry('Call 1 architecture brief', () =>
+  const response = await withAnthropicOverloadedRetry('Call 1 architecture brief', (modelOverride) =>
     opusMessagesCreate(client, {
-      model:      ARCH_MODEL,
+      model:      modelOverride || ARCH_MODEL,
       max_tokens: ARCH_MAX_TOKENS,
       system,
       messages:   userMessages,
@@ -2226,9 +2247,9 @@ async function getFrameworkPlan(client, demoScript, architectureBrief, framework
     buildViewMode: frameworkOpts.buildViewMode || 'desktop',
     pipelineAppOnlyHostUi: !!frameworkOpts.pipelineAppOnlyHostUi,
   });
-  const response = await withAnthropicOverloadedRetry('Call 1b framework plan', () =>
+  const response = await withAnthropicOverloadedRetry('Call 1b framework plan', (modelOverride) =>
     opusMessagesCreate(client, {
-      model: FRAMEWORK_MODEL,
+      model: modelOverride || FRAMEWORK_MODEL,
       max_tokens: FRAMEWORK_MAX_TOKENS,
       system,
       messages: userMessages,
@@ -2384,9 +2405,10 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
     }
   );
 
-  return withAnthropicOverloadedRetry('Call 2 full HTML', async () => {
+  return withAnthropicOverloadedRetry('Call 2 full HTML', async (modelOverride) => {
+    const activeModel = modelOverride || BUILD_MODEL;
     const stream = await opusMessagesStream(client, {
-      model:      BUILD_MODEL,
+      model:      activeModel,
       max_tokens: BUILD_MAX_TOKENS,
       thinking: {
         type: 'adaptive',
@@ -2414,7 +2436,7 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
           clearInterval(idleTimer);
           try { stream.abort && stream.abort(); } catch (_) {}
           try { stream.controller && stream.controller.abort && stream.controller.abort(); } catch (_) {}
-          const e = new Error(`BUILD_STREAM_IDLE: no stream activity for ${Math.round(IDLE_MS / 1000)}s (${BUILD_MODEL} stalled)`);
+          const e = new Error(`BUILD_STREAM_IDLE: no stream activity for ${Math.round(IDLE_MS / 1000)}s (${activeModel} stalled)`);
           e.isStreamIdleTimeout = true;
           reject(e);
         }

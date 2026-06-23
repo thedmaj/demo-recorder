@@ -49,6 +49,12 @@ const OPUS_PRIMARY_BETAS = process.env.PIPELINE_OPUS_1M === 'false'
   ? []
   : ['context-1m-2025-08-07'];
 
+// Opus fallback — used when the primary (Opus 4.8) is unavailable / stalls via
+// the Anthropic API after the primary retries are exhausted (e.g.
+// BUILD_STREAM_IDLE during availability blips). build-app generation switches to
+// this model rather than failing the build. Override with PIPELINE_OPUS_FALLBACK.
+const OPUS_FALLBACK = process.env.PIPELINE_OPUS_FALLBACK || 'claude-opus-4-7';
+
 // Sonnet — narration repace, story-echo, multi-modal recording analysis.
 // Short-horizon per-clip work; 200K context is plenty.
 const SONNET_PRIMARY = process.env.PIPELINE_SONNET_MODEL || 'claude-sonnet-4-6';
@@ -60,6 +66,7 @@ const HAIKU_PRIMARY = process.env.PIPELINE_HAIKU_MODEL || 'claude-haiku-4-5-2025
 
 module.exports = {
   OPUS_PRIMARY,
+  OPUS_FALLBACK,
   OPUS_PRIMARY_BETAS,
   SONNET_PRIMARY,
   HAIKU_PRIMARY,
