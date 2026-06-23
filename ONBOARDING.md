@@ -6,6 +6,35 @@ Build hyper-realistic Plaid demo **apps** (real host UI + a live Plaid Link inte
 
 ---
 
+## 0. Quick start — paste this as your first message to Claude Code
+
+Once you've installed Claude Code, authenticated to GitHub Enterprise, and cloned the repo (§2–4 below), open Claude Code **inside the repo folder** (`cd plaid-demo-recorder && claude`) and paste the block below as your **first message**. The agent then drives the rest of this guide — install, secrets handoff, validation, and your first demo — pausing only where it needs you. (Also saved in the repo as [`ONBOARDING-bootstrap.txt`](ONBOARDING-bootstrap.txt).)
+
+```text
+You are my onboarding guide for the Plaid Demo Recorder. Use ONBOARDING.md in this
+repo as the source of truth and walk me through setup, then my first demo. Go step
+by step, confirm before any install, and STOP at any step that needs me (interactive
+auth or secrets).
+
+1. Confirm we're inside the cloned repo (ls shows package.json + ONBOARDING.md).
+2. Run `bash scripts/setup/install.sh` and summarize what it did (it writes a TEMPLATE .env).
+3. SECRETS — stop and tell me: "Request the completed `.env` and the Vertex
+   `gcp-service-account.json` from David Majetic (dmajetic@plaid.com)." Wait until I
+   confirm I have them, then:
+   - Ensure David's `.env` is at the REPO ROOT as `./.env`, replacing the template.
+     Verify without printing the key:
+       test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or key empty"
+   - Ensure the GCP JSON is at ~/.config/plaid-demo-recorder/gcp-service-account.json
+4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do not
+   continue until validate-env prints "✓ Required checks passed".
+5. Then ask me for a demo scenario and build my first demo per ONBOARDING §10
+   (default app-only `npm run demo`; full video only if I ask).
+Note: `gh auth login --hostname github.plaid.com` is interactive — I run it, not you.
+Never commit `.env`.
+```
+
+---
+
 ## 1. How you'll work (read this first)
 
 You operate in **agent mode**: you run **Claude Code** inside the repo folder and chat with it. The agent runs the CLI (`npm run pipe …`), posts status while builds run, and fixes failures. You rarely type CLI commands yourself — you say *"build a demo for …"*, *"what's the status?"*, *"fix the slides."* §9 lists the phrases.
@@ -60,18 +89,25 @@ bash scripts/setup/install.sh
 ```
 This idempotent installer (safe to re-run anytime to update) does it all: verifies prerequisites, `npm install`, creates `.env` from the template, prefetches MCP packages, sets up the Vertex creds folder, confirms `gh` auth, caches your identity, clones the shared demo catalog (`~/.plaid-demo-apps`), and installs the Playwright browser.
 
-**Secrets come from the repo owner — not self-provisioned.** Message the owner for:
-1. A completed **`.env`** (Anthropic, Plaid sandbox, ElevenLabs, Glean/AskBill, etc.) — save it at the repo root, replacing the template. **Never commit `.env`.**
-2. The **Vertex `gcp-service-account.json`** → save to `~/.config/plaid-demo-recorder/gcp-service-account.json`.
+**Secrets come from David Majetic — not self-provisioned.** Message **David Majetic (dmajetic@plaid.com)** and request:
+1. The completed **`.env`** (Anthropic, Plaid sandbox, ElevenLabs, Glean/AskBill, etc.).
+2. The **Vertex `gcp-service-account.json`**.
 
-Full secrets handoff steps: **README §2**. Then verify:
+**Place them correctly (relative paths matter):**
+- **`.env` → the repo root**, i.e. `plaid-demo-recorder/.env` (replace the template `install.sh` wrote). The pipeline only reads `.env` from the repo root — a `.env` left in `~/Downloads` or a subfolder will not be found. **Never commit `.env`** (it's gitignored).
+  ```bash
+  mv ~/Downloads/plaid-demo-recorder.env ./.env      # run from the repo root
+  test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env \
+    && echo ".env OK at repo root" || echo ".env missing or ANTHROPIC_API_KEY empty"
+  ```
+- **GCP JSON → `~/.config/plaid-demo-recorder/gcp-service-account.json`** (the path `.env`'s `GOOGLE_APPLICATION_CREDENTIALS` points to).
 
+**Validate before going further — do not proceed until this passes:**
 ```bash
-npm run pipe -- whoami          # your GHE identity
 npm run pipe -- validate-env    # expect: [env-check] ✓ Required checks passed
+npm run pipe -- whoami          # your GHE identity
 ```
-
-Only `ANTHROPIC_API_KEY` is strictly required for a basic build; everything else degrades gracefully.
+If `validate-env` flags a key, it's missing/blank in the `.env` — re-check you placed **David's** file at the repo root (not the template), or ask David for the specific value. Only `ANTHROPIC_API_KEY` is strictly required for a basic build; everything else degrades gracefully. Full handoff reference: **README §2**.
 
 ## 6. MCP servers
 

@@ -1,0 +1,37 @@
+You are my onboarding guide for the Plaid Demo Recorder. Use ONBOARDING.md in this
+repo as the source of truth and walk me through setup, then my first demo. Go step
+by step, confirm before any install, and STOP at any step that needs me (interactive
+auth or secrets) — do not try to work around those.
+
+Do this in order:
+
+1. Confirm we're inside the cloned repo: `ls` should show package.json + ONBOARDING.md.
+   If not, stop and tell me to clone it first (ONBOARDING §4) and reopen Claude Code here.
+
+2. Run `bash scripts/setup/install.sh` and summarize what it did. (It installs Node
+   deps, Playwright Chromium, and the vidmagik render engine, and writes a TEMPLATE
+   `.env`. It is idempotent — safe to re-run.)
+
+3. SECRETS — stop and tell me, verbatim:
+   "Request the completed `.env` file and the Vertex `gcp-service-account.json` from
+    David Majetic (dmajetic@plaid.com). These are never self-provisioned or committed."
+   Wait until I confirm I have them, then:
+   - Ensure the `.env` from David is at the REPO ROOT as `./.env` (relative to this
+     repo), REPLACING the template install.sh wrote. Verify placement and that it
+     carries a non-empty `ANTHROPIC_API_KEY` WITHOUT printing the key, e.g.:
+       `test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or ANTHROPIC_API_KEY empty"`
+     If it reports missing/empty, stop and tell me to (re)place David's `.env` at the
+     repo root. Never commit `.env` (it is gitignored).
+   - Ensure the GCP JSON is at `~/.config/plaid-demo-recorder/gcp-service-account.json`.
+
+4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do NOT
+   continue until validate-env prints "✓ Required checks passed". If it flags a key,
+   tell me which one and that I need David Majetic's value for it.
+
+5. Once validated, ask me for a demo scenario (brand, product, persona, story), then
+   build my first demo per ONBOARDING §10. Default to app-only (`npm run demo`) unless
+   I ask for the full video (`npm run demo:full`). Monitor the build and report status.
+
+Notes: `gh auth login --hostname github.plaid.com` (ONBOARDING §4) is interactive — I
+run that, not you. Optional Glean/AskBill creds live in David's `.env`; without them
+research still works, just with less customer color.
