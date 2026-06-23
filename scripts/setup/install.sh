@@ -27,6 +27,11 @@
 #   6. Clones (or refreshes) the artifact repo `plaid-demo-apps` at
 #      `~/.plaid-demo-apps` so shared demos are immediately available.
 #   7. Installs a Playwright browser for the recorder (`npx playwright install chromium`).
+#   7b. Sets up the render engine: ensures `uv` and clones the canonical
+#      vidmagik-mcp MoviePy server (github.com/vizionik25/vidmagik-mcp, branch
+#      pipeline-patches) to ~/.mcp-servers/mcp-moviepy. Optional + graceful —
+#      app-only builds skip it; a failure only falls render back to Remotion.
+#      Skip with --skip-render-engine or SKIP_RENDER_ENGINE=true.
 #   8. Prints the quick-start commands for building a first demo.
 #
 # This script is INTENTIONALLY idempotent — re-running it on an already-set-up
@@ -41,9 +46,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 NON_INTERACTIVE=false
+SKIP_RENDER_ENGINE="${SKIP_RENDER_ENGINE:-false}"
 for arg in "$@"; do
   case "$arg" in
     --non-interactive|--ci) NON_INTERACTIVE=true ;;
+    --skip-render-engine) SKIP_RENDER_ENGINE=true ;;
     -h|--help)
       sed -n '2,/^#\ ──/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -154,6 +161,73 @@ ensure_ffmpeg_bin() {
   fi
   err "ffmpeg still not on PATH after install."
   return 1
+}
+
+# Ensure `uv` (the Python runner the render-engine MCP server uses). Graceful —
+# a missing uv is NOT fatal; render falls back to Remotion.
+ensure_uv() {
+  if have_cmd uv; then ok "uv $(uv --version 2>/dev/null | awk '{print $2}')"; return 0; fi
+  warn "uv not found — needed by the vidmagik-mcp render engine (full-pipeline video only)."
+  if have_cmd brew; then
+    if [ "${NON_INTERACTIVE}" = true ] || confirm "Install uv with Homebrew (\`brew install uv\`)?" y; then
+      info "Running \`brew install uv\` …"
+      brew install uv || { warn "\`brew install uv\` failed — install manually: https://docs.astral.sh/uv/"; return 1; }
+    else
+      warn "Skipped uv — install later: brew install uv (or https://docs.astral.sh/uv/)"; return 1
+    fi
+  else
+    warn "Install uv: https://docs.astral.sh/uv/ (then re-run this script)"; return 1
+  fi
+  have_cmd uv && { ok "uv installed"; return 0; }
+  return 1
+}
+
+# Render engine — clone/refresh the CANONICAL vidmagik-mcp MoviePy server on its
+# pipeline-patches branch. Always returns 0 (a failure here only means render
+# falls back to Remotion, lower fidelity — never block the install).
+RENDER_MCP_DIR="${HOME}/.mcp-servers/mcp-moviepy"
+RENDER_MCP_REPO="https://github.com/vizionik25/vidmagik-mcp.git"   # NOT vizionik25/moviepy-mcp (different project)
+RENDER_MCP_BRANCH="pipeline-patches"
+setup_render_engine() {
+  if [ "${SKIP_RENDER_ENGINE}" = true ]; then
+    info "Skipping render engine (SKIP_RENDER_ENGINE / --skip-render-engine). App-only builds don't need it."
+    return 0
+  fi
+  ensure_uv || { warn "Render engine setup skipped (no uv). Full-pipeline render will fall back to Remotion."; return 0; }
+  mkdir -p "$(dirname "${RENDER_MCP_DIR}")" 2>/dev/null || true
+  if [ -d "${RENDER_MCP_DIR}/.git" ]; then
+    info "Refreshing vidmagik-mcp at ${RENDER_MCP_DIR}"
+    git -C "${RENDER_MCP_DIR}" fetch origin "${RENDER_MCP_BRANCH}" 2>/dev/null \
+      && git -C "${RENDER_MCP_DIR}" checkout "${RENDER_MCP_BRANCH}" 2>/dev/null \
+      && git -C "${RENDER_MCP_DIR}" pull --ff-only 2>/dev/null \
+      || warn "Could not fast-forward vidmagik-mcp — resolve manually in ${RENDER_MCP_DIR}."
+  elif [ -e "${RENDER_MCP_DIR}" ]; then
+    warn "${RENDER_MCP_DIR} exists but is not a git clone — leaving as-is."
+  else
+    info "Cloning ${RENDER_MCP_REPO} → ${RENDER_MCP_DIR} (branch ${RENDER_MCP_BRANCH})"
+    if git clone --branch "${RENDER_MCP_BRANCH}" "${RENDER_MCP_REPO}" "${RENDER_MCP_DIR}" 2>/dev/null; then
+      :
+    else
+      # Older git without --branch on a non-default branch, or clone failed: try plain clone + checkout.
+      git clone "${RENDER_MCP_REPO}" "${RENDER_MCP_DIR}" 2>/dev/null \
+        && git -C "${RENDER_MCP_DIR}" checkout "${RENDER_MCP_BRANCH}" 2>/dev/null \
+        || { warn "Could not clone vidmagik-mcp — render will fall back to Remotion. Clone manually: git clone ${RENDER_MCP_REPO} ${RENDER_MCP_DIR} && (cd ${RENDER_MCP_DIR} && git checkout ${RENDER_MCP_BRANCH})"; return 0; }
+    fi
+  fi
+  if [ -f "${RENDER_MCP_DIR}/main.py" ]; then
+    local br; br="$(git -C "${RENDER_MCP_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    ok "vidmagik-mcp ready at ${RENDER_MCP_DIR} (branch ${br})"
+  else
+    warn "vidmagik-mcp present but main.py missing — verify the clone."
+  fi
+  # .mcp.json's moviepy entry is a per-machine absolute path used for INTERACTIVE
+  # agent moviepy tools; the render pipeline itself resolves ~/.mcp-servers/mcp-moviepy
+  # portably via os.homedir(), so render works regardless. Only warn (don't rewrite
+  # a committed file) when the interactive path won't match this machine.
+  if [ -f "${REPO_ROOT}/.mcp.json" ] && ! grep -q "${RENDER_MCP_DIR}" "${REPO_ROOT}/.mcp.json" 2>/dev/null; then
+    warn ".mcp.json's moviepy path does not match ${RENDER_MCP_DIR} — interactive moviepy MCP tools (not render) may not resolve. Render is unaffected."
+  fi
+  return 0
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -495,6 +569,15 @@ if node -e "require.resolve('playwright')" >/dev/null 2>&1; then
 else
   warn "playwright package not found — this should have been installed by \`npm install\`."
 fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7b. Render engine — vidmagik-mcp (MoviePy MCP server) for full-pipeline video.
+#     Optional + graceful: app-only builds (`npm run demo`) don't render, and a
+#     failed setup only means render falls back to Remotion. --skip-render-engine
+#     (or SKIP_RENDER_ENGINE=true) to skip.
+# ─────────────────────────────────────────────────────────────────────────────
+heading "Render engine (vidmagik-mcp — for full-pipeline video)"
+setup_render_engine || true
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. First-run quick start

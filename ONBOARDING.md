@@ -1,0 +1,192 @@
+# Plaid Demo Recorder — Sales Engineer Onboarding
+
+Build hyper-realistic Plaid demo **apps** (real host UI + a live Plaid Link integration) from a single prompt — by **chatting with a Claude Code agent**. You describe the customer story; the agent writes the prompt, runs the pipeline, watches the build, and recovers it. Almost everything below is run *for* you by the agent — you mostly talk to it in plain English.
+
+> **Scope:** this guide gets you from a blank Mac → installed → first demo, in **agent mode**, plus how to contribute enhancements. It complements [`README.md`](README.md) (the line-by-line install reference) — when this guide says "see README §N," open that. Default builds are **app-only** (fast, no recording); full-pipeline render is advanced and being stabilized.
+
+---
+
+## 1. How you'll work (read this first)
+
+You operate in **agent mode**: you run **Claude Code** inside the repo folder and chat with it. The agent runs the CLI (`npm run pipe …`), posts status while builds run, and fixes failures. You rarely type CLI commands yourself — you say *"build a demo for …"*, *"what's the status?"*, *"fix the slides."* §9 lists the phrases.
+
+---
+
+## 2. Prerequisites (macOS)
+
+```bash
+# Homebrew (if `brew --version` fails): https://brew.sh
+node -v                      # need 20+ ; if missing: `nvm install 20 && nvm use 20`
+brew install git gh ffmpeg   # git, GitHub CLI, ffmpeg
+```
+
+## 3. Install & update Claude Code
+
+```bash
+# Install (either works):
+curl -fsSL https://claude.ai/install.sh | bash      # native installer
+#   …or…
+npm install -g @anthropic-ai/claude-code
+
+claude --version             # verify
+claude update                # keep it current (run this whenever you start work)
+```
+You'll log in to Claude on first launch. Tip: `/fast` inside Claude Code enables Fast mode (Opus, faster output).
+
+## 4. Get access to the code (GitHub Enterprise — no prior GHE experience needed)
+
+The repo lives on Plaid's **GitHub Enterprise** at `github.plaid.com` (separate from public github.com). Authenticate once with the GitHub CLI:
+
+```bash
+gh auth login --hostname github.plaid.com
+#  → choose: GitHub Enterprise Server → hostname github.plaid.com → HTTPS → "Login with a web browser"
+#  → if the browser flow fails: choose "Paste an authentication token" and create a PAT with `repo` scope
+gh auth status --hostname github.plaid.com          # should show your login
+```
+
+Then clone the repo (HTTPS — `gh` supplies credentials automatically):
+
+```bash
+git clone https://github.plaid.com/dmajetic/plaid-demo-recorder.git
+cd plaid-demo-recorder
+```
+
+> You'll be added as a **collaborator** (ask the owner). You don't fork — you push branches to this repo and open PRs (see §10).
+
+## 5. One-command install + secrets
+
+```bash
+bash scripts/setup/install.sh
+```
+This idempotent installer (safe to re-run anytime to update) does it all: verifies prerequisites, `npm install`, creates `.env` from the template, prefetches MCP packages, sets up the Vertex creds folder, confirms `gh` auth, caches your identity, clones the shared demo catalog (`~/.plaid-demo-apps`), and installs the Playwright browser.
+
+**Secrets come from the repo owner — not self-provisioned.** Message the owner for:
+1. A completed **`.env`** (Anthropic, Plaid sandbox, ElevenLabs, Glean/AskBill, etc.) — save it at the repo root, replacing the template. **Never commit `.env`.**
+2. The **Vertex `gcp-service-account.json`** → save to `~/.config/plaid-demo-recorder/gcp-service-account.json`.
+
+Full secrets handoff steps: **README §2**. Then verify:
+
+```bash
+npm run pipe -- whoami          # your GHE identity
+npm run pipe -- validate-env    # expect: [env-check] ✓ Required checks passed
+```
+
+Only `ANTHROPIC_API_KEY` is strictly required for a basic build; everything else degrades gracefully.
+
+## 6. MCP servers
+
+**Research MCPs (optional — wired by the install + your `.env`; builds still complete without them, just with less customer color):**
+- **AskBill** — Plaid product/API documentation Q&A. Wired via `.mcp.json` / `ASKBILL_MCP_COMMAND` (the installer prefetches the bridge). Without it: `[AskBill unavailable]`.
+- **Glean (pipeline research)** — `@gleanwork/local-mcp-server`, internal knowledge (Gong calls, collateral, customer stories) used by the pipeline's `research` stage. Enabled by `GLEAN_INSTANCE` + `GLEAN_API_TOKEN` in `.env`. Without it: `[Glean unavailable]`.
+- **Official Glean Claude connector (recommended for ad-hoc work)** — also connect the **official Glean MCP connector in Claude Code** (`/mcp` → add Glean) for *interactive* research and prompt building/enhancing — e.g. "pull the <Account> opportunity context from Glean and draft the prompt." It's richer than the local server (search + read-document + people) and uses managed OAuth (no token in `.env`). The pipeline's headless `research` stage keeps using the local Glean above; you use the official connector when chatting with the agent.
+
+**Render engine — vidmagik-mcp (required for video render; app-only builds skip it):**
+The final video render uses the **MoviePy MCP server `vidmagik-mcp`**. Default app-only builds (`npm run demo`, stop at build-qa) **don't render**, so you don't need it to start. For full-pipeline video you must install it:
+
+```bash
+brew install uv                                   # Python runner vidmagik uses
+mkdir -p ~/.mcp-servers && git clone https://github.com/vizionik25/vidmagik-mcp.git ~/.mcp-servers/mcp-moviepy
+git -C ~/.mcp-servers/mcp-moviepy checkout pipeline-patches   # the branch the pipeline depends on
+```
+- **Repo:** `https://github.com/vizionik25/vidmagik-mcp` · **branch `pipeline-patches`** (raised clip cap + the custom effects `render-moviepy.js` calls — stock `main` is not sufficient). This is the canonical server; the similarly-named `vizionik25/moviepy-mcp` is a *different* project — do not use it.
+- **Location:** `~/.mcp-servers/mcp-moviepy` (the path `render-moviepy.js` and `.mcp.json` expect).
+- Without it, render **falls back to Remotion** (works, lower fidelity) — so a missing/incorrect vidmagik install silently degrades quality rather than failing loudly.
+
+**figma** MCP is optional (design flows only).
+
+---
+
+## 7. How a build works in agent mode (heartbeat + monitoring)
+
+Start Claude Code from the repo folder — that's what makes it agent mode:
+
+```bash
+cd plaid-demo-recorder
+claude
+```
+
+When you ask for a build, the agent runs the pipeline and **monitors it for you**:
+- The pipeline emits a **heartbeat** (`::PIPE:: event=heartbeat`) every **5 minutes** while a stage runs, and writes `pipeline-heartbeat.json`. The agent posts a one-line status on each tick (`stage=build-qa, elapsed=…s, awaiting=false`) — so a long build never looks "stuck."
+- The agent polls **`npm run pipe -- status --json`** to decide the next action (and tells you what it ran).
+- Builds run **unattended** (`--non-interactive` / `SCRATCH_AUTO_APPROVE`); if the pipeline needs you, it pauses on a "continue-gate" and the agent surfaces the task.
+- Default `npm run demo` is **app-only** and stops at `build-qa` after an automatic touch-up loop — fast iteration, no recording.
+- Watch live in the **dashboard** (run once in a second terminal): `npm run dashboard` → http://localhost:4040.
+
+You don't memorize any of this — the agent does it. You just read its updates.
+
+---
+
+## 8. The prompt template → storyboard
+
+A demo is generated from a **prompt** (`inputs/prompt.txt`). The agent fills it from a template; you supply the *story*, not the tech. Template skeleton (full version: [`inputs/prompt-template.txt`](inputs/prompt-template.txt); simple app-only version: `inputs/prompt-template-app-only.txt`):
+
+```
+«DEMO TITLE» — «ONE-LINE VALUE PROPOSITION»
+Host: «HOST_APP_NAME» — «industry»     Canonical URL / Brand URL: «https://…»
+User journey (one sentence): «…»
+Story arc: «Problem → how Plaid enters → frictionless steps → quantified reveal → outcome»
+Products featured: «Plaid Link, Plaid Auth, Plaid Signal, …»   (approved names only)
+Solutions supported: «Account Opening, Funding, …»   ← queries Solutions Master
+Primary product family: «funding | cra_base_report | income_insights | …»
+Primary messaging file: «inputs/products/plaid-….md»   ← owns the stats
+Research depth: «full | gapfill | messaging | skip»   (omit = gapfill)
+STORYBOARD BEATS (order = script order):
+  | # | Beat (host/link/insight/slide) | What the viewer sees | Narration focus | Reveal/CTA |
+Persona & sample data: name/role, company, on-screen amounts/scores (no placeholders)
+Host chrome: nav + entry screen + the CTA that opens Link.   Viewport: 1440×900.
+```
+
+**How it becomes a storyboard:** `research` (Solutions Master + AskBill + Glean) → `script` writes **`demo-script.json`**, whose ordered **`steps[]`** *are* the storyboard (each step = a screen with narration, visual state, and optional API panel). `build` turns those steps into the host app; the **dashboard storyboard view** shows each beat with its screenshot + narration + API JSON.
+
+### Example A — pure natural language
+> *"Build an app-only demo for **Cox Automotive** showing **Plaid Bank Income** for instant auto-finance income verification. Persona: Daniel Carter, a buyer financing a $24,600 used car at the dealer finance desk. Story: replace the paystub chase — he links his checking account via Plaid Link, Bank Income returns verified income, and the desk clears him for financing. Research depth gapfill."*
+
+The agent writes `inputs/prompt.txt` from the template and runs `npm run demo`.
+
+### Example B — from a Salesforce opportunity (via Glean)
+> *"Build a demo for the **<Account Name>** opportunity. Pull their context from Glean first."*
+
+The agent calls **Glean** (`gleanChat`) for that account's Gong-call themes, use case, products under evaluation, and persona color, then fills the template — `Solutions supported`, persona/company, and story arc reflect *their* real pain points — and runs the build. (Glean is the bridge to Salesforce context; set `GLEAN_INSTANCE`/`GLEAN_API_TOKEN` in `.env`.)
+
+---
+
+## 9. Top 10 commands — just say the phrase (agent mode)
+
+You speak the left column; the agent runs the right. (You can type the command yourself, but you don't have to.)
+
+| Say this | Agent runs | What it does |
+|---|---|---|
+| "Build a demo for <story>" | `npm run pipe -- new --non-interactive` | App-only build → build-qa (fast) |
+| "Build it with slides" | `npm run pipe -- new --with-slides --non-interactive` | Adds the slide deck |
+| "What's the status?" | `npm run pipe -- status --json` | Stage, QA score, next step |
+| "Keep an eye on it" | `npm run pipe -- monitor` | Re-emits the 5-min heartbeat |
+| "Show me the logs" | `npm run pipe -- logs --follow` | Tail the build log |
+| "Fix the app" (app score low) | `npm run pipe -- app-touchup --non-interactive` | Surgical app-tier repair |
+| "Fix the slides" | `npm run pipe -- slide-fix --non-interactive` | Slide-tier repair |
+| "Re-record / redo from <stage>" | `npm run pipe -- resume --from=<stage> --non-interactive` | Resume from a stage |
+| "Open the demo / dashboard" | `npm run dashboard` + `npm run pipe -- open` | Review in the browser (:4040) |
+| "Stop it" / "Continue" | `npm run pipe -- stop` / `… continue` | Halt, or release a continue-gate |
+
+(Also: "research deeper" → `--research=broad`; "list recent runs" → `pipe list`; "publish this demo to the catalog" → `pipe publish`.)
+
+---
+
+## 10. Submitting enhancements (PRs)
+
+Two kinds of changes follow two review paths. Both: branch off `main`, push to this repo (you're a collaborator), open a PR — `main` requires a PR + code-owner approval.
+
+- **Application code** (`scripts/`, `bin/`, `remotion/`, `.claude/`, `tests/`, `docs/`): ask the agent to **review your branch before you open the PR** ("review my changes for a PR") — it diffs against `main` and flags issues; address them, then `gh pr create`.
+- **GTM stats / product knowledge** (`inputs/products/*.md`, value props, claims): these need **human sign-off**. Keep AI-suggested edits marked `[DRAFT]`; a human owner reviews and bumps the `approved` / `last_human_review` frontmatter before it's used. **Do not** commit Gong/$/%/threshold stats without sign-off.
+
+> The full two-lane workflow (CODEOWNERS routing, a frontmatter governance check, PR template) is being finalized — `CONTRIBUTING.md` will be the source of truth. For now, ask the owner before submitting KB/GTM changes.
+
+---
+
+## 11. Troubleshooting & help
+
+- **Anything fails?** `npm run pipe -- validate-env` first — most issues are a missing/blank key.
+- **Build looks stuck:** it isn't if heartbeats are ticking; ask the agent "what's the status?" (vision QA can take ~20 min silently).
+- **`[Glean unavailable]` / `[AskBill unavailable]`:** research creds aren't set — builds still work; ask the owner for the values.
+- **Re-running `bash scripts/setup/install.sh`** is the safe way to refresh deps after a `git pull`.
+- **Architecture & deep rules:** [`CLAUDE.md`](CLAUDE.md). Agent/heartbeat contract: [`AGENTS.md`](AGENTS.md). CLI reference: [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md). Sharing demos: [`docs/distribution-architecture.md`](docs/distribution-architecture.md).
+- **Stuck?** Ping the repo owner.
