@@ -93,51 +93,9 @@ async function validatePipelineEnv(opts = {}) {
     errors.push('ANTHROPIC_API_KEY is missing or empty (required for the pipeline LLM).');
   }
 
-  const b64 = process.env.GCP_SERVICE_ACCOUNT_JSON_B64;
-  if (b64 != null && String(b64).trim() !== '') {
-    try {
-      const jsonStr = Buffer.from(String(b64).trim(), 'base64').toString('utf8');
-      JSON.parse(jsonStr);
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      errors.push(`GCP_SERVICE_ACCOUNT_JSON_B64 is set but not valid base64 JSON: ${msg}`);
-    }
-  }
-
-  const rawJson = process.env.GCP_SERVICE_ACCOUNT_JSON;
-  if (rawJson != null && String(rawJson).trim() !== '') {
-    try {
-      JSON.parse(String(rawJson).trim());
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      errors.push(`GCP_SERVICE_ACCOUNT_JSON is set but not valid JSON: ${msg}`);
-    }
-  }
-
-  const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (gac != null && String(gac).trim() !== '') {
-    const credPath = expandCredentialPath(gac, projectRoot);
-    try {
-      if (!fs.existsSync(credPath)) {
-        errors.push(`GOOGLE_APPLICATION_CREDENTIALS file not found: ${credPath}`);
-      } else {
-        fs.accessSync(credPath, fs.constants.R_OK);
-        const raw = fs.readFileSync(credPath, 'utf8');
-        JSON.parse(raw);
-      }
-    } catch (e) {
-      if (e && e.code === 'ENOENT') {
-        errors.push(`GOOGLE_APPLICATION_CREDENTIALS file not found: ${credPath}`);
-      } else if (e instanceof SyntaxError) {
-        errors.push(
-          `GOOGLE_APPLICATION_CREDENTIALS file is not valid JSON: ${credPath} (${e.message})`
-        );
-      } else {
-        const msg = e && e.message ? e.message : String(e);
-        errors.push(`GOOGLE_APPLICATION_CREDENTIALS not readable: ${credPath} (${msg})`);
-      }
-    }
-  }
+  // Google embeddings now use GOOGLE_API_KEY (gemini-embedding-2 via the Gemini
+  // API) — no GCP service-account JSON / ADC. No service-account credentials are
+  // validated here anymore.
 
   const plaidEnv = (process.env.PLAID_ENV || 'sandbox').toLowerCase();
   if (plaidEnv === 'sandbox') {
@@ -153,33 +111,8 @@ async function validatePipelineEnv(opts = {}) {
     warnings.push('ELEVENLABS_API_KEY is empty — voiceover stages will fail until set.');
   }
 
-  const vertexProject =
-    process.env.VERTEX_AI_PROJECT_ID && String(process.env.VERTEX_AI_PROJECT_ID).trim();
-  const { hasVertexServiceAccountEnv, verifyVertexConnectivity } = require('./vertex-embed.js');
-  if ((hasVertexServiceAccountEnv() || process.env.GOOGLE_API_KEY) && !vertexProject) {
-    warnings.push(
-      'VERTEX_AI_PROJECT_ID is empty — embedding / Vertex stages need a project ID when Google credentials are present.'
-    );
-  }
-
-  const hadCredParseError = errors.some(
-    e =>
-      e.includes('GCP_SERVICE_ACCOUNT_JSON') ||
-      e.includes('GOOGLE_APPLICATION_CREDENTIALS')
-  );
-
-  /** @type {Awaited<ReturnType<typeof verifyVertexConnectivity>> | null} */
-  let vertexResult = null;
-  if (!hadCredParseError) {
-    try {
-      vertexResult = await verifyVertexConnectivity();
-      if (!vertexResult.ok) {
-        errors.push(`Google / Vertex auth check failed: ${vertexResult.message}`);
-      }
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      errors.push(`Google / Vertex auth check threw: ${msg}`);
-    }
+  if (!process.env.GOOGLE_API_KEY || !String(process.env.GOOGLE_API_KEY).trim()) {
+    warnings.push('GOOGLE_API_KEY is empty — embedding stages (embed-script-validate, embed-sync) fall back to Haiku / skip.');
   }
 
   if (anthropic && !skipLiveCheck) {
@@ -199,7 +132,7 @@ async function validatePipelineEnv(opts = {}) {
   }
 
   const ok = errors.length === 0;
-  return { ok, errors, warnings, vertexResult };
+  return { ok, errors, warnings };
 }
 
 /**

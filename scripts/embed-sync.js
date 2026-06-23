@@ -92,9 +92,12 @@ function mergeSyncSegments(existing, suggestions) {
 async function main() {
   console.log('=== embed-sync: audio-video alignment detection ===\n');
 
-  if (!process.env.VERTEX_AI_PROJECT_ID) {
-    console.warn('[embed-sync] VERTEX_AI_PROJECT_ID not set — skipping stage.');
-    console.warn('[embed-sync] Add VERTEX_AI_PROJECT_ID to .env to enable multimodal sync detection.');
+  // Needs a Google embedding backend: GOOGLE_API_KEY (gemini-embedding-2 via the
+  // Gemini API — no service account) is the default; VERTEX_AI_PROJECT_ID enables
+  // the legacy Vertex path. Skip only when neither is present.
+  if (!process.env.GOOGLE_API_KEY && !process.env.VERTEX_AI_PROJECT_ID) {
+    console.warn('[embed-sync] No GOOGLE_API_KEY (or VERTEX_AI_PROJECT_ID) — skipping multimodal sync detection.');
+    console.warn('[embed-sync] Add GOOGLE_API_KEY to .env to enable it (uses gemini-embedding-2, no service account).');
     return null;
   }
 

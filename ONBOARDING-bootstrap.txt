@@ -13,16 +13,15 @@ Do this in order:
    `.env`. It is idempotent — safe to re-run.)
 
 3. SECRETS — stop and tell me, verbatim:
-   "Request the completed `.env` file and the Vertex `gcp-service-account.json` from
-    David Majetic (dmajetic@plaid.com). These are never self-provisioned or committed."
-   Wait until I confirm I have them, then:
-   - Ensure the `.env` from David is at the REPO ROOT as `./.env` (relative to this
-     repo), REPLACING the template install.sh wrote. Verify placement and that it
-     carries a non-empty `ANTHROPIC_API_KEY` WITHOUT printing the key, e.g.:
+   "Request the completed `.env` file from David Majetic (dmajetic@plaid.com). It is
+    never self-provisioned or committed." Wait until I confirm I have it, then:
+   - Ensure David's `.env` is at the REPO ROOT as `./.env` (relative to this repo),
+     REPLACING the template install.sh wrote. Verify placement and that it carries a
+     non-empty `ANTHROPIC_API_KEY` WITHOUT printing the key, e.g.:
        `test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or ANTHROPIC_API_KEY empty"`
      If it reports missing/empty, stop and tell me to (re)place David's `.env` at the
-     repo root. Never commit `.env` (it is gitignored).
-   - Ensure the GCP JSON is at `~/.config/plaid-demo-recorder/gcp-service-account.json`.
+     repo root. Never commit `.env` (it is gitignored). (No GCP service-account JSON
+     is needed — embeddings use the GOOGLE_API_KEY already in `.env`.)
 
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do NOT
    continue until validate-env prints "✓ Required checks passed". If it flags a key,

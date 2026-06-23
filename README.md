@@ -58,39 +58,16 @@ mv ~/Downloads/plaid-demo-recorder.env  ./.env
 
 **Never commit `.env`.** It is `.gitignore`d. The structure is documented in [`.env.example`](.env.example).
 
-### 2b. The Google Vertex service-account JSON
+### 2b. Google embeddings — no service-account JSON needed
 
-Several pipeline stages (Vertex / Gemini embeddings for `embed-script-validate` and similar) need a Google Cloud service-account JSON. The owner will send you that file — it is **not** part of `.env`.
+The embedding stages (`embed-script-validate`, `embed-sync`) use **`gemini-embedding-2` via the Gemini API with `GOOGLE_API_KEY`** (already in the `.env` from the owner) — there is **no GCP service-account JSON / ADC** to download or configure. Without `GOOGLE_API_KEY`, those stages fall back to Anthropic Haiku / skip; builds still complete.
 
-1. Create the per-user credentials folder (the installer already does this):
+Sanity-check after placing `.env`:
 
-   ```bash
-   mkdir -p ~/.config/plaid-demo-recorder
-   ```
-
-2. Move the owner-provided JSON into it with a predictable name:
-
-   ```bash
-   mv ~/Downloads/plaid-vertex-service-account.json \
-      ~/.config/plaid-demo-recorder/gcp-service-account.json
-   chmod 600 ~/.config/plaid-demo-recorder/gcp-service-account.json
-   ```
-
-3. Point `.env` at that path. Open `.env` and set (or edit) this line so it matches the file you just saved:
-
-   ```bash
-   GOOGLE_APPLICATION_CREDENTIALS=/Users/<you>/.config/plaid-demo-recorder/gcp-service-account.json
-   ```
-
-   Use the **absolute** path for your machine (expand `~` to `/Users/<you>`). The installer leaves this line blank on a fresh install, so you are filling it in, not replacing it.
-
-4. Sanity-check the path is readable and valid JSON:
-
-   ```bash
-   npm run pipe -- validate-env
-   ```
-
-   Expect `[env-check] ✓ Required checks passed`. If it flags `GOOGLE_APPLICATION_CREDENTIALS`, the path in `.env` does not match the file you saved — fix the typo and rerun.
+```bash
+npm run pipe -- validate-env
+```
+Expect `[env-check] ✓ Required checks passed`.
 
 > If you also need **Glean** / **AskBill** MCP integrations for internal research, those values are in `.env` too and come from the same owner handoff. Without them, research returns `[Glean unavailable]` / `[AskBill unavailable]` — builds still complete, just with less customer color.
 
@@ -230,8 +207,7 @@ Secrets and paths live in `.env`. Most come from the owner handoff in §2.
 | `PLAID_ENV` | yes | Keep `sandbox` unless you have an approved live scenario. |
 | `PLAID_LINK_LIVE` | yes | `true` enables the real Plaid Link SDK. |
 | `ELEVENLABS_API_KEY` | yes | Voiceover. |
-| `GOOGLE_APPLICATION_CREDENTIALS` | yes for Vertex | Absolute path to the Vertex service-account JSON from §2b. |
-| `VERTEX_AI_PROJECT_ID` / `VERTEX_AI_REGION` | yes for Vertex | Set by the owner or `.env.example`. |
+| `GOOGLE_API_KEY` | optional | Gemini API key for `gemini-embedding-2` embeddings (embed-script-validate, embed-sync). No service-account JSON needed; without it those stages fall back to Haiku / skip. |
 | `GLEAN_API_TOKEN` + `GLEAN_INSTANCE` | optional | Enables Glean MCP; without them, research returns `[Glean unavailable]`. |
 | `ASKBILL_MCP_COMMAND` / `ASKBILL_API_URL` | optional | Enables AskBill MCP; same fallback behavior. |
 | `PLAID_GHE_HOSTNAME` | yes for GHE auth | `github.plaid.com`. |
@@ -262,7 +238,7 @@ Full list (plus optional flags) in [`.env.example`](.env.example).
 |---------|-----|
 | `node is too old` | `nvm install 20 && nvm use 20`. |
 | `gh: command not found` or `ffmpeg: command not found` | `brew install gh ffmpeg`, then re-run `bash scripts/setup/install.sh`. |
-| `npm run pipe -- validate-env` flags `GOOGLE_APPLICATION_CREDENTIALS` | Path in `.env` does not match the JSON you saved under `~/.config/plaid-demo-recorder/`. Use the absolute path (§2b). |
+| `npm run pipe -- validate-env` warns `GOOGLE_API_KEY is empty` | Optional — embeddings fall back to Haiku / skip. Add `GOOGLE_API_KEY` (from the owner's `.env`) to enable `gemini-embedding-2`. No service-account JSON is involved. |
 | `dotenv loaded (0) variables from .env` when running in **Claude Code / Cursor Agent mode from a git worktree** | Cursor worktrees share `.git` with the main repo but don't carry gitignored files (`.env`). The pipeline now auto-detects worktrees and loads `.env` from the main repo via `scripts/scratch/utils/dotenv-loader.js`. If it still fails, set **`PLAID_DEMO_RECORDER_ENV=/absolute/path/to/main-repo/.env`** in the worktree shell or ask Claude Code to run commands from the main repo root (`cd /path/to/main && npm run demo`). |
 | `pipe whoami` returns no login | `gh auth status --hostname github.plaid.com`; if not signed in, redo `gh auth login`. |
 | `Permission denied (publickey)` cloning `plaid-demo-apps` | Add SSH key to GHE **Settings → SSH keys**, or switch `PLAID_DEMO_APPS_REPO` to HTTPS and supply a PAT when Git prompts. |

@@ -14,8 +14,8 @@
 #   3. Creates a local `.env` from `.env.example` if one doesn't exist; optionally
 #      prompts to paste secrets (default: skip). If you skip, reach out to the
 #      repository owner for real `.env` keys — never commit secrets.
-#   3a. Ensures ~/.config/plaid-demo-recorder exists and writes GOOGLE_APPLICATION_CREDENTIALS
-#      in .env when unset or empty (optional Vertex / Gemini — teammates drop JSON per machine).
+#      (Google embeddings use GOOGLE_API_KEY via gemini-embedding-2 — no GCP
+#      service-account JSON / ADC; nothing to set up here.)
 #   3b. When .env lists Glean (token + instance) and/or AskBill mcp-remote settings,
 #      prefetches @gleanwork/local-mcp-server and/or mcp-remote into the npm cache.
 #   4. Runs `gh auth status` to confirm the user is signed in to their
@@ -340,59 +340,6 @@ if [ -f ".env" ]; then
       echo "RESEARCH_MODE=gapfill"
     } >> .env
     ok "Added RESEARCH_MODE=gapfill to .env (targeted research is the default)."
-  fi
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3a. Per-machine Google Cloud credentials path (optional Vertex / Gemini)
-# ─────────────────────────────────────────────────────────────────────────────
-heading "Google Cloud credentials path (optional)"
-
-GOOGLE_CREDS_DIR="${HOME}/.config/plaid-demo-recorder"
-DEFAULT_GCP_JSON="${GOOGLE_CREDS_DIR}/gcp-service-account.json"
-mkdir -p "${GOOGLE_CREDS_DIR}"
-ok "Directory ready for optional service account JSON: ${DEFAULT_GCP_JSON}"
-
-if [ -f ".env" ]; then
-  if grep -qE '^[[:space:]]*GOOGLE_APPLICATION_CREDENTIALS=[^[:space:]#]' .env; then
-    ok "GOOGLE_APPLICATION_CREDENTIALS already set in .env — leaving untouched."
-  elif command -v python3 >/dev/null 2>&1; then
-    export _DEMO_RECORDER_GCP_JSON="${DEFAULT_GCP_JSON}"
-    python3 <<'PY'
-import os
-from pathlib import Path
-path = Path(".env")
-key = "GOOGLE_APPLICATION_CREDENTIALS"
-val = os.environ.get("_DEMO_RECORDER_GCP_JSON", "").strip()
-if not val:
-    raise SystemExit(0)
-text = path.read_text(encoding="utf-8")
-lines = text.splitlines()
-out = []
-replaced = False
-prefix = key + "="
-for line in lines:
-    stripped = line.strip()
-    if stripped.startswith(prefix) or stripped.startswith(key + " ="):
-        if not replaced:
-            out.append(prefix + val)
-            replaced = True
-        continue
-    out.append(line)
-if not replaced:
-    if out and out[-1].strip():
-        out.append("")
-    out.append("# Optional: Vertex AI / Gemini embeddings — place your service account JSON at the path below.")
-    out.append(prefix + val)
-nl = "\n"
-ending = nl if (text.endswith("\n") or not text) else ""
-path.write_text(nl.join(out) + ending, encoding="utf-8")
-PY
-    unset _DEMO_RECORDER_GCP_JSON
-    ok "Set GOOGLE_APPLICATION_CREDENTIALS to ${DEFAULT_GCP_JSON}"
-    info "If you use Vertex, download JSON from GCP IAM → Keys and save it as that filename."
-  else
-    warn "python3 not found — add to .env manually: GOOGLE_APPLICATION_CREDENTIALS=${DEFAULT_GCP_JSON}"
   fi
 fi
 

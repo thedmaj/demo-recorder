@@ -22,13 +22,12 @@ auth or secrets).
 
 1. Confirm we're inside the cloned repo (ls shows package.json + ONBOARDING.md).
 2. Run `bash scripts/setup/install.sh` and summarize what it did (it writes a TEMPLATE .env).
-3. SECRETS — stop and tell me: "Request the completed `.env` and the Vertex
-   `gcp-service-account.json` from David Majetic (dmajetic@plaid.com)." Wait until I
-   confirm I have them, then:
+3. SECRETS — stop and tell me: "Request the completed `.env` from David Majetic
+   (dmajetic@plaid.com)." Wait until I confirm I have it, then:
    - Ensure David's `.env` is at the REPO ROOT as `./.env`, replacing the template.
      Verify without printing the key:
        test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or key empty"
-   - Ensure the GCP JSON is at ~/.config/plaid-demo-recorder/gcp-service-account.json
+   (No GCP service-account JSON needed — embeddings use the GOOGLE_API_KEY in `.env`.)
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do not
    continue until validate-env prints "✓ Required checks passed".
 5. Then ask me for a demo scenario and build my first demo per ONBOARDING §10
@@ -91,20 +90,17 @@ cd plaid-demo-recorder
 ```bash
 bash scripts/setup/install.sh
 ```
-This idempotent installer (safe to re-run anytime to update) does it all: verifies prerequisites, `npm install`, creates `.env` from the template, prefetches MCP packages, sets up the Vertex creds folder, confirms `gh` auth, caches your identity, clones the shared demo catalog (`~/.plaid-demo-apps`), and installs the Playwright browser.
+This idempotent installer (safe to re-run anytime to update) does it all: verifies prerequisites, `npm install`, creates `.env` from the template, prefetches MCP packages, sets up the vidmagik render engine, confirms `gh` auth, caches your identity, clones the shared demo catalog (`~/.plaid-demo-apps`), and installs the Playwright browser.
 
-**Secrets come from David Majetic — not self-provisioned.** Message **David Majetic (dmajetic@plaid.com)** and request:
-1. The completed **`.env`** (Anthropic, Plaid sandbox, ElevenLabs, Glean/AskBill, etc.).
-2. The **Vertex `gcp-service-account.json`**.
+**Secrets come from David Majetic — not self-provisioned.** Message **David Majetic (dmajetic@plaid.com)** and request **the completed `.env`** (Anthropic, Plaid sandbox, ElevenLabs, Glean/AskBill, GOOGLE_API_KEY, etc.). There is **no GCP service-account JSON** — Google embeddings use the `GOOGLE_API_KEY` in `.env`.
 
-**Place them correctly (relative paths matter):**
+**Place it correctly (the relative path matters):**
 - **`.env` → the repo root**, i.e. `plaid-demo-recorder/.env` (replace the template `install.sh` wrote). The pipeline only reads `.env` from the repo root — a `.env` left in `~/Downloads` or a subfolder will not be found. **Never commit `.env`** (it's gitignored).
   ```bash
   mv ~/Downloads/plaid-demo-recorder.env ./.env      # run from the repo root
   test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env \
     && echo ".env OK at repo root" || echo ".env missing or ANTHROPIC_API_KEY empty"
   ```
-- **GCP JSON → `~/.config/plaid-demo-recorder/gcp-service-account.json`** (the path `.env`'s `GOOGLE_APPLICATION_CREDENTIALS` points to).
 
 **Validate before going further — do not proceed until this passes:**
 ```bash
