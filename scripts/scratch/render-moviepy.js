@@ -35,6 +35,7 @@
  *   require('./render-moviepy').main({ runDir, outFile })          (orchestrator)
  *
  * Env knobs: MOVIEPY_CRF (default 16), MOVIEPY_PRESET (default slow),
+ *            MOVIEPY_AUDIO_NORMALIZE (default true — peak-normalize voiceover),
  *            MOVIEPY_THREADS (default 10).
  */
 
@@ -148,6 +149,7 @@ async function main(opts = {}) {
   const crf = String(process.env.MOVIEPY_CRF || '16');
   const preset = String(process.env.MOVIEPY_PRESET || 'slow');
   const threads = parseInt(process.env.MOVIEPY_THREADS || '10', 10) || 10;
+  const AUDIO_NORMALIZE = String(process.env.MOVIEPY_AUDIO_NORMALIZE || 'true').toLowerCase() !== 'false';
   const t0 = Date.now();
 
   const recording = path.join(runDir, 'recording-processed.webm');
@@ -288,7 +290,22 @@ async function main(opts = {}) {
     }
 
     if (hasVoiceover) {
-      const aId = await client.callTool('audio_file_clip', { filename: wsAudio }, 60000);
+      let aId = await client.callTool('audio_file_clip', { filename: wsAudio }, 60000);
+      // Audio normalize (production default, MOVIEPY_AUDIO_NORMALIZE=false to skip).
+      // afx.AudioNormalize is a single constant-gain peak normalization — it scales
+      // every sample by 1/peak so the loudest point hits full scale. It is purely
+      // amplitude: NO resample / pad / trim / shift, so narration TIMING is byte-for-
+      // byte unchanged (sample count identical). Gives every demo a consistent, full
+      // voiceover level run-to-run. Applied to the assembled voiceover track only.
+      if (AUDIO_NORMALIZE) {
+        try {
+          aId = await client.callTool('afx_audio_normalize', { clip_id: aId }, 60000);
+          report.audioNormalized = true;
+          console.log('[render-moviepy] voiceover audio normalized (afx_audio_normalize)');
+        } catch (e) {
+          console.warn(`[render-moviepy] audio normalize skipped (${e.message})`);
+        }
+      }
       finalId = await client.callTool('set_audio', { clip_id: finalId, audio_clip_id: aId }, 60000);
     }
 
