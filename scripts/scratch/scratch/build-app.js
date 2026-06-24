@@ -885,6 +885,40 @@ function copyPlaidLogoAssetsToScratchRoot() {
   }
 }
 
+// Mirror build-time ROOT assets (brand-logo.png, plaid-logo-*.png — copied into
+// SCRATCH_APP_DIR by copyHostBrandLogoToScratchRoot / copyPlaidLogoAssetsToScratchRoot)
+// into the LEGACY run-root scratch-app, which is the dir the recorder actually
+// serves AND which post-slides/post-panels later rewrite (index.html only).
+// Without this the served index.html's <img src="brand-logo.png"> / src="./plaid-logo-*.png"
+// resolve to nothing → broken host logo in the recording (Citi, 2026-06-23).
+// index.html / playwright-script.json are written fresh to LEGACY by the output
+// block, so skip them here; only copy root-level asset files (not subdirs).
+function mirrorRootAssetsToLegacyScratchApp() {
+  try {
+    if (SCRATCH_APP_DIR === LEGACY_SCRATCH_APP_DIR) return;
+    if (!fs.existsSync(SCRATCH_APP_DIR)) return;
+    fs.mkdirSync(LEGACY_SCRATCH_APP_DIR, { recursive: true });
+    const skip = new Set(['index.html', 'playwright-script.json']);
+    let mirrored = 0;
+    for (const name of fs.readdirSync(SCRATCH_APP_DIR)) {
+      if (skip.has(name)) continue;
+      const src = path.join(SCRATCH_APP_DIR, name);
+      if (!fs.statSync(src).isFile()) continue; // dirs (assets/, fonts/) handled elsewhere
+      try {
+        fs.copyFileSync(src, path.join(LEGACY_SCRATCH_APP_DIR, name));
+        mirrored++;
+      } catch (err) {
+        console.warn(`[Build] Could not mirror root asset "${name}" to run-root scratch-app: ${err.message}`);
+      }
+    }
+    if (mirrored > 0) {
+      console.log(`[Build] Mirrored ${mirrored} root asset(s) (logos) → run-root scratch-app`);
+    }
+  } catch (err) {
+    console.warn(`[Build] Root-asset mirror to run-root scratch-app failed: ${err.message}`);
+  }
+}
+
 // When a local host-brand logo is supplied, the build agent sometimes draws its
 // own placeholder glyph (inline SVG) in the nav instead of using the image. This
 // deterministically swaps the nav logo "mark" element's inner glyph for the real
@@ -894,7 +928,24 @@ function injectLocalBrandLogo(html, brand) {
   if (!html || typeof html !== 'string') return html;
   if (!(brand && brand.logo && brand.logo._localSource)) return html;
   const alt = String((brand.name || 'Bank')).replace(/"/g, '');
-  const img = `<img src="brand-logo.png" alt="${alt}" data-testid="host-bank-logo-img" class="brand-logo-img" style="width:28px;height:28px;min-width:28px;object-fit:contain;border-radius:50%;display:block">`;
+  // Aspect-aware sizing (brand-extract classifies the localized logo):
+  //   wordmark (wide)  → size by height, width auto, NEVER a circle (else the
+  //                      wordmark is crushed into a tiny disc — Citi/Credit Genie).
+  //   icon (~square)   → fixed square, gently rounded.
+  //   lockup/unknown   → height-constrained, width auto, modest cap (safe middle).
+  const logoKind = (brand.logo._kind) || 'unknown';
+  const logoAspect = Number(brand.logo._aspect) || null;
+  const isWordmark = logoKind === 'wordmark' || (logoAspect != null && logoAspect >= 1.8);
+  const isIcon = logoKind === 'icon' || (logoAspect != null && logoAspect <= 1.35);
+  let dimStyle;
+  if (isWordmark) {
+    dimStyle = 'height:26px;width:auto;max-width:180px;object-fit:contain;border-radius:0';
+  } else if (isIcon) {
+    dimStyle = 'height:28px;width:28px;min-width:28px;object-fit:contain;border-radius:6px';
+  } else {
+    dimStyle = 'height:26px;width:auto;max-width:120px;object-fit:contain;border-radius:4px';
+  }
+  const img = `<img src="brand-logo.png" alt="${alt}" data-testid="host-bank-logo-img" class="brand-logo-img" style="${dimStyle};display:block">`;
   const textColor = (brand.colors && brand.colors.textPrimary) || '#1B1F3B';
   let out = html;
   let swapped = 0;
@@ -915,10 +966,15 @@ function injectLocalBrandLogo(html, brand) {
   //    <header> opening tag that doesn't already carry the logo. Ensures the
   //    supplied logo is always present on host chrome.
   if (swapped === 0 && !/brand-logo\.png/.test(out)) {
+    // A wordmark logo already contains the brand name — don't append a text span
+    // next to it (that double-prints the brand). Only icons/unknown get the text.
+    const textSpan = isWordmark
+      ? ''
+      : `<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span>`;
     const lockup =
       `<div class="brand-logo-lockup" data-testid="host-bank-logo-shell" ` +
       `style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto">` +
-      `${img}<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span></div>`;
+      `${img}${textSpan}</div>`;
     out = out.replace(/(<(?:nav|header)\b[^>]*>)/gi, (openTag) => {
       swapped++;
       return `${openTag}${lockup}`;
@@ -3990,6 +4046,9 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
     JSON.stringify(playwrightScript, null, 2),
     'utf8'
   );
+  // Mirror root logo assets (brand-logo.png, plaid-logo-*.png) into the served
+  // run-root scratch-app so the host nav logo actually renders during recording.
+  mirrorRootAssetsToLegacyScratchApp();
   writeBuildMetadata({
     runId: (runManifest?.runId || RUN_LAYOUT.runId),
     scriptSignature,

@@ -306,7 +306,7 @@ async function extractLogoCropFromSite(url, outPath) {
         await el.screenshot({ path: outPath, omitBackground: false });
         if (fs.existsSync(outPath) && fs.statSync(outPath).size >= MIN_BYTES) {
           console.log(`[BrandExtract] Logo crop: screenshotted real element "${sel}" (${Math.round(box.width)}×${Math.round(box.height)})`);
-          return { ok: true, method: `element-crop:${sel}` };
+          return { ok: true, method: `element-crop:${sel}`, w: Math.round(box.width), h: Math.round(box.height) };
         }
       } catch (_) { /* try next selector */ }
     }
@@ -350,6 +350,64 @@ async function extractLogoCropFromSite(url, outPath) {
   } catch (err) {
     console.warn(`[BrandExtract] Logo crop failed: ${err.message}`);
     return { ok: false, method: 'error' };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+/**
+ * Classify a logo by aspect ratio so build-app can size it correctly in the host
+ * nav. A wide asset is a wordmark (size by height, width auto, NEVER a circle); a
+ * ~square asset is an icon (square, rounded OK); in between is a lockup.
+ * @returns {{kind:'wordmark'|'icon'|'lockup'|'unknown', aspect:number|null}}
+ */
+function classifyLogoKind(w, h) {
+  if (!w || !h) return { kind: 'unknown', aspect: null };
+  const aspect = w / h;
+  let kind = 'lockup';
+  if (aspect >= 1.8) kind = 'wordmark';
+  else if (aspect <= 1.35) kind = 'icon';
+  return { kind, aspect: Math.round(aspect * 100) / 100 };
+}
+
+/**
+ * Localize a remote logo URL (Brandfetch PNG/SVG/webp, or any direct image URL)
+ * to a real PNG on disk by rendering it in a headless browser and screenshotting
+ * the <img> at natural size. This (a) removes the remote-CDN dependency that
+ * blanks logos during recording, (b) normalizes SVG/webp → PNG uniformly,
+ * (c) preserves transparency, and (d) returns intrinsic dimensions so the nav
+ * logo can be sized by aspect. Real pixels from the brand's own asset — never
+ * generated. Returns { ok, w, h }.
+ */
+async function localizeLogoFromUrl(imgUrl, outPath) {
+  if (!imgUrl) return { ok: false };
+  let browser;
+  try {
+    const { chromium } = require('playwright');
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ deviceScaleFactor: 2 });
+    const safe = String(imgUrl).replace(/"/g, '&quot;');
+    await page.setContent(
+      `<!doctype html><html><body style="margin:0;background:transparent">` +
+      `<img id="l" src="${safe}"></body></html>`,
+      { waitUntil: 'load', timeout: 20000 }
+    ).catch(() => {});
+    const el = page.locator('#l');
+    await el.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+    const dims = await page.evaluate(() => {
+      const i = document.getElementById('l');
+      return i && i.complete && i.naturalWidth > 1
+        ? { w: i.naturalWidth, h: i.naturalHeight } : null;
+    }).catch(() => null);
+    if (!dims) return { ok: false };
+    await el.screenshot({ path: outPath, omitBackground: true });
+    if (fs.existsSync(outPath) && fs.statSync(outPath).size >= 400) {
+      return { ok: true, w: dims.w, h: dims.h };
+    }
+    return { ok: false };
+  } catch (err) {
+    console.warn(`[BrandExtract] Logo localize failed: ${err.message}`);
+    return { ok: false };
   } finally {
     if (browser) await browser.close().catch(() => {});
   }
@@ -1010,18 +1068,33 @@ async function main() {
     }
   }
 
-  // ── 2b. Real logo crop (Brandfetch-independent) ────────────────────────────
-  // When Brandfetch gave no usable logo (failure / 429 quota), pull the brand's
-  // ACTUAL logo from its site — a real element crop or downloaded icon, never a
-  // generated image. Captured into brand/<slug>-logo.png and surfaced to the
-  // build via profile.logo._localSource (build-app copies it to brand-logo.png).
+  // ── 2b. ALWAYS localize the logo to disk (real pixels, never generated) ─────
+  // Robustness: the host nav logo must be a LOCAL file (brand-logo.png), never a
+  // remote Brandfetch CDN URL — remote URLs are network-dependent and blank out
+  // during recording. Priority:
+  //   1. Localize the best Brandfetch asset (clean, official) → render+screenshot.
+  //   2. Fall back to a real element crop / icon download from the brand's site.
+  // Either way we measure intrinsic dimensions and classify wordmark/icon/lockup
+  // so build-app can size the nav logo by aspect (no forced square/circle).
   let localLogoPath = null;
-  const brandfetchHasLogo = !!(rawData && (rawData.logoImageUrl || rawData.iconImageUrl));
-  if (url && !brandfetchHasLogo) {
-    const logoOut = path.join(BRAND_DIR, `${slug}-logo.png`);
+  let localLogoDims = null;
+  const logoOut = path.join(BRAND_DIR, `${slug}-logo.png`);
+  const brandfetchLogoUrl = rawData && (rawData.logoImageUrl || rawData.iconImageUrl);
+  if (brandfetchLogoUrl) {
+    const loc = await localizeLogoFromUrl(brandfetchLogoUrl, logoOut);
+    if (loc.ok) {
+      localLogoPath = logoOut;
+      localLogoDims = { w: loc.w, h: loc.h };
+      console.log(`[BrandExtract] Localized Brandfetch logo → ${slug}-logo.png (${loc.w}×${loc.h})`);
+    } else {
+      console.warn('[BrandExtract] Brandfetch logo localize failed — falling back to site crop.');
+    }
+  }
+  if (!localLogoPath && url) {
     const logoRes = await extractLogoCropFromSite(url, logoOut);
     if (logoRes.ok && fs.existsSync(logoOut) && fs.statSync(logoOut).size > 0) {
       localLogoPath = logoOut;
+      if (logoRes.w && logoRes.h) localLogoDims = { w: logoRes.w, h: logoRes.h };
       // Ensure a rawData object exists even if both Brandfetch + Playwright tokens failed.
       if (!rawData) rawData = { source: 'playwright-logo', name: companyName, domain };
       rawData.logoLocalFile = logoOut;
@@ -1059,7 +1132,16 @@ async function main() {
   // brand-logo.png and injects it into the host nav. Real pixels only.
   if (localLogoPath) {
     profile.logo._localSource = localLogoPath;
-    console.log(`[BrandExtract] Using real logo crop: ${path.relative(PROJECT_ROOT, localLogoPath)}`);
+    console.log(`[BrandExtract] Using real logo file: ${path.relative(PROJECT_ROOT, localLogoPath)}`);
+    // Aspect-aware sizing metadata for build-app's host-nav injection.
+    if (localLogoDims && localLogoDims.w && localLogoDims.h) {
+      const { kind, aspect } = classifyLogoKind(localLogoDims.w, localLogoDims.h);
+      profile.logo._kind = kind;
+      profile.logo._aspect = aspect;
+      profile.logo._w = localLogoDims.w;
+      profile.logo._h = localLogoDims.h;
+      console.log(`[BrandExtract] Logo classified: ${kind} (aspect ${aspect}, ${localLogoDims.w}×${localLogoDims.h})`);
+    }
   }
   enforceLogoContrast(profile, rawData);
 
@@ -1286,6 +1368,12 @@ module.exports = {
   getResolvedBrandDomain,
   readStoredBrandExtractDomain,
   maybeRefreshBrandIfPromptDomainChanged,
+  // Exported for QA / unit comparison of the logo routine:
+  fetchFromBrandfetch,
+  brandfetchToRaw,
+  localizeLogoFromUrl,
+  extractLogoCropFromSite,
+  classifyLogoKind,
 };
 
 if (require.main === module) {
