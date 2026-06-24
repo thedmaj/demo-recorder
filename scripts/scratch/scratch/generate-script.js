@@ -1247,18 +1247,23 @@ async function main() {
   // despite the prompt asking for remember-me/OTP). This makes the model set
   // plaidLinkFlow='remember-me' AND narrate the returning-user / Plaid-network framing
   // so the narration matches what the recorder actually does.
+  // NOTE: the recorder authenticates the returning-user phone+OTP path under the
+  // DEFAULT flow ("modal") and completes onSuccess (YNAB v1 2026-06-24). The
+  // dedicated "remember-me" flow value triggers a separate recorder path that loops
+  // on the post-OTP save screen and never fires onSuccess (v4 failed). So we keep the
+  // returning-user NARRATION framing but do NOT switch plaidLinkFlow to remember-me.
   const wantsRememberMe = /remember.?me|returning user|one[\s-]?time[\s-]?pass|phone\s*\+?\s*otp|otp.*phone/i.test(promptText || '');
   if (wantsRememberMe && Array.isArray(userMessages) && userMessages[0]) {
     const directive =
-      '\n\nPLAID LINK FLOW (DETECTED FROM PROMPT): remember-me / phone + one-time-passcode (returning user). ' +
-      'You MUST set plaidSandboxConfig.plaidLinkFlow="remember-me". The launch-step narration MUST describe the ' +
-      'RETURNING-USER path — open with the button bridge, then weave in the Plaid-network framing ("recognized as a ' +
-      'returning user on the Plaid network, where roughly one in two U.S. adults have connected a bank with Plaid Link") ' +
-      'and a one-time code. Do NOT narrate a standard "searches for her bank, signs in" flow — that will not match the recording.';
+      '\n\nPLAID LINK FLOW (DETECTED FROM PROMPT): returning user via phone + one-time-passcode. ' +
+      'The launch-step narration MUST describe the RETURNING-USER path — open with the button bridge, then weave in the ' +
+      'Plaid-network framing ("recognized as a returning user on the Plaid network, where roughly one in two U.S. adults ' +
+      'have connected a bank with Plaid Link") and a one-time code. Do NOT narrate a standard "searches for her bank, ' +
+      'signs in" flow — that will not match the recording. Keep plaidSandboxConfig.plaidLinkFlow as the default "modal".';
     const m0 = userMessages[0];
     if (typeof m0.content === 'string') m0.content += directive;
     else if (Array.isArray(m0.content)) m0.content.push({ type: 'text', text: directive });
-    console.log('[Script] Prompt indicates a remember-me/OTP flow — injected returning-user narration + flow directive.');
+    console.log('[Script] Prompt indicates a returning-user phone+OTP flow — injected returning-user narration directive (flow stays "modal").');
   }
   if (pipelineAppOnlyHostUi) {
     console.log('[Script] App-only run: script prompt forbids sceneType "insight" and "slide"');
@@ -1475,15 +1480,15 @@ async function main() {
   // step narration now SHOULD open with a button-name bridge introducing the Plaid Link
   // experience (to cover the ~2-3s modal load); stripping it reintroduced the dead-air.
 
-  // Backstop: when the prompt called for a remember-me/OTP returning-user flow, ensure
-  // plaidLinkFlow is actually set to 'remember-me' so the recorder runs the phone+OTP
-  // returning-user path that the narration describes (keeps narration ↔ recording matched).
-  if (wantsRememberMe) {
-    demoScript.plaidSandboxConfig = demoScript.plaidSandboxConfig || {};
-    if (demoScript.plaidSandboxConfig.plaidLinkFlow !== 'remember-me') {
-      console.log(`[Script] Forced plaidLinkFlow=remember-me (was "${demoScript.plaidSandboxConfig.plaidLinkFlow || 'unset'}"; prompt indicates returning-user/OTP).`);
-      demoScript.plaidSandboxConfig.plaidLinkFlow = 'remember-me';
-    }
+  // Backstop: the returning-user phone+OTP experience is recorded under the default
+  // "modal" flow (which completes onSuccess); the dedicated "remember-me" flow value
+  // hits a buggy recorder path (post-OTP save-screen loop, no onSuccess — v4). So if
+  // the model set plaidLinkFlow="remember-me" for a returning-user prompt, normalize it
+  // back to "modal" so the recording actually succeeds while the narration framing stays.
+  if (wantsRememberMe && demoScript.plaidSandboxConfig &&
+      demoScript.plaidSandboxConfig.plaidLinkFlow === 'remember-me') {
+    console.log('[Script] Normalized plaidLinkFlow remember-me → modal (modal path records phone+OTP returning-user reliably; remember-me path loops).');
+    demoScript.plaidSandboxConfig.plaidLinkFlow = 'modal';
   }
 
   // App-only safety net: if the LLM still produced any Plaid-branded
