@@ -552,13 +552,17 @@ async function plaidSelectSavedInstitution(page, otpSubmittedWallMs = null) {
 
   console.log(`  [Plaid Link] Saved institutions: ${JSON.stringify(listItems.map(i => i.text))}`);
 
-  // Order: preferred non-OAuth names first, then others.
-  // Tartan Bank is always first in sandbox Remember Me list and is non-OAuth.
+  // ONLY attempt known non-OAuth saved banks. If the saved list contains only OAuth
+  // banks (e.g. "Merrill" for the +14155550011 returning-user phone), return null so
+  // the CALLER falls back to searching the configured non-OAuth institution — clicking
+  // an OAuth saved bank dead-ends the recording (it opens OAuth, onSuccess never fires;
+  // YNAB 2026-06-24). Tartan Bank is always first in the sandbox Remember Me list.
   const preferred = ['Tartan Bank', 'First Platypus Bank', 'First Gingham'];
-  const ordered = [
-    ...listItems.filter(i => preferred.some(p => i.text.includes(p))),
-    ...listItems.filter(i => !preferred.some(p => i.text.includes(p))),
-  ];
+  const ordered = listItems.filter(i => preferred.some(p => i.text.includes(p)));
+  if (ordered.length === 0) {
+    console.log(`  [Plaid Link] Saved institutions are all OAuth/unknown (${JSON.stringify(listItems.map(i => i.text))}) — will search the configured non-OAuth bank instead.`);
+    return null;
+  }
 
   for (const inst of ordered) {
     // Reset OAuth flag before each attempt
@@ -593,6 +597,52 @@ async function plaidSelectSavedInstitution(page, otpSubmittedWallMs = null) {
 
   console.log('  [Plaid Link] All saved institutions were OAuth or list empty');
   return null;
+}
+
+/**
+ * On the returning-user saved-institution screen, click the affordance that leads to
+ * searching for a DIFFERENT bank ("Connect a different institution" / "I don't see my
+ * bank" / "Search for your bank" / a search input). Used when the saved institutions
+ * are all OAuth/un-automatable so the recorder can connect the configured non-OAuth
+ * bank instead and still complete onSuccess (YNAB returning-user fix, 2026-06-24).
+ * Returns true if it reached/opened a search affordance.
+ */
+async function plaidConnectDifferentInstitution(page) {
+  const frame = getPlaidLinkFrame(page);
+  // If a bank-search input is already on screen, nothing to click.
+  const searchNow = frame.locator('input[placeholder*="Search" i], input[type="search"], input[role="searchbox"]').first();
+  if (await searchNow.isVisible({ timeout: 1500 }).catch(() => false)) {
+    console.log('  [Plaid Link] Search input already present on saved-institution screen.');
+    return true;
+  }
+  const labels = [
+    'Connect a different institution', 'connect a different', 'a different institution',
+    "I don't see my bank", 'see my bank', 'Search for your bank', 'Search for a bank',
+    'Add a different account', 'Connect a different account', 'Add another bank',
+    'Search', 'Find your bank',
+  ];
+  for (const label of labels) {
+    try {
+      const el = frame.getByText(label, { exact: false }).first();
+      if (await el.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await el.click({ timeout: 4000 }).catch(() => {});
+        await page.waitForTimeout(1200);
+        console.log(`  [Plaid Link] Connect-different-institution via: "${label}"`);
+        return true;
+      }
+    } catch (_) { /* try next */ }
+  }
+  // Last resort: an in-iframe DOM click on any element whose text matches.
+  const clicked = await (page.frames().find(f => /plaid\.com/.test(f.url())) || page.mainFrame())
+    .evaluate(() => {
+      const rx = /different institution|see my bank|search for (your|a) bank|different account|another bank/i;
+      const el = Array.from(document.querySelectorAll('button, a, [role="button"], li'))
+        .find(n => rx.test(n.textContent || ''));
+      if (el) { el.click(); return true; }
+      return false;
+    }).catch(() => false);
+  if (clicked) { await page.waitForTimeout(1200); console.log('  [Plaid Link] Connect-different-institution via in-iframe DOM click.'); }
+  return clicked;
 }
 
 /**
@@ -2038,11 +2088,21 @@ async function executePlaidLinkPhase(page, phase) {
           // non-OAuth — `plaidSelectSavedInstitution` clicks it directly per
           // CLAUDE.md's "Tartan Bank at top, no scroll, no search" rule.
           const selectedSavedInstitution = await plaidSelectSavedInstitution(page, otpSubmittedWallMs);
-          const rememberMeActive = isRememberMe || !!selectedSavedInstitution;
+          // Only treat the flow as "remember-me complete" (skip search/credentials) when a
+          // NON-OAuth saved bank was actually selected. If the saved list had only OAuth
+          // banks, plaidSelectSavedInstitution returns null — we must NOT skip search;
+          // instead click "connect a different institution" and search the configured
+          // non-OAuth bank so the link completes (YNAB returning-user fix, 2026-06-24).
+          let rememberMeActive = !!selectedSavedInstitution;
           if (selectedSavedInstitution) {
             console.log(
               `  [Plaid Link] Remember Me detected at runtime — saved institution "${selectedSavedInstitution}" selected; skipping consent/search/credentials.`
             );
+          } else if (otpDone) {
+            // A returning-user OTP happened but no automatable saved bank — switch to
+            // searching the configured non-OAuth institution (then standard search runs below).
+            const switched = await plaidConnectDifferentInstitution(page).catch(() => false);
+            console.log(`  [Plaid Link] Returning-user with no non-OAuth saved bank → ${switched ? 'opened search for' : 'falling through to'} the configured institution.`);
           }
 
           // ── 3. Consent / "Get started" screen ──────────────────────────────
