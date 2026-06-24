@@ -99,6 +99,20 @@ function checkRecordingAndClip(runDir) {
   const stepTiming = readJson(path.join(runDir, 'step-timing.json'));
   const processed = readJson(path.join(runDir, 'processed-step-timing.json'));
 
+  // Unsuccessful link: the recorder force-completed without the app's onSuccess
+  // ever firing (e.g. a rejected sandbox OTP — YNAB 2026-06-24). The demo would
+  // show a Link flow that never actually connected. Recorded in plaid-link-outcome.json.
+  const outcome = readJson(path.join(runDir, 'plaid-link-outcome.json'));
+  if (outcome && (outcome.outcome === 'forced-no-success' || outcome.outcome === 'timeout')) {
+    violations.push({
+      stepId: launches[0], kind: 'link-unsuccessful', severity: 'CRITICAL',
+      outcome: outcome.outcome,
+      detail: outcome.outcome === 'timeout'
+        ? 'Plaid Link never completed (timeout) — no onSuccess; the recorded flow did not connect a bank.'
+        : 'Plaid Link force-completed but onSuccess never fired — the link was NOT successful (commonly a rejected OTP). Check plaidSandboxConfig.otp / sandbox credentials and re-record.',
+    });
+  }
+
   for (const id of launches) {
     // recording: modal-missing (post-record QA category)
     const qstep = qa && (qa.steps || []).find(s => s.stepId === id);

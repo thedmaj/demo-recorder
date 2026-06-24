@@ -72,5 +72,28 @@ t('no launch steps → skipped (ok)', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+t('forced-no-success outcome → link-unsuccessful CRITICAL violation', () => {
+  const dir = mkRun({
+    'demo-script.json': { steps: [{ id: 'plaid-link-launch', plaidPhase: 'launch' }] },
+    'qa-report-1.json': { steps: [{ stepId: 'plaid-link-launch', score: 85, categories: [] }] },
+    'plaid-link-outcome.json': { outcome: 'forced-no-success', current: 'plaid-link-launch' },
+  });
+  const r = checkRecordingAndClip(dir);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.violations.some(v => v.kind === 'link-unsuccessful' && v.severity === 'CRITICAL'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+t('success outcome → no link-unsuccessful violation', () => {
+  const dir = mkRun({
+    'demo-script.json': { steps: [{ id: 'plaid-link-launch', plaidPhase: 'launch' }] },
+    'qa-report-1.json': { steps: [{ stepId: 'plaid-link-launch', score: 85, categories: [] }] },
+    'plaid-link-outcome.json': { outcome: 'success', via: 'onSuccess' },
+  });
+  const r = checkRecordingAndClip(dir);
+  assert.ok(!r.violations.some(v => v.kind === 'link-unsuccessful'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 console.log(`\nplaid-link-integrity: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

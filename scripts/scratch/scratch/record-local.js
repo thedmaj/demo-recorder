@@ -928,6 +928,21 @@ async function plaidLinkSelectAccount(page) {
  * 90s allows for Remember Me flow where onSuccess can fire 50-60s after CDP automation
  * completes (the SDK processes the saved session internally before calling onSuccess).
  */
+/**
+ * Records how the Plaid Link flow actually ended so QA can flag an UNSUCCESSFUL
+ * link (e.g. a wrong sandbox OTP that Plaid rejected — YNAB 2026-06-24). Written to
+ * plaid-link-outcome.json; read by plaid-link-integrity.js.
+ *   outcome: 'success'              — app onSuccess fired (token exchanged)
+ *            'forced-no-success'    — recorder force-completed; onSuccess NEVER fired → link FAILED
+ *            'timeout'              — hard timeout, no completion
+ */
+function recordLinkOutcome(outcome, detail = {}) {
+  try {
+    const p = path.join(OUT_DIR, 'plaid-link-outcome.json');
+    fs.writeFileSync(p, JSON.stringify({ outcome, ...detail, at: new Date().toISOString() }, null, 2));
+  } catch (_) { /* best-effort */ }
+}
+
 async function plaidLinkWaitSuccess(page) {
   console.log('  [Plaid Link] Waiting for Link completion (window._plaidLinkComplete)...');
 
@@ -959,6 +974,7 @@ async function plaidLinkWaitSuccess(page) {
     }, PLAID_LINK_INTERMEDIATE_STEPS).catch(() => false);
     if (ready) {
       console.log('  [Plaid Link] Link flow complete!');
+      recordLinkOutcome('success', { via: 'onSuccess' });
       return;
     }
     // Embedded flows can surface late phone/save prompts after account selection.
@@ -973,6 +989,9 @@ async function plaidLinkWaitSuccess(page) {
     if (Date.now() > deadline - 25000) {
       const fallback = await page.evaluate(() => {
         try {
+          // Did the APP's onSuccess already fire? If not, the recorder is about to
+          // force-complete a link that never succeeded (e.g. rejected OTP).
+          const hadAppSuccess = window._plaidLinkComplete === true;
           if (!window._plaidLinkComplete) window._plaidLinkComplete = true;
           if (typeof window.getCurrentStep === 'function' && typeof window.goToStep === 'function') {
             const current = String(window.getCurrentStep() || '').replace(/^step-/, '');
@@ -982,9 +1001,9 @@ async function plaidLinkWaitSuccess(page) {
             const idx = ids.indexOf(current);
             const next = idx >= 0 ? ids[idx + 1] : null;
             if (next) window.goToStep(next);
-            return { forced: true, current, next: next || null };
+            return { forced: true, hadAppSuccess, current, next: next || null };
           }
-          return { forced: true, current: null, next: null };
+          return { forced: true, hadAppSuccess, current: null, next: null };
         } catch (e) {
           return { forced: false, error: String(e && e.message ? e.message : e) };
         }
@@ -994,6 +1013,16 @@ async function plaidLinkWaitSuccess(page) {
           `  [Plaid Link] Forced deterministic completion after repeated post-link prompt loop ` +
           `(current=${fallback.current || 'unknown'} next=${fallback.next || 'none'}).`
         );
+        // Distinguish a real link that just stalled on late post-link prompts
+        // (app onSuccess already fired) from a link that NEVER succeeded (no
+        // onSuccess — e.g. a rejected OTP). The latter ships a broken demo and
+        // must be flagged by QA.
+        if (fallback.hadAppSuccess) {
+          recordLinkOutcome('success', { via: 'forced-after-onSuccess', current: fallback.current || null });
+        } else {
+          console.warn('  [Plaid Link] ⚠ onSuccess never fired — link was NOT successful (forced). Flagging for QA.');
+          recordLinkOutcome('forced-no-success', { current: fallback.current || null, next: fallback.next || null });
+        }
         return;
       }
     }
@@ -1003,6 +1032,7 @@ async function plaidLinkWaitSuccess(page) {
     // Take a diagnostic screenshot so the failure can be analyzed post-mortem
     const diagPath = path.join(OUT_DIR, `plaid-link-timeout-${Date.now()}.png`);
     await page.screenshot({ path: diagPath, fullPage: true }).catch(() => {});
+    recordLinkOutcome('timeout', { timeoutSec: TIMEOUT_MS / 1000 });
     throw new Error(
       `PLAID_LINK_TIMEOUT: _plaidLinkComplete not set within ${TIMEOUT_MS / 1000}s. ` +
       `CDP automation likely failed silently. ` +
@@ -1207,7 +1237,16 @@ async function enterModalOtpIfPresent(page, { label = 'Layer' } = {}) {
     if (beforeCap > 0) await page.waitForTimeout(beforeCap);
     await otpInput.click({ force: true, timeout: 3000 }).catch(() => {});
     await recordPlaidInteraction(page, otpInput, 'otp-screen').catch(() => {});
-    const otp = _sandboxConfig?.otp || '123456';
+    // Length-aware sandbox OTP (same fix as classic Link): 6-digit phone code is
+    // 123456, 4-digit device-MFA is 1234; ignore a mismatched LLM config value.
+    const otpMax = parseInt((await otpInput.getAttribute('maxlength').catch(() => '')) || '0', 10);
+    const otpCfg = String(_sandboxConfig?.otp || '');
+    const otp = otpMax === 4
+      ? (otpCfg.length === 4 ? otpCfg : '1234')
+      : (otpCfg.length === 6 ? otpCfg : '123456');
+    if (otpCfg && otpCfg !== otp) {
+      console.log(`  [Plaid ${label}] OTP corrected: config "${otpCfg}" != ${otpMax || 6}-digit field → using sandbox ${otp}`);
+    }
     const typed = await getPacer().humanType(otpInput, String(otp), {
       kind: 'numeric', screenId: 'otp-screen', fastDelayMs: 220,
     }).then(() => true).catch(() => false);
@@ -1922,7 +1961,21 @@ async function executePlaidLinkPhase(page, phase) {
                 continue;
               }
               markPlaidStep('otp-screen', page);
-              const otp = _sandboxConfig?.otp || '123456';
+              // Sandbox OTP is length-specific and a FIXED Plaid constant: the
+              // 6-digit phone-verification code is 123456, the 4-digit device-MFA
+              // code is 1234. An LLM-authored plaidSandboxConfig.otp is unreliable
+              // (YNAB 2026-06-24: "1234" sent to a 6-digit phone screen → rejected,
+              // link silently failed). Pick by the input's maxlength; honor a config
+              // value ONLY when it matches that length; otherwise use the canonical
+              // sandbox code (default 123456). Never send the wrong-length code.
+              const otpMax = parseInt((await otpInput.getAttribute('maxlength').catch(() => '')) || '0', 10);
+              const otpCfg = String(_sandboxConfig?.otp || '');
+              const otp = otpMax === 4
+                ? (otpCfg.length === 4 ? otpCfg : '1234')
+                : (otpCfg.length === 6 ? otpCfg : '123456');
+              if (otpCfg && otpCfg !== otp) {
+                console.log(`  [Plaid Link] OTP corrected: config "${otpCfg}" != ${otpMax || 6}-digit field → using sandbox ${otp}`);
+              }
               // Requirement: simulate human typing (~1–2s) + 1s pause.
               await otpInput.click({ force: true, timeout: 3000 }).catch(() => {});
               await recordPlaidInteraction(page, otpInput, 'otp-screen');

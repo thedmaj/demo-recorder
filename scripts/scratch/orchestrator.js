@@ -951,6 +951,30 @@ async function runScriptCritique() {
   console.log('[script-critique] Checking script quality...');
 
   const script = JSON.parse(fs.readFileSync(scriptFile, 'utf8'));
+
+  // Deterministic narration-metric scan: the voiceover must NOT read exact on-screen
+  // values aloud (dollar amounts, numeric scores, account masks, exact timings) — it
+  // should describe the outcome/direction. Exact values stay on the slide/API panel.
+  // (User directive 2026-06-24.) Surfaced as `narration-reads-metric` warnings.
+  const NARRATION_METRIC_PATTERNS = [
+    { re: /\$\s?\d[\d,]*(?:\.\d+)?/, label: 'dollar amount' },
+    { re: /\bscores?\s+(?:of\s+|is\s+|was\s+|:\s*)?\d+/i, label: 'numeric score' },
+    { re: /\b\d{1,3}\s*\/\s*\d{2,3}\b/, label: 'NN/NN score' },
+    { re: /\b(?:ending(?:\s+in)?|x|\*{2,}|•{2,})\s*\d{4}\b/i, label: 'account mask / last-4' },
+    { re: /\bin\s+(?:under\s+|less\s+than\s+)?\d+(?:\.\d+)?\s*(?:seconds?|sec|ms|milliseconds?)\b/i, label: 'exact timing' },
+  ];
+  const narrationMetricWarnings = [];
+  for (const step of (script.steps || [])) {
+    const n = String(step.narration || '');
+    for (const { re, label } of NARRATION_METRIC_PATTERNS) {
+      const m = n.match(re);
+      if (m) { narrationMetricWarnings.push({ stepId: step.id || '(no-id)', rule: 'narration-reads-metric', label, match: m[0] }); break; }
+    }
+  }
+  if (narrationMetricWarnings.length) {
+    console.warn(`[script-critique] narration-reads-metric: ${narrationMetricWarnings.length} step(s) read an exact on-screen value aloud (use outcome/directional language; the value stays on the slide):`);
+    narrationMetricWarnings.forEach(w => console.warn(`  - ${w.stepId}: ${w.label} "${w.match}"`));
+  }
   let productResearch = { synthesizedInsights: '', accurateTerminology: {}, internalKnowledge: [], apiSpec: {} };
   if (fs.existsSync(researchFile)) {
     try {
@@ -1002,6 +1026,7 @@ async function runScriptCritique() {
             at: new Date().toISOString(),
             passed: !!critique.passed,
             issueCount: Array.isArray(critique.issues) ? critique.issues.length : 0,
+            narrationMetricWarnings,
           },
           null,
           2
@@ -3615,6 +3640,26 @@ async function runScratchPipeline({
           }
         } else {
           cliWarn(`${msg} Advancing (PLAID_LINK_STRICT=false / PLAID_LINK_BYPASS=true). See plaid-link-integrity.json.`);
+        }
+      }
+      // Unsuccessful link gate: the recorder force-completed without the app's
+      // onSuccess (e.g. a rejected sandbox OTP — YNAB 2026-06-24). The demo would
+      // ship a Link flow that never connected. Same strict/bypass handling as
+      // modal-missing; the OTP is now length-corrected at record time so this
+      // should be rare, but the gate prevents a silently-broken demo.
+      const bad = (integ.violations || []).filter(v => v.kind === 'link-unsuccessful');
+      if (bad.length) {
+        const msg = `[plaid-link] Plaid Link was NOT successful on ${bad.map(v => v.stepId).join(', ')} (${bad[0].outcome}): ${bad[0].detail}`;
+        const bypass = parseBoolEnv(process.env.PLAID_LINK_BYPASS, false);
+        if (isStrict() && !bypass) {
+          if (isAgentContext().enabled && !parseBoolEnv(process.env.SCRATCH_AUTO_APPROVE, false)) {
+            cliWarn(`${msg} Pausing for fix.`);
+            await promptContinue('[plaid-link] Link not successful (likely wrong OTP / credentials) — fix + re-record.');
+          } else {
+            throw new Error(`CRITICAL: PLAID_LINK_UNSUCCESSFUL — ${msg} Override with PLAID_LINK_BYPASS=true. See plaid-link-integrity.json.`);
+          }
+        } else {
+          cliWarn(`${msg} Advancing (PLAID_LINK_STRICT=false / PLAID_LINK_BYPASS=true).`);
         }
       }
     } catch (e) {
