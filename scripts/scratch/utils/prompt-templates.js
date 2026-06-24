@@ -803,17 +803,19 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `   Each step shows that product's specific API output and narrates the business implication.\n` +
       `   Never combine two product reveals into one step. Every product named in the prompt\n` +
       `   must appear as a distinct step with its own apiResponse block.\n` +
-      `   Examples: Auth → verified account/routing + coverage stat; Identity Match → per-field\n` +
-      `   scores (NAME 88 / EMAIL 62) + ownership confirmed; Signal → score + ruleset.result.\n` +
-      `4. Key reveal — the wow moment that resolves the user's specific friction (with a real metric)\n` +
+      `   The slide/apiResponse SHOWS the exact API output (account/routing, per-field scores like\n` +
+      `   NAME 88 / EMAIL 62, Signal score + ruleset.result); the NARRATION speaks to the implication\n` +
+      `   (ownership confirmed, low-risk → ACCEPT) — directionally, never reading the raw numbers aloud.\n` +
+      `4. Key reveal — the wow moment that resolves the user's specific friction, stated as the OUTCOME\n` +
+      `   (the decision/result — ACCEPT, approved, verified, qualifies, low-risk), not the raw on-screen value\n` +
       `5. Outcome — close with a concrete business result tied to this demo's opening problem.\n` +
-      `   Format: "[Product(s)] deliver [specific metric or capability] — enabling [customer outcome\n` +
+      `   Format: "[Product(s)] deliver [outcome or capability] — enabling [customer outcome\n` +
       `   from the opening hook]." Must callback to beat 1. Do NOT close with a generic mantra\n` +
       `   ("faster, safer, more compliant") — use the scenario's specific numbers and stakes.\n\n` +
       `Quality standards:\n` +
       `- Step count by product count: 1 product → 6–9 steps; 2 products → 8–11 steps; 3+ products → 10–14 steps\n` +
       `- Narration: 20–35 words per step (including loading/wait steps — see rule below)\n` +
-      `- Include a climactic reveal with a quantified outcome\n` +
+      `- Include a climactic reveal stated as an OUTCOME/decision (e.g. ACCEPT, approved, qualifies, low-risk) — not by reading the on-screen number\n` +
       `- Use realistic persona data (never generic placeholders)\n` +
       `- No error states, declined flows, or unresolved loading spinners\n\n`;
   } else {
@@ -826,17 +828,19 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `   Each step shows that product's specific API output and narrates the business implication.\n` +
       `   Never combine two product reveals into one step. Every product named in the prompt\n` +
       `   must appear as a distinct step with its own apiResponse block.\n` +
-      `   Examples: Auth → verified account/routing + coverage stat; Identity Match → per-field\n` +
-      `   scores (NAME 88 / EMAIL 62) + ownership confirmed; Signal → score + ruleset.result.\n` +
-      `4. Key reveal — the "wow moment" (score, approval, matched data) with a real metric\n` +
+      `   The slide/apiResponse SHOWS the exact API output (account/routing, per-field scores like\n` +
+      `   NAME 88 / EMAIL 62, Signal score + ruleset.result); the NARRATION speaks to the implication\n` +
+      `   (ownership confirmed, low-risk → ACCEPT) — directionally, never reading the raw numbers aloud.\n` +
+      `4. Key reveal — the "wow moment" (approval, matched ownership, cleared decision) stated as the OUTCOME,\n` +
+      `   not by reading the raw on-screen number (say "low-risk → ACCEPT", not "Signal score 12")\n` +
       `5. Outcome — close with a concrete business result tied to the opening problem.\n` +
-      `   Format: "[Product(s)] deliver [specific metric or capability] — enabling [customer outcome\n` +
+      `   Format: "[Product(s)] deliver [outcome or capability] — enabling [customer outcome\n` +
       `   from beat 1]." Must callback to the problem in beat 1. Do NOT close with a generic mantra\n` +
       `   ("faster, safer, more compliant") — use the scenario's specific numbers and stakes.\n\n` +
       `Quality standards:\n` +
       `- Step count by product count: 1 product → 6–9 steps; 2 products → 8–11 steps; 3+ products → 10–14 steps\n` +
       `- Narration: 20–35 words per step (including loading/wait steps — see rule below)\n` +
-      `- Include a climactic reveal with a quantified outcome\n` +
+      `- Include a climactic reveal stated as an OUTCOME/decision (e.g. ACCEPT, approved, qualifies, low-risk) — not by reading the on-screen number\n` +
       `- Use realistic persona data (never generic placeholders)\n` +
       `- No error states, declined flows, or unresolved loading spinners\n\n`;
   }
@@ -848,7 +852,15 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
     `- Confident, precise, outcome-focused. Never apologetic or jargon-heavy.\n` +
     `- Lead with customer value, not technical implementation details.\n` +
     `- Use active voice: "Plaid verifies the document in real time" not "the document is verified."\n` +
-    `- Quantify value where possible: "Signal score 12 — ACCEPT", "verified in under 3 seconds."\n` +
+    `- NARRATE OUTCOMES, DON'T READ THE SCREEN. Speak to what a result MEANS for the user/business —\n` +
+    `  its direction and decision — never recite the exact on-screen number. The slide/API panel SHOWS\n` +
+    `  the precise values (dollar amounts, scores, account masks); the voiceover stays high-level + natural.\n` +
+    `    • Income/cashflow: "her verified income easily clears the loan threshold" — NOT "bi-weekly income of $2,236".\n` +
+    `    • Signal/risk score: "a low-risk transaction — the lower the score, the safer the ACH" and the decision\n` +
+    `      ("cleared to ACCEPT") — NOT "Signal score 12". Directional high-vs-low meaning is encouraged; the raw value is not.\n` +
+    `    • Linked account: "her checking account — Gold Savings — is connected" — NOT "account ending 4821".\n` +
+    `    • Identity/match: "name and email confirmed as a strong ownership match" — NOT "NAME 88 / EMAIL 62".\n` +
+    `  Decisions/results ARE fine to say out loud (ACCEPT / REVIEW / approved / verified / qualifies). Apply to ALL metrics.\n` +
     `- Never use: "simply", "just", "unfortunately", "robust", "seamless".\n` +
     `- Use only approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth", ` +
     `"Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".\n\n` +
@@ -1096,7 +1108,7 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `      "id": "<kebab-case string>",\n` +
       `      "label": "<string>",\n` +
       `      "sceneType": "<host|link|insight|slide>",\n` +
-      `      "narration": "<20–35 words, active voice, quantified outcomes — ALL steps including loading/wait states>",\n` +
+      `      "narration": "<20–35 words, active voice, OUTCOME/directional (never read exact on-screen $/scores/account masks) — ALL steps including loading/wait states>",\n` +
       `      "durationMs": <number>,\n` +
       `      "interaction": {\n` +
       `        "type": "<click|fill|wait|navigate>",\n` +
@@ -3105,7 +3117,14 @@ function buildScriptCritiquePrompt(demoScript, productResearch) {
     `- Each step must have 20–35 words (flag steps with > 35 words as critical)\n` +
     `- Active voice only (flag passive constructions)\n` +
     `- No banned words: "simply", "just", "unfortunately", "robust", "seamless"\n` +
-    `- Quantified outcomes in the key reveal step\n\n` +
+    `- The key reveal lands an OUTCOME/decision (ACCEPT, approved, qualifies, low-risk)\n` +
+    `- NARRATE OUTCOMES, DON'T READ THE SCREEN: flag any narration that recites an exact on-screen\n` +
+    `  value — a dollar amount ("$2,236"), a numeric score ("Signal score 12", "NAME 88"), an account\n` +
+    `  mask / last-4 ("ending 4821"), or an exact timing ("in 2.4 seconds") — as severity "warning",\n` +
+    `  rule "narration-reads-metric". The slide/API panel shows the precise value; the voiceover should\n` +
+    `  speak to the implication/direction instead (e.g. "income easily clears the threshold", "low-risk —\n` +
+    `  cleared to ACCEPT", "her Gold Savings checking account is connected"). Account/product NAMES and\n` +
+    `  decisions are fine to say; raw numbers are not.\n\n` +
     `Continuity (read the narrations in step order, as ONE continuous voiceover):\n` +
     `- Each scene change should open with connective tissue carrying the previous beat's\n` +
     `  outcome forward ("Once…", "That session returns…", "With identity settled…",\n` +

@@ -10,7 +10,7 @@ description: Pacing rules, narrative structure, and quality standards for Plaid 
 1. **Problem** — User/developer faces friction or compliance challenge (first 15 seconds)
 2. **Solution entry** — Plaid product introduced as the answer
 3. **Frictionless experience** — Walk through key flow steps
-4. **Key reveal** — The "wow moment" (score, approval, matched data, instant result)
+4. **Key reveal** — The "wow moment" as an OUTCOME/decision (approval, matched ownership, cleared-to-ACCEPT, instant result) — not the raw on-screen number
 5. **Outcome** — Result: faster, safer, more compliant
 
 ## Pacing Rules
@@ -27,10 +27,25 @@ description: Pacing rules, narrative structure, and quality standards for Plaid 
 ## Reveal Moment Checklist
 
 A great reveal:
-- Uses quantified outcomes: "Signal score 12 — ACCEPT", "verified in 2.4 seconds"
+- **States the OUTCOME, never reads the screen.** Speak to what the result MEANS and its direction —
+  the slide/API panel SHOWS the exact value; the voiceover stays natural and high-level.
 - Follows the narrative arc: problem → solution → wow → outcome
-- Names the key metric explicitly (score, time, confidence level)
 - Uses active voice: "Plaid verifies in real time" not "is verified"
+
+### Narration metrics rule (NARRATE OUTCOMES, DON'T READ THE SCREEN)
+The voiceover must **not recite exact on-screen values** (dollar amounts, numeric scores, account
+last-4 / masks). Those stay visible on the slide / API panel; narration speaks to the implication,
+directionally. Decisions/results ARE fine to say aloud (ACCEPT / REVIEW / approved / verified / qualifies).
+
+| Don't read the screen | Do narrate the outcome |
+|---|---|
+| "bi-weekly income of $2,236" | "her verified income easily clears the loan threshold" |
+| "Signal score 12" | "a low-risk transaction — the lower the score, the safer the ACH — cleared to ACCEPT" |
+| "account ending 4821" | "her checking account — Gold Savings — is connected" (account **names** are fine) |
+| "NAME 88 / EMAIL 62" | "name and email confirmed as a strong ownership match" |
+
+Directional high-vs-low framing is encouraged ("a higher score means more risk"); reading the raw
+number is not. Apply to **all** metrics. Script-critique flags exact-value reading as `narration-reads-metric`.
 
 ## Plaid Narrative Structures by Product
 

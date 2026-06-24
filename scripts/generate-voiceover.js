@@ -257,22 +257,36 @@ const VOICEOVER_SCRIPTS = _scratchScripts || {
 //
 // Stability is kept at 0.75 per CLAUDE.md — do NOT lower it (causes stutter artifacts).
 
+// Acronyms must be SPELLED letter-by-letter by ElevenLabs. Space-separated caps
+// ("A P I") get coalesced back into a word ("ahpee") by eleven_multilingual_v2 —
+// the reliable spell-out form is PERIOD-separated caps ("A.P.I."), which forces a
+// brief boundary between each letter. Plurals (APIs, SDKs) are handled by the
+// optional-"s" match in the expansion loop (→ "A.P.I.s"). Values are the spelled
+// form WITHOUT the source acronym, keyed by the source acronym (longest first is
+// not required — \b word boundaries prevent partial overlaps).
 const ACRONYM_MAP = {
-  'ACH':  'A C H',
-  'API':  'A P I',
-  'IDV':  'I D V',
-  'OTP':  'O T P',
-  'KYC':  'K Y C',
-  'MFA':  'M F A',
-  'IAV':  'I A V',
-  'EAV':  'E A V',
-  'AML':  'A M L',
-  'PEP':  'P E P',
-  'SSN':  'S S N',
-  'CTA':  'C T A',
-  'TLS':  'T L S',
-  'SDK':  'S D K',
-  'CRA':  'C R A',
+  'ACH':  'A.C.H.',
+  'API':  'A.P.I.',
+  'IDV':  'I.D.V.',
+  'OTP':  'O.T.P.',
+  'KYC':  'K.Y.C.',
+  'MFA':  'M.F.A.',
+  'IAV':  'I.A.V.',
+  'EAV':  'E.A.V.',
+  'AML':  'A.M.L.',
+  'PEP':  'P.E.P.',
+  'SSN':  'S.S.N.',
+  'CTA':  'C.T.A.',
+  'TLS':  'T.L.S.',
+  'SDK':  'S.D.K.',
+  'CRA':  'C.R.A.',
+  'FDIC': 'F.D.I.C.',
+  'NMLS': 'N.M.L.S.',
+  'DTC':  'D.T.C.',
+  'ACATS':'A.C.A.T.S.',
+  // EWA is spoken as the full phrase in voiceover (cleaner than spelling "E.W.A.");
+  // the abbreviation "EWA" still appears on slides (this map only affects narration).
+  'EWA':  'Earned Wage Access',
 };
 
 // Patterns that indicate a reveal moment deserving a brief dramatic pause
@@ -343,11 +357,15 @@ function normalizeNarration(text, stepId = '') {
     (_, prefix, digits) => `${prefix} ${digits.split('').join(' ')}`
   );
 
-  // 1. Expand acronyms: word-boundary match to avoid partial replacements
+  // 1. Expand acronyms → period-separated letters (spell-out). Match an optional
+  //    trailing plural "s" (APIs → A.P.I.s) so plurals also spell out instead of
+  //    reading as "ahpees". \b prevents partial matches inside larger words.
   for (const [acronym, expansion] of Object.entries(ACRONYM_MAP)) {
     normalized = normalized.replace(
-      new RegExp(`\\b${acronym}\\b`, 'g'),
-      expansion
+      new RegExp(`\\b${acronym}(s)?\\b`, 'g'),
+      // Append the plural "s" only for letter spell-outs (dotted, e.g. A.P.I.s);
+      // word expansions like "Earned Wage Access" must not gain a stray "s".
+      (_, plural) => expansion + (plural && expansion.includes('.') ? 's' : '')
     );
   }
 
