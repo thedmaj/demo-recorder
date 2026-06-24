@@ -47,6 +47,13 @@ directionally. Decisions/results ARE fine to say aloud (ACCEPT / REVIEW / approv
 Directional high-vs-low framing is encouraged ("a higher score means more risk"); reading the raw
 number is not. Apply to **all** metrics. Script-critique flags exact-value reading as `narration-reads-metric`.
 
+**Narration must MATCH the screen.** Outcome-style does not mean made-up: any specific NAME the
+voiceover says (account/plan/card name, institution, decision label) must actually appear in that
+step's rendered content (`visualState` / `apiResponse` / slide). Put the name verbatim on screen, or
+don't say it. For the bank account linked via Plaid Link, use the label the live sandbox shows
+("Plaid Checking", "Plaid Saving") — never invent a marketing name like "Gold Savings" that won't be
+on screen. Script-critique flags ungrounded names as `narration-screen-mismatch`.
+
 ## Plaid Narrative Structures by Product
 
 ### Signal (ACH risk)
@@ -136,14 +143,27 @@ surface webhook names, event names, raw enums, API field names, endpoints, or ID
 
 ## Plaid Link Narration Boundary Rule
 
-The step BEFORE the Plaid Link step must end with the action that triggers the modal:
-- ✅ "...she taps Link Your Bank."
-- ✅ "...she clicks Add External Account."
+**Cover the modal-load beat.** The live Plaid Link modal takes ~2–3s to appear after the
+button click. If the Link step narration jumps straight to in-modal content it finishes
+before the modal renders, leaving dead air. So the Plaid Link step narration **opens with a
+short bridge that introduces the Plaid Link experience** — naming the **actual** on-screen
+button (match it verbatim) and that it brings up Plaid Link — then continues with what's
+visible inside (and the use-case context). (Operator direction 2026-06-24; this supersedes the
+older "never narrate the trigger in the Link step" rule, which caused the dead-air.)
 
-The Plaid Link step narration must begin describing content VISIBLE INSIDE the modal:
-- ✅ "Recognized as a returning user, she confirms with a one-time code..."
-- ❌ "Plaid Link opens. She taps..." (never narrate the trigger in the Link step)
-- ❌ "She clicks the button and Plaid Link opens..." (same violation)
+- ✅ "Joe taps **Link bank account**, bringing up the Plaid Link experience, where he connects his bank in seconds."
+- ✅ "She selects **Add External Account** — Plaid Link opens, and she confirms her bank securely."
+- ❌ Jumping straight to in-modal detail with no bridge (narration ends before the modal loads).
+- ❌ A button name that isn't the one on screen (must match the rendered CTA — grounding rule applies).
+
+**Returning-user (phone + one-time-passcode) flows.** When the flow authenticates via a phone
+number + OTP (the returning-user / Remember-Me path), weave in the Plaid-network framing to
+explain *why* the user is recognized and fill the verification beat — directionally, e.g.:
+- ✅ "In this example Joe is recognized as a returning user on the Plaid network — where roughly
+  one in two U.S. adults have connected a bank with Plaid Link — so he just confirms a one-time code."
+
+This is directional guidance, not fixed wording; vary the phrasing. The "1 in 2 U.S. adults"
+Plaid-network reach line is an approved public framing for these phone+OTP flows.
 
 ## Narration Transitions — Connect Every Scene Change
 
@@ -160,6 +180,7 @@ behind-the-scenes/API insight beat:
   the /auth/get API returns verified routing and account numbers."
 - ❌ "The report-ready webhook fires — the Consumer Report is ready." (cold start + dev jargon)
 
-This composes with the boundary rule above: the transition INTO a Link step still never
-narrates the button tap. Endpoint names belong only in insight-step transitions, never in
-host-step narration. Script-critique flags cold starts as `narration-continuity` warnings.
+This composes with the boundary rule above: the Link step OPENS with the button-name bridge
+that introduces the Plaid Link experience (to cover modal load), then describes the in-modal
+content. Endpoint names belong only in insight-step transitions, never in host-step narration.
+Script-critique flags cold starts as `narration-continuity` warnings.

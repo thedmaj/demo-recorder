@@ -69,9 +69,11 @@ These are the highest-blast-radius mistakes; the owning file has the full rules.
 - **Realistic but idealized data** — no 100/100 scores, no sub-1s responses. Verify exact field
   names/types via AskBill; never fabricate fields or `reason_codes[]`.
 - **IDV statuses:** `active`, `success`, `failed`, `pending_review`. Never show API errors in main flows.
-- **Plaid Link narration boundary:** the step BEFORE the Link step ends with the trigger action
-  ("…she taps Link Your Bank."); the Link step narration begins describing content VISIBLE INSIDE
-  the modal — never the act of opening it. → [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md)
+- **Plaid Link narration boundary (updated 2026-06-24):** the Link step narration OPENS with a short
+  bridge introducing the Plaid Link experience — naming the ACTUAL on-screen button + that it brings up
+  Plaid Link — to cover the ~2-3s modal load, then describes what's inside. For phone+OTP (returning-user)
+  flows, weave in the Plaid-network framing ("~1 in 2 U.S. adults have connected a bank with Plaid Link").
+  Button name must match the rendered CTA. → [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md)
 - **Host app background:** default host/customer screens to white/light neutral; reserve
   Plaid-dark for Plaid-specific contexts. → [`saas-demo-design-principles`](.claude/skills/saas-demo-design-principles/SKILL.md)
 - **Adding/removing a step after build ⇒ re-sync the recording nav script.** The recorder

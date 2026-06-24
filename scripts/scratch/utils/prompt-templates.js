@@ -861,6 +861,11 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
     `    • Linked account: "her checking account — Gold Savings — is connected" — NOT "account ending 4821".\n` +
     `    • Identity/match: "name and email confirmed as a strong ownership match" — NOT "NAME 88 / EMAIL 62".\n` +
     `  Decisions/results ARE fine to say out loud (ACCEPT / REVIEW / approved / verified / qualifies). Apply to ALL metrics.\n` +
+    `- MATCH THE SCREEN. Any specific NAME you say in narration (account/plan/card name, institution,\n` +
+    `  decision label) MUST appear in that step's on-screen content — put it verbatim in the step's\n` +
+    `  visualState and/or apiResponse. Never narrate a name that isn't rendered. For the bank account\n` +
+    `  linked via Plaid Link, use the label the live sandbox actually shows (e.g. "Plaid Checking",\n` +
+    `  "Plaid Saving") — do NOT invent a marketing name like "Gold Savings" that won't be on screen.\n` +
     `- Never use: "simply", "just", "unfortunately", "robust", "seamless".\n` +
     `- Use only approved product names: "Plaid Identity Verification (IDV)", "Plaid Instant Auth", ` +
     `"Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets".\n\n` +
@@ -1165,9 +1170,12 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `  ✗ "The report-ready webhook fires —…" (developer jargon as an opener, zero connective tissue)\n` +
       `- The transition lives INSIDE the 20–35 word budget: a short connective clause (3–8 words),\n` +
       `  then the step's own content. Do not pad a narration to fit a transition in.\n` +
-      `- The Plaid Link boundary rule still holds: the step BEFORE a launch ends on the tap; the\n` +
-      `  launch step opens INSIDE the modal. The step AFTER a Link/IDV/Layer session is the prime\n` +
-      `  transition site ("Once Plaid Link has authenticated…", "That session returns…").\n` +
+      `- Plaid Link boundary (updated): the launch step OPENS with a short bridge that introduces the\n` +
+      `  Plaid Link experience — name the ACTUAL on-screen button and that it brings up Plaid Link —\n` +
+      `  to cover the ~2-3s modal load (otherwise the narration ends before the modal renders). Then\n` +
+      `  describe what's inside. e.g. "Joe taps Link bank account, bringing up the Plaid Link experience…".\n` +
+      `  The step AFTER a Link/IDV/Layer session is the prime transition site ("Once Plaid Link has\n` +
+      `  authenticated…", "That session returns…").\n` +
       `- VARY sentence openers: never start two consecutive narrations with the same word, the\n` +
       `  same connective form, the persona's name, or "Plaid". Use the persona's first name in at\n` +
       `  most 3 narrations total — pronouns and role words ("she", "the owner", "the applicant")\n` +
@@ -1200,9 +1208,14 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `  same token; it appears as a SEPARATE launch step alongside the bank Link launch.\n` +
       `- Do NOT create a standalone pre-Link explainer step before a launch; merge trust/value copy\n` +
       `  into the launch step itself.\n` +
-      `- Each launch step's narration (≤35 words) describes what is visible INSIDE that modal, not\n` +
-      `  the button click that triggers it. e.g. "Recognized as a returning user, Berta confirms with\n` +
-      `  a one-time code, selects her checking account, and connects in seconds."\n\n` +
+      `- Each launch step's narration (≤35 words) OPENS by introducing the Plaid Link experience —\n` +
+      `  naming the actual on-screen button (must match the rendered CTA) and that it brings up Plaid\n` +
+      `  Link — to cover the modal-load beat, THEN describes what's visible inside. e.g. "Joe taps Link\n` +
+      `  bank account, bringing up Plaid Link, where he connects his bank in seconds."\n` +
+      `- For a phone-number + one-time-passcode (returning-user / Remember-Me) launch, weave in the\n` +
+      `  Plaid-network framing to explain the recognition and fill the verification beat — directionally,\n` +
+      `  e.g. "…recognized as a returning user on the Plaid network — where roughly one in two U.S. adults\n` +
+      `  have connected a bank with Plaid Link — so she just confirms a one-time code." Vary the wording.\n\n` +
       `SCENE METADATA RULE (CRITICAL):\n` +
       `Set sceneType for every step and keep it consistent with structure:\n` +
       `- host: customer-branded host UI step\n` +
@@ -3123,8 +3136,12 @@ function buildScriptCritiquePrompt(demoScript, productResearch) {
     `  mask / last-4 ("ending 4821"), or an exact timing ("in 2.4 seconds") — as severity "warning",\n` +
     `  rule "narration-reads-metric". The slide/API panel shows the precise value; the voiceover should\n` +
     `  speak to the implication/direction instead (e.g. "income easily clears the threshold", "low-risk —\n` +
-    `  cleared to ACCEPT", "her Gold Savings checking account is connected"). Account/product NAMES and\n` +
-    `  decisions are fine to say; raw numbers are not.\n\n` +
+    `  cleared to ACCEPT", "her connected checking account is ready"). Account/product NAMES and\n` +
+    `  decisions are fine to say; raw numbers are not.\n` +
+    `- NARRATION MUST MATCH THE SCREEN: flag (rule "narration-screen-mismatch", severity "warning") any\n` +
+    `  specific NAME spoken in narration — an account/plan/card name, institution, or labeled entity —\n` +
+    `  that does NOT appear in that step's visualState/apiResponse/slide content. A name said aloud must\n` +
+    `  be the one actually rendered (e.g. the Plaid Link account label), never an invented one.\n\n` +
     `Continuity (read the narrations in step order, as ONE continuous voiceover):\n` +
     `- Each scene change should open with connective tissue carrying the previous beat's\n` +
     `  outcome forward ("Once…", "That session returns…", "With identity settled…",\n` +

@@ -975,6 +975,40 @@ async function runScriptCritique() {
     console.warn(`[script-critique] narration-reads-metric: ${narrationMetricWarnings.length} step(s) read an exact on-screen value aloud (use outcome/directional language; the value stays on the slide):`);
     narrationMetricWarnings.forEach(w => console.warn(`  - ${w.stepId}: ${w.label} "${w.match}"`));
   }
+
+  // Deterministic narration-grounding scan: a specific named entity in narration
+  // (account/plan/card name) must MATCH what's on screen — narration may be
+  // outcome-style, but a name it says aloud ("Gold Savings account") must actually
+  // appear in the demo's rendered content (visualState / apiResponse / slide text).
+  // Catches the LLM inventing a plausible name that's nowhere on screen.
+  // (User directive 2026-06-24.) Surfaced as `narration-screen-mismatch` warnings.
+  const screenHaystack = (script.steps || [])
+    .map(st => [st.visualState, st.apiResponse ? JSON.stringify(st.apiResponse) : '', st.slideContent, st.label]
+      .filter(Boolean).join(' '))
+    .join(' ')
+    .toLowerCase();
+  const NAMED_ENTITY_RE = /\b([A-Z][A-Za-z0-9]+(?:\s+[A-Z][A-Za-z0-9]+){0,2})\s+(Checking|Savings?|Account|Card|Wallet|Plan)\b/g;
+  const narrationGroundingWarnings = [];
+  for (const step of (script.steps || [])) {
+    const n = String(step.narration || '');
+    let m;
+    NAMED_ENTITY_RE.lastIndex = 0;
+    while ((m = NAMED_ENTITY_RE.exec(n)) !== null) {
+      const phrase = m[0].trim();
+      // Generic phrases ("your checking account", "a savings account") are fine —
+      // only flag a DISTINCT proper name (the qualifier isn't a generic word).
+      const qualifier = m[1].toLowerCase();
+      if (/^(your|the|a|an|her|his|their|this|that|external|linked|new|primary|business|personal)$/.test(qualifier)) continue;
+      if (!screenHaystack.includes(phrase.toLowerCase())) {
+        narrationGroundingWarnings.push({ stepId: step.id || '(no-id)', rule: 'narration-screen-mismatch', name: phrase });
+      }
+    }
+  }
+  if (narrationGroundingWarnings.length) {
+    console.warn(`[script-critique] narration-screen-mismatch: ${narrationGroundingWarnings.length} named reference(s) in narration not found on screen (narration must match what's rendered):`);
+    narrationGroundingWarnings.forEach(w => console.warn(`  - ${w.stepId}: "${w.name}" — not present in any visualState/apiResponse/slide. Use the name actually shown (e.g. the Plaid Link account label) or render this name in the demo.`));
+  }
+
   let productResearch = { synthesizedInsights: '', accurateTerminology: {}, internalKnowledge: [], apiSpec: {} };
   if (fs.existsSync(researchFile)) {
     try {
@@ -1027,6 +1061,7 @@ async function runScriptCritique() {
             passed: !!critique.passed,
             issueCount: Array.isArray(critique.issues) ? critique.issues.length : 0,
             narrationMetricWarnings,
+            narrationGroundingWarnings,
           },
           null,
           2

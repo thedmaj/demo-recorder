@@ -1228,9 +1228,10 @@ async function enterModalOtpIfPresent(page, { label = 'Layer' } = {}) {
     const existing = (await otpInput.inputValue().catch(() => '')).replace(/\D/g, '');
     if (existing.length >= 7) continue;
 
-    // NEW RULE: at most 1.5s "receive the code" beat before entry begins.
+    // Short "receive the code" beat before entry begins. Default trimmed 1500→500ms
+    // (operator 2026-06-24: OTP entry starts ~1s sooner); still hard-capped at 1500ms.
     const beforeCap = Math.min(
-      Math.max(0, parseInt(process.env.PLAID_LAYER_OTP_BEFORE_MS || '1500', 10) || 0),
+      Math.max(0, parseInt(process.env.PLAID_LAYER_OTP_BEFORE_MS || '500', 10) || 0),
       1500,
     );
     markPlaidStep('otp-screen', page);
@@ -1844,12 +1845,12 @@ async function executePlaidLinkPhase(page, phase) {
               // Human style: profile pacing overrides recipe dwell constants
               // (before = pre-action hesitation, after = read/settle dwell).
               // fast → null → raw recipe constants, unchanged.
-              // Per operator request (2026-06-17): the phone number is typed AS
-              // SOON AS Plaid Link loads — no "read the screen" hesitation before
-              // it (PLAID_PHONE_BEFORE_MS, default 0) — and the OTP is entered
-              // after a short ~1.5s "receive the code" pause once the phone is
-              // submitted (PLAID_OTP_BEFORE_MS, default 1500). Typing itself stays
-              // at human keystroke speed via the pacer's typeInto.
+              // Per operator request (2026-06-17, retrimmed 2026-06-24): the phone
+              // number is typed AS SOON AS Plaid Link loads — no "read the screen"
+              // hesitation before it (PLAID_PHONE_BEFORE_MS, default 0) — and the OTP
+              // is entered after a short ~0.5s "receive the code" pause once the phone
+              // is submitted (PLAID_OTP_BEFORE_MS, default 500 — ~1s sooner than before).
+              // Typing itself stays at human keystroke speed via the pacer's typeInto.
               pacingResolver: getPacer().isHuman
                 ? ({ screen, phase, defaultMs }) => {
                     const id = String((screen && screen.id) || '').toLowerCase();
@@ -1858,7 +1859,8 @@ async function executePlaidLinkPhase(page, phase) {
                         return parseInt(process.env.PLAID_PHONE_BEFORE_MS || '0', 10);
                       }
                       if (/\botp\b|one[-\s]?time|verif|\bcode\b/.test(id)) {
-                        return parseInt(process.env.PLAID_OTP_BEFORE_MS || '1500', 10);
+                        // Trimmed 1500→500ms (operator 2026-06-24: OTP entry starts ~1s sooner).
+                        return parseInt(process.env.PLAID_OTP_BEFORE_MS || '500', 10);
                       }
                       return Math.max(defaultMs, getPacer().hesitateMs('primary', screen.id));
                     }
@@ -1905,8 +1907,11 @@ async function executePlaidLinkPhase(page, phase) {
           const phoneInput = frame.locator('input[type="tel"], input[name="phone"], input[placeholder*="phone" i], input[placeholder*="Phone" i]').first();
           const phoneVisible = await phoneInput.isVisible({ timeout: 5000 }).catch(() => false);
           if (phoneVisible) {
-            // Requirement: keep initial Plaid Link screen visible ~3s before continuing.
-            await page.waitForTimeout(3000);
+            // Hold the initial Plaid Link screen briefly before typing the phone.
+            // Trimmed 3000→1000ms (operator 2026-06-24: phone entry should start ~2s
+            // sooner so it overlaps the modal-load beat rather than dead-airing).
+            // Override with PLAID_PHONE_HOLD_MS.
+            await page.waitForTimeout(parseInt(process.env.PLAID_PHONE_HOLD_MS || '1000', 10));
             const phone = _sandboxConfig?.phone || '+14155550011';
             await recordPlaidInteraction(page, phoneInput, 'phone-entry');
             await getPacer().humanType(phoneInput, phone, { kind: 'numeric', screenId: 'phone-entry' });

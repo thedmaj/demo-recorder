@@ -1094,13 +1094,11 @@ function validateDemoScript(demoScript, opts = {}) {
       );
     }
   }
-  // Plaid Link narration-boundary rule applies to every launch step.
-  for (const ls of launchSteps) {
-    const narration = ls.narration || '';
-    if (/\b(plaid link opens|opens plaid link|clicks .*link|taps .*link|launches plaid link)\b/i.test(narration)) {
-      errors.push(`Launch step "${ls.id}" narration violates the Plaid Link boundary rule. Narrate what is visible inside the modal, not the trigger action.`);
-    }
-  }
+  // Plaid Link narration boundary (updated 2026-06-24): the launch step narration
+  // SHOULD now OPEN with a short bridge that introduces the Plaid Link experience —
+  // naming the actual button and that it brings up Plaid Link — to cover the modal-
+  // load beat (the old "never narrate the trigger" rule caused dead air). So trigger
+  // language in the launch step is intentional and no longer a validation error.
   if (plaidLinkLive && launchSteps.length === 0) {
     if (layerUseCase) {
       warnings.push('PLAID_LINK_LIVE=true with no plaidPhase:"launch" is allowed for Layer-native flows.');
@@ -1449,33 +1447,10 @@ async function main() {
     }
   }
 
-  // Auto-repair narrations that violate the Plaid Link boundary rule BEFORE
-  // validation runs. CLAUDE.md requires the Plaid Link launch step to narrate
-  // what is visible inside the modal (institution picker / account select /
-  // success handoff), NOT the button-click that opens it. The LLM sometimes
-  // forgets and writes "Elena taps Link Bank Account. Plaid Link opens...".
-  // Rather than hard-failing and losing a ~90s research run, strip the
-  // trigger-phrase sentence and keep the rest.
-  {
-    const launch = demoScript.steps.find((s) => s && s.plaidPhase === 'launch');
-    if (launch && typeof launch.narration === 'string') {
-      const original = launch.narration;
-      const TRIGGER_PATTERNS = [
-        /\b(plaid link opens|opens plaid link|launches plaid link)[^.?!]*[.?!]?\s*/gi,
-        /\b(clicks?|taps?|presses?|selects?|hits?)\s+[^.?!]*\b(link bank|connect bank|link (?:my |her |his |your )?(?:external )?account|link (?:my |her |his |your )?bank|add (?:external )?bank|add (?:my |her |his |your )?bank|continue with bank)[^.?!]*[.?!]?\s*/gi,
-      ];
-      let rewritten = original;
-      for (const re of TRIGGER_PATTERNS) rewritten = rewritten.replace(re, '');
-      rewritten = rewritten.replace(/\s{2,}/g, ' ').trim();
-      if (rewritten && rewritten !== original && rewritten.split(/\s+/).length >= 6) {
-        launch.narration = rewritten;
-        console.warn(
-          `[Script] Auto-repaired Plaid Link boundary-rule violation on step "${launch.id}". ` +
-          `Removed trigger-action sentence(s) so narration describes modal content only.`
-        );
-      }
-    }
-  }
+  // (Removed 2026-06-24) The Plaid Link boundary auto-repair that stripped the
+  // trigger-action sentence from launch narration. Per operator direction, the launch
+  // step narration now SHOULD open with a button-name bridge introducing the Plaid Link
+  // experience (to cover the ~2-3s modal load); stripping it reintroduced the dead-air.
 
   // App-only safety net: if the LLM still produced any Plaid-branded
   // interstitial (sceneType: insight | slide) despite the explicit prompt,
