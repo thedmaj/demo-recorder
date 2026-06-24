@@ -1258,6 +1258,55 @@ function plaidModalPresent(page) {
 }
 
 /**
+ * Guarantee the Plaid Link modal actually OPENED and is VISIBLE after the launch
+ * CTA click. agent.visionClick can report a successful click that visually missed
+ * the CTA, so the app's opener never fires and the host pre-link card stays up —
+ * the recorder then navigates the host card, the modal never composites, and the
+ * integrity gate halts (Citi funding funnel, 2026-06-23: a "Securely connect your
+ * bank" explainer card with a "Link external account" button stayed on screen,
+ * institution-list-shown stuck at a fixed ~57s fallback, modal-missing).
+ *
+ * If no VISIBLE Plaid iframe (real size, not the hidden preload iframe) is present
+ * shortly after the click, directly invoke the app's own opener — covering every
+ * common name (openPlaid / openPlaidLink / initiateLink) and finally
+ * _plaidHandler.open(). Idempotent: re-opening an already-open modal is a no-op.
+ * Returns true once a visible modal is detected.
+ */
+async function ensurePlaidModalOpen(page, { timeoutMs = 8000 } = {}) {
+  const isVisible = async () => {
+    try {
+      return await page.evaluate((sel) => {
+        const ifr = document.querySelector(sel);
+        if (!ifr) return false;
+        const r = ifr.getBoundingClientRect();
+        const cs = getComputedStyle(ifr);
+        return r.width > 200 && r.height > 200 &&
+          cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity || '1') > 0.1;
+      }, PLAID_IFRAME_SELECTOR);
+    } catch (_) { return false; }
+  };
+  if (await isVisible()) return true;
+  const opened = await page.evaluate(() => {
+    const tryFns = ['openPlaid', 'openPlaidLink', 'initiateLink'];
+    for (const fn of tryFns) {
+      if (typeof window[fn] === 'function') { try { window[fn](); return fn + '()'; } catch (_) {} }
+    }
+    if (window._plaidHandler && typeof window._plaidHandler.open === 'function') {
+      try { window._plaidHandler.open(); return 'handler.open()'; } catch (_) {}
+    }
+    return null;
+  }).catch(() => null);
+  if (opened) console.log(`  [Plaid Link] ensureModalOpen: modal not visible after click — directly invoked ${opened}`);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await isVisible()) { console.log('  [Plaid Link] ensureModalOpen: modal is visible'); return true; }
+    await page.waitForTimeout(400);
+  }
+  console.warn('  [Plaid Link] ensureModalOpen: Plaid modal still not visible after direct open fallback');
+  return false;
+}
+
+/**
  * Launch-step lock: during a live Plaid launch, prevent the host app from
  * advancing to a DIFFERENT step while the modal is being recorded. The app's
  * onSuccess (or a stray timer) can call goToStep(postLink) mid-flow, painting a
@@ -1685,6 +1734,9 @@ async function executePlaidLinkPhase(page, phase) {
             }
           }
           await page.waitForTimeout(1500);
+          // Guarantee the modal actually opened — vision can report a click that
+          // missed the CTA, leaving the host pre-link card up and the modal closed.
+          await ensurePlaidModalOpen(page);
         }
 
         // Also try to automate the real Plaid iframe in background (for token exchange).
