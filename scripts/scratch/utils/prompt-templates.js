@@ -1208,14 +1208,18 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `  same token; it appears as a SEPARATE launch step alongside the bank Link launch.\n` +
       `- Do NOT create a standalone pre-Link explainer step before a launch; merge trust/value copy\n` +
       `  into the launch step itself.\n` +
-      `- Each launch step's narration (≤35 words) OPENS by introducing the Plaid Link experience —\n` +
-      `  naming the actual on-screen button (must match the rendered CTA) and that it brings up Plaid\n` +
-      `  Link — to cover the modal-load beat, THEN describes what's visible inside. e.g. "Joe taps Link\n` +
-      `  bank account, bringing up Plaid Link, where he connects his bank in seconds."\n` +
-      `- For a phone-number + one-time-passcode (returning-user / Remember-Me) launch, weave in the\n` +
-      `  Plaid-network framing to explain the recognition and fill the verification beat — directionally,\n` +
-      `  e.g. "…recognized as a returning user on the Plaid network — where roughly one in two U.S. adults\n` +
-      `  have connected a bank with Plaid Link — so she just confirms a one-time code." Vary the wording.\n\n` +
+      `- Each launch step's narration (up to ~45 words — launch steps get extra room to cover the\n` +
+      `  modal load) OPENS by introducing the Plaid Link experience — naming the actual on-screen button\n` +
+      `  (must match the rendered CTA) and that it brings up Plaid Link — to cover the ~2-3s modal-load\n` +
+      `  beat, THEN conveys the OUTCOME of the connection. Do NOT enumerate every sub-step (institution\n` +
+      `  pick → account select → success screen) like a checklist — the recording shows those; keep it\n` +
+      `  natural. e.g. "Joe taps Link bank account, bringing up Plaid Link, and connects his bank in seconds."\n` +
+      `- For a phone-number + one-time-passcode (returning-user / Remember-Me) launch, you MUST weave in\n` +
+      `  the Plaid-network framing — it explains WHY the user is recognized and fills the verification\n` +
+      `  beat — INSTEAD of narrating each sub-step. Directionally, e.g. "Joe taps Continue with Plaid,\n` +
+      `  opening the Plaid Link experience. Recognized as a returning user on the Plaid network — where\n` +
+      `  roughly one in two U.S. adults have connected a bank with Plaid Link — he confirms a one-time\n` +
+      `  code and his accounts connect." Vary the wording; this framing is required for phone+OTP launches.\n\n` +
       `SCENE METADATA RULE (CRITICAL):\n` +
       `Set sceneType for every step and keep it consistent with structure:\n` +
       `- host: customer-branded host UI step\n` +

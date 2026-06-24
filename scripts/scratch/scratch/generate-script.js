@@ -93,7 +93,7 @@ const GENERATE_DEMO_SCRIPT_TOOL = {
             id:              { type: 'string', description: 'kebab-case step identifier' },
             label:           { type: 'string' },
             sceneType:       { type: 'string', description: '"host" | "link" | "insight" | "slide"' },
-            narration:       { type: 'string', description: '20–35 words for ElevenLabs TTS' },
+            narration:       { type: 'string', description: '20–35 words for ElevenLabs TTS (Plaid Link launch steps may run up to ~45 to cover the modal-load bridge + returning-user framing)' },
             durationHintMs:  { type: 'number', description: 'Expected screen duration in ms' },
             plaidPhase:      { type: 'string', description: '"launch" for the Plaid Link step' },
             visualState:     { type: 'string', description: 'What is visible on screen' },
@@ -1240,6 +1240,26 @@ async function main() {
     productResearchForPrompt,
     { requireFinalValueSummarySlide, pipelineAppOnlyHostUi }
   );
+
+  // Deterministic Plaid Link flow hint. If the prompt's link beat calls for a
+  // remember-me / phone+OTP returning-user flow, tell the model EXPLICITLY (a buried
+  // beat gets ignored — YNAB 2026-06-24 narrated a standard "searches/signs in" flow
+  // despite the prompt asking for remember-me/OTP). This makes the model set
+  // plaidLinkFlow='remember-me' AND narrate the returning-user / Plaid-network framing
+  // so the narration matches what the recorder actually does.
+  const wantsRememberMe = /remember.?me|returning user|one[\s-]?time[\s-]?pass|phone\s*\+?\s*otp|otp.*phone/i.test(promptText || '');
+  if (wantsRememberMe && Array.isArray(userMessages) && userMessages[0]) {
+    const directive =
+      '\n\nPLAID LINK FLOW (DETECTED FROM PROMPT): remember-me / phone + one-time-passcode (returning user). ' +
+      'You MUST set plaidSandboxConfig.plaidLinkFlow="remember-me". The launch-step narration MUST describe the ' +
+      'RETURNING-USER path — open with the button bridge, then weave in the Plaid-network framing ("recognized as a ' +
+      'returning user on the Plaid network, where roughly one in two U.S. adults have connected a bank with Plaid Link") ' +
+      'and a one-time code. Do NOT narrate a standard "searches for her bank, signs in" flow — that will not match the recording.';
+    const m0 = userMessages[0];
+    if (typeof m0.content === 'string') m0.content += directive;
+    else if (Array.isArray(m0.content)) m0.content.push({ type: 'text', text: directive });
+    console.log('[Script] Prompt indicates a remember-me/OTP flow — injected returning-user narration + flow directive.');
+  }
   if (pipelineAppOnlyHostUi) {
     console.log('[Script] App-only run: script prompt forbids sceneType "insight" and "slide"');
   } else {
@@ -1430,8 +1450,11 @@ async function main() {
   for (const step of demoScript.steps) {
     if (step.narration) {
       const words = step.narration.trim().split(/\s+/).length;
-      if (words > 35) {
-        narrationErrors.push(`  Step "${step.id}": narration has ${words} words (max 35)`);
+      // Launch steps carry the modal-load bridge + (for phone+OTP) the returning-user
+      // network framing, so they get a higher ceiling (48) than normal steps (35).
+      const maxWords = step.plaidPhase === 'launch' ? 48 : 35;
+      if (words > maxWords) {
+        narrationErrors.push(`  Step "${step.id}": narration has ${words} words (max ${maxWords})`);
       } else if (words < 8) {
         narrationErrors.push(`  Step "${step.id}": narration has ${words} words (min 8)`);
       }
@@ -1451,6 +1474,17 @@ async function main() {
   // trigger-action sentence from launch narration. Per operator direction, the launch
   // step narration now SHOULD open with a button-name bridge introducing the Plaid Link
   // experience (to cover the ~2-3s modal load); stripping it reintroduced the dead-air.
+
+  // Backstop: when the prompt called for a remember-me/OTP returning-user flow, ensure
+  // plaidLinkFlow is actually set to 'remember-me' so the recorder runs the phone+OTP
+  // returning-user path that the narration describes (keeps narration ↔ recording matched).
+  if (wantsRememberMe) {
+    demoScript.plaidSandboxConfig = demoScript.plaidSandboxConfig || {};
+    if (demoScript.plaidSandboxConfig.plaidLinkFlow !== 'remember-me') {
+      console.log(`[Script] Forced plaidLinkFlow=remember-me (was "${demoScript.plaidSandboxConfig.plaidLinkFlow || 'unset'}"; prompt indicates returning-user/OTP).`);
+      demoScript.plaidSandboxConfig.plaidLinkFlow = 'remember-me';
+    }
+  }
 
   // App-only safety net: if the LLM still produced any Plaid-branded
   // interstitial (sceneType: insight | slide) despite the explicit prompt,
