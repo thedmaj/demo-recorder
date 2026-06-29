@@ -964,6 +964,36 @@ function cmdWhoami({ flags = {} } = {}) {
   console.log(c.bold('Artifact repository'));
   console.log(`  URL:   ${artifactRepo || c.yellow('(unset — export PLAID_DEMO_APPS_REPO)')}`);
   console.log(`  Clone: ${artifactDir}${fs.existsSync(artifactDir) ? '' : c.yellow(' (not cloned yet — run `pipe pull`)')}`);
+
+  // Repository freshness. A stale local clone is the #1 silent onboarding
+  // failure: commands referenced in ONBOARDING.md appear "missing" (Unknown
+  // command → exit 64) only because the checkout predates them. Surface the
+  // current commit/date and, when the clone is behind its tracked upstream,
+  // the exact refresh command.
+  try {
+    const { execSync } = require('child_process');
+    const repoRoot = require('path').join(__dirname, '..');
+    const git = (args) => execSync(`git ${args}`, { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+    const sha = git('rev-parse --short HEAD');
+    const date = git('show -s --format=%cd --date=short HEAD');
+    console.log('');
+    console.log(c.bold('Repository'));
+    console.log(`  Commit: ${sha} (${date})`);
+    let behind = 0;
+    let upstream = '';
+    try {
+      upstream = git('rev-parse --abbrev-ref --symbolic-full-name @{u}');
+      behind = parseInt(git(`rev-list --count HEAD..${upstream}`), 10) || 0;
+    } catch (_) { /* no upstream tracking ref */ }
+    if (behind > 0) {
+      console.log(c.yellow(`  ⚠ ${behind} commit(s) behind ${upstream} — your clone is stale (as of last fetch).`));
+      console.log(`    Refresh: ${c.cyan('git pull --ff-only')} ${c.dim('then')} ${c.cyan('bash scripts/setup/install.sh')}`);
+    } else if (upstream) {
+      console.log(c.dim(`  Up to date with ${upstream} (as of last fetch). If a documented command seems missing, run \`git pull\`.`));
+    } else {
+      console.log(c.dim('  (no upstream tracking branch — run `git pull` if a documented command seems missing)'));
+    }
+  } catch (_) { /* not a git checkout — skip silently */ }
   return 0;
 }
 
