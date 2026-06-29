@@ -1844,6 +1844,34 @@ async function main() {
     console.warn(`  Could not write pipeline run context: ${e.message}`);
   }
 
+  // ── Host-company context (Brandfetch Brand Context API) ────────────────────
+  // Grounds the demo persona / scenario / value-prop language in what the HOST
+  // company actually does (AskBill/Glean only know Plaid + internal data). Flagged
+  // (BRAND_CONTEXT_ENABLED, default on) + fully graceful — any miss leaves research
+  // unchanged. Surfaced to script-gen as research.hostCompanyContext.markdown.
+  if (String(process.env.BRAND_CONTEXT_ENABLED || 'true').toLowerCase() !== 'false') {
+    try {
+      const { fetchBrandContext, inferBrandDomainFromPrompt } = require('./utils/brand-context');
+      const brandDomain = inferBrandDomainFromPrompt(promptContent);
+      if (brandDomain) {
+        const md = await fetchBrandContext(brandDomain);
+        if (md) {
+          research.hostCompanyContext = {
+            domain: brandDomain,
+            source: 'brandfetch-brand-context-api',
+            fetchedAt: new Date().toISOString(),
+            markdown: md,
+          };
+          console.log(`  Host company context: ${brandDomain} (${Math.round(md.length / 1024)}KB) → product-research.json`);
+        }
+      } else {
+        console.log('  Host company context: no brand domain found in prompt — skipped.');
+      }
+    } catch (e) {
+      console.warn(`  Host company context (non-fatal): ${e.message}`);
+    }
+  }
+
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(research, null, 2));
   console.log(`✓ Product research written: out/product-research.json`);
   console.log(`  Features: ${(research.synthesizedInsights.keyFeatures || []).length}`);

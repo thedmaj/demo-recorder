@@ -39,3 +39,12 @@ artifacts/
 /*.png
 inputs/prompt.*-backup.*
 inputs/*.bak
+
+# One-off exports (portable skills, etc.) — not part of the pipeline
+exports/
+
+# Brandfetch Brand Context API per-domain cache (regenerable; not committed)
+inputs/brand-context-cache.json
+
+# Cursor local worktree state (per-machine; never committed)
+.cursor/worktrees.json

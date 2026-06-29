@@ -757,6 +757,23 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       ? productResearch.embeddedLinkSkillMarkdown.trim()
       : '';
 
+  // Host-company context (Brandfetch Brand Context API, fetched in research). SUPPLEMENTARY
+  // background only — adds realistic color to the persona/scenario/host-app surfaces, but it is
+  // LOWER AUTHORITY than the prompt and the internal research (Glean / AskBill / curated product
+  // knowledge / Solutions Master). On ANY conflict, the prompt + internal research win
+  // (operator directive 2026-06-25).
+  const hostCtx = productResearch && productResearch.hostCompanyContext;
+  const hostCompanyContextBlock =
+    hostCtx && typeof hostCtx.markdown === 'string' && hostCtx.markdown.trim()
+      ? `HOST COMPANY CONTEXT — ${hostCtx.domain} (SUPPLEMENTARY background from Brandfetch — LOWER AUTHORITY).\n` +
+        `Use it ONLY to add realistic color to the persona, scenario, and host-app surfaces.\n` +
+        `PRECEDENCE — the SOURCE OF TRUTH is the user's prompt and the internal research above (Glean / AskBill /\n` +
+        `curated product knowledge / Solutions Master). If anything below conflicts with the prompt or that\n` +
+        `internal research — company facts, products, persona, value props, the storyboard, or any other detail —\n` +
+        `IGNORE the conflicting part here and follow the prompt + research. Never let this override them.\n\n` +
+        hostCtx.markdown.trim()
+      : '';
+
   // ── Three-tier story handling ─────────────────────────────────────────────
   // Detect whether the user wrote an explicit storyboard, gave us a tailored
   // scenario, or left the LLM to follow the canonical arc. The system prompt
@@ -984,6 +1001,16 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
     contentBlocks.push({
       type: 'text',
       text: `## INTERNAL KNOWLEDGE\n\n${snippets}`,
+    });
+  }
+
+  // Host-company context LAST + lowest authority: it follows all the authoritative
+  // material (prompt, curated product knowledge, internal Glean/AskBill research) so
+  // the model treats it as supplementary and yields to the prompt + research on conflict.
+  if (hostCompanyContextBlock) {
+    contentBlocks.push({
+      type: 'text',
+      text: hostCompanyContextBlock,
     });
   }
 
