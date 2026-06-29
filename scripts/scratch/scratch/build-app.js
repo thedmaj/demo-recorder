@@ -949,6 +949,23 @@ function injectLocalBrandLogo(html, brand) {
   const textColor = (brand.colors && brand.colors.textPrimary) || '#1B1F3B';
   let out = html;
   let swapped = 0;
+  // 0) Most common case: the build already placed the canonical host-bank logo
+  //    from the prompt template (a REMOTE Brandfetch <img data-testid=
+  //    "host-bank-logo-img" src="https://cdn.brandfetch.io/…" onerror=…>).
+  //    Repoint that existing <img> at the local asset and drop its remote
+  //    onerror fallback — do NOT add a second lockup. This must run before the
+  //    fallback below; once `brand-logo.png` is in the HTML the strategy-2/3
+  //    guards (`!/brand-logo\.png/`) self-skip, preventing the double logo.
+  out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+    const isHostLogo = /data-testid=["']host-bank-logo-img["']/i.test(tag)
+      || /\bsrc=["'][^"']*cdn\.brandfetch\.io[^"']*["']/i.test(tag);
+    if (!isHostLogo || /\bsrc=["']brand-logo\.png["']/i.test(tag)) return tag;
+    let t = tag.replace(/\s+onerror=("[^"]*"|'[^']*')/i, '');
+    t = t.replace(/(\bsrc=)("[^"]*"|'[^']*')/i, '$1"brand-logo.png"');
+    swapped++;
+    return t;
+  });
+  if (swapped > 0) console.log(`[Build] Repointed ${swapped} existing host-bank logo <img> to local brand-logo.png (no duplicate lockup).`);
   // 1) Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
   out = out.replace(
     /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
