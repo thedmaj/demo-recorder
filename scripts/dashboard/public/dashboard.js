@@ -4571,6 +4571,48 @@
   let _vpCurrentFrontmatter = {};  // frontmatter of the file currently displayed
   let _vpPreserveSelection = null; // after fact PATCH, re-open same file after list refresh
 
+  // ── Product-knowledge triage state ──────────────────────────────────────────
+  let _vpFiles = [];           // last fetched list payload
+  let _vpFilter = 'all';       // all | attention | stale | notwired | fresh
+  let _vpSearch = '';          // free-text query over name/family/product
+  let _vpSort = 'priority';    // priority | name
+
+  // Mirror of server queuePriorityScore so the tab ranks "what needs action" first.
+  function vpPriority(f) {
+    let s = 0;
+    if (f.needsReview) s += 1000;
+    if (f.staleByAge) s += 200;
+    s += Math.min(50, f.draftCount || 0) * 10;
+    s += Math.min(365, f.staleDays || 0);
+    return s;
+  }
+  function vpNeedsAttention(f) { return !!(f.needsReview || f.staleByAge); }
+  function vpNotWired(f) {
+    return f.group === 'products' && (!Array.isArray(f.loadedBy) || f.loadedBy.length === 0);
+  }
+  function vpMatchesFilter(f) {
+    switch (_vpFilter) {
+      case 'attention': return vpNeedsAttention(f);
+      case 'stale':     return !!f.staleByAge;
+      case 'notwired':  return vpNotWired(f);
+      case 'fresh':     return !vpNeedsAttention(f) && !vpNotWired(f);
+      default:          return true;
+    }
+  }
+  function vpMatchesSearch(f) {
+    if (!_vpSearch) return true;
+    const q = _vpSearch.toLowerCase();
+    const fm = f.frontmatter || {};
+    const hay = [f.name, fm.product, fm.slug, ...(f.loadedBy || [])]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  }
+  function vpDisplayTitle(f) {
+    const fm = f.frontmatter || {};
+    if (fm.product) return fm.product;
+    return (f.name.startsWith('products/') ? f.name.slice('products/'.length) : f.name).replace(/\.md$/, '');
+  }
+
   async function loadValueProps() {
     const el = document.getElementById('valueprop-content');
     if (!el) return;
@@ -4578,87 +4620,146 @@
 
     try {
       const data = await api('/api/valueprop/list');
-      const files = data.files || [];
+      _vpFiles = data.files || [];
 
-      if (files.length === 0) {
+      if (_vpFiles.length === 0) {
         el.innerHTML = '<div class="empty-state">No markdown files found in inputs/</div>';
         return;
       }
 
-      const productFiles = files.filter(f => f.group === 'products');
-      const rootFiles    = files.filter(f => f.group !== 'products');
-
-      function renderFileItem(f) {
-        const loadedBy = Array.isArray(f.loadedBy) ? f.loadedBy : [];
-        const loadedBadge = f.group === 'products'
-          ? (loadedBy.length > 0
-              ? `<span class="vp-loaded-badge vp-loaded-badge--active" title="This file is curated into prompts when the pipeline resolves product family: ${esc(loadedBy.join(', '))}">loaded: ${esc(loadedBy.join(', '))}</span>`
-              : `<span class="vp-loaded-badge vp-loaded-badge--idle" title="No product family in product-profiles.js references this slug — the file is present but not consumed by the pipeline">not wired</span>`)
-          : '';
-        const vpResearchDate = f.frontmatter && (f.frontmatter.last_vp_research || f.frontmatter.last_ai_update);
-        const vpResearchBadge = vpResearchDate
-          ? `<span class="vp-research-date" title="Last value-prop research run"><code>${esc(String(vpResearchDate).slice(0, 10))}</code></span>`
-          : '';
-        const staleB = f.staleByAge
-          ? `<span class="vp-stale-badge" title="Last curated update older than ${esc(String(f.staleThresholdDays || 90))} days">Stale ${f.staleDays != null ? esc(String(f.staleDays)) + 'd' : ''}</span>`
-          : '';
-        const displayName = f.name.startsWith('products/') ? f.name.replace('products/', '') : f.name;
-        return `
-          <div class="vp-file-item" data-name="${esc(f.name)}">
-            <span class="vp-file-name">${esc(displayName)}</span>
-            ${loadedBadge}
-            <span class="vp-file-size">${formatBytes(f.size)}</span>
-            <div class="vp-file-badges">${vpResearchBadge}${staleB}</div>
-          </div>`;
-      }
-
-      const productSection = productFiles.length > 0 ? `
-        <div class="file-group-title">inputs/products/ — Per-Product KB</div>
-        ${productFiles.map(renderFileItem).join('')}` : '';
-
-      const rootSection = rootFiles.length > 0 ? `
-        <div class="file-group-title" style="margin-top:${productFiles.length > 0 ? '12px' : '0'}">inputs/ — Markdown</div>
-        ${rootFiles.map(renderFileItem).join('')}` : '';
-
       el.innerHTML = `
         <div class="vp-layout">
           <div class="vp-sidebar">
-            ${productSection}
-            ${rootSection}
+            <div class="vp-controls">
+              <input type="search" id="vp-search" class="vp-search" placeholder="Search products, families…" autocomplete="off" />
+              <div class="vp-facets" id="vp-facets"></div>
+              <div class="vp-sortrow">
+                <span class="vp-triage-line" id="vp-triage-line"></span>
+                <label class="vp-sort">Sort
+                  <select id="vp-sort-select">
+                    <option value="priority">Priority</option>
+                    <option value="name">Name</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="vp-file-list" id="vp-file-list"></div>
           </div>
           <div class="vp-editor-area" id="vp-editor-area">
             <div class="empty-state">Select a file to view or edit</div>
           </div>
         </div>`;
 
-      el.querySelectorAll('.vp-file-item').forEach(item => {
-        item.addEventListener('click', () => {
-          el.querySelectorAll('.vp-file-item').forEach(x => x.classList.remove('active'));
-          item.classList.add('active');
-          // Retrieve frontmatter from the files list
-          const fileInfo = files.find(f => f.name === item.dataset.name);
-          _vpCurrentFrontmatter = fileInfo ? (fileInfo.frontmatter || {}) : {};
-          loadVpFile(item.dataset.name);
-        });
-      });
+      const searchEl = el.querySelector('#vp-search');
+      searchEl.value = _vpSearch;
+      searchEl.addEventListener('input', () => { _vpSearch = searchEl.value.trim(); renderVpList(); });
+      const sortEl = el.querySelector('#vp-sort-select');
+      sortEl.value = _vpSort;
+      sortEl.addEventListener('change', () => { _vpSort = sortEl.value; renderVpList(); });
 
+      renderVpList();
+      installVpSelectionHandler();
+
+      // Initial selection: pending deep-link, preserved selection, else top of list.
       const want = _vpPendingOpenName || _vpPreserveSelection;
       _vpPendingOpenName = null;
       _vpPreserveSelection = null;
-      const pick = want
-        ? [...el.querySelectorAll('.vp-file-item')].find(i => i.dataset.name === want)
-        : null;
-      const firstItem = pick || el.querySelector('.vp-file-item');
-      if (firstItem) {
-        el.querySelectorAll('.vp-file-item').forEach(x => x.classList.remove('active'));
-        firstItem.classList.add('active');
-        const fileInfo = files.find(f => f.name === firstItem.dataset.name);
-        _vpCurrentFrontmatter = fileInfo ? (fileInfo.frontmatter || {}) : {};
-        loadVpFile(firstItem.dataset.name);
-      }
+      const listEl = el.querySelector('#vp-file-list');
+      const pick = want ? [...listEl.querySelectorAll('.vp-file-item')].find(i => i.dataset.name === want) : null;
+      const firstItem = pick || listEl.querySelector('.vp-file-item');
+      if (firstItem) selectVpItem(firstItem);
 
     } catch (e) {
       el.innerHTML = `<div class="empty-state error">Failed to load value props: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function selectVpItem(item) {
+    const listEl = document.getElementById('vp-file-list');
+    if (!listEl || !item) return;
+    listEl.querySelectorAll('.vp-file-item').forEach(x => x.classList.remove('active'));
+    item.classList.add('active');
+    const fileInfo = _vpFiles.find(f => f.name === item.dataset.name);
+    _vpCurrentFrontmatter = fileInfo ? (fileInfo.frontmatter || {}) : {};
+    loadVpFile(item.dataset.name);
+  }
+
+  function renderVpFacets() {
+    const facetsEl = document.getElementById('vp-facets');
+    const triageEl = document.getElementById('vp-triage-line');
+    if (!facetsEl) return;
+    const attention = _vpFiles.filter(vpNeedsAttention).length;
+    const stale     = _vpFiles.filter(f => f.staleByAge).length;
+    const notwired  = _vpFiles.filter(vpNotWired).length;
+    const fresh     = _vpFiles.filter(f => !vpNeedsAttention(f) && !vpNotWired(f)).length;
+    const facets = [
+      { key: 'all',       label: 'All',            count: _vpFiles.length, cls: '' },
+      { key: 'attention', label: 'Needs attention', count: attention,      cls: 'vp-facet--attention' },
+      { key: 'stale',     label: 'Stale',           count: stale,          cls: 'vp-facet--stale' },
+      { key: 'notwired',  label: 'Not wired',       count: notwired,       cls: 'vp-facet--warn' },
+      { key: 'fresh',     label: 'Fresh',           count: fresh,          cls: 'vp-facet--fresh' },
+    ];
+    facetsEl.innerHTML = facets.map(f =>
+      `<button type="button" class="vp-facet ${f.cls} ${_vpFilter === f.key ? 'active' : ''}" data-facet="${f.key}">
+         ${esc(f.label)} <span class="vp-facet-count">${f.count}</span>
+       </button>`).join('');
+    facetsEl.querySelectorAll('.vp-facet').forEach(btn => {
+      btn.addEventListener('click', () => { _vpFilter = btn.dataset.facet; renderVpList(); });
+    });
+    if (triageEl) {
+      triageEl.innerHTML = attention > 0
+        ? `<button type="button" class="vp-triage-cta" id="vp-triage-cta">${attention} need attention</button>`
+        : `<span class="vp-triage-clear">✓ All reviewed &amp; fresh</span>`;
+      triageEl.querySelector('#vp-triage-cta')?.addEventListener('click', () => { _vpFilter = 'attention'; renderVpList(); });
+    }
+  }
+
+  function renderFileItem(f) {
+    const loadedBy = Array.isArray(f.loadedBy) ? f.loadedBy : [];
+    const chips = [];
+    if (f.needsReview) chips.push('<span class="vp-chip vp-chip--review" title="AI updated this file after the last human review">Needs review</span>');
+    if (f.staleByAge)  chips.push(`<span class="vp-chip vp-chip--stale" title="Last human review older than ${esc(String(f.staleThresholdDays || 90))} days">Stale ${f.staleDays != null ? esc(String(f.staleDays)) + 'd' : ''}</span>`);
+    if (vpNotWired(f)) chips.push('<span class="vp-chip vp-chip--warn" title="No product family references this slug — present but not consumed by the pipeline">Not wired</span>');
+    if (chips.length === 0) chips.push('<span class="vp-chip vp-chip--fresh">Fresh</span>');
+
+    const familyLine = f.group === 'products'
+      ? (loadedBy.length > 0
+          ? `<span class="vp-file-family" title="Curated into prompts for: ${esc(loadedBy.join(', '))}">${esc(loadedBy.join(', '))}</span>`
+          : '')
+      : `<span class="vp-file-family vp-file-family--root">${esc(f.name)}</span>`;
+
+    return `
+      <div class="vp-file-item" data-name="${esc(f.name)}">
+        <div class="vp-file-head">
+          <span class="vp-file-name" title="${esc(f.name)}">${esc(vpDisplayTitle(f))}</span>
+          <span class="vp-file-size">${formatBytes(f.size)}</span>
+        </div>
+        ${familyLine ? `<div class="vp-file-sub">${familyLine}</div>` : ''}
+        <div class="vp-file-chips">${chips.join('')}</div>
+      </div>`;
+  }
+
+  function renderVpList() {
+    renderVpFacets();
+    const listEl = document.getElementById('vp-file-list');
+    if (!listEl) return;
+    let rows = _vpFiles.filter(f => vpMatchesFilter(f) && vpMatchesSearch(f));
+    rows.sort((a, b) => _vpSort === 'name'
+      ? a.name.localeCompare(b.name)
+      : (vpPriority(b) - vpPriority(a)) || a.name.localeCompare(b.name));
+
+    if (rows.length === 0) {
+      listEl.innerHTML = '<div class="empty-state" style="padding:24px 14px">No files match this filter.</div>';
+      return;
+    }
+    listEl.innerHTML = rows.map(renderFileItem).join('');
+    listEl.querySelectorAll('.vp-file-item').forEach(item => {
+      item.addEventListener('click', () => selectVpItem(item));
+    });
+    // Keep the open file highlighted if it's still in view.
+    if (_vpCurrentFile) {
+      const cur = [...listEl.querySelectorAll('.vp-file-item')].find(i => i.dataset.name === _vpCurrentFile);
+      if (cur) cur.classList.add('active');
     }
   }
 
@@ -4683,9 +4784,27 @@
    * is wrapped in a <details> block.
    */
   function renderVpContent(content) {
+    // Peel the YAML frontmatter off the top so the value-prop prose leads.
+    // The schema/metadata is preserved but collapsed — a PMM edits messaging,
+    // not YAML, so it shouldn't be the first thing they wade through.
+    let fmBlock = '';
+    const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (fmMatch) {
+      fmBlock = `
+        <details class="vp-frontmatter-toggle">
+          <summary class="vp-frontmatter-summary">
+            <span class="vp-frontmatter-icon">⚙️</span>
+            File metadata &amp; API schema (YAML)
+            <span class="vp-ai-notes-hint">(click to expand)</span>
+          </summary>
+          <pre class="vp-frontmatter-body">${esc(fmMatch[1])}</pre>
+        </details>`;
+      content = content.slice(fmMatch[0].length);
+    }
+
     const NOTES_HEADING = '## AI Research Notes';
     const idx = content.indexOf(NOTES_HEADING);
-    if (idx === -1) return `<div class="vp-rendered">${renderMarkdown(content)}</div>`;
+    if (idx === -1) return `<div class="vp-rendered">${fmBlock}${renderMarkdown(content)}</div>`;
 
     const before = content.slice(0, idx);
     const rest = content.slice(idx + NOTES_HEADING.length);
@@ -4697,6 +4816,7 @@
 
     return `
       <div class="vp-rendered">
+        ${fmBlock}
         ${renderMarkdown(before)}
         <details class="vp-ai-notes-toggle">
           <summary class="vp-ai-notes-summary">
@@ -4744,10 +4864,17 @@
       ? `<div id="vp-content-area"><textarea id="vp-textarea" class="vp-textarea">${esc(content)}</textarea></div>`
       : `<div id="vp-content-area">${previewBody}</div>`;
 
+    const curInfo = _vpFiles.find(f => f.name === _vpCurrentFile);
+    const needsAttention = curInfo && (curInfo.needsReview || curInfo.staleByAge);
+    const markReviewedBtn = (!editMode && isProductFile && needsAttention)
+      ? `<button class="btn btn-sm vp-mark-reviewed-btn" id="vp-mark-reviewed-btn" title="Stamp last_human_review to today and clear the needs-review flag">✓ Mark reviewed</button>`
+      : '';
+
     area.innerHTML = `
       <div class="vp-toolbar">
         <span class="vp-filename">${esc(_vpCurrentFile || '')}</span>
         <div class="vp-toolbar-actions">
+          ${markReviewedBtn}
           <button class="btn btn-sm ${!editMode ? 'btn-primary' : 'btn-secondary'}" id="vp-preview-btn">Preview</button>
           <button class="btn btn-sm ${editMode ? 'btn-primary' : 'btn-secondary'}" id="vp-edit-btn">Edit</button>
           ${editMode ? `
@@ -4757,6 +4884,8 @@
       </div>
       ${metaBar}
       ${splitWrap}`;
+
+    document.getElementById('vp-mark-reviewed-btn')?.addEventListener('click', markVpReviewed);
 
     document.getElementById('vp-preview-btn')?.addEventListener('click', () => {
       const current = editMode ? (document.getElementById('vp-textarea')?.value || content) : content;
@@ -4789,6 +4918,214 @@
     } catch (e) {
       showToast('Save failed: ' + e.message, 'error');
     }
+  }
+
+  async function markVpReviewed() {
+    if (!_vpCurrentFile) return;
+    try {
+      const res = await fetch('/api/valueprop/' + encodeURIComponent(_vpCurrentFile) + '/mark-reviewed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      }).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+      // Update the in-memory list entry so facets/priority re-rank without a full reload.
+      if (res.entry) {
+        const i = _vpFiles.findIndex(f => f.name === _vpCurrentFile);
+        if (i !== -1) _vpFiles[i] = res.entry;
+        _vpCurrentFrontmatter = res.entry.frontmatter || {};
+      }
+      showToast('Marked reviewed — ' + _vpCurrentFile, 'success');
+      renderVpList();
+      loadVpFile(_vpCurrentFile);
+    } catch (e) {
+      showToast('Mark reviewed failed: ' + e.message, 'error');
+    }
+  }
+
+  // ── Highlight → Validate / Improve (AskBill / Glean) ─────────────────────────
+  let _vpSelText = '';
+  let _vpSelFromTextarea = false;
+  let _vpSelStart = 0, _vpSelEnd = 0;
+  let _vpSelHandlerInstalled = false;
+
+  function installVpSelectionHandler() {
+    if (_vpSelHandlerInstalled) return;
+    _vpSelHandlerInstalled = true;
+    document.addEventListener('mouseup', onVpSelectionEvent);
+    document.addEventListener('keyup', (e) => {
+      // Only react to selection changes inside the editor textarea.
+      const ta = document.getElementById('vp-textarea');
+      if (ta && document.activeElement === ta) onVpSelectionEvent(e);
+    });
+    document.addEventListener('mousedown', (e) => {
+      const fab = document.getElementById('vp-sel-fab');
+      if (fab && !fab.contains(e.target)) hideVpFab();
+    });
+  }
+
+  function onVpSelectionEvent(e) {
+    const area = document.getElementById('vp-editor-area');
+    if (!area) return hideVpFab();
+    const ta = document.getElementById('vp-textarea');
+    let text = '';
+    if (ta && document.activeElement === ta) {
+      _vpSelFromTextarea = true;
+      _vpSelStart = ta.selectionStart; _vpSelEnd = ta.selectionEnd;
+      text = ta.value.substring(_vpSelStart, _vpSelEnd);
+    } else {
+      // Preview selection — only count it if it's inside the editor area.
+      const sel = window.getSelection && window.getSelection();
+      if (!sel || sel.rangeCount === 0) return hideVpFab();
+      const anchor = sel.anchorNode;
+      if (!anchor || !area.contains(anchor.nodeType === 1 ? anchor : anchor.parentNode)) return hideVpFab();
+      _vpSelFromTextarea = false;
+      text = sel.toString();
+    }
+    text = text.trim();
+    if (text.length < 8) return hideVpFab();
+    _vpSelText = text;
+    // Position the FAB near the selection.
+    let x, y;
+    if (!_vpSelFromTextarea && window.getSelection().rangeCount) {
+      const r = window.getSelection().getRangeAt(0).getBoundingClientRect();
+      x = r.left + r.width / 2; y = r.top - 8;
+    } else if (e && typeof e.clientX === 'number' && e.clientX > 0) {
+      x = e.clientX; y = e.clientY - 12;
+    } else {
+      const r = (ta || area).getBoundingClientRect();
+      x = r.right - 90; y = r.top + 12;
+    }
+    showVpFab(x, y);
+  }
+
+  function showVpFab(x, y) {
+    let fab = document.getElementById('vp-sel-fab');
+    if (!fab) {
+      fab = document.createElement('button');
+      fab.id = 'vp-sel-fab';
+      fab.className = 'vp-sel-fab';
+      fab.innerHTML = '✦ Validate / Improve';
+      fab.addEventListener('click', (ev) => { ev.stopPropagation(); openVpValidatePanel(); });
+      document.body.appendChild(fab);
+    }
+    fab.style.left = Math.max(8, Math.min(window.innerWidth - 180, x - 80)) + 'px';
+    fab.style.top = Math.max(8, y - 34) + 'px';
+    fab.style.display = 'block';
+  }
+  function hideVpFab() {
+    const fab = document.getElementById('vp-sel-fab');
+    if (fab) fab.style.display = 'none';
+  }
+
+  function openVpValidatePanel() {
+    hideVpFab();
+    const stmt = _vpSelText;
+    const canReplace = _vpSelFromTextarea;
+    let panel = document.getElementById('vp-validate-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'vp-validate-panel';
+      panel.className = 'vp-validate-panel';
+      document.body.appendChild(panel);
+    }
+    panel.dataset.canReplace = canReplace ? '1' : '0';
+    panel.innerHTML = `
+      <div class="vp-vp-header">
+        <span class="vp-vp-title">✦ Validate &amp; improve</span>
+        <button class="vp-vp-close" id="vp-vp-close">✕</button>
+      </div>
+      <div class="vp-vp-statement">“${esc(stmt)}”</div>
+      <div class="vp-vp-sources">
+        <span class="vp-vp-srclabel">Check against:</span>
+        <button class="btn btn-sm btn-primary" id="vp-vp-askbill">AskBill (docs)</button>
+        <button class="btn btn-sm btn-secondary" id="vp-vp-glean">Glean (internal)</button>
+      </div>
+      <div class="vp-vp-body" id="vp-vp-body">
+        <div class="vp-vp-hint">Pick a source to validate this statement and get improved wording.</div>
+      </div>`;
+    panel.style.display = 'flex';
+    panel.querySelector('#vp-vp-close').addEventListener('click', closeVpValidatePanel);
+    panel.querySelector('#vp-vp-askbill').addEventListener('click', () => runVpValidation('askbill'));
+    panel.querySelector('#vp-vp-glean').addEventListener('click', () => runVpValidation('glean'));
+    // Auto-run the default source for a one-click feel.
+    runVpValidation('askbill');
+  }
+  function closeVpValidatePanel() {
+    const p = document.getElementById('vp-validate-panel');
+    if (p) p.style.display = 'none';
+  }
+
+  const _VP_VERDICTS = {
+    supported:     { label: 'Supported',     cls: 'vp-verdict--ok' },
+    needs_caution: { label: 'Needs caution', cls: 'vp-verdict--warn' },
+    unsupported:   { label: 'Unsupported',   cls: 'vp-verdict--bad' },
+    unknown:       { label: 'Inconclusive',  cls: 'vp-verdict--unknown' },
+  };
+
+  async function runVpValidation(source) {
+    const panel = document.getElementById('vp-validate-panel');
+    if (!panel) return;
+    const body = panel.querySelector('#vp-vp-body');
+    const canReplace = panel.dataset.canReplace === '1';
+    // Toggle active source button.
+    panel.querySelector('#vp-vp-askbill')?.classList.toggle('btn-primary', source === 'askbill');
+    panel.querySelector('#vp-vp-askbill')?.classList.toggle('btn-secondary', source !== 'askbill');
+    panel.querySelector('#vp-vp-glean')?.classList.toggle('btn-primary', source === 'glean');
+    panel.querySelector('#vp-vp-glean')?.classList.toggle('btn-secondary', source !== 'glean');
+    body.innerHTML = `<div class="vp-vp-loading">Checking against ${source === 'glean' ? 'Glean' : 'AskBill'}…<div class="vp-vp-spinner"></div></div>`;
+
+    const fm = _vpCurrentFrontmatter || {};
+    try {
+      const res = await fetch('/api/valueprop/validate-statement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ statement: _vpSelText, source, product: fm.product || fm.slug || '', fileName: _vpCurrentFile }),
+      }).then(r => r.json());
+      if (res.error) { body.innerHTML = `<div class="vp-vp-err">Error: ${esc(res.error)}</div>`; return; }
+
+      const v = _VP_VERDICTS[res.verdict] || _VP_VERDICTS.unknown;
+      const issues = (res.issues || []).map(i => `<li>${esc(i)}</li>`).join('');
+      const suggestions = (res.suggestions || []).map((s, idx) => `
+        <div class="vp-vp-sugg">
+          <div class="vp-vp-sugg-text">${esc(s.wording)}</div>
+          ${s.rationale ? `<div class="vp-vp-sugg-why">${esc(s.rationale)}</div>` : ''}
+          <div class="vp-vp-sugg-actions">
+            <button class="btn btn-sm btn-secondary vp-vp-copy" data-i="${idx}">Copy</button>
+            ${canReplace ? `<button class="btn btn-sm btn-primary vp-vp-replace" data-i="${idx}">Replace selection</button>` : ''}
+          </div>
+        </div>`).join('');
+
+      body.innerHTML = `
+        <div class="vp-vp-verdict ${v.cls}">${v.label}${res.sourceAvailable ? '' : ' · source unavailable'}</div>
+        <div class="vp-vp-assessment">${esc(res.assessment || '')}</div>
+        ${issues ? `<div class="vp-vp-section-title">Issues</div><ul class="vp-vp-issues">${issues}</ul>` : ''}
+        ${suggestions ? `<div class="vp-vp-section-title">Improved wording</div>${suggestions}` : '<div class="vp-vp-hint">No wording suggestions returned.</div>'}
+        ${res.sourceRaw ? `<details class="vp-vp-raw"><summary>Source evidence (${source === 'glean' ? 'Glean' : 'AskBill'})</summary><pre>${esc(res.sourceRaw)}</pre></details>` : ''}`;
+
+      const sugg = res.suggestions || [];
+      body.querySelectorAll('.vp-vp-copy').forEach(btn => btn.addEventListener('click', () => {
+        const w = sugg[+btn.dataset.i]?.wording || '';
+        navigator.clipboard?.writeText(w);
+        showToast('Copied suggestion', 'success');
+      }));
+      body.querySelectorAll('.vp-vp-replace').forEach(btn => btn.addEventListener('click', () => {
+        const w = sugg[+btn.dataset.i]?.wording || '';
+        applyVpReplacement(w);
+      }));
+    } catch (e) {
+      body.innerHTML = `<div class="vp-vp-err">Request failed: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function applyVpReplacement(wording) {
+    const ta = document.getElementById('vp-textarea');
+    if (!ta) { showToast('Switch to Edit mode to replace', 'error'); return; }
+    ta.value = ta.value.slice(0, _vpSelStart) + wording + ta.value.slice(_vpSelEnd);
+    _vpSelEnd = _vpSelStart + wording.length;
+    ta.focus();
+    ta.setSelectionRange(_vpSelStart, _vpSelEnd);
+    showToast('Replaced — remember to Save', 'success');
+    closeVpValidatePanel();
   }
 
   // ── Lightweight Markdown Renderer ────────────────────────────────────────────

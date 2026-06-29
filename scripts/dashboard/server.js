@@ -4221,6 +4221,151 @@ app.put('/api/valueprop/:name', (req, res) => {
   }
 });
 
+// Mark a product-knowledge file human-reviewed: stamp `last_human_review` to
+// today and clear `needs_review`, editing ONLY those frontmatter keys so the
+// PMM never has to hand-edit YAML. Returns the refreshed list entry so the UI
+// can re-rank without a full reload.
+app.post('/api/valueprop/:name/mark-reviewed', (req, res) => {
+  try {
+    const filePath = safeInputsPath(req.params.name);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    let content = fs.readFileSync(filePath, 'utf8');
+    const fmMatch = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/);
+    if (!fmMatch) return res.status(400).json({ error: 'File has no frontmatter block to stamp' });
+
+    const today = new Date().toISOString().slice(0, 10);
+    let body = fmMatch[2];
+
+    // last_human_review → today (replace if present, else append)
+    if (/^last_human_review\s*:.*$/m.test(body)) {
+      body = body.replace(/^last_human_review\s*:.*$/m, `last_human_review: "${today}"`);
+    } else {
+      body += `\nlast_human_review: "${today}"`;
+    }
+    // needs_review → false (replace if present, else append)
+    if (/^needs_review\s*:.*$/m.test(body)) {
+      body = body.replace(/^needs_review\s*:.*$/m, 'needs_review: false');
+    } else {
+      body += '\nneeds_review: false';
+    }
+
+    content = content.replace(fmMatch[0], `${fmMatch[1]}${body}${fmMatch[3]}`);
+    const tmp = filePath + '.tmp';
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, filePath);
+
+    const group = req.params.name.startsWith('products/') ? 'products' : 'root';
+    const entry = enrichValuepropListEntry(req.params.name, group, filePath, fs.statSync(filePath));
+    res.json({ ok: true, entry });
+  } catch (err) {
+    res.status(err.message === 'Invalid filename' ? 400 : 500).json({ error: err.message });
+  }
+});
+
+// Validate / improve a highlighted value-prop statement against an authoritative
+// source (AskBill = Plaid docs, Glean = internal GTM), then synthesize a
+// structured marketing/sales assessment + improved wording with Anthropic.
+// Body: { statement, source: 'askbill'|'glean', product?, fileName? }
+app.post('/api/valueprop/validate-statement', async (req, res) => {
+  try {
+    const { statement, source, product, fileName } = req.body || {};
+    if (!statement || typeof statement !== 'string' || statement.trim().length < 3) {
+      return res.status(400).json({ error: 'statement is required (min 3 chars)' });
+    }
+    const src = source === 'glean' ? 'glean' : 'askbill';
+    const stmt = statement.trim().slice(0, 2000);
+    const productLabel = (product && String(product).trim()) || 'a Plaid product';
+
+    const { askPlaidDocs, gleanChat, tryExtractJsonBlock } =
+      require(path.join(__dirname, '../scratch/utils/mcp-clients.js'));
+
+    // 1) Ground the statement against the chosen source.
+    let sourceRaw = '';
+    try {
+      if (src === 'askbill') {
+        const q =
+          `Product: ${productLabel}.\n` +
+          `Evaluate this marketing/sales value-proposition statement for factual accuracy ` +
+          `against Plaid's official product documentation and actual capabilities:\n"""${stmt}"""\n` +
+          `Call out any inaccurate, outdated, unsupported, or non-compliant claims and state the correct facts. ` +
+          `If it is accurate, say so plainly.`;
+        sourceRaw = await askPlaidDocs(q, { answerFormat: 'prose' });
+      } else {
+        const q =
+          `Search Plaid internal GTM, marketing, sales enablement, and competitive materials.\n` +
+          `For this value-proposition statement about ${productLabel}, assess whether it matches how ` +
+          `Plaid positions this in market, and surface stronger, on-brand language that sales and ` +
+          `marketing actually use.\nStatement: """${stmt}"""`;
+        sourceRaw = await gleanChat(q, {});
+      }
+    } catch (e) {
+      sourceRaw = `[${src === 'askbill' ? 'AskBill' : 'Glean'} error] ${e.message}`;
+    }
+    const sourceOk = !!sourceRaw && !/^\[(AskBill|Glean)( unavailable| error)?\]/i.test(sourceRaw) && sourceRaw.trim().length > 0;
+
+    // 2) Synthesize a structured verdict + wording suggestions with Anthropic.
+    let result = null;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (apiKey) {
+      try {
+        const Anthropic = require('@anthropic-ai/sdk');
+        const client = new Anthropic({ apiKey });
+        const evidenceLabel = src === 'askbill' ? 'AskBill (Plaid documentation)' : 'Glean (internal GTM)';
+        const sys =
+          `You are a product-marketing editor for Plaid. You assess value-proposition statements ` +
+          `for factual accuracy and improve their wording for marketing and sales. Ground every ` +
+          `judgment in the provided ${evidenceLabel} evidence — never invent product capabilities. ` +
+          `Return STRICT JSON only, no prose around it.`;
+        const prompt =
+          `STATEMENT (highlighted by a product marketer):\n"""${stmt}"""\n\n` +
+          `EVIDENCE from ${evidenceLabel}:\n"""${(sourceRaw || '(no evidence returned)').slice(0, 6000)}"""\n\n` +
+          `Return JSON with this exact shape:\n` +
+          `{\n` +
+          `  "verdict": "supported" | "needs_caution" | "unsupported" | "unknown",\n` +
+          `  "assessment": "1-2 sentences, plain language, grounded in the evidence",\n` +
+          `  "issues": ["specific inaccuracy, risk, or weak claim", "..."],\n` +
+          `  "suggestions": [ { "wording": "improved marketing/sales phrasing", "rationale": "why it is stronger / more accurate / more on-brand" } ]\n` +
+          `}\n` +
+          `Rules: 2-3 suggestions, each <= 40 words, active voice, no "simply / just / seamless / robust". ` +
+          `Keep all claims within what the evidence supports. If evidence is empty or inconclusive, use ` +
+          `verdict "unknown" and offer wording improvements clearly framed as stylistic.`;
+        const msg = await client.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1024,
+          system: sys,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const text = (msg.content[0]?.text || '').trim();
+        result = tryExtractJsonBlock(text);
+        if (!result) { try { result = JSON.parse(text); } catch (_) { result = null; } }
+      } catch (e) {
+        result = null;
+      }
+    }
+
+    if (!result || typeof result !== 'object') {
+      result = {
+        verdict: 'unknown',
+        assessment: sourceOk
+          ? 'Model synthesis was unavailable — see the raw source evidence below.'
+          : `The ${src === 'askbill' ? 'AskBill' : 'Glean'} source did not return usable evidence.`,
+        issues: [],
+        suggestions: [],
+      };
+    }
+    // Normalize shapes defensively.
+    result.verdict = ['supported', 'needs_caution', 'unsupported', 'unknown'].includes(result.verdict) ? result.verdict : 'unknown';
+    result.issues = Array.isArray(result.issues) ? result.issues.filter(x => typeof x === 'string') : [];
+    result.suggestions = Array.isArray(result.suggestions)
+      ? result.suggestions.filter(s => s && typeof s.wording === 'string').map(s => ({ wording: s.wording, rationale: typeof s.rationale === 'string' ? s.rationale : '' }))
+      : [];
+
+    res.json({ source: src, sourceAvailable: sourceOk, sourceRaw: sourceRaw || '', statement: stmt, fileName: fileName || null, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Remotion Studio ───────────────────────────────────────────────────────────
 
 app.get('/api/studio/status', (req, res) => {
