@@ -22,6 +22,7 @@
   let storyboardSelectedStepId = null;
   let storyboardMessageBridgeBound = false;
   let storyboardPreviewSyncing = false;
+  let storyboardSlideEditMode = false;
   let _overviewLoadToken = 0;
   let _filesLoadToken = 0;
   let _storyboardLoadToken = 0;
@@ -1619,7 +1620,7 @@
     window.addEventListener('message', (evt) => {
       const msg = evt && evt.data ? evt.data : null;
       if (!msg || typeof msg !== 'object') return;
-      if (!/^(STORYBOARD_PREVIEW_READY|STORYBOARD_STEP_CHANGED)$/i.test(String(msg.type || ''))) return;
+      if (!/^(STORYBOARD_PREVIEW_READY|STORYBOARD_STEP_CHANGED|STORYBOARD_SLIDE_EDIT)$/i.test(String(msg.type || ''))) return;
       if (!currentRunId || msg.runId !== currentRunId) return;
       if (currentTab !== 'storyboard') return;
       if (!storyboardLivePreviewUrl) return;
@@ -1634,6 +1635,27 @@
         if (storyboardSelectedStepId) {
           postStoryboardPreviewMessage({ type: 'STORYBOARD_SET_STEP', stepId: storyboardSelectedStepId });
         }
+        // Re-assert edit mode across reloads so a saved edit (which reloads the
+        // preview) keeps inline editing active.
+        if (storyboardSlideEditMode) {
+          postStoryboardPreviewMessage({ type: 'STORYBOARD_EDIT_MODE', enabled: true });
+        }
+        return;
+      }
+
+      if (msg.type === 'STORYBOARD_SLIDE_EDIT') {
+        const stepId = String(msg.stepId || '').replace(/^step-/, '');
+        const stepHtml = typeof msg.stepHtml === 'string' ? msg.stepHtml : '';
+        if (!stepId || !stepHtml) return;
+        (async () => {
+          try {
+            const r = await apiPost('/api/runs/' + currentRunId + '/slide-edit', { stepId, stepHtml });
+            const rec = r && r.staleness && r.staleness.recommendedRecovery;
+            showToast(`Slide text saved (step ${stepId})${rec ? ' — re-run \`' + rec + '\` to refresh' : ''}`, 'success');
+          } catch (e) {
+            showToast('Slide save failed: ' + (e.message || String(e)), 'error');
+          }
+        })();
         return;
       }
       if (msg.type === 'STORYBOARD_STEP_CHANGED') {
@@ -1683,6 +1705,7 @@
               <button type="button" class="btn btn-sm sb-zoom-btn" data-zoom="0.75" title="75% scale">75%</button>
               <button type="button" class="btn btn-sm sb-zoom-btn" data-zoom="1" title="100% (actual size)">100%</button>
             </div>
+            <button type="button" class="btn btn-sm${storyboardSlideEditMode ? ' btn-primary' : ''}" id="sb-edit-text-btn" aria-pressed="${storyboardSlideEditMode ? 'true' : 'false'}" title="Toggle inline editing — double-click slide text to edit, Enter/click-away to save, Esc to cancel">✎ Edit text</button>
             <button type="button" class="btn btn-sm" id="sb-add-slide-btn" title="Insert a slide from the template library after the selected step">+ Add slide</button>
             <button type="button" class="btn btn-sm" id="sb-fullscreen-btn" title="Maximize the preview for easier narration editing (Esc to exit)">⤢ Maximize</button>
           </div>
@@ -2386,6 +2409,21 @@
       if (addSlideBtn) {
         addSlideBtn.addEventListener('click', () => {
           openSlideLibraryModal(storyboardSelectedStepId || '');
+        });
+      }
+
+      // Inline slide-text editing toggle — tells the preview iframe to enable
+      // double-click-to-edit on slide text.
+      const editTextBtn = document.getElementById('sb-edit-text-btn');
+      if (editTextBtn) {
+        editTextBtn.addEventListener('click', () => {
+          storyboardSlideEditMode = !storyboardSlideEditMode;
+          editTextBtn.classList.toggle('btn-primary', storyboardSlideEditMode);
+          editTextBtn.setAttribute('aria-pressed', storyboardSlideEditMode ? 'true' : 'false');
+          postStoryboardPreviewMessage({ type: 'STORYBOARD_EDIT_MODE', enabled: storyboardSlideEditMode });
+          if (storyboardSlideEditMode) {
+            showToast('Inline edit on — double-click slide text, Enter to save, Esc to cancel', 'success');
+          }
         });
       }
 

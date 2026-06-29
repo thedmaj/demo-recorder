@@ -2820,6 +2820,152 @@ app.post('/api/runs/:runId/reorder-steps', (req, res) => {
   }
 });
 
+// Deterministic inline slide-text edit from the Storyboard live preview.
+// The iframe sends the full, pre-cleaned step block (one balanced <div
+// data-testid="step-{id}"> containing a .slide-root). We sanitize defensively,
+// splice it into scratch-app/index.html (and the source slide-library file if
+// the step is library-backed), then flag staleness via recordEditorMutation.
+// No AI, no token cost — the text is persisted verbatim.
+function sanitizeSlideStepBlock(stepId, rawHtml) {
+  if (typeof rawHtml !== 'string' || !rawHtml.trim()) {
+    return { ok: false, reason: 'empty html' };
+  }
+  let html = rawHtml.trim();
+  // Strip anything executable or styling that could be injected — the step
+  // block should only carry markup. (Functional onclick="goToStep(...)" stays.)
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
+  html = html.replace(/<link\b[^>]*>/gi, '');
+  // Remove edit-only attributes the contenteditable session may leave behind.
+  html = html.replace(/\s+contenteditable(?:="[^"]*")?/gi, '');
+  html = html.replace(/\s+spellcheck(?:="[^"]*")?/gi, '');
+  // Must be the right step and a slide step.
+  if (!html.includes(`data-testid="step-${stepId}"`)) {
+    return { ok: false, reason: 'stepHtml does not match the target step id' };
+  }
+  if (!/class="[^"]*\bslide-root\b/.test(html)) {
+    return { ok: false, reason: 'not a slide step (no .slide-root)' };
+  }
+  if (!html.startsWith('<div')) {
+    return { ok: false, reason: 'step block must start with <div' };
+  }
+  // Balanced-div check (mirrors extractStepHtml's depth walk).
+  let depth = 0, i = 0, closedAtEnd = false;
+  while (i < html.length) {
+    if (html[i] === '<') {
+      if (html.slice(i, i + 4) === '<div') { depth++; i += 4; continue; }
+      if (html.slice(i, i + 6) === '</div>') {
+        depth--; i += 6;
+        if (depth === 0) { closedAtEnd = (i >= html.length); }
+        continue;
+      }
+    }
+    i++;
+  }
+  if (depth !== 0 || !closedAtEnd) {
+    return { ok: false, reason: 'unbalanced <div> nesting in step block' };
+  }
+  return { ok: true, html };
+}
+
+app.post('/api/runs/:runId/slide-edit', (req, res) => {
+  if (guardWriteOrStage(req, res, 'post-slides')) return;
+  try {
+    const { stepId, stepHtml } = req.body || {};
+    if (!stepId || typeof stepId !== 'string') {
+      return res.status(400).json({ error: 'stepId is required' });
+    }
+    const dir = getRunDir(req.params.runId);
+    const appHtmlPath = path.join(dir, 'scratch-app', 'index.html');
+    if (!fs.existsSync(appHtmlPath)) return res.status(404).json({ error: 'App HTML not found' });
+
+    const clean = sanitizeSlideStepBlock(stepId, stepHtml);
+    if (!clean.ok) return res.status(400).json({ error: clean.reason });
+
+    // Confirm the target is actually a slide step in the script.
+    const scriptPath = path.join(dir, 'demo-script.json');
+    const script = fs.existsSync(scriptPath) ? safeReadJson(scriptPath) : null;
+    const step = script && Array.isArray(script.steps)
+      ? script.steps.find(s => s && s.id === stepId)
+      : null;
+    const slideRef = step && step.slideLibraryRef && step.slideLibraryRef.htmlPath
+      ? step.slideLibraryRef : null;
+
+    // 1) Splice into the run's built HTML (the canonical render source).
+    const currentHtml = fs.readFileSync(appHtmlPath, 'utf8');
+    const spliced = spliceStepHtml(currentHtml, stepId, clean.html);
+    let wroteRunHtml = false;
+    if (spliced.valid) {
+      fs.writeFileSync(appHtmlPath + '.bak', currentHtml, 'utf8');
+      const tmp = appHtmlPath + '.tmp';
+      fs.writeFileSync(tmp, spliced.html, 'utf8');
+      fs.renameSync(tmp, appHtmlPath);
+      _appCache && _appCache.delete && _appCache.delete(req.params.runId);
+      wroteRunHtml = true;
+    }
+
+    // 2) If library-backed, persist the .slide-root to the source library file
+    //    so canvas thumbnails + future inserts reflect the edit.
+    let wroteLibrary = false;
+    if (slideRef) {
+      try {
+        const libAbs = path.resolve(PROJECT_ROOT, slideRef.htmlPath);
+        if (fs.existsSync(libAbs)) {
+          const rootMatch = clean.html.match(/<div[^>]*class="[^"]*\bslide-root\b[\s\S]*/i);
+          if (rootMatch) {
+            const libOld = fs.readFileSync(libAbs, 'utf8');
+            const libNew = extractStepHtml(clean.html, stepId) || clean.html;
+            fs.writeFileSync(libAbs + '.bak', libOld, 'utf8');
+            fs.writeFileSync(libAbs, libNew, 'utf8');
+            wroteLibrary = true;
+          }
+        }
+      } catch (e) {
+        console.warn(`[slide-edit] library mirror skipped: ${e.message}`);
+      }
+    }
+
+    if (!wroteRunHtml && !wroteLibrary) {
+      return res.status(404).json({ error: `Step ${stepId} not found in built HTML` });
+    }
+
+    // 3) Flag staleness: slide content changed ⇒ qaStale; recordingStale is
+    //    set automatically by recordEditorMutation when recording.webm exists.
+    recordEditorMutation(dir, {
+      endpoint: '/slide-edit',
+      affectedStepIds: [stepId],
+      voiceoverStale: false,
+      details: { wroteRunHtml, wroteLibrary, libraryBacked: !!slideRef },
+    });
+
+    // Return the freshly computed staleness so the dashboard can update its banner.
+    let staleness = null;
+    try {
+      const hashFile = path.join(dir, 'slide-content-hash.json');
+      const logFile = path.join(dir, EDITOR_MUTATION_LOG_FILE);
+      const hash = fs.existsSync(hashFile) ? safeReadJson(hashFile) : null;
+      const log = fs.existsSync(logFile) ? safeReadJson(logFile) : null;
+      const entries = (log && Array.isArray(log.entries)) ? log.entries : [];
+      const userModifiedStepIds = hash && hash.steps
+        ? Object.entries(hash.steps).filter(([, v]) => v && v.userModifiedSinceQa).map(([id]) => id)
+        : [];
+      const qaStale = userModifiedStepIds.length > 0;
+      const recordingStale = entries.some(e => e && e.recordingStale === true);
+      const voiceoverStale = entries.some(e => e && e.voiceoverStale === true);
+      staleness = {
+        qaStale, voiceoverStale, recordingStale, userModifiedStepIds,
+        recommendedRecovery: recordingStale ? 'pipe stage record'
+          : voiceoverStale ? 'pipe stage voiceover'
+          : qaStale ? 'pipe stage build-qa' : null,
+      };
+    } catch (_) {}
+
+    res.json({ ok: true, wroteRunHtml, wroteLibrary, staleness });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Remotion Studio launcher (B4) ─────────────────────────────────────────────
 
 app.post('/api/runs/:runId/open-studio', (req, res) => {

@@ -1010,6 +1010,11 @@
       return;
     }
 
+    if (msg.type === 'STORYBOARD_EDIT_MODE') {
+      setSlideEditMode(!!msg.enabled);
+      return;
+    }
+
     if (msg.type === 'STORYBOARD_SYNC_NARRATION') {
       const sid = String(msg.stepId || '').replace(/^step-/, '');
       const narration = String(msg.narration || '');
@@ -1026,6 +1031,158 @@
       }
     }
   });
+
+  // ── Inline slide-text editing (double-click → contenteditable) ──────────────
+  // Enabled by STORYBOARD_EDIT_MODE from the dashboard. Double-clicking a text
+  // element inside a .slide-root makes it editable; Enter/blur commits, Escape
+  // reverts. On commit we postMessage the cleaned step block to the dashboard,
+  // which persists it deterministically (no AI).
+  let __sbEditMode = false;
+  let __sbEditing = null;
+  let __sbEditOriginal = '';
+
+  (function injectSlideEditStyles() {
+    const css = `
+      body.sb-edit-mode .slide-root h1:hover, body.sb-edit-mode .slide-root h2:hover,
+      body.sb-edit-mode .slide-root h3:hover, body.sb-edit-mode .slide-root h4:hover,
+      body.sb-edit-mode .slide-root h5:hover, body.sb-edit-mode .slide-root h6:hover,
+      body.sb-edit-mode .slide-root p:hover, body.sb-edit-mode .slide-root span:hover,
+      body.sb-edit-mode .slide-root li:hover, body.sb-edit-mode .slide-root td:hover,
+      body.sb-edit-mode .slide-root figcaption:hover {
+        outline: 1px dashed rgba(0,166,126,0.7); outline-offset: 2px; cursor: text;
+      }
+      .slide-root .sb-editing {
+        outline: 2px solid #00A67E !important; outline-offset: 2px;
+        background: rgba(0,166,126,0.08); border-radius: 2px;
+      }`;
+    const tag = document.createElement('style');
+    tag.id = 'sb-slide-edit-styles';
+    tag.textContent = css;
+    (document.head || document.documentElement).appendChild(tag);
+  })();
+
+  function isSlideTextEditable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (!el.closest || !el.closest('.slide-root')) return false;
+    if (['IMG', 'SVG', 'CANVAS', 'VIDEO', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'A'].includes(el.tagName)) return false;
+    // Only leaf/inline text — skip containers that hold block-level children.
+    const hasBlockChild = Array.from(el.children).some((c) => {
+      try { return !String(getComputedStyle(c).display || '').startsWith('inline'); }
+      catch (_) { return true; }
+    });
+    if (hasBlockChild) return false;
+    return (el.textContent || '').trim().length > 0;
+  }
+
+  function pickEditableTarget(node) {
+    let el = node && node.nodeType === 3 ? node.parentElement : node;
+    let hops = 0;
+    while (el && hops < 4) {
+      if (isSlideTextEditable(el)) return el;
+      el = el.parentElement; hops++;
+    }
+    return null;
+  }
+
+  function setSlideEditMode(on) {
+    __sbEditMode = !!on;
+    document.body.classList.toggle('sb-edit-mode', __sbEditMode);
+    if (!__sbEditMode) cancelSlideEdit();
+  }
+
+  function beginSlideEdit(el) {
+    if (__sbEditing) return;
+    __sbEditing = el;
+    __sbEditOriginal = el.innerHTML;
+    el.setAttribute('contenteditable', 'true');
+    el.classList.add('sb-editing');
+    el.focus();
+    try {
+      const r = document.createRange(); r.selectNodeContents(el);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    } catch (_) {}
+  }
+
+  function cancelSlideEdit() {
+    if (!__sbEditing) return;
+    const el = __sbEditing; __sbEditing = null;
+    el.removeAttribute('contenteditable');
+    el.classList.remove('sb-editing');
+    el.innerHTML = __sbEditOriginal;
+    __sbEditOriginal = '';
+  }
+
+  function endSlideEdit(commit) {
+    const el = __sbEditing;
+    if (!el) return;
+    __sbEditing = null;
+    el.removeAttribute('contenteditable');
+    el.classList.remove('sb-editing');
+    if (!commit) { el.innerHTML = __sbEditOriginal; __sbEditOriginal = ''; return; }
+    const changed = el.innerHTML !== __sbEditOriginal;
+    // For pure-text elements, normalize stray newlines contenteditable may add.
+    const hadInlineMarkup = /<[a-z]/i.test(__sbEditOriginal);
+    if (!hadInlineMarkup) {
+      el.textContent = (el.innerText || '').replace(/\s*\n\s*/g, ' ').trim();
+    }
+    __sbEditOriginal = '';
+    if (changed) commitSlideEdit(el);
+  }
+
+  function commitSlideEdit(el) {
+    const stepDiv = el.closest('[data-testid^="step-"]');
+    if (!stepDiv) return;
+    const stepId = String(stepDiv.dataset.testid || '').replace(/^step-/, '');
+    if (!stepId) return;
+    // Clone + strip transient runtime state so we persist a clean step block.
+    const clone = stepDiv.cloneNode(true);
+    clone.classList.remove('active');
+    if (clone.style && clone.style.display) clone.style.display = '';
+    if (clone.getAttribute('style') === '') clone.removeAttribute('style');
+    clone.querySelectorAll('[contenteditable]').forEach((n) => n.removeAttribute('contenteditable'));
+    clone.querySelectorAll('.sb-editing').forEach((n) => n.classList.remove('sb-editing'));
+    clone.querySelectorAll('#storyboard-narration-store, #storyboard-narration-runtime, [data-slide-preview-override], [data-slide-preview-reveal]').forEach((n) => n.remove());
+    const stepHtml = clone.outerHTML;
+    if (!window.parent || window.parent === window) return;
+    try {
+      window.parent.postMessage({ type: 'STORYBOARD_SLIDE_EDIT', runId: RUN_ID, stepId, stepHtml }, DASHBOARD);
+    } catch (_) {}
+  }
+
+  document.addEventListener('dblclick', (e) => {
+    if (!__sbEditMode) return;
+    const target = pickEditableTarget(e.target);
+    if (!target) return;
+    e.preventDefault();
+    beginSlideEdit(target);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!__sbEditing) return;
+    if (e.key === 'Enter') { e.preventDefault(); __sbEditing.blur(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancelSlideEdit(); }
+  });
+  document.addEventListener('blur', (e) => {
+    if (__sbEditing && e.target === __sbEditing) endSlideEdit(true);
+  }, true);
+
+  // In the storyboard live preview, user clicks must NOT advance the demo —
+  // click-driven step changes interfere with inline slide editing. Navigation
+  // is driven only by the dashboard's chevron prev/next (and step dropdown),
+  // which call goToStep programmatically via the STORYBOARD_SET_STEP bridge,
+  // not through DOM clicks. So we suppress click-driven goToStep navigation
+  // here in the capture phase, before the element's inline onclick can run.
+  // We never preventDefault on the element being edited, so caret placement
+  // and text selection during editing still work.
+  const IS_STORYBOARD = /[?&]storyboard=1\b/.test(location.search || '');
+  if (IS_STORYBOARD) {
+    document.addEventListener('click', (e) => {
+      const navEl = e.target && e.target.closest && e.target.closest('[onclick*="goToStep"]');
+      if (!navEl) return;
+      e.stopImmediatePropagation();
+      const editingThis = __sbEditing && (e.target === __sbEditing || (__sbEditing.contains && __sbEditing.contains(e.target)));
+      if (!editingThis) e.preventDefault();
+    }, true);
+  }
 
   // Emit live step changes back to dashboard so storyboard UI can follow preview navigation.
   let __lastReportedStep = null;
