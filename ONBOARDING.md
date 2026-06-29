@@ -37,8 +37,13 @@ auth or secrets).
    (§8). If the request is vague, do NOT guess — ask up to ~4 targeted questions
    for the missing pieces first, especially the EXACT Plaid product(s) by approved
    name + family ("CRA Base Report" / cra_base_report, not "a lending demo"); if
-   unsure which product I mean, list candidates and ask me to choose. Then build
-   per §10 (default app-only `npm run demo`; full video only if I ask).
+   unsure which product I mean, list candidates and ask me to choose. REVIEW GATE —
+   before writing `inputs/prompt.txt` or building, show me an easy-to-read, high-level
+   summary of the proposed demo (title, host, products, persona, the story arc, the
+   ordered beats, build mode/research depth — plain language, no raw prompt/JSON) and
+   STOP: "Want any changes, or should I build it?" If I ask for edits, update and
+   re-show the summary; loop until I approve. Only after I approve, build per §10
+   (default app-only `npm run demo`; full video only if I ask).
 Note: `gh auth login --hostname github.plaid.com` is interactive — I run it, not you.
 Never commit `.env`.
 ```
@@ -185,7 +190,9 @@ Host chrome: nav + entry screen + the CTA that opens Link.   Viewport: 1440×900
 > - **Persona + story/use case** — who's on screen, what they're doing, and the reveal/outcome.
 > - **Build mode & depth** — app-only (default) vs with-slides vs full video; research depth (default `gapfill`).
 >
-> Give these up front and the agent fills the template and builds immediately; leave them out and it clarifies first. (You don't need to know the family slug — naming the real product, e.g. "CRA Base Report," is enough.)
+> Give these up front and the agent moves straight to the review step; leave them out and it clarifies first. (You don't need to know the family slug — naming the real product, e.g. "CRA Base Report," is enough.)
+>
+> **You approve before it builds.** Once the agent has the inputs, it shows an easy-to-read summary of the proposed demo — title, host, products, persona, the **story arc**, and the ordered beats — and asks *"Want any changes, or should I build it?"* Tell it what to tweak (a beat, the persona, the reveal, a product) and it revises the summary; it only writes `inputs/prompt.txt` and starts the build once you say go.
 
 **How it becomes a storyboard:** `research` (Solutions Master + AskBill + Glean) → `script` writes **`demo-script.json`**, whose ordered **`steps[]`** *are* the storyboard (each step = a screen with narration, visual state, and optional API panel). `build` turns those steps into the host app; the **dashboard storyboard view** shows each beat with its screenshot + narration + API JSON.
 

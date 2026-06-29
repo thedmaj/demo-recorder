@@ -42,9 +42,21 @@ Do this in order:
      - Host company / brand (+ URL if known).
      - Persona + the story/use case (what they're doing, the reveal/outcome).
      - App-only vs with-slides vs full video; research depth (default gapfill).
-   Confirm the assembled scenario back to me in one line, then build per ONBOARDING
-   §10. Default to app-only (`npm run demo`) unless I ask for the full video
-   (`npm run demo:full`). Monitor the build and report status.
+   REVIEW GATE — before writing `inputs/prompt.txt` or starting the build, show me
+   an easy-to-read, high-level summary of the proposed demo and STOP for my
+   go-ahead. Plain language, scannable, no raw prompt/JSON:
+     • Title: <demo title — one-line value prop>
+     • Host: <company> (<industry>)
+     • Products: <Plaid X, Plaid Y — approved names>
+     • Persona: <name>, <role>
+     • Story arc: Problem → how Plaid enters → steps → reveal → outcome (1–2 lines)
+     • Beats: 1) … 2) … 3) …  (storyboard order, one short line each)
+     • Build: app-only | with-slides | full video · Research: <depth>
+   Then ask: "Want any changes, or should I build it?" If I request edits, update
+   the summary and show it again — loop until I approve. Only AFTER I approve, write
+   `inputs/prompt.txt` from the template and build per ONBOARDING §10. Default to
+   app-only (`npm run demo`) unless I ask for the full video (`npm run demo:full`).
+   Monitor the build and report status.
 
 Notes: `gh auth login --hostname github.plaid.com` (ONBOARDING §4) is interactive — I
 run that, not you. Optional Glean/AskBill creds live in David's `.env`; without them

@@ -33,7 +33,14 @@ When a user asks to build a demo, **do not write `inputs/prompt.txt` or start a 
 - **Persona + story/use case** (who's on screen, what they do, the reveal/outcome).
 - **Build mode & research depth** — app-only (default) vs with-slides vs full video; depth default `gapfill`.
 
-Confirm the assembled scenario back in one line before building. Approved product names and family slugs: [`CLAUDE.md`](CLAUDE.md) (per-product map) + [`inputs/products/*.md`](inputs/products).
+**Review gate before building.** Once you have the inputs, do **not** silently write `inputs/prompt.txt` and start the run. First present an **easy-to-read, high-level summary of the proposed demo and story arc** and **stop for the user's go-ahead** — plain language, scannable, no raw prompt or JSON:
+
+- **Title** (one-line value prop), **Host** (company + industry), **Products** (approved names), **Persona** (name + role)
+- **Story arc** in 1–2 lines (problem → how Plaid enters → steps → reveal → outcome)
+- **Beats** — the storyboard order, one short line each
+- **Build mode** (app-only / with-slides / full video) + **research depth**
+
+Then ask "Want any changes, or should I build it?" If the user requests edits, update the summary and show it again — loop until they approve. Only after approval do you write `inputs/prompt.txt` from the template and build. Approved product names and family slugs: [`CLAUDE.md`](CLAUDE.md) (per-product map) + [`inputs/products/*.md`](inputs/products).
 
 ## Skills sync convention (Cursor ↔ Claude Code)
 
