@@ -2,6 +2,8 @@
 
 Build hyper-realistic Plaid demo **apps** (real host UI + a live Plaid Link integration) from a single prompt — by **chatting with a Claude Code agent**. You describe the customer story; the agent writes the prompt, runs the pipeline, watches the build, and recovers it. Almost everything below is run *for* you by the agent — you mostly talk to it in plain English.
 
+> **⚠️ Must be run in the Claude Code terminal.** This pipeline is operated by a [Claude Code](https://claude.com/claude-code) agent running **inside the repo folder** (`cd plaid-demo-recorder && claude`) — not from a plain shell. Every step below is executed in that Claude Code session; you talk to the agent in plain English and it runs the commands. (Need to run one yourself? Type `! <command>` at the Claude Code prompt.)
+
 > **Scope:** this guide gets you from a blank Mac → installed → first demo, in **agent mode**, plus how to contribute enhancements. It complements [`README.md`](README.md) (the line-by-line install reference) — when this guide says "see README §N," open that. Default builds are **app-only** (fast, no recording); full-pipeline render is advanced and being stabilized.
 
 ---

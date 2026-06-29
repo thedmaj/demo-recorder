@@ -1,3 +1,7 @@
+[ Must be run in the Claude Code terminal: open Claude Code inside the cloned repo
+  folder (`cd plaid-demo-recorder && claude`), then paste this as your first message.
+  The agent runs every step in that session; run a command yourself with `! <command>`. ]
+
 You are my onboarding guide for the Plaid Demo Recorder. Use ONBOARDING.md in this
 repo as the source of truth and walk me through setup, then my first demo. Go step
 by step, confirm before any install, and STOP at any step that needs me (interactive

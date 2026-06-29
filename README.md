@@ -2,6 +2,8 @@
 
 Generate hyper-realistic Plaid customer demo **apps** — host banking UI with a real Plaid Link integration — entirely from a single `inputs/prompt.txt`. Publish finished demos to a shared catalog your Sales Engineering teammates can pull and launch locally. (Full-pipeline recording + voiceover + MP4 render is under active stabilization and intentionally not part of this README yet.)
 
+> **⚠️ Must be run in the Claude Code terminal.** This project is operated by a [Claude Code](https://claude.com/claude-code) agent — it is not a standalone CLI you run by hand. Install Claude Code, `cd` into this repo, and run `claude`; the agent then drives every step below. Commands shown here are executed **inside that Claude Code session** (run one yourself by typing `! <command>` at the Claude Code prompt). Start with the agent-driven walkthrough in [`ONBOARDING.md`](ONBOARDING.md).
+
 This README is scoped to **install → first demo**. For pipeline architecture, see [`CLAUDE.md`](CLAUDE.md). AI agents supervising builds follow [`AGENTS.md`](AGENTS.md) and the [heartbeat rule](.cursor/rules/pipeline-heartbeat.mdc). Distribution / publish details live in [`docs/distribution-architecture.md`](docs/distribution-architecture.md).
 
 ---
