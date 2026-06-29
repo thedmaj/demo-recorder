@@ -24,6 +24,17 @@ Optional for humans only: `npm run pipe:status-loop` — redundant for agents on
 
 **Full policy:** [`CLAUDE.md`](CLAUDE.md) — **REQUIRED — Pipeline heartbeat**. Cursor rule: [`.cursor/rules/pipeline-heartbeat.mdc`](.cursor/rules/pipeline-heartbeat.mdc). CLI skill: [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md).
 
+## Demo-build intake (clarify before building)
+
+When a user asks to build a demo, **do not write `inputs/prompt.txt` or start a run from an underspecified request.** First confirm you have enough to fill the prompt template ([`inputs/prompt-template.txt`](inputs/prompt-template.txt); see ONBOARDING §8). If the request is vague, ask up to ~4 targeted questions for the missing pieces, then build. Required minimum:
+
+- **Exact Plaid product(s)** by approved name, resolving to a **product family** — e.g. "CRA Base Report" (`cra_base_report`), **not** "a lending demo." Never infer the family from a vague phrase; if ambiguous, list the likely products and ask the user to pick. This drives research, the `/link/token/create` `products[]`, and the API panels, so getting it exact is load-bearing.
+- **Host company / brand** (+ URL if available).
+- **Persona + story/use case** (who's on screen, what they do, the reveal/outcome).
+- **Build mode & research depth** — app-only (default) vs with-slides vs full video; depth default `gapfill`.
+
+Confirm the assembled scenario back in one line before building. Approved product names and family slugs: [`CLAUDE.md`](CLAUDE.md) (per-product map) + [`inputs/products/*.md`](inputs/products).
+
 ## Skills sync convention (Cursor ↔ Claude Code)
 
 Every skill in this repo must be discoverable in **both** agent modes:

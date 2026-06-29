@@ -32,8 +32,13 @@ auth or secrets).
    (No GCP service-account JSON needed — embeddings use the GOOGLE_API_KEY in `.env`.)
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do not
    continue until validate-env prints "✓ Required checks passed".
-5. Then ask me for a demo scenario and build my first demo per ONBOARDING §10
-   (default app-only `npm run demo`; full video only if I ask).
+5. Then ask me for a demo scenario. REQUIREMENTS INTAKE — before writing
+   `inputs/prompt.txt`, confirm I've given enough to fill the prompt template
+   (§8). If the request is vague, do NOT guess — ask up to ~4 targeted questions
+   for the missing pieces first, especially the EXACT Plaid product(s) by approved
+   name + family ("CRA Base Report" / cra_base_report, not "a lending demo"); if
+   unsure which product I mean, list candidates and ask me to choose. Then build
+   per §10 (default app-only `npm run demo`; full video only if I ask).
 Note: `gh auth login --hostname github.plaid.com` is interactive — I run it, not you.
 Never commit `.env`.
 ```
@@ -173,6 +178,14 @@ STORYBOARD BEATS (order = script order):
 Persona & sample data: name/role, company, on-screen amounts/scores (no placeholders)
 Host chrome: nav + entry screen + the CTA that opens Link.   Viewport: 1440×900.
 ```
+
+> **Required inputs — the agent asks before it builds.** A successful prompt needs specifics. If your request is vague, the agent will ask a few targeted questions rather than guess. At minimum it needs:
+> - **Exact Plaid product(s)** by approved name, resolving to a product family — e.g. **"CRA Base Report" (`cra_base_report`)**, not "a lending demo." Vague asks like *"lending demo,"* *"a fraud thing,"* or *"something with income"* don't pin down the product family that drives research, the Link token, and the API panels — so the agent will ask you to name the exact product (and offer candidates if it's ambiguous).
+> - **Host company / brand** (and URL if you have it).
+> - **Persona + story/use case** — who's on screen, what they're doing, and the reveal/outcome.
+> - **Build mode & depth** — app-only (default) vs with-slides vs full video; research depth (default `gapfill`).
+>
+> Give these up front and the agent fills the template and builds immediately; leave them out and it clarifies first. (You don't need to know the family slug — naming the real product, e.g. "CRA Base Report," is enough.)
 
 **How it becomes a storyboard:** `research` (Solutions Master + AskBill + Glean) → `script` writes **`demo-script.json`**, whose ordered **`steps[]`** *are* the storyboard (each step = a screen with narration, visual state, and optional API panel). `build` turns those steps into the host app; the **dashboard storyboard view** shows each beat with its screenshot + narration + API JSON.
 
