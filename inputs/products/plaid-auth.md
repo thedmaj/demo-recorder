@@ -99,12 +99,17 @@ Feature this product when the demo persona is a developer or fintech PM solving 
      Build agents and script generator must use these exactly. -->
 
 - API endpoint: `POST /auth/get` — response: `accounts[]`, `numbers.ach[]` (each has `account`, `routing`, `wire_routing`), `item`, `request_id`
-- Identity API endpoint: `POST /identity/match` — per-field scores 0–100 (name, address, phone, email)
+- Identity API endpoint: `POST /identity/match` — name/address/phone graded 0–100; **`email` is BINARY (0 or 100 only)**
 - Link token endpoint: `/link/token/create` — `products: ["auth"]`; add `"signal"` for ACH risk scoring; use `required_if_supported_products: ["identity"]` for Identity Match
 - Verification modes: Instant Auth, Database Auth, Same-Day Micro-deposits, Automated Micro-deposits
 - Link events: `OPEN`, `SELECT_INSTITUTION`, `SUBMIT_CREDENTIALS`, `SUBMIT_MFA`, `HANDOFF`, `TRANSITION_VIEW`
 - Identity Match score range: 0–100 (70+ = Pass; 95+ includes nickname/common variations; 100 = exact)
-- Per-field scores for: name, address, city, state/zip, phone, email — each independent
+- Per-field scores for: name, address, city, state/zip, phone — each independent, **graded 0–100**
+- **`email` is BINARY — it returns `0` or `100` ONLY** (the email matches exactly, or not at all). It is
+  NEVER a partial/graded value like 25 or 60 — a graded email score is incorrect and not meaningful. A `0`
+  email just means the bank's email on file differs from the KYC email (very common, not a failure). Strong
+  matches on name + address + phone still give strong ownership verification, so the user verifies even with
+  email `0`. In narration, frame email as "matched" (100) or "didn't match" (0) — never a percentage.
 - Do NOT use "Trust Index" — not a Plaid product term
 
 ## Reference Data Scenario (Identity Match)
@@ -119,7 +124,10 @@ Use this as the canonical demo data scenario:
 | Phone | 1112223333 | +1(111)222-3333 | 80 |
 | Email | accountholder0@example.com | bcharleson@mailnator.com | 0 |
 
-Key demo insight: despite the email mismatch (score 0), all other fields pass — Identity Match surfaces this nuance so you can make a confident approval decision rather than blocking the user.
+Key demo insight: email is BINARY (0 or 100) — here it's `0` (the bank's email differs from KYC). Despite the
+email not matching, name/address/phone all pass, so Identity Match still confirms strong ownership and you
+approve with confidence rather than blocking the user. Never depict email as a partial score (e.g. 25) — it is
+only ever 0 or 100.
 
 ## Competitive Differentiators
 <!-- ⚠️ HUMAN-OWNED -->
