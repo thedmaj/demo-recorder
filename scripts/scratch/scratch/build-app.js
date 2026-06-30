@@ -948,57 +948,62 @@ function injectLocalBrandLogo(html, brand) {
   const img = `<img src="brand-logo.png" alt="${alt}" data-testid="host-bank-logo-img" class="brand-logo-img" style="${dimStyle};display:block">`;
   const textColor = (brand.colors && brand.colors.textPrimary) || '#1B1F3B';
   let out = html;
-  let swapped = 0;
+  let swapped = 0;     // strategies 1–3: inject the local logo into a glyph / wordmark / bare nav
+  let repointed = 0;   // strategy 0: repoint an EXISTING template host-bank logo to the local asset
   // 0) Most common case: the build already placed the canonical host-bank logo
   //    from the prompt template (a REMOTE Brandfetch <img data-testid=
   //    "host-bank-logo-img" src="https://cdn.brandfetch.io/…" onerror=…>).
   //    Repoint that existing <img> at the local asset and drop its remote
-  //    onerror fallback — do NOT add a second lockup. This must run before the
-  //    fallback below; once `brand-logo.png` is in the HTML the strategy-2/3
-  //    guards (`!/brand-logo\.png/`) self-skip, preventing the double logo.
+  //    onerror fallback — do NOT add a second lockup.
   out = out.replace(/<img\b[^>]*>/gi, (tag) => {
     const isHostLogo = /data-testid=["']host-bank-logo-img["']/i.test(tag)
       || /\bsrc=["'][^"']*cdn\.brandfetch\.io[^"']*["']/i.test(tag);
     if (!isHostLogo || /\bsrc=["']brand-logo\.png["']/i.test(tag)) return tag;
     let t = tag.replace(/\s+onerror=("[^"]*"|'[^']*')/i, '');
     t = t.replace(/(\bsrc=)("[^"]*"|'[^']*')/i, '$1"brand-logo.png"');
-    swapped++;
+    repointed++;
     return t;
   });
-  if (swapped > 0) console.log(`[Build] Repointed ${swapped} existing host-bank logo <img> to local brand-logo.png (no duplicate lockup).`);
-  // 1) Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
-  out = out.replace(
-    /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
-    (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
-  );
-  // 2) Else inject before a nav wordmark text node (.logo-text / .brand-name).
-  if (swapped === 0 && !/brand-logo\.png/.test(out)) {
+  if (repointed > 0) console.log(`[Build] Repointed ${repointed} existing host-bank logo <img> to local brand-logo.png (no duplicate lockup).`);
+
+  // Strategies 1–3 run ONLY when strategy 0 did not already place the local logo
+  // on an existing template host-bank logo. Otherwise an app that carries both a
+  // template logo AND a separate logo-mark glyph would get a SECOND logo.
+  if (repointed === 0) {
+    // 1) Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
     out = out.replace(
-      /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text)\b[^"]*"[^>]*>)/i,
-      (m) => { swapped++; return `${img}${m}`; }
+      /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
+      (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
     );
-  }
-  // 3) Last-resort guarantee: the LLM produced a nav with NO brand/logo slot at
-  //    all. Inject a brand lockup (logo + wordmark) right after each <nav> /
-  //    <header> opening tag that doesn't already carry the logo. Ensures the
-  //    supplied logo is always present on host chrome.
-  if (swapped === 0 && !/brand-logo\.png/.test(out)) {
-    // A wordmark logo already contains the brand name — don't append a text span
-    // next to it (that double-prints the brand). Only icons/unknown get the text.
-    const textSpan = isWordmark
-      ? ''
-      : `<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span>`;
-    const lockup =
-      `<div class="brand-logo-lockup" data-testid="host-bank-logo-shell" ` +
-      `style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto">` +
-      `${img}${textSpan}</div>`;
-    out = out.replace(/(<(?:nav|header)\b[^>]*>)/gi, (openTag) => {
-      swapped++;
-      return `${openTag}${lockup}`;
-    });
+    // 2) Else inject before a nav wordmark text node (.logo-text / .brand-name).
+    if (swapped === 0 && !/brand-logo\.png/.test(out)) {
+      out = out.replace(
+        /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text)\b[^"]*"[^>]*>)/i,
+        (m) => { swapped++; return `${img}${m}`; }
+      );
+    }
+    // 3) Last-resort guarantee: the LLM produced a nav with NO brand/logo slot at
+    //    all. Inject a brand lockup (logo + wordmark) right after each <nav> /
+    //    <header> opening tag that doesn't already carry the logo. Ensures the
+    //    supplied logo is always present on host chrome.
+    if (swapped === 0 && !/brand-logo\.png/.test(out)) {
+      // A wordmark logo already contains the brand name — don't append a text span
+      // next to it (that double-prints the brand). Only icons/unknown get the text.
+      const textSpan = isWordmark
+        ? ''
+        : `<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span>`;
+      const lockup =
+        `<div class="brand-logo-lockup" data-testid="host-bank-logo-shell" ` +
+        `style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto">` +
+        `${img}${textSpan}</div>`;
+      out = out.replace(/(<(?:nav|header)\b[^>]*>)/gi, (openTag) => {
+        swapped++;
+        return `${openTag}${lockup}`;
+      });
+    }
   }
   if (swapped > 0) console.log(`[Build] Injected local brand logo into ${swapped} host nav/mark slot(s).`);
-  else console.warn('[Build] Local brand logo: no nav/header or logo slot found to inject into.');
+  else if (repointed === 0) console.warn('[Build] Local brand logo: no nav/header or logo slot found to inject into.');
   return out;
 }
 
