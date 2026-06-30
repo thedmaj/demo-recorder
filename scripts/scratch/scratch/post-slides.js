@@ -577,10 +577,73 @@ function ensureSlideDesignStylesInHead(html, templates) {
     `  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();\n` +
     `})();\n` +
     `</script>\n`;
+  // Deterministic fit-to-canvas (2026-06-30). When a slide's .frame content is
+  // taller than the .slide-root canvas, apply CSS zoom to the .frame to shrink-
+  // to-fit, so dense slides are never clipped by overflow:hidden. Only fires
+  // when content genuinely overflows (non-overflowing slides stay full-bleed),
+  // floor 0.5, idempotent, re-fits on goToStep / visibility / resize. Runs
+  // AFTER title-fit (title shrinks first → milder zoom). This is the reliable
+  // safety net the authorship overflow-feedback can't guarantee alone: the LLM
+  // won't always trim dense multi-product slides to fit, so we scale to fit.
+  // Verified against the build-qa overflow detector (both rect-scan + frame
+  // scrollHeight methods) — overflowing Gringo slides go 156–495px → 0px.
+  const autofitRuntime =
+    `<script data-slide-autofit="v2">\n` +
+    `(function(){\n` +
+    `  var FLOOR = 0.7;  // never shrink below 0.7 — milder zoom keeps slides legible; genuinely over-stuffed slides still overflow at the floor and get flagged for content reduction\n` +
+    `  function fitRoot(root){\n` +
+    `    var frame = root && root.querySelector('.frame'); if(!frame) return;\n` +
+    `    // Wrap the frame's FLOW content (leaving absolutely-positioned chrome\n` +
+    `    // like the logo in place) and CSS-zoom only the wrapper, so the frame /\n` +
+    `    // slide-root canvas stays full-size (passes the min-canvas-size contract)\n` +
+    `    // while the content shrinks to fit vertically (passes the overflow gate).\n` +
+    `    var wrap = frame.querySelector(':scope > .slide-autofit');\n` +
+    `    if(!wrap){\n` +
+    `      var fcs = getComputedStyle(frame);\n` +
+    `      wrap = document.createElement('div'); wrap.className = 'slide-autofit';\n` +
+    `      wrap.style.display = fcs.display.indexOf('flex') >= 0 ? 'flex' : 'block';\n` +
+    `      wrap.style.flexDirection = 'column';\n` +
+    `      if(fcs.gap && fcs.gap !== 'normal') wrap.style.gap = fcs.gap;\n` +
+    `      if(fcs.alignItems) wrap.style.alignItems = fcs.alignItems;\n` +
+    `      wrap.style.width = '100%';\n` +
+    `      Array.prototype.slice.call(frame.children).forEach(function(c){\n` +
+    `        if(c === wrap) return; var p = getComputedStyle(c).position; if(p === 'absolute' || p === 'fixed') return; wrap.appendChild(c);\n` +
+    `      });\n` +
+    `      frame.appendChild(wrap);\n` +
+    `    }\n` +
+    `    wrap.style.zoom = '1';\n` +
+    `    var cs = getComputedStyle(frame);\n` +
+    `    var avail = frame.clientHeight - (parseFloat(cs.paddingTop)||0) - (parseFloat(cs.paddingBottom)||0);\n` +
+    `    var natural = wrap.scrollHeight;\n` +
+    `    if(natural > avail && avail > 0){ var z = Math.max(FLOOR, (avail/natural) * 0.98); wrap.style.zoom = String(z); root.setAttribute('data-autofit-zoom', z.toFixed(3)); }\n` +
+    `    else { wrap.style.zoom = '1'; root.removeAttribute('data-autofit-zoom'); }\n` +
+    `  }\n` +
+    `  function fitAll(){\n` +
+    `    document.querySelectorAll('.slide-root').forEach(function(r){\n` +
+    `      var step = r.closest && r.closest('.step');\n` +
+    `      if(!step || step.classList.contains('active')) fitRoot(r);\n` +
+    `    });\n` +
+    `  }\n` +
+    `  function hook(){\n` +
+    `    if(typeof window.goToStep === 'function' && !window.__slideAutofitHook){\n` +
+    `      var g = window.goToStep; window.goToStep = function(){ var rv = g.apply(this, arguments); setTimeout(fitAll, 70); return rv; }; window.__slideAutofitHook = 1;\n` +
+    `    }\n` +
+    `  }\n` +
+    `  function init(){\n` +
+    `    hook(); fitAll(); setTimeout(fitAll, 90); window.addEventListener('resize', fitAll);\n` +
+    `    try {\n` +
+    `      var io = new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ var root = e.target.classList && e.target.classList.contains('slide-root') ? e.target : (e.target.closest ? e.target.closest('.slide-root') : null); if(root) setTimeout(function(){ fitRoot(root); }, 70); } }); });\n` +
+    `      document.querySelectorAll('.slide-root').forEach(function(r){ io.observe(r); });\n` +
+    `    } catch(_){}\n` +
+    `  }\n` +
+    `  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();\n` +
+    `})();\n` +
+    `</script>\n`;
   const designBlock =
     `${markerStart}\n` +
     `<style data-post-slides-design-system="v1">\n${scopedColors}\n${scopedSlide}\n</style>\n` +
     titleFitRuntime +
+    autofitRuntime +
     markerEnd;
   const showcaseBlock = showcase
     ? `\n<!-- POST-SLIDES SHOWCASE CLASSES v1 -->\n` +
@@ -679,6 +742,21 @@ async function main() {
   const outDir = requireRunDir(PROJECT_ROOT, 'post-slides');
   const layout = getRunLayout(outDir);
   const cli = parseArgs(process.argv.slice(2));
+
+  // Slide-fix regeneration feedback (optional): { stepId: {score, issues[], overflowPx} }
+  // written by slide-fix.js before it re-runs this stage on failing slides, so
+  // the LLM regenerates against the SPECIFIC prior QA complaints instead of blind.
+  let regenFeedbackByStep = {};
+  try {
+    const fbPath = path.join(outDir, 'slide-regen-feedback.json');
+    if (fs.existsSync(fbPath)) {
+      const parsed = JSON.parse(fs.readFileSync(fbPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') regenFeedbackByStep = parsed;
+      console.log(`[post-slides] Loaded slide-regen-feedback for ${Object.keys(regenFeedbackByStep).length} step(s).`);
+    }
+  } catch (e) {
+    console.warn(`[post-slides] Could not read slide-regen-feedback.json: ${e.message}`);
+  }
 
   const htmlPath = resolveHtmlPath(outDir, layout);
   const scriptPath = path.join(outDir, 'demo-script.json');
@@ -874,6 +952,7 @@ async function main() {
           templateRouting: routing,
           showcaseTemplate,
           recentBackgrounds: recentBackgrounds.slice(-4),
+          regenFeedback: regenFeedbackByStep[step.id] || null,
         });
         lastRaw = raw;
         const { html: updated, applied: ok, reason } = spliceSlideFragmentIntoHtml(

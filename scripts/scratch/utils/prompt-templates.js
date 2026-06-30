@@ -3268,6 +3268,7 @@ function buildSlideInsertionPrompt({
   templateRouting = null,
   showcaseTemplate = null,
   recentBackgrounds = [],
+  regenFeedback = null,
 } = {}) {
   const brandName = (brand && brand.name) || 'Plaid';
   const stepId = String(step?.id || '').trim();
@@ -3324,6 +3325,25 @@ function buildSlideInsertionPrompt({
       ? `\nProduct names the narration mentions — these MUST appear in the slide's rendered text (eyebrow, headline, bullets, or footer label): ${narrationProducts.map((p) => `"${p}"`).join(', ')}.\n`
       : '') +
     `\n## ${SLIDE_HOST_ISOLATION_BLOCK}\n\n`;
+
+  // Slide-fix regeneration feedback: when this step was rejected by a prior QA
+  // pass, give the model the SPECIFIC measured complaints (overflow pixels,
+  // missing fields, jammed pairs) so it fixes them — blind regeneration without
+  // this just reproduces the same dense layout. Authorship fix per the slide
+  // skill ("trim the content"), never a CSS clamp/scale. Highest salience.
+  const _rf = regenFeedback && typeof regenFeedback === 'object' ? regenFeedback : null;
+  const _rfIssues = _rf && Array.isArray(_rf.issues) ? _rf.issues.filter((s) => typeof s === 'string' && s.trim()) : [];
+  if (_rf && (_rfIssues.length || _rf.overflowPx)) {
+    userText +=
+      `## ⚠ PREVIOUS ATTEMPT FAILED QA — FIX EVERY ISSUE BELOW (highest priority)\n` +
+      `Your last version of THIS slide scored ${Number.isFinite(_rf.score) ? _rf.score : '?'}/100 and was rejected. ` +
+      `Regenerate so each issue is resolved — keep what worked, change what's flagged:\n` +
+      (_rfIssues.length ? _rfIssues.map((s, i) => `  ${i + 1}. ${s}`).join('\n') + '\n' : '') +
+      (_rf.overflowPx
+        ? `\nCRITICAL — CONTENT OVERFLOW: the previous slide's content extended ~${_rf.overflowPx}px past the 1440×900 canvas and was clipped (overflow:hidden). You MUST emit materially LESS content this time: drop the lowest / least-essential row or card, cut every bullet to one short line, reduce the number of rows/cards, and tighten the .slide-stack gap. The whole slide must fit ~760px of vertical content space — when in doubt, show fewer denser rows rather than risk a clipped bottom row.\n`
+        : '') +
+      `\n`;
+  }
 
   if (slideSkillBlock) {
     userText += `## PLAID SLIDE DESIGN SKILL (authoritative)\n${slideSkillBlock}\n\n`;

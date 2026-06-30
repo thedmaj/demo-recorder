@@ -85,6 +85,38 @@ function stripSlides(runDir, stepIds) {
   return { stripped, skipped };
 }
 
+// Write per-failing-slide QA feedback (score, issues, measured overflow px) so the
+// next post-slides regeneration fixes the SPECIFIC complaints instead of blindly
+// reproducing the same dense layout. Read by post-slides.js → buildSlideInsertionPrompt.
+function writeRegenFeedback(runDir, report, failingIds) {
+  try {
+    const steps = (report && Array.isArray(report.steps)) ? report.steps : [];
+    const want = new Set(failingIds || []);
+    const byId = {};
+    for (const s of steps) {
+      const sid = s && (s.stepId || s.id);
+      if (!sid || !want.has(sid)) continue;
+      const issues = Array.isArray(s.issues) ? s.issues.filter((x) => typeof x === 'string' && x.trim()) : [];
+      let overflowPx = 0;
+      for (const iss of issues) {
+        const m = String(iss).match(/extends\s+(\d+)\s*px beyond/i);
+        if (m) overflowPx = Math.max(overflowPx, parseInt(m[1], 10) || 0);
+      }
+      byId[sid] = { score: Number.isFinite(s.score) ? s.score : null, issues };
+      if (overflowPx > 0) byId[sid].overflowPx = overflowPx;
+    }
+    fs.writeFileSync(path.join(runDir, 'slide-regen-feedback.json'), JSON.stringify(byId, null, 2));
+    return Object.keys(byId).length;
+  } catch (e) {
+    console.warn(`[slide-fix] could not write regen feedback: ${e.message}`);
+    return 0;
+  }
+}
+
+function clearRegenFeedback(runDir) {
+  try { fs.unlinkSync(path.join(runDir, 'slide-regen-feedback.json')); } catch (_) {}
+}
+
 async function runPostSlides(runDir, stepIds) {
   // post-slides reads PIPELINE_RUN_DIR + parses argv for --steps=…; load
   // module fresh and synthesize argv via env override so the stage thinks
@@ -264,10 +296,16 @@ async function main(opts = {}) {
     //    reinsert means the LLM regeneration immediately wipes them. So we
     //    swap the order: regenerate the failing slides first, then apply
     //    deterministic patches to the fresh output, then re-QA.
+    // Feed the prior QA's specific complaints (overflow px, missing fields,
+    // jammed pairs) into this regeneration so the LLM fixes them rather than
+    // reproducing the same overflowing layout.
+    const fbCount = writeRegenFeedback(runDir, tier.report, failingSlideIds);
+    if (fbCount > 0) console.log(`[slide-fix] iter=${iter}: regen feedback prepared for ${fbCount} slide(s)`);
     const stripOut = stripSlides(runDir, failingSlideIds);
     if (stripOut.stripped.length > 0) {
       await runPostSlides(runDir, stripOut.stripped);
     }
+    clearRegenFeedback(runDir);
     await runPostPanels(runDir);
 
     // 2) Apply deterministic patches (typography, overlap autofix, etc.) to

@@ -845,6 +845,13 @@ function scanSlideCanvasSize(state, step, opts = {}) {
   if (!isSlideLikeStep(step)) return out;
   const renderedWidth = Number(state.slideRootRenderedWidth) || 0;
   if (renderedWidth <= 0) return out;
+  // Autofit exemption: when the deterministic fit-to-canvas runtime has scaled
+  // this slide to fit dense content (data-autofit-zoom present), its smaller
+  // rendered size is INTENTIONAL — not the layout/panel squish this contract
+  // guards against. The autofit's own zoom floor (0.7) bounds how small it can
+  // get, and the content-overflow detector still runs at that floor to surface
+  // genuinely over-stuffed slides. So skip the min-canvas-size block here.
+  if (Number(state.slideAutofitZoom) > 0 && Number(state.slideAutofitZoom) < 1) return out;
   const renderedHeight = Number(state.slideRootRenderedHeight) || 0;
   const viewportWidth = Number(state.viewportWidth) || 1440;
   const viewportHeight = Number(state.viewportHeight) || 900;
@@ -2186,6 +2193,11 @@ async function evaluateStepState(page, stepId) {
       slideRootComputedHeight: slideRootStyle ? parseFloat(slideRootStyle.height || '0') : 0,
       slideRootRenderedWidth: slideRootRect ? slideRootRect.width : 0,
       slideRootRenderedHeight: slideRootRect ? slideRootRect.height : 0,
+      // Deterministic fit-to-canvas zoom applied by post-slides' autofit runtime
+      // (data-autofit-zoom on .slide-root). When present, the slide is rendered
+      // intentionally smaller to fit dense content — the min-canvas-size contract
+      // (which guards against layout/panel squish) must not penalize it.
+      slideAutofitZoom: slideRoot ? (parseFloat(slideRoot.getAttribute('data-autofit-zoom')) || 0) : 0,
       slideRootOffsetLeft: slideRootRect ? slideRootRect.left : 0,
       viewportWidth: window.innerWidth || document.documentElement.clientWidth || 0,
       viewportHeight: window.innerHeight || document.documentElement.clientHeight || 0,
