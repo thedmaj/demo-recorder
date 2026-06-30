@@ -547,6 +547,12 @@ function cmdStop({ positional, flags }) {
 
 // ── Command: new ─────────────────────────────────────────────────────────────
 async function cmdNew({ flags }) {
+  // Auto-pull a stale clone before a NEW build (safe fast-forward only; asks or
+  // warns when risky; never blocks). Shared with the orchestrator via
+  // scripts/scratch/utils/repo-freshness so `npm run demo` and `pipe new` behave
+  // identically. The env flag below tells the orchestrator we already checked.
+  await require(path.join(PROJECT_ROOT, 'scripts', 'scratch', 'utils', 'repo-freshness'))
+    .ensureRepoFreshForBuild({ root: PROJECT_ROOT, nonInteractive: !!flags['non-interactive'], skip: !!flags['no-pull'] });
   if (flags.prompt && typeof flags.prompt === 'string') {
     const src = path.resolve(flags.prompt);
     if (!fs.existsSync(src)) throw new Error(`--prompt not found: ${src}`);
@@ -582,6 +588,9 @@ async function cmdNew({ flags }) {
   }
   if (flags['reuse-research']) env.RESEARCH_REUSE = 'true';
   if (flags['non-interactive']) env.SCRATCH_AUTO_APPROVE = 'true';
+  // We already ran the repo-freshness check above — tell the spawned orchestrator
+  // to skip its own (it shares scripts/scratch/utils/repo-freshness).
+  env.PIPE_FRESHNESS_CHECKED = 'true';
 
   console.log(c.bold('[pipe] starting new pipeline'));
   console.log(c.dim('  prompt: ' + promptFile));

@@ -4660,6 +4660,17 @@ async function main() {
   } = parseArgs();
   let effectiveFromStage = fromStage;
 
+  // Repo freshness: on a brand-new build (no --from / --run-id) auto-pull a stale
+  // clone before doing any work, so `npm run demo` builds on the latest templates
+  // and fixes. Safe fast-forward only; asks (interactive TTY) or warns (agent /
+  // non-interactive) when a pull is risky; never blocks the build. Skipped when
+  // `pipe new` already ran it (PIPE_FRESHNESS_CHECKED) or PIPE_SKIP_FRESHNESS=true.
+  if (!fromStage && !explicitRunId) {
+    try {
+      await require('./utils/repo-freshness').ensureRepoFreshForBuild({});
+    } catch (_) { /* never block a build on the freshness check */ }
+  }
+
   if (qaThresholdOverride != null && (!Number.isInteger(qaThresholdOverride) || qaThresholdOverride <= 0)) {
     cliError(`[Orchestrator] Invalid --qa-threshold="${qaThresholdOverride}". Must be a positive integer.`);
     process.exit(1);
