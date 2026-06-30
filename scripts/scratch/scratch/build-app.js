@@ -2490,6 +2490,13 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
       max_tokens: BUILD_MAX_TOKENS,
       thinking: {
         type: 'adaptive',
+        // display:'summarized' streams thinking-summary deltas. On Opus 4.8 the
+        // default is 'omitted', which emits empty/sparse thinking blocks — at
+        // high effort on this 32K-token build the model can think for MINUTES
+        // with no streamed events, which tripped the idle watchdog below and
+        // aborted healthy requests as "BUILD_STREAM_IDLE / 0 chars". Summarized
+        // deltas keep the stream active (and surface progress). See claude-api skill.
+        display: 'summarized',
       },
       output_config: {
         effort: 'high',
@@ -2503,10 +2510,12 @@ async function generateApp(client, demoScript, architectureBrief, qaReport, bran
     let lastActivity = Date.now();
 
     // Idle-timeout watchdog: if the stream opens but stops emitting events for
-    // BUILD_STREAM_IDLE_MS (default 120s), abort it and throw a retryable error
-    // rather than hanging the build indefinitely (claude-opus-4-8 streaming has
-    // intermittently stalled mid-generation). withAnthropicOverloadedRetry retries.
-    const IDLE_MS = Number(process.env.BUILD_STREAM_IDLE_MS || 120000);
+    // BUILD_STREAM_IDLE_MS, abort it and throw a retryable error rather than
+    // hanging indefinitely. Default 300s (5 min): Opus 4.8 adaptive thinking at
+    // high effort legitimately runs minutes on this 32K-token build, so 120s was
+    // far too aggressive and aborted healthy requests (paired with display:
+    // 'summarized' above, which keeps events flowing during thinking).
+    const IDLE_MS = Number(process.env.BUILD_STREAM_IDLE_MS || 300000);
     let idleTimer = null;
     const idleGuard = new Promise((_, reject) => {
       idleTimer = setInterval(() => {
@@ -3430,6 +3439,33 @@ async function main(opts = {}) {
         return `${pre}${tagOpen} data-testid="${target}">`;
       });
       if (patched !== html) html = patched;
+      // Fallback for display-card interaction targets (e.g. `*-card`, `*-result-card`):
+      // insight steps are often advanced by clicking a card <div>, not a button/<a>,
+      // so the button/anchor pass above can't place them. Attach to the first
+      // card-like block in the step div, else the step's first block child.
+      if (!html.includes(`data-testid="${target}"`)) {
+        const cardRe = new RegExp(
+          `(<div[^>]+data-testid="step-${stepId}"[^>]*>[\\s\\S]*?)(<(?:div|section|article)(?:\\s[^>]*?class="[^"]*\\bcard\\b[^"]*")[^>]*?)>`
+        );
+        let p2 = html.replace(cardRe, (m, pre, tagOpen) => {
+          if (tagOpen.includes('data-testid=')) return m;
+          console.log(`[Build] Auto-injected data-testid="${target}" onto card div in step "${stepId}"`);
+          autoFixed++;
+          return `${pre}${tagOpen} data-testid="${target}">`;
+        });
+        if (p2 === html) {
+          const firstBlockRe = new RegExp(
+            `(<div[^>]+data-testid="step-${stepId}"[^>]*>\\s*)(<(?:div|section|article)(?:\\s[^>]*?)?)>`
+          );
+          p2 = html.replace(firstBlockRe, (m, pre, tagOpen) => {
+            if (tagOpen.includes('data-testid=')) return m;
+            console.log(`[Build] Auto-injected data-testid="${target}" onto first block in step "${stepId}"`);
+            autoFixed++;
+            return `${pre}${tagOpen} data-testid="${target}">`;
+          });
+        }
+        if (p2 !== html) html = p2;
+      }
     }
     const stillMissing = missingTargets.filter(t => !html.includes(`data-testid="${t}"`));
     if (stillMissing.length > 0) {
