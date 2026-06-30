@@ -297,6 +297,7 @@ Two kinds of changes follow two review paths. Both: branch off `main`, push to t
 - **Anything fails?** `npm run pipe -- validate-env` first — most issues are a missing/blank key.
 - **Build looks stuck:** it isn't if heartbeats are ticking; ask the agent "what's the status?" (vision QA can take ~20 min silently).
 - **`[Glean unavailable]` / `[AskBill unavailable]`:** research creds aren't set — builds still work; ask the owner for the values.
-- **Re-running `bash scripts/setup/install.sh`** is the safe way to refresh deps after a `git pull`.
+- **Stale clone? Builds now self-update.** `npm run demo` and `npm run pipe -- new` automatically fast-forward a clean clone that's behind `main` before building (they ask first if you have uncommitted changes, and never block the build). So you no longer need to `git pull` by hand before a demo. Opt out with `--no-pull` or `PIPE_SKIP_FRESHNESS=true`.
+- **Re-running `bash scripts/setup/install.sh`** is the safe way to refresh deps after a `git pull` (the auto-pull updates code, not npm deps).
 - **Architecture & deep rules:** [`CLAUDE.md`](CLAUDE.md). Agent/heartbeat contract: [`AGENTS.md`](AGENTS.md). CLI reference: [`.claude/skills/pipeline-cli/SKILL.md`](.claude/skills/pipeline-cli/SKILL.md). Sharing demos: [`docs/distribution-architecture.md`](docs/distribution-architecture.md).
 - **Stuck?** Ping the repo owner.
