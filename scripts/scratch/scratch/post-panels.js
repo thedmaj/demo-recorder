@@ -91,7 +91,7 @@ function markHostAppChrome(html) {
   // 2) Semantic element tags (top-level chrome by definition)
   //    Tag the opening tag. If it has no class attribute, add one.
   //    If it has one without host-app-chrome, append.
-  for (const tag of ['nav', 'header', 'footer']) {
+  for (const tag of ['nav', 'header', 'footer', 'aside']) {
     // First pass: add to existing class attribute
     const reWithClass = new RegExp(`<${tag}(\\s[^>]*?)?\\sclass="([^"]*)"`, 'gi');
     html = html.replace(reWithClass, (m, beforeAttrs, classes) => {
@@ -119,7 +119,9 @@ function markHostAppChrome(html) {
                      'app-nav', 'top-nav', 'bottom-nav', 'footer', 'bottom-bar',
                      'stepbar', 'step-bar', 'step-indicator', 'stepindicator',
                      'stepper', 'step-rail', 'step-tracker', 'step-progress',
-                     'progress-rail', 'progress-steps', 'wizard-steps', 'flow-steps']) {
+                     'progress-rail', 'progress-steps', 'wizard-steps', 'flow-steps',
+                     'sidebar', 'side-bar', 'side-nav', 'sidenav', 'app-sidebar',
+                     'left-nav', 'left-rail', 'side-rail']) {
     const re = new RegExp(`class="([^"]*\\b${cls}\\b[^"]*)"`, 'g');
     html = html.replace(re, (m, classes) => {
       if (classes.includes('host-app-chrome')) return m;
