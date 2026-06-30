@@ -3289,6 +3289,27 @@ async function main(opts = {}) {
   console.log(`[Record] Navigating to ${appServer.url}...`);
   await page.goto(appServer.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
+  // WRONG-APP GUARD: confirm we actually loaded the generated demo app, not some
+  // other server squatting on the port (e.g. a dashboard left running on 3737 —
+  // which silently recorded the dashboard UI: goToStep missing, every click
+  // timed out, modal never opened, QA 10/100; Ascend/Gringo 2026-06-30). The
+  // real app always exposes window.goToStep and at least one [data-testid^="step-"].
+  {
+    const looksLikeApp = await page.evaluate(() =>
+      typeof window.goToStep === 'function' &&
+      !!document.querySelector('[data-testid^="step-"]')
+    ).catch(() => false);
+    if (!looksLikeApp) {
+      const title = await page.title().catch(() => '');
+      throw new Error(
+        `WRONG_APP_AT_RECORD_URL: ${appServer.url} did not serve the demo app ` +
+        `(window.goToStep / [data-testid^="step-"] missing; page title="${title}"). ` +
+        `Almost always a PORT COLLISION — another server (often a dashboard) is on ` +
+        `that port. Free it (lsof -iTCP:<port> -sTCP:LISTEN) and re-record.`
+      );
+    }
+  }
+
   // Critical recording fixes injected via page.evaluate() — more reliable than addStyleTag()
   // which can fail silently due to CSP or timing issues.
   //

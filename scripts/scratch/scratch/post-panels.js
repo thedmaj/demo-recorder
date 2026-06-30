@@ -107,9 +107,19 @@ function markHostAppChrome(html) {
     });
   }
 
-  // 3) Generic chrome class aliases the LLM frequently emits
+  // 3) Generic chrome class aliases the LLM frequently emits.
+  //    Includes persistent step-indicator / progress-tracker bars that sit
+  //    OUTSIDE the step divs (e.g. a top `.stepbar` between <header> and <main>
+  //    with a section label + segments). These are host chrome and must be
+  //    hidden on slides, but were not covered by nav/header/footer tagging — a
+  //    top step-progress bar bled onto slides (Ascend 2026-06-30). The names are
+  //    deliberately SPECIFIC (compound step-/progress- forms) so they do NOT
+  //    match in-step content like `gen-progress` / `gen-steps` on a host step.
   for (const cls of ['nav', 'navbar', 'topbar', 'top-bar', 'header-bar',
-                     'app-nav', 'top-nav', 'bottom-nav', 'footer', 'bottom-bar']) {
+                     'app-nav', 'top-nav', 'bottom-nav', 'footer', 'bottom-bar',
+                     'stepbar', 'step-bar', 'step-indicator', 'stepindicator',
+                     'stepper', 'step-rail', 'step-tracker', 'step-progress',
+                     'progress-rail', 'progress-steps', 'wizard-steps', 'flow-steps']) {
     const re = new RegExp(`class="([^"]*\\b${cls}\\b[^"]*)"`, 'g');
     html = html.replace(re, (m, classes) => {
       if (classes.includes('host-app-chrome')) return m;

@@ -983,9 +983,12 @@ function injectLocalBrandLogo(html, brand) {
       );
     }
     // 3) Last-resort guarantee: the LLM produced a nav with NO brand/logo slot at
-    //    all. Inject a brand lockup (logo + wordmark) right after each <nav> /
-    //    <header> opening tag that doesn't already carry the logo. Ensures the
-    //    supplied logo is always present on host chrome.
+    //    all. Inject a brand lockup (logo + wordmark) right after the FIRST <nav> /
+    //    <header> opening tag. Use a non-global regex (first match only): a host
+    //    layout commonly has BOTH `<header class="nav">` AND a nested
+    //    `<nav class="nav-links">`, and a global replace injected the lockup into
+    //    each → duplicate logos (Ascend 2026-06-30). The first match is the
+    //    top-level nav/header, which is the correct single home for the logo.
     if (swapped === 0 && !/brand-logo\.png/.test(out)) {
       // A wordmark logo already contains the brand name — don't append a text span
       // next to it (that double-prints the brand). Only icons/unknown get the text.
@@ -996,7 +999,7 @@ function injectLocalBrandLogo(html, brand) {
         `<div class="brand-logo-lockup" data-testid="host-bank-logo-shell" ` +
         `style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto">` +
         `${img}${textSpan}</div>`;
-      out = out.replace(/(<(?:nav|header)\b[^>]*>)/gi, (openTag) => {
+      out = out.replace(/(<(?:nav|header)\b[^>]*>)/i, (openTag) => {
         swapped++;
         return `${openTag}${lockup}`;
       });
