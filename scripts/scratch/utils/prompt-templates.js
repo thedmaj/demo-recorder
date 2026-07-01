@@ -2267,6 +2267,16 @@ contract that the next stage knows how to fill.\n` +
     const allLaunchIds = (demoScript.steps || [])
       .filter((s) => s && String(s.plaidPhase || '').toLowerCase() === 'launch')
       .map((s) => s.id);
+    // The step id immediately before the bank (non-IDV) launch — where the fresh
+    // bank handler must be (re)created so open() on the CTA is instant.
+    const bankPrepPriorStepId = (() => {
+      const steps = demoScript.steps || [];
+      const idvIds = new Set(idvLaunchSteps.map((s) => s.id));
+      const bankIdx = steps.findIndex(
+        (s) => s && String(s.plaidPhase || '').toLowerCase() === 'launch' && !idvIds.has(s.id)
+      );
+      return bankIdx > 0 ? steps[bankIdx - 1]?.id || null : null;
+    })();
     contentBlocks.push({
       type: 'text',
       text:
@@ -2314,26 +2324,36 @@ contract that the next stage knows how to fill.\n` +
         `\`Plaid.create({ token, onSuccess })\`, set \`window._plaidLinkComplete = true\` in onSuccess, then ` +
         `\`goToStep\` to its own post-link step. Do NOT merge the two launches; do NOT set ` +
         `\`_plaidLinkComplete\` from the IDV onSuccess (use \`_idvComplete\`).\n` +
-        `- **CRITICAL — open the bank handler FRESH on click (multi-launch).** Because the IDV modal opens a ` +
-        `Plaid session BEFORE the bank launch, Plaid's web SDK will NOT composite the bank Link iframe if an ` +
-        `earlier handler still holds a session — a boot-created bank handler goes stale after IDV and ` +
-        `\`open()\` shows nothing (host card stays up → PLAID_LINK_MODAL_MISSING). So the bank CTA handler ` +
-        `must, on click: (1) destroy any live \`window._idvHandler\` and the prior \`window._plaidHandler\`, ` +
-        `(2) create a FRESH \`Plaid.create\` with a freshly fetched token, (3) \`open()\`:\n` +
+        `- **CRITICAL — (re)create the bank handler EAGERLY on the step BEFORE the bank launch (multi-launch).** ` +
+        `Because the IDV modal opens a Plaid session BEFORE the bank launch, Plaid's web SDK will NOT composite ` +
+        `the bank Link iframe while an earlier handler still holds a session — the boot-created bank handler ` +
+        `goes stale after IDV and \`open()\` shows nothing (host card stays up → PLAID_LINK_MODAL_MISSING). ` +
+        `Recreate a FRESH handler eagerly when the app navigates INTO the step just before the bank launch ` +
+        `(here: \`${bankPrepPriorStepId || '<step before the bank launch>'}\`) — NOT on click. A token-fetch ` +
+        `ON click opens the modal ~1-2s too late (after the recorder's iframe-navigation window), so it never ` +
+        `records; pre-creating means \`open()\` on click is INSTANT and the iframe is already attached.\n` +
         '```javascript\n' +
-        `function bankHandlerConfig(token){ return { token, onSuccess:(pt,md)=>{ /* set _plaidLinkComplete + goToStep */ }, onExit:()=>{}, onEvent:()=>{} }; }\n` +
+        `function bankHandlerConfig(token){ return { token, onSuccess:(pt,md)=>{ /* set _plaidLinkComplete + goToStep(<post-link step>) */ }, onExit:()=>{}, onEvent:()=>{} }; }\n` +
         `// Boot: create once so the recorder's pre-click "handler ready" wait passes.\n` +
         `createBankLinkToken().then(d => { if (d&&d.link_token) window._plaidHandler = Plaid.create(bankHandlerConfig(d.link_token)); });\n` +
-        `window.openBankLink = async function(){\n` +
+        `window._bankPrepStarted = false;\n` +
+        `async function prepBankHandler(){\n` +
         `  try { window._idvHandler && window._idvHandler.destroy(); } catch(e){}  window._idvHandler = null;\n` +
         `  try { window._plaidHandler && window._plaidHandler.destroy(); } catch(e){}  window._plaidHandler = null;\n` +
-        `  const d = await createBankLinkToken(); if (!d || !d.link_token) return;\n` +
-        `  window._plaidHandler = Plaid.create(bankHandlerConfig(d.link_token));\n` +
-        `  await new Promise(r => setTimeout(r, 300));  // let the fresh iframe attach\n` +
-        `  window._plaidHandler.open();\n` +
+        `  const d = await createBankLinkToken(); if (!d || !d.link_token) { window._bankPrepStarted=false; return; }\n` +
+        `  window._plaidHandler = Plaid.create(bankHandlerConfig(d.link_token));   // fresh iframe attaches now\n` +
+        `}\n` +
+        `// Trigger prep when reaching the step BEFORE the bank launch (wrap goToStep):\n` +
+        `(function(){ var orig = window.goToStep; window.goToStep = function(id){ var r = orig.apply(this, arguments);\n` +
+        `  if (id === '${bankPrepPriorStepId || '<step-before-bank-launch>'}' && !window._bankPrepStarted){ window._bankPrepStarted = true; prepBankHandler(); }\n` +
+        `  return r; }; })();\n` +
+        `window.openBankLink = async function(){  // CTA just opens the already-prepped handler\n` +
+        `  var t=Date.now(); while(!window._plaidHandler && Date.now()-t<8000){ await new Promise(r=>setTimeout(r,120)); }\n` +
+        `  if(!window._plaidHandler) await prepBankHandler();\n` +
+        `  if(window._plaidHandler) window._plaidHandler.open();\n` +
         `};\n` +
         '```\n' +
-        `This one-clean-session-per-open rule applies to ANY demo whose bank Link launch follows another ` +
+        `This pre-create-then-instant-open rule applies to ANY demo whose bank Link launch follows another ` +
         `real Plaid launch (IDV, Layer, or CRA).\n` +
         `- **NO auto-advance:** neither launch step may auto-advance via setTimeout/onload. Advance ONLY from ` +
         `the SDK \`onSuccess\` callback (\`_idvComplete\` → goToStep for IDV; \`_plaidLinkComplete\` → goToStep ` +
