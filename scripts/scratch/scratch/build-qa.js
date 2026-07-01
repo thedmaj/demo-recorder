@@ -1418,6 +1418,37 @@ function scanSlideTextContrast(state, step) {
   }));
 }
 
+/**
+ * Host body-text contrast emitter (2026-07-01). Reads `state.hostTextContrast`
+ * and flags unreadable HOST-step text (black-on-black / very low contrast).
+ * CRITICAL + deterministic blocker — the class of bug that shipped when
+ * brand-extract classified a host as mode:"dark" and the build painted the host
+ * page/card with the dark brand color while text stayed dark (Gringo 2026-07-01).
+ * Excludes .host-app-chrome (nav/footer may be dark by design). Pairs with the
+ * LIGHT-HOST RULE now enforced in prompt-templates.js renderBrandBlock.
+ */
+function scanHostTextContrast(state, step) {
+  const sceneType = String(step?.sceneType || '').toLowerCase();
+  if (sceneType && sceneType !== 'host') return [];
+  if (isSlideLikeStep(step)) return [];
+  const items = Array.isArray(state?.hostTextContrast) ? state.hostTextContrast : [];
+  return items.map((c) => ({
+    stepId: step.id,
+    category: 'host-text-contrast',
+    severity: 'critical',
+    deterministicBlocker: true,
+    issue:
+      `Unreadable host text (black-on-black / very low contrast): ${c.tag}` +
+      `${c.classes ? '.' + String(c.classes).split(/\s+/).join('.') : ''} "${c.text}" — ` +
+      `${c.color} on ${c.background} (contrast ${c.ratio}:1, minimum 2.0).`,
+    suggestion:
+      `Host page + content cards must be LIGHT with dark text (CLAUDE.md: reserve dark for ` +
+      `Plaid contexts). If the brand is dark-mode, keep host surfaces light and use the brand ` +
+      `color for nav/accents only — see the LIGHT-HOST RULE in the HOST APP DESIGN SYSTEM block.`,
+    meta: { tag: c.tag, classes: c.classes, text: c.text, color: c.color, background: c.background, ratio: c.ratio },
+  }));
+}
+
 function scanSlideMotionAttributes(html, slideStepIds) {
   if (!html || !/\bslide-root\b/.test(html)) return [];
   const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
@@ -2490,6 +2521,36 @@ async function evaluateStepState(page, stepId) {
               ratio: Number(ratio.toFixed(2)),
             });
           }
+        }
+        return found;
+      })(),
+      // Host body-text contrast (2026-07-01): catch black-on-black / unreadable
+      // text on HOST steps (slides handled above). Scoped to the active step's
+      // content, EXCLUDING .host-app-chrome (nav/footer may be dark by design).
+      // Flags ratio < 2.0 (effectively invisible). Guards the regression where a
+      // dark brand surface was used as the host page/card with dark text on top.
+      hostTextContrast: (() => {
+        if (!active || active.querySelector('.slide-root')) return [];
+        const parse = (c) => { const m = String(c || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\)/); return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] == null ? 1 : +m[4] } : null; };
+        const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+        const blend = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1 });
+        const WHITE = { r: 255, g: 255, b: 255, a: 1 };
+        const bgOf = (el) => { let n = el; while (n && n !== document.documentElement) { const cs2 = getComputedStyle(n); const c = parse(cs2.backgroundColor); if (c && c.a >= 0.9) return c; if (cs2.backgroundImage && cs2.backgroundImage !== 'none') return WHITE; n = n.parentElement; } return WHITE; };
+        const found = [];
+        for (const el of Array.from(active.querySelectorAll('*'))) {
+          if (found.length >= 6) break;
+          if (el.closest && el.closest('.host-app-chrome')) continue;
+          const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!text || text.length < 3) continue;
+          const hasDirectText = Array.from(el.childNodes).some((n) => n.nodeType === 3 && (n.textContent || '').trim().length > 1);
+          if (!hasDirectText) continue;
+          const cs = window.getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity || '1') < 0.05) continue;
+          const rect = el.getBoundingClientRect(); if (rect.width < 2 || rect.height < 2) continue;
+          const fg = parse(cs.color); if (!fg) continue;
+          const bg = bgOf(el); const eff = fg.a < 1 ? blend(fg, bg) : fg;
+          const l1 = lum(eff), l2 = lum(bg); const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+          if (ratio < 2.0) found.push({ tag: el.tagName, classes: String(el.className || '').slice(0, 60), text: text.slice(0, 60), color: cs.color, background: `rgb(${Math.round(bg.r)}, ${Math.round(bg.g)}, ${Math.round(bg.b)})`, ratio: Number(ratio.toFixed(2)) });
         }
         return found;
       })(),
@@ -3860,6 +3921,7 @@ function buildStepAssertions(step, state, demoScript, opts = {}) {
     for (const d of scanSlideTextOverlap(state, step)) diagnostics.push(d);
     for (const d of scanSlideTextWrap(state, step)) diagnostics.push(d);
     for (const d of scanSlideTextContrast(state, step)) diagnostics.push(d);
+    for (const d of scanHostTextContrast(state, step)) diagnostics.push(d);
   }
   if (isSlideLikeStep(step) && (state.activeStepHasMobileShellTarget || state.activeStepHasMobileSimulatorShell)) {
     diagnostics.push({

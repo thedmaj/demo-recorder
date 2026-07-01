@@ -288,25 +288,43 @@ function renderBrandBlock(brand) {
   const lines = [];
   lines.push(`- HOST APP DESIGN SYSTEM — ${brand.name} brand (applies to app chrome only; Plaid Link modal is always white/Plaid-branded):`);
 
-  // Colors
-  lines.push(`    Mode:              ${brand.mode || 'dark'}`);
-  if (c.bgGradient) {
-    lines.push(`    Background:        ${c.bgPrimary} or ${c.bgGradient}`);
+  // Colors — LIGHT-HOST FLOOR (2026-07-01). Host SURFACES (page + content cards)
+  // are ALWAYS light with dark text, regardless of the brand's mode. brand-extract
+  // non-deterministically classifies some hosts as mode:"dark" and emits a dark
+  // bgPrimary; if that dark color is used as the host page/card background the
+  // build renders black-on-black (dark text on the dark brand surface — Gringo
+  // 2026-07-01: mode flipped light→dark run-to-run). Per CLAUDE.md the host
+  // defaults to light; the brand's dark color is for the nav/banner + accents ONLY.
+  const _bgParsed = parseColor(c.bgPrimary);
+  const _bgLum = _bgParsed ? relativeLuminance(_bgParsed) : 1;
+  const _hostDark = String(brand.mode || '').toLowerCase() === 'dark' || _bgLum < 0.5;
+  const hostBg    = _hostDark ? '#ffffff' : (c.bgPrimary   || '#ffffff');
+  const hostCard  = _hostDark ? '#ffffff' : (c.surfaceCard || '#ffffff');
+  const hostText1 = _hostDark ? '#111827' : (c.textPrimary   || '#111827');
+  const hostText2 = _hostDark ? '#4b5563' : (c.textSecondary || '#4b5563');
+  const hostText3 = _hostDark ? '#6b7280' : (c.textTertiary  || '#6b7280');
+  lines.push(`    Mode:              light` + (_hostDark ? `  (brand palette is dark; host surfaces forced light — see LIGHT-HOST RULE below)` : `  (host surfaces are light)`));
+  if (!_hostDark && c.bgGradient) {
+    lines.push(`    Background:        ${hostBg} or ${c.bgGradient}   (host PAGE + cards)`);
   } else {
-    lines.push(`    Background:        ${c.bgPrimary}`);
+    lines.push(`    Background:        ${hostBg}   (host PAGE + cards — light; dark text on top)`);
   }
   lines.push(`    Primary CTA color: ${c.accentCta}`);
-  lines.push(`    Text primary:      ${c.textPrimary}`);
-  lines.push(`    Text secondary:    ${c.textSecondary}`);
-  lines.push(`    Text tertiary:     ${c.textTertiary}`);
+  lines.push(`    Text primary:      ${hostText1}`);
+  lines.push(`    Text secondary:    ${hostText2}`);
+  lines.push(`    Text tertiary:     ${hostText3}`);
   lines.push(`    Accent border:     ${c.accentBorder}`);
   lines.push(`    Accent bg tint:    ${c.accentBgTint}`);
   lines.push(`    Error color:       ${c.error}`);
   lines.push(`    Success color:     ${c.success}`);
-  if (c.surfaceCard)      lines.push(`    Card surface:      ${c.surfaceCard}`);
-  if (c.navBg)            lines.push(`    Nav background:    ${c.navBg}`);
+  lines.push(`    Card surface:      ${hostCard}   (light — never a dark brand color)`);
+  if (c.navBg)            lines.push(`    Nav background:    ${c.navBg}   (chrome ONLY — may be the brand's dark color)`);
   if (c.navAccentStripe)  lines.push(`    Nav accent stripe: ${c.navAccentStripe}`);
-  if (c.footerBg)         lines.push(`    Footer background: ${c.footerBg}`);
+  if (c.footerBg)         lines.push(`    Footer background: ${c.footerBg}   (chrome ONLY)`);
+  if (_hostDark) {
+    lines.push('');
+    lines.push(`    ⚠ LIGHT-HOST RULE (authoritative): ${brand.name}'s brand palette is dark, but the DEMO host page and every content card MUST be light (${hostBg}) with dark text (${hostText1}). Reserve the brand's dark color (${c.bgPrimary}) for the top nav/banner + footer chrome and accents ONLY — never the page background or content cards, and never place dark text on a dark surface. (Dark full-bleed surfaces are reserved for the Plaid Link modal / Plaid slides.)`);
+  }
 
   if (hb && hb.bg) {
     lines.push('');
@@ -3477,6 +3495,7 @@ function buildPanelPayloadPrompt({ step, existingPayload = '', narrationHint = '
 // ─────────────────────────────────────────────────────────────────────────────
 
 module.exports = {
+  renderBrandBlock,
   buildResearchPrompt,
   buildScriptGenerationPrompt,
   stripPromptLevelNoSlidesDirectives,
