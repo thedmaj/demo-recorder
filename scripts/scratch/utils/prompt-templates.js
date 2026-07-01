@@ -3300,9 +3300,17 @@ function buildSlideInsertionPrompt({
 
   const system =
     `You are generating ONE Plaid Deck Design System slide as a surgical insertion into an existing demo app. ` +
-    `Use the RECOMMENDED showcase template below (data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}") — copy its skeleton structure exactly and adapt copy from the step narration. ` +
-    `Do NOT invent a different layout or fall back to a generic T3 statement shell. ` +
-    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}">...</div></div>. ` +
+    // LAYOUT AUTONOMY (2026-07-01): the routed template is a SUGGESTION, not a
+    // mandate. Older builds forced "copy this skeleton exactly / do NOT invent a
+    // different layout", which produced uniform, sometimes-poorer slides; the
+    // freer 2026-06-10 build chose better layouts. Let the model pick the layout
+    // that best fits THIS slide's content from the T1–T11 Deck Design System, and
+    // rely on the deterministic autofit (post-slides) to shrink any overflow —
+    // favor the clearest layout over cramming.
+    `A SUGGESTED showcase template is provided (data-slide-template="${recommendedT}" data-workhorse-layout="${recommendedLayout}") as a strong starting point. ` +
+    `But YOU choose the layout that best communicates THIS slide's content: if a different Deck Design System layout (T1–T11 / a different workhorse layout) fits the data better, use it and set data-slide-template / data-workhorse-layout accordingly. ` +
+    `Match the layout to how much content there is — pick the cleanest fit and do NOT overfill; overflow is auto-shrunk to fit the canvas, so favor clarity over cramming. Only fall back to a generic T3 statement shell when nothing richer suits the content. ` +
+    `Return a single HTML fragment: <div data-testid="step-${stepId}" class="step"><div class="slide-root" data-slide-template="{your chosen T#}" data-workhorse-layout="{your chosen layout}">...</div></div>. ` +
     `Use the canonical shell: .frame, .chrome-logo, .eyebrow-tag, .h-title (with one <em> Bowery italic accent), .slide-stack body. Do NOT include .chrome-foot. ` +
     `Slides are Plaid-branded ONLY — never use customer/host brand colors, Workhorse themes, runtime.js, data-anim, or Chart.js inside .slide-root. ` +
     `Do NOT include <script>, do NOT use display:inline-block inside .slide-root, do NOT add inline display on the step div, do NOT wrap output in markdown fences.`;
