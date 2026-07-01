@@ -15,6 +15,20 @@ repeat long technical build specs here — the pipeline loads them automatically
 
 Copy the completed spec to **`inputs/prompt.txt`** (or merge into it).
 
+AUTHORING GOTCHAS (read before writing — these cost real build attempts)
+-----------------------------------------------------------------------
+• **Never name a product you aren't using — not even to exclude it.** Product
+  names *anywhere* in this prompt (even "IDV — N/A", "do NOT use investments_auth",
+  "no transfer") are keyword-scanned: they leak into the **run-dir name** and can
+  leak into Link **`products[]`**. Write only the products the demo actually uses;
+  delete N/A reminder lines entirely instead of naming the excluded product.
+• **Reserve the word "insight" for `slide` steps.** Any non-slide step whose
+  id/label/visual contains "insight" is treated as an API-insight step and is
+  required to carry a JSON `apiResponse` — a plain host confirmation screen named
+  "…insight" will halt the script stage. Keep host steps as plain confirmation UI.
+• **Force a clean run-dir name** (optional): pre-create the dir and pass
+  `PIPELINE_RUN_DIR=<abs path>` — the orchestrator uses an existing dir verbatim.
+
 HOW TO RUN
 ----------
 1. Save as **`inputs/prompt.txt`**

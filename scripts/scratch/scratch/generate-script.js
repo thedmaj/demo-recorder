@@ -211,6 +211,12 @@ function isInsightLikeStep(step) {
   const sceneType = String(step?.sceneType || '').toLowerCase();
   if (sceneType === 'slide') return false;
   if (sceneType === 'insight') return true;
+  // An EXPLICIT host step is never an insight, even if it carries the word
+  // "insight" in its id/label/visualState (Astera 2026-06-30: a host confirmation
+  // step named "*-insight" was forced to require an apiResponse and halted the
+  // run at validateDemoScript). The word-match below stays only as a fallback for
+  // steps that omit sceneType.
+  if (sceneType === 'host') return false;
   const haystack = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
   return /\binsight\b|\bapi insight\b|\bplaid insight\b/.test(haystack);
 }
@@ -419,6 +425,13 @@ function normalizeSceneType(step) {
   if (raw === 'host' || raw === 'link' || raw === 'insight') return raw;
   if (step?.plaidPhase === 'launch') return 'link';
   if (step?.apiResponse?.endpoint || step?.apiResponse?.response) return 'insight';
+  // Untyped step whose id/label/visual says "insight" → classify as insight (it
+  // needs a JSON panel). Preserves the historical word-match fallback now that
+  // isInsightLikeStep trusts an EXPLICIT sceneType:'host' (Astera 2026-06-30): an
+  // explicit host confirmation step named "*-insight" must NOT be forced to carry
+  // an apiResponse, but an UNTYPED one still is.
+  const insightText = [step?.id, step?.label, step?.visualState].filter(Boolean).join(' ').toLowerCase();
+  if (/\binsight\b|\bapi insight\b|\bplaid insight\b/.test(insightText)) return 'insight';
   return 'host';
 }
 

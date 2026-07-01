@@ -188,6 +188,42 @@ ensure_uv() {
 RENDER_MCP_DIR="${HOME}/.mcp-servers/mcp-moviepy"
 RENDER_MCP_REPO="https://github.com/vizionik25/vidmagik-mcp.git"   # NOT vizionik25/moviepy-mcp (different project)
 RENDER_MCP_BRANCH="pipeline-patches"
+
+# Rewrite committed ABSOLUTE MCP-server home paths in .mcp.json to THIS machine's
+# $HOME. .mcp.json ships with the committer's paths (e.g. /Users/<committer>/…);
+# a fresh clone otherwise points the askbill + moviepy MCP servers at a home dir
+# that doesn't exist here, and the agent CANNOT fix .mcp.json (the harness blocks
+# edits to its own startup config), so this user-run step is the fix. Targets only
+# the two known MCP parents (plaid-mcp-servers, .mcp-servers) so nothing else is
+# touched. Idempotent; backs up to .mcp.json.bak only when it actually changes.
+# (Astera 2026-06-30: the moviepy path was still /Users/<other>/… after clone.)
+normalize_mcp_json() {
+  local mcp="${REPO_ROOT}/.mcp.json"
+  [ -f "${mcp}" ] || return 0
+  local tmp; tmp="$(mktemp)" || return 0
+  # NOTE: use '#' as the sed delimiter — '|' collides with the (Users|home)
+  # alternation on BSD/macOS sed ("parentheses not balanced").
+  sed -E \
+    -e "s#/(Users|home)/[^/\"]+/plaid-mcp-servers/#${HOME}/plaid-mcp-servers/#g" \
+    -e "s#/(Users|home)/[^/\"]+/\.mcp-servers/#${HOME}/.mcp-servers/#g" \
+    "${mcp}" > "${tmp}" 2>/dev/null || { rm -f "${tmp}"; return 0; }
+  if ! cmp -s "${mcp}" "${tmp}"; then
+    cp "${mcp}" "${mcp}.bak" 2>/dev/null || true
+    mv "${tmp}" "${mcp}"
+    ok ".mcp.json MCP paths normalized to ${HOME} (backup: .mcp.json.bak) — restart the agent to load them."
+  else
+    rm -f "${tmp}"
+    info ".mcp.json MCP paths already match ${HOME}."
+  fi
+  # Verify the referenced server dirs actually exist — a normalized path pointing
+  # at a missing dir is the other half of the Astera gap (the server was never
+  # cloned to this $HOME). Warn with a concrete pointer; never block.
+  [ -d "${HOME}/.mcp-servers/mcp-moviepy" ] || \
+    warn "moviepy MCP server missing at ${HOME}/.mcp-servers/mcp-moviepy — interactive moviepy tools won't load (render is unaffected)."
+  [ -d "${HOME}/plaid-mcp-servers/askbill-plaid" ] || \
+    warn "askbill MCP server missing at ${HOME}/plaid-mcp-servers/askbill-plaid — research (AskBill) tools won't load. Set it up per the askbill server README or ask the repo owner."
+}
+
 setup_render_engine() {
   if [ "${SKIP_RENDER_ENGINE}" = true ]; then
     info "Skipping render engine (SKIP_RENDER_ENGINE / --skip-render-engine). App-only builds don't need it."
@@ -220,13 +256,11 @@ setup_render_engine() {
   else
     warn "vidmagik-mcp present but main.py missing — verify the clone."
   fi
-  # .mcp.json's moviepy entry is a per-machine absolute path used for INTERACTIVE
-  # agent moviepy tools; the render pipeline itself resolves ~/.mcp-servers/mcp-moviepy
-  # portably via os.homedir(), so render works regardless. Only warn (don't rewrite
-  # a committed file) when the interactive path won't match this machine.
-  if [ -f "${REPO_ROOT}/.mcp.json" ] && ! grep -q "${RENDER_MCP_DIR}" "${REPO_ROOT}/.mcp.json" 2>/dev/null; then
-    warn ".mcp.json's moviepy path does not match ${RENDER_MCP_DIR} — interactive moviepy MCP tools (not render) may not resolve. Render is unaffected."
-  fi
+  # Point .mcp.json's moviepy (and askbill) entries at THIS machine's $HOME. The
+  # render pipeline resolves ~/.mcp-servers/mcp-moviepy portably via os.homedir()
+  # regardless, but the INTERACTIVE agent MCP tools read .mcp.json literally — so
+  # normalize it here rather than only warning.
+  normalize_mcp_json
   return 0
 }
 
@@ -511,10 +545,15 @@ heading "Playwright browser"
 
 if node -e "require.resolve('playwright')" >/dev/null 2>&1; then
   info "Ensuring Chromium is installed for Playwright (idempotent)."
-  npx --yes playwright install chromium || warn "playwright install failed — rerun \`npx playwright install chromium\` later."
-  ok "Playwright Chromium ready"
+  # BOTH variants: `chromium` (record) and `chromium-headless-shell` (build-qa's
+  # headless visual capture + plaid-link-qa + brand screenshots). Without the
+  # headless-shell, build-qa silently degrades to token-only — no visual score
+  # (observed on a first-time build, Astera 2026-06-30).
+  npx --yes playwright install chromium chromium-headless-shell \
+    || warn "playwright install failed — rerun \`npx playwright install chromium chromium-headless-shell\` later."
+  ok "Playwright Chromium + headless-shell ready"
 else
-  warn "playwright package not found — this should have been installed by \`npm install\`."
+  warn "playwright package not found — this should have been installed by \`npm install\`. build-qa's visual score and \`record\` need it: run \`npm install\` then \`npx playwright install chromium chromium-headless-shell\`."
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

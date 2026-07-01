@@ -277,24 +277,45 @@ function inferPlaidLinkProductsFromPrompt(promptText = '') {
   // Detect Move-specific signals FIRST so a prompt mentioning ACATS or
   // /investments/auth/get doesn't degrade to 'investments' and silently
   // call the wrong endpoint after Link completes.
+  // Windowed negation guard (Astera 2026-06-30): `investments_auth` leaked into
+  // products[] from a *negative reminder* line ("do NOT use investments_auth",
+  // "ACATS/transfer fields N/A"). `affirmProduct` counts a signal only when no
+  // exclusion word sits in the ~40-char window around it. Targeted NEG list
+  // deliberately omits bare "no"/"standard" (too common — they'd drop real
+  // products co-mentioned on the same line, e.g. "no micro-deposit … Auth");
+  // the corpus-diff regression test (tests/unit/product-inference-negation.test.js
+  // + tests/corpus/*) guards against over-suppression across all existing prompts.
+  const collapsedText = text.replace(/\s+/g, ' ');
+  const PRODUCT_NEG = /\bnot\b|\bnever\b|n['’]t\b|\bwithout\b|\bexclud\w*|\bavoid\b|\bn\/?a\b/i;
+  const affirmProduct = (re) => {
+    const gre = new RegExp(re.source, 'gi');
+    let m;
+    while ((m = gre.exec(collapsedText))) {
+      const s = Math.max(0, m.index - 40);
+      const e = Math.min(collapsedText.length, m.index + m[0].length + 40);
+      if (!PRODUCT_NEG.test(collapsedText.slice(s, e))) return true;
+      if (gre.lastIndex === m.index) gre.lastIndex++;
+    }
+    return false;
+  };
   const isInvestmentsMove =
-    /\binvestments\s+move\b/.test(text) ||
-    /\bacats\b/.test(text) ||
-    /\baton\b/.test(text) ||
-    /\bbroker-?sourced\b/.test(text) ||
-    /\bheld-?away\b/.test(text) ||
-    /\bportfolio\s+transfer\b/.test(text) ||
-    /\bbrokerage\b.*\btransfer\b/.test(text) ||
-    /\binvestments_auth\b/.test(text) ||
-    /\/investments\/auth\/get\b/.test(text);
+    affirmProduct(/\binvestments\s+move\b/) ||
+    affirmProduct(/\bacats\b/) ||
+    affirmProduct(/\baton\b/) ||
+    affirmProduct(/\bbroker-?sourced\b/) ||
+    affirmProduct(/\bheld-?away\b/) ||
+    affirmProduct(/\bportfolio\s+transfer\b/) ||
+    affirmProduct(/\bbrokerage\b.*\btransfer\b/) ||
+    affirmProduct(/\binvestments_auth\b/) ||
+    affirmProduct(/\/investments\/auth\/get\b/);
   const isInvestmentsDataAccess =
     !isInvestmentsMove &&
     (
-      /\binvestments\b/.test(text) ||
-      /\binvestment\s+holdings\b/.test(text) ||
-      /\/investments\/holdings\/get\b/.test(text) ||
-      /\/investments\/transactions\/get\b/.test(text) ||
-      /\bportfolio\s+(view|allocation|performance|holdings)\b/.test(text)
+      affirmProduct(/\binvestments\b/) ||
+      affirmProduct(/\binvestment\s+holdings\b/) ||
+      affirmProduct(/\/investments\/holdings\/get\b/) ||
+      affirmProduct(/\/investments\/transactions\/get\b/) ||
+      affirmProduct(/\bportfolio\s+(view|allocation|performance|holdings)\b/)
     );
   if (isInvestmentsMove) {
     add('investments_auth');
