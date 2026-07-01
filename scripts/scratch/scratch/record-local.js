@@ -1108,6 +1108,23 @@ async function plaidLinkDismissSaveScreen(page) {
   const frame = getPlaidLinkFrame(page);
   const fallbackPhone = (_sandboxConfig && _sandboxConfig.phone) ? String(_sandboxConfig.phone) : '+14155550011';
 
+  // Post-account "Plaid Passport" phone-verification (OTP) pane — appears AFTER
+  // account-select confirm on returning-user / CRA flows: "Verify your phone
+  // number — Enter the code sent to … to access your saved accounts" with an OTP
+  // Code field and a DISABLED Continue. The generic Continue/Skip dismissal below
+  // clicks the disabled button forever WITHOUT entering the code, so the pane
+  // never advances to HANDOFF/onSuccess and the link force-completes unsuccessfully
+  // (cashrepublic / ascend / scrubio CRA, 2026-07-01: PLAID_LINK_UNSUCCESSFUL).
+  // Fill the sandbox OTP first (enterModalOtpIfPresent guards against the phone
+  // field — ≥7 digits — and no-ops when no OTP input is present).
+  try {
+    if (await enterModalOtpIfPresent(page, { label: 'Link' })) {
+      console.log('  [Plaid Link] Entered OTP on post-link phone-verification (Passport) pane.');
+      await page.waitForTimeout(1200);
+      return true;
+    }
+  } catch (_) {}
+
   // If embedded flow is on the optional phone capture prompt, satisfy it directly.
   try {
     const phoneInput = frame.locator('input[type="tel"], input[name="phone"], input[inputmode="tel"], input[placeholder*="phone" i]').first();
