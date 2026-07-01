@@ -108,7 +108,13 @@ const RECORD_TRANSITION_SAFE_TIMING = !(
 const STEP_TRANSITION_SETTLE_MS = parseInt(process.env.STEP_TRANSITION_SETTLE_MS || '300', 10);
 // Extra boundary guard immediately after Plaid launch completion.
 const POST_LINK_STEP_BOUNDARY_GUARD_MS = parseInt(process.env.POST_LINK_STEP_BOUNDARY_GUARD_MS || '700', 10);
-const RECORD_POSTPROCESS_TIMEOUT_MS = parseInt(process.env.RECORD_POSTPROCESS_TIMEOUT_MS || '360000', 10);
+// A long (200s+) 2880×1800 recording re-encoded to 60fps VP9 (crf18 cpu-used4)
+// takes ~9 min — the old 6-min default timed out, and the retry then spawned a
+// SECOND ffmpeg alongside the orphaned first → machine overload → node killed
+// before the graceful copy-raw fallback (Gringo 2026-07-01). Default bumped to
+// 15 min so the primary attempt completes; the timed-out process is now hard-
+// killed (SIGKILL) so no ffmpeg is left orphaned before any retry.
+const RECORD_POSTPROCESS_TIMEOUT_MS = parseInt(process.env.RECORD_POSTPROCESS_TIMEOUT_MS || '900000', 10);
 const RECORD_POSTPROCESS_MAX_RETRIES = parseInt(process.env.RECORD_POSTPROCESS_MAX_RETRIES || '1', 10);
 
 // Human-pacing engine (PLAID_NAV_STYLE=human|fast). DEFAULT IS 'human' as of
@@ -2792,8 +2798,14 @@ function postProcessRecording(rawPath, outPath) {
     try {
       if (i > 0) {
         console.log(`[Record] Post-processing: retrying with ${attempt.label}...`);
+        // Kill any ffmpeg orphaned by a prior execSync timeout — execSync's
+        // SIGTERM on the /bin/sh does NOT always reap the ffmpeg grandchild, and
+        // a lingering encode running alongside the retry overloads the machine.
+        try { execSync('pkill -9 -f "ffmpeg .*recording-raw"', { stdio: 'ignore', timeout: 5000 }); } catch (_) {}
       }
-      execSync(attempt.cmd, { stdio: 'pipe', timeout: timeoutMs });
+      // killSignal SIGKILL ensures the ffmpeg is hard-killed on timeout (not left
+      // running after a soft SIGTERM the encode may ignore).
+      execSync(attempt.cmd, { stdio: 'pipe', timeout: timeoutMs, killSignal: 'SIGKILL' });
 
       if (fs.existsSync(tmpOut)) {
         fs.renameSync(tmpOut, outPath);
