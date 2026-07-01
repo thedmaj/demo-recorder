@@ -2309,11 +2309,32 @@ contract that the next stage knows how to fill.\n` +
         `\`POST /identity_verification/get\` → \`status:"success"\` (sub-steps documentary_verification / ` +
         `kyc_check / selfie_check = success). Use that as the IDV-success step's \`apiResponse\`. Never show \`failed\` ` +
         `or an API error in the main flow.\n\n` +
-        `**Bank launch step (separate session):** the OTHER \`plaidPhase:"launch"\` step keeps the existing ` +
-        `bank Plaid Link wiring — CTA \`data-testid="link-external-account-btn"\`, fetch ` +
-        `\`POST /api/create-link-token\`, \`Plaid.create({ token, onSuccess })\`, set ` +
-        `\`window._plaidLinkComplete = true\` in onSuccess, then \`goToStep\` to its own post-link step. ` +
-        `Do NOT merge the two launches; do NOT set \`_plaidLinkComplete\` from the IDV onSuccess (use \`_idvComplete\`).\n` +
+        `**Bank launch step (separate session):** the OTHER \`plaidPhase:"launch"\` step is the bank Plaid ` +
+        `Link — CTA \`data-testid="link-external-account-btn"\`, fetch \`POST /api/create-link-token\`, ` +
+        `\`Plaid.create({ token, onSuccess })\`, set \`window._plaidLinkComplete = true\` in onSuccess, then ` +
+        `\`goToStep\` to its own post-link step. Do NOT merge the two launches; do NOT set ` +
+        `\`_plaidLinkComplete\` from the IDV onSuccess (use \`_idvComplete\`).\n` +
+        `- **CRITICAL — open the bank handler FRESH on click (multi-launch).** Because the IDV modal opens a ` +
+        `Plaid session BEFORE the bank launch, Plaid's web SDK will NOT composite the bank Link iframe if an ` +
+        `earlier handler still holds a session — a boot-created bank handler goes stale after IDV and ` +
+        `\`open()\` shows nothing (host card stays up → PLAID_LINK_MODAL_MISSING). So the bank CTA handler ` +
+        `must, on click: (1) destroy any live \`window._idvHandler\` and the prior \`window._plaidHandler\`, ` +
+        `(2) create a FRESH \`Plaid.create\` with a freshly fetched token, (3) \`open()\`:\n` +
+        '```javascript\n' +
+        `function bankHandlerConfig(token){ return { token, onSuccess:(pt,md)=>{ /* set _plaidLinkComplete + goToStep */ }, onExit:()=>{}, onEvent:()=>{} }; }\n` +
+        `// Boot: create once so the recorder's pre-click "handler ready" wait passes.\n` +
+        `createBankLinkToken().then(d => { if (d&&d.link_token) window._plaidHandler = Plaid.create(bankHandlerConfig(d.link_token)); });\n` +
+        `window.openBankLink = async function(){\n` +
+        `  try { window._idvHandler && window._idvHandler.destroy(); } catch(e){}  window._idvHandler = null;\n` +
+        `  try { window._plaidHandler && window._plaidHandler.destroy(); } catch(e){}  window._plaidHandler = null;\n` +
+        `  const d = await createBankLinkToken(); if (!d || !d.link_token) return;\n` +
+        `  window._plaidHandler = Plaid.create(bankHandlerConfig(d.link_token));\n` +
+        `  await new Promise(r => setTimeout(r, 300));  // let the fresh iframe attach\n` +
+        `  window._plaidHandler.open();\n` +
+        `};\n` +
+        '```\n' +
+        `This one-clean-session-per-open rule applies to ANY demo whose bank Link launch follows another ` +
+        `real Plaid launch (IDV, Layer, or CRA).\n` +
         `- **NO auto-advance:** neither launch step may auto-advance via setTimeout/onload. Advance ONLY from ` +
         `the SDK \`onSuccess\` callback (\`_idvComplete\` → goToStep for IDV; \`_plaidLinkComplete\` → goToStep ` +
         `for the bank). Each launch button must be INSIDE its own step's div so goToStep doesn't hide it.`,
