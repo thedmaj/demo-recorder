@@ -112,13 +112,18 @@ function markHostAppChrome(html) {
   //    OUTSIDE the step divs (e.g. a top `.stepbar` between <header> and <main>
   //    with a section label + segments). These are host chrome and must be
   //    hidden on slides, but were not covered by nav/header/footer tagging — a
-  //    top step-progress bar bled onto slides (Ascend 2026-06-30). The names are
-  //    deliberately SPECIFIC (compound step-/progress- forms) so they do NOT
-  //    match in-step content like `gen-progress` / `gen-steps` on a host step.
+  //    top step-progress bar bled onto slides (Ascend 2026-06-30; a bare
+  //    `.progress` / `#progress` stepper on Gringo 2026-07-01 slipped through the
+  //    compound-only list below). Over-tagging is harmless: `host-app-chrome`
+  //    only hides under `body.pipeline-slide-active` (slide steps), and any
+  //    in-step progress bar lives on a HOST step that is never shown while a
+  //    slide is active — so hiding it then changes nothing visible. Bare
+  //    `progress`/`steps` are therefore now covered too.
   for (const cls of ['nav', 'navbar', 'topbar', 'top-bar', 'header-bar',
                      'app-nav', 'top-nav', 'bottom-nav', 'footer', 'bottom-bar',
                      'stepbar', 'step-bar', 'step-indicator', 'stepindicator',
                      'stepper', 'step-rail', 'step-tracker', 'step-progress',
+                     'progress', 'progress-bar', 'progressbar', 'steps', 'step-list',
                      'progress-rail', 'progress-steps', 'wizard-steps', 'flow-steps',
                      'sidebar', 'side-bar', 'side-nav', 'sidenav', 'app-sidebar',
                      'left-nav', 'left-rail', 'side-rail']) {
@@ -127,6 +132,23 @@ function markHostAppChrome(html) {
       if (classes.includes('host-app-chrome')) return m;
       return `class="${classes} host-app-chrome"`;
     });
+  }
+
+  // 3b) Id-based top-level trackers. A host stepper is often a UNIQUE element
+  //     addressed by id (`<div class="progress" id="progress">`, `id="stepper"`)
+  //     and filled by a renderProgress()-style function. Ids are unique, so an
+  //     in-step progress bar never shares these ids — tagging by id is precise.
+  for (const id of ['progress', 'progressbar', 'progress-bar', 'stepper',
+                    'steps', 'step-indicator', 'step-tracker', 'stepbar']) {
+    // Add host-app-chrome to the element carrying this id, whether or not it
+    // already has a class attribute.
+    const reWithClass = new RegExp(`(<[a-z]+\\b[^>]*\\bid="${id}"[^>]*\\sclass=")([^"]*)"`, 'gi');
+    html = html.replace(reWithClass, (m, pre, classes) => {
+      if (classes.includes('host-app-chrome')) return m;
+      return `${pre}${classes} host-app-chrome"`;
+    });
+    const reNoClass = new RegExp(`(<[a-z]+\\b(?:(?!\\sclass=)[^>])*\\bid="${id}")((?:(?!\\sclass=)[^>])*>)`, 'gi');
+    html = html.replace(reNoClass, (m, pre, post) => `${pre} class="host-app-chrome"${post}`);
   }
 
   return html;

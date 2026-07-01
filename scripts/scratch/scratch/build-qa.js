@@ -2248,7 +2248,11 @@ async function evaluateStepState(page, stepId) {
         const root = active ? active.querySelector('.slide-root') : null;
         if (!root) return null; // not a slide step
         const sel = 'header, nav, footer, .host-nav, .fdic-bar, .sub-nav, .host-app-chrome,' +
-          '[class*="banner"], [class*="navbar"], [class*="topbar"], [class*="app-header"], [class*="site-header"]';
+          '[class*="banner"], [class*="navbar"], [class*="topbar"], [class*="app-header"], [class*="site-header"],' +
+          // Host step/progress trackers (Gringo 2026-07-01: a bare `.progress`/`#progress`
+          // stepper strip bled onto slides and passed at 94 because the scanner ignored it).
+          '#progress, .progress, .stepper, [class*="stepbar"], [class*="step-indicator"],' +
+          '[class*="step-tracker"], [class*="step-progress"], [class*="progress-bar"], [class*="progress-rail"]';
         const hits = [];
         document.querySelectorAll(sel).forEach((el) => {
           if (el.id === 'api-response-panel' || el.closest('#api-response-panel')) return; // panel overlay is allowed

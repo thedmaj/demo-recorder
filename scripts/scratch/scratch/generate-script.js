@@ -478,22 +478,39 @@ function isLayerUseCase(demoScript) {
 
 function enforceCanonicalLaunchInteraction(demoScript) {
   if (!demoScript || !Array.isArray(demoScript.steps)) return null;
-  const launchStep = demoScript.steps.find((s) => s && s.plaidPhase === 'launch');
-  if (!launchStep) return null;
-  if (String(launchStep.sceneType || '').toLowerCase() === 'slide') return null;
-  launchStep.sceneType = 'link';
-  launchStep.interaction = launchStep.interaction || {};
+  // Multi-launch contract: a demo may have MORE THAN ONE plaidPhase:"launch" step
+  // (e.g. IDV launch + a separate bank-Link launch). The old code used .find() and
+  // normalized ONLY the first launch, leaving the second with whatever the LLM
+  // emitted — commonly {action:"wait", target:"plaid-link-modal"}. A "wait" action
+  // never CLICKS the launch CTA, so the recorder waited on a modal that never
+  // opened → onSuccess never fired → PLAID_LINK_MODAL_MISSING (Gringo 2026-07-01,
+  // bank-link-launch). Normalize EVERY launch step to an explicit click (or
+  // goToStep in embedded mode) so every real modal actually opens.
+  const launchSteps = demoScript.steps.filter(
+    (s) => s && s.plaidPhase === 'launch' && String(s.sceneType || '').toLowerCase() !== 'slide'
+  );
+  if (!launchSteps.length) return null;
   const embedded = String(demoScript.plaidLinkMode || '').toLowerCase() === 'embedded';
-  if (embedded) {
-    launchStep.interaction.action = 'goToStep';
-    launchStep.interaction.target = launchStep.id;
-    launchStep.interaction.waitMs = 120000;
-  } else {
-    launchStep.interaction.action = 'click';
-    launchStep.interaction.target = 'link-external-account-btn';
+  for (const launchStep of launchSteps) {
+    launchStep.sceneType = 'link';
+    launchStep.interaction = launchStep.interaction || {};
+    if (embedded) {
+      launchStep.interaction.action = 'goToStep';
+      launchStep.interaction.target = launchStep.id;
+    } else {
+      // Product-aware CTA target so distinct launches map to DISTINCT buttons
+      // (an IDV launch clicks idv-launch-btn; a bank/Layer/CRA Link clicks
+      // link-external-account-btn). Using the same target for two launches would
+      // make the build stamp a duplicate data-testid (DOM-contract hard error).
+      // The recorder resolves the real CTA within the step regardless, but the
+      // right hint keeps build wiring + api-panel audit consistent.
+      launchStep.interaction.action = 'click';
+      launchStep.interaction.target =
+        inferLaunchProduct(launchStep) === 'idv' ? 'idv-launch-btn' : 'link-external-account-btn';
+    }
     launchStep.interaction.waitMs = 120000;
   }
-  return launchStep.id || null;
+  return launchSteps[0].id || null;
 }
 
 function isPreLinkExplainerStep(step) {
