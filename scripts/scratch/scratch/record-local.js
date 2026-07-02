@@ -1125,6 +1125,88 @@ async function plaidLinkDismissSaveScreen(page) {
     }
   } catch (_) {}
 
+  // CRA / returning-user post-OTP panes. After the Passport OTP, a standard CRA
+  // Consumer-Report Link shows, in order: (a) "Select accounts" — saved
+  // INSTITUTIONS, "share all accounts from your selected institution", with a
+  // Confirm that is DISABLED until a row is picked; then (b) the FCRA "Share
+  // consumer report" consent (CTA Confirm) → HANDOFF. The generic Continue/Skip
+  // loop below can advance NEITHER (both are Confirm-gated, initially disabled),
+  // so the link never HANDs OFF and force-completes unsuccessfully (cashrepublic /
+  // ascend / scrubio 2026-07-01). Advance each pane by in-frame DOM (scroll-free).
+  try {
+    const plaidFr = page.frames().find((f) => /plaid\.com/.test(f.url()));
+    if (plaidFr) {
+      const paneKind = await plaidFr.evaluate(() => {
+        const body = document.body ? (document.body.innerText || '') : '';
+        if (/Select accounts/i.test(body) && /share all accounts|selected institution/i.test(body)) return 'select-accounts';
+        if (/consumer report|Fair Credit Reporting|Plaid Check will create/i.test(body)) return 'fcra';
+        return null;
+      }).catch(() => null);
+
+      // "Select accounts" saved-institution pane: pick a known non-OAuth row, WAIT
+      // for Confirm to enable, then Confirm — all in ONE call so we never re-toggle
+      // the selection across loop ticks (which kept Confirm disabled forever).
+      if (paneKind === 'select-accounts') {
+        // Click the preferred institution row. The selectable element is the inner
+        // MUI div[role="button"] (Thr-ListItem-Content), NOT the wrapping <li> —
+        // clicking the <li> doesn't fire the row's onClick, so Confirm stays
+        // disabled (observed cashrepublic 2026-07-01, cra-select-accounts-dom.json).
+        // Target [role="button"] directly + dispatch pointer events (MUI can
+        // ignore a bare programmatic .click()).
+        await plaidFr.evaluate(() => {
+          const vis = (el) => el && el.offsetParent !== null;
+          const candidates = Array.from(document.querySelectorAll('[role="button"]'))
+            .filter(vis)
+            .filter((el) => /Tartan Bank|First Platypus|First Gingham|Bank|Credit Union/i.test(el.textContent || '')
+              && !/^\s*(Confirm|Continue|Add new account|Exit)\s*$/i.test((el.textContent || '').trim()));
+          const pref = candidates.find((el) => /Tartan Bank|First Platypus|First Gingham/i.test(el.textContent || '')) || candidates[0];
+          if (pref) {
+            for (const type of ['pointerdown', 'pointerup', 'click']) {
+              pref.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+            }
+            try { pref.click(); } catch (_) {}
+          }
+        }).catch(() => {});
+        await page.waitForTimeout(800); // let Confirm enable after selection
+        const confirmed = await plaidFr.evaluate(() => {
+          const vis = (el) => el && el.offsetParent !== null;
+          const b = Array.from(document.querySelectorAll('button')).filter(vis)
+            .find((x) => /^Confirm\b/i.test((x.textContent || '').trim())
+              && !x.disabled && x.getAttribute('aria-disabled') !== 'true');
+          if (b) { b.click(); return true; }
+          return false;
+        }).catch(() => false);
+        console.log(`  [Plaid Link] CRA "Select accounts" — picked institution${confirmed ? ' + confirmed' : ' (Confirm not yet enabled)'}.`);
+        await page.waitForTimeout(1000);
+        return true;
+      }
+
+      // FCRA "Share consumer report" consent pane — CTA "Confirm". CRITICAL: the
+      // pane also has inline legal LINKS (class InlineLink-module) whose text
+      // includes "report" / "Policy" / "Agreement" — a bare /Agree/ match hits
+      // "Agreement" (which precedes Confirm in DOM order), opening a doc instead of
+      // consenting. Exclude InlineLink buttons and match the real MUI CTA. The
+      // button can ignore a bare .click(), so fire dispatched pointer events too.
+      if (paneKind === 'fcra') {
+        const confirmed = await plaidFr.evaluate(() => {
+          const vis = (el) => el && el.offsetParent !== null;
+          const fire = (el) => { for (const t of ['pointerdown', 'pointerup', 'click']) el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); try { el.click(); } catch (_) {} };
+          const b = Array.from(document.querySelectorAll('button, [role="button"]')).filter(vis)
+            .filter((x) => !/InlineLink/i.test((x.className || '').toString()))
+            .find((x) => /^(Confirm|Share|Allow|Authorize|Agree and continue)$/i.test((x.textContent || '').trim())
+              && !x.disabled && x.getAttribute('aria-disabled') !== 'true');
+          if (b) { fire(b); return true; }
+          return false;
+        }).catch(() => false);
+        if (confirmed) {
+          console.log('  [Plaid Link] CRA consumer-report (FCRA) consent — confirmed.');
+          await page.waitForTimeout(1000);
+          return true;
+        }
+      }
+    }
+  } catch (_) {}
+
   // If embedded flow is on the optional phone capture prompt, satisfy it directly.
   try {
     const phoneInput = frame.locator('input[type="tel"], input[name="phone"], input[inputmode="tel"], input[placeholder*="phone" i]').first();
