@@ -42,6 +42,8 @@ npm run pipe -- qa-touchup  [RUN_ID] [--tier=app|slide]
                                               # surgical edits (no orchestrator loop)
 ```
 
+> **Repo self-updates before every NEW build — surface it to the user.** `npm run demo` and `pipe new` automatically check the source (GitHub Enterprise for a GHE clone) and fast-forward a clean, behind clone to latest before building — logged as `[pipe] Checking GitHub Enterprise (github.plaid.com) for repo updates…` then `✓ Repo is already up to date…` / `✓ updated to <sha> — building on latest`. When you kick off a build, **relay that result in one line** so the operator knows they're building on the current code (e.g. "Pulled 3 new commits from GitHub Enterprise, building on latest" or "Already up to date with GHE"). Uncommitted/diverged → it asks (interactive) or warns and builds on the current checkout (agent/non-interactive). Opt out: `--no-pull` / `PIPE_SKIP_FRESHNESS=true`. A ZIP download has no git history, so it logs that it's skipping the update check (re-download to refresh).
+
 Run IDs default to the latest run when omitted. Stage names are the canonical stages from [CLAUDE.md](../../../CLAUDE.md):
 `research, ingest, script, brand-extract, script-critique, embed-script-validate, build, plaid-link-qa, build-qa, post-slides, post-panels, api-panel-audit, app-touchup, slide-fix, record, qa, figma-review, post-process, voiceover, coverage-check, auto-gap, resync-audio, embed-sync, audio-qa, ai-suggest-overlays, render, ppt, touchup`
 

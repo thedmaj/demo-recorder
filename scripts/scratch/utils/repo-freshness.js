@@ -31,23 +31,40 @@ async function ensureRepoFreshForBuild(opts = {}) {
   const log = opts.log || ((m) => console.log(m));
   try {
     if (opts.skip || process.env.PIPE_FRESHNESS_CHECKED === 'true' || process.env.PIPE_SKIP_FRESHNESS === 'true') return;
-    if (!fs.existsSync(path.join(root, '.git'))) return; // ZIP download — nothing to pull
+    if (!fs.existsSync(path.join(root, '.git'))) {
+      // ZIP download — no git history to update against. Say so (the operator asked
+      // to be informed) and point at how to refresh.
+      log('[pipe] Source is a ZIP download (no git repo) — skipping the GitHub Enterprise update check. Re-download the ZIP to pick up newer templates/fixes.');
+      return;
+    }
     const git = (a) => {
       try { return execSync(`git ${a}`, { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
       catch (_) { return null; }
     };
     const upstream = git('rev-parse --abbrev-ref --symbolic-full-name @{u}');
     if (!upstream) return; // no tracking branch to compare against
+    // Name the source so the announcement reads "GitHub Enterprise (github.plaid.com)".
+    const remoteName = upstream.includes('/') ? upstream.split('/')[0] : 'origin';
+    const remoteUrl = git(`remote get-url ${remoteName}`) || '';
+    const hm = remoteUrl.match(/@([^:/]+)|https?:\/\/([^/]+)/);
+    const host = (hm && (hm[1] || hm[2])) || remoteName;
+    const source = /plaid|github\.plaid/i.test(host) ? `GitHub Enterprise (${host})` : host;
 
+    // Always announce the check — the operator asked to be informed each build,
+    // including when nothing needs updating.
+    log(`[pipe] Checking ${source} for repo updates before building…`);
     // Best-effort quiet fetch; offline / failure → build on local checkout.
     const fetched = spawnSync('git', ['fetch', '--quiet'], { cwd: root, stdio: ['ignore', 'ignore', 'ignore'], timeout: 20000 });
     if (!fetched || fetched.status !== 0) {
-      log('[pipe] repo freshness: fetch skipped (offline?) — building on local checkout.');
+      log(`[pipe] ⚠ Couldn't reach ${source} (offline?) — building on the current local checkout.`);
       return;
     }
 
     const behind = parseInt(git(`rev-list --count HEAD..${upstream}`) || '0', 10) || 0;
-    if (behind === 0) return; // already current
+    if (behind === 0) {
+      log(`[pipe] ✓ Repo is already up to date with ${upstream} — building on latest.`);
+      return;
+    }
 
     const ahead = parseInt(git(`rev-list --count ${upstream}..HEAD`) || '0', 10) || 0;
     const dirty = !!git('status --porcelain');
