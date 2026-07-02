@@ -31,7 +31,17 @@ Do this in order:
    continue until validate-env prints "✓ Required checks passed". If it flags a key,
    tell me which one and that I need David Majetic's value for it.
 
-5. Once validated, ask me for a demo scenario. REQUIREMENTS INTAKE — before you
+5. Once validated (setup complete), FIRST orient me before asking for a scenario:
+   show me ~4-5 NATURAL-LANGUAGE sample prompts illustrating how to opt in/out of
+   the two build toggles, and state the defaults plainly — "a build includes the
+   app + the Plaid API/JSON side panels, and no slides; slides are opt-in, the JSON
+   panels are opt-out" (ONBOARDING §9 → "Slides & JSON panels"). Examples to show:
+     • "Build the Acme Bank Income demo"          → app + JSON panels, no slides (default)
+     • "Build the Acme demo with slides"          → adds the slide deck (--with-slides)
+     • "Build it without the API panels"          → drops the JSON side panels (--no-panels)
+     • "App only — no slides, no API panels"      → just the app (--app-only --no-panels)
+     • "Build the full video with slides"         → render + slides (demo:full --with-slides)
+   THEN ask me for a demo scenario. REQUIREMENTS INTAKE — before you
    write `inputs/prompt.txt`, make sure I've given enough to fill the prompt
    template (ONBOARDING §8). If my request is vague, DO NOT guess or proceed —
    ask me up to ~4 targeted questions for the missing pieces, then build:

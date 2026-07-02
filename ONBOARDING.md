@@ -32,7 +32,15 @@ auth or secrets).
    (No GCP service-account JSON needed — embeddings use the GOOGLE_API_KEY in `.env`.)
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do not
    continue until validate-env prints "✓ Required checks passed".
-5. Then ask me for a demo scenario. REQUIREMENTS INTAKE — before writing
+5. Setup is complete — FIRST orient me. Show me a few **natural-language sample
+   prompts** that illustrate how to opt in/out of the two build toggles, and call
+   out the defaults: **a build includes the app + the Plaid API/JSON side panels,
+   and no slides — slides are opt-in, the JSON panels are opt-out** (see §9 →
+   "Slides & JSON panels — opt in or out"). Keep it to ~4–5 example phrases, e.g.
+   *"Build the Acme Bank Income demo"* (app + JSON panels, no slides · default),
+   *"…with slides"*, *"…without the API panels"*, *"app only — no slides, no API
+   panels"*, *"build the full video with slides"*. THEN ask me for a demo scenario.
+   REQUIREMENTS INTAKE — before writing
    `inputs/prompt.txt`, confirm I've given enough to fill the prompt template
    (§8). If the request is vague, do NOT guess — ask up to ~4 targeted questions
    for the missing pieces first, especially the EXACT Plaid product(s) by approved
@@ -226,6 +234,21 @@ You speak the left column; the agent runs the right. (You can type the command y
 | "Stop it" / "Continue" | `npm run pipe -- stop` / `… continue` | Halt, or release a continue-gate |
 
 (Also: "research deeper" → `--research=broad`; "list recent runs" → `pipe list`; "publish this demo to the catalog" → `pipe publish`.)
+
+### Slides & JSON panels — opt in or out (just say it)
+
+A build has two **independent** toggles. **Defaults:** you get the **app + the Plaid API/JSON side panels**, and **no slides**. Slides are **opt-in**; the JSON panels are **opt-out**. Say what you want in plain language — the agent maps it to the flags:
+
+| Say this | You get | Behind it |
+|---|---|---|
+| "Build the &lt;story&gt; demo" | app + JSON panels, no slides *(default)* | `npm run demo` |
+| "…**with slides**" / "add the slide deck" | app + JSON panels + slides | `--with-slides` |
+| "…**without the API panels**" / "no JSON side panel" | app (+ slides if asked), no panels | `--no-panels` |
+| "**app only** — no slides, no API panels" | just the app | `--app-only --no-panels` |
+| "**with slides but skip the API panels**" | app + slides, no panels | `--with-slides --no-panels` |
+| "build the **full video with slides**" | render + slides | `npm run demo:full --with-slides` |
+
+The **JSON panels** are the Plaid **request/response JSON** shown beside each step; **slides** are the marketing deck interleaved with the app flow. The two are orthogonal — any combination works (e.g. slides-on + panels-off).
 
 ---
 
