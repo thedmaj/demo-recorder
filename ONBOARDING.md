@@ -22,7 +22,9 @@ repo as the source of truth and walk me through setup, then my first demo. Go st
 by step, confirm before any install, and STOP at any step that needs me (interactive
 auth or secrets).
 
-1. Confirm we're inside the cloned repo (ls shows package.json + ONBOARDING.md).
+1. Confirm we're inside the repo folder (ls shows package.json + ONBOARDING.md). If
+   not, tell me to get the code first (§4): Option A `git clone` from GitHub Enterprise
+   (preferred), or Option B download + unzip the ZIP if I lack GHE access.
 2. Run `bash scripts/setup/install.sh` and summarize what it did (it writes a TEMPLATE .env).
 3. SECRETS — stop and tell me: "Request the completed `.env` from David Majetic
    (dmajetic@plaid.com)." Wait until I confirm I have it, then:
@@ -85,7 +87,11 @@ claude update                # keep it current (run this whenever you start work
 ```
 You'll log in to Claude on first launch. Tip: `/fast` inside Claude Code enables Fast mode (Opus, faster output).
 
-## 4. Get access to the code (GitHub Enterprise — no prior GHE experience needed)
+## 4. Get the code — two options
+
+Use **Option A (GitHub Enterprise)** if you have access — it's the preferred path (real `git` clone → auto-updates before each build, and you can contribute PRs). **Not everyone has GHE access; if you don't, use Option B (ZIP download).**
+
+### Option A — GitHub Enterprise (preferred, no prior GHE experience needed)
 
 The repo lives on Plaid's **GitHub Enterprise** at `github.plaid.com` (separate from public github.com). Authenticate once with the GitHub CLI:
 
@@ -104,6 +110,24 @@ cd plaid-demo-recorder
 ```
 
 > You'll be added as a **collaborator** (ask the owner). You don't fork — you push branches to this repo and open PRs (see §13).
+
+### Option B — ZIP download (if you don't have GitHub Enterprise access)
+
+Download the source as a ZIP, unzip it, and `cd` into the folder:
+
+1. Open **https://drive.google.com/file/d/1_WPeeNoGNIxK3Q4t4q8h2xONR3ZwJpYd/view?usp=sharing** in your browser and click **Download** (for a large file, Google Drive may say it "can't scan for viruses" — choose **Download anyway**).
+2. Unzip it and enter the folder (adjust the filename to what landed in `~/Downloads`):
+   ```bash
+   cd ~/Downloads
+   unzip plaid-demo-recorder*.zip
+   cd plaid-demo-recorder            # the unzipped folder (name may vary)
+   ```
+3. Continue at §5 (install) — the ZIP contains everything `install.sh` needs.
+
+> **ZIP caveats (it's a snapshot, not a git clone):**
+> - **No auto-update.** Builds normally fast-forward the clone to the latest templates/fixes before running; a ZIP has no `git` history, so that's skipped. To get a newer version, **re-download the ZIP** (or switch to Option A).
+> - **You can't contribute PRs from a ZIP** — submitting enhancements (§13) requires the GitHub Enterprise clone (Option A). Ask the owner for access when you're ready to contribute.
+> - Everything else (setup, secrets, building demos) works identically.
 
 ## 5. One-command install + secrets
 

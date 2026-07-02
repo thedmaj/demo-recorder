@@ -9,8 +9,12 @@ auth or secrets) — do not try to work around those.
 
 Do this in order:
 
-1. Confirm we're inside the cloned repo: `ls` should show package.json + ONBOARDING.md.
-   If not, stop and tell me to clone it first (ONBOARDING §4) and reopen Claude Code here.
+1. Confirm we're inside the repo folder: `ls` should show package.json + ONBOARDING.md.
+   If not, stop and tell me to get the code first (ONBOARDING §4) and reopen Claude Code
+   here — Option A: `git clone` from GitHub Enterprise (preferred), or Option B (if I
+   don't have GHE access): download + unzip the ZIP
+   (https://drive.google.com/file/d/1_WPeeNoGNIxK3Q4t4q8h2xONR3ZwJpYd/view?usp=sharing),
+   then `cd` into the unzipped folder.
 
 2. Run `bash scripts/setup/install.sh` and summarize what it did. (It installs Node
    deps, Playwright Chromium, and the vidmagik render engine, and writes a TEMPLATE

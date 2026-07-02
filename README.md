@@ -26,11 +26,17 @@ gh auth login --hostname github.plaid.com
 
 gh auth status --hostname github.plaid.com    # verify
 
-# 4. Clone this repo (HTTPS — gh will supply credentials when git prompts)
+# 4. Get the code — preferred: clone from GitHub Enterprise (HTTPS; gh supplies creds)
 git clone https://github.plaid.com/dmajetic/plaid-demo-recorder.git
 cd plaid-demo-recorder
 # SSH alternative if you already have keys on GHE:
 #   git clone git@github.plaid.com:dmajetic/plaid-demo-recorder.git
+#
+# NO GitHub Enterprise access? Download the source ZIP instead, unzip, and cd in:
+#   open https://drive.google.com/file/d/1_WPeeNoGNIxK3Q4t4q8h2xONR3ZwJpYd/view  # click Download (→ "Download anyway" for large files)
+#   cd ~/Downloads && unzip plaid-demo-recorder*.zip && cd plaid-demo-recorder
+# NOTE: a ZIP is a snapshot, not a git clone — no auto-update (re-download to
+# refresh) and you can't push PRs from it (that needs the GHE clone above).
 
 # 5. Run the project installer
 bash scripts/setup/install.sh
