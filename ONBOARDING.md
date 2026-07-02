@@ -235,6 +235,8 @@ You speak the left column; the agent runs the right. (You can type the command y
 
 (Also: "research deeper" → `--research=broad`; "list recent runs" → `pipe list`; "publish this demo to the catalog" → `pipe publish`.)
 
+> **The dashboard opens itself after a build.** When a build stops at build-qa (the default `npm run demo` review point), the pipeline auto-starts the dashboard and opens `http://localhost:4040/?run=<run>` in your browser — no need to ask. (Full-render runs and touch-up re-runs don't auto-open. Turn it off with `PIPELINE_NO_AUTO_OPEN=1`.)
+
 ### Slides & JSON panels — opt in or out (just say it)
 
 A build has two **independent** toggles. **Defaults:** you get the **app + the Plaid API/JSON side panels**, and **no slides**. Slides are **opt-in**; the JSON panels are **opt-out**. Say what you want in plain language — the agent maps it to the flags:

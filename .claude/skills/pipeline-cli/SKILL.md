@@ -190,7 +190,9 @@ When **all** of these hold (use `pipe status --json` or read `run-manifest.json`
 
 …then the **next best user experience** is reviewing frames, QA details, and the scratch app **in the dashboard** — not staring at the terminal.
 
-**Agent checklist (do in order):**
+> **This is now AUTOMATIC.** A fresh build that stops at build-qa (`npm run demo` / `pipe new --to=build-qa`) auto-starts the dashboard (detached, if not already up) and opens `http://localhost:<port>/?run=<RUN_ID>` in the default browser at end-of-run (orchestrator `autoOpenDashboardAfterBuild`). So **do NOT re-open it** — you'd spawn a second tab. Only run the manual checklist below if the operator says the dashboard didn't open, they closed it, or auto-open was disabled with **`PIPELINE_NO_AUTO_OPEN=1`** (or the run was a full-render / touchup re-run, which intentionally don't auto-open).
+
+**Manual fallback checklist (only if auto-open didn't fire — do in order):**
 
 1. **Announce** in one sentence: build-qa passed for an app-only run; next step is review in the local dashboard (default **http://localhost:4040/**).
 2. **Port alignment:** `npm run dashboard` binds **`PORT`** (default **4040**, see `scripts/dashboard/server.js`). **`npm run pipe -- open`** builds URLs with **`DASHBOARD_PORT`** (default **4040**). If `.env` changes one, set **both** so the probe, server, and opener agree.

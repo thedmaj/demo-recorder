@@ -4646,6 +4646,52 @@ async function runHybridPipeline({ startIdx, noTouchup, versionedDir, promptText
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// After a fresh app build stops at build-qa (the review point), bring up the
+// read-only dashboard and open it in the default browser so the operator can step
+// through the app + inspect QA frames without hunting for the URL. Starts the
+// dashboard server detached (survives this process's exit) only if it isn't
+// already listening; then opens http://localhost:<port>/?run=<runId>. Best-effort
+// and non-fatal — a headless/CI box (no `open`, no display) just logs the URL.
+// Opt out with PIPELINE_NO_AUTO_OPEN=1. Only fires for a fresh build-qa stop, so
+// full-render runs and touchup/resume re-runs never pop a browser.
+async function autoOpenDashboardAfterBuild(runId) {
+  const optOut = String(process.env.PIPELINE_NO_AUTO_OPEN || '').trim().toLowerCase();
+  if (optOut === '1' || optOut === 'true' || optOut === 'yes') {
+    cliLog('[Dashboard] Auto-open disabled (PIPELINE_NO_AUTO_OPEN).');
+    return;
+  }
+  const http = require('http');
+  const { spawn, spawnSync } = require('child_process');
+  const port = String(process.env.DASHBOARD_PORT || process.env.PORT || '4040');
+  const url = `http://localhost:${port}/${runId ? `?run=${encodeURIComponent(runId)}` : ''}`;
+  const probe = () => new Promise((resolve) => {
+    const req = http.get({ host: 'localhost', port: Number(port), path: '/', timeout: 800 }, (r) => { r.resume(); resolve(true); });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+  let up = await probe();
+  if (!up) {
+    cliLog(`[Dashboard] Starting the review dashboard on :${port} (npm run dashboard)…`);
+    try {
+      spawn('npm', ['run', 'dashboard'], { cwd: PROJECT_ROOT, env: { ...process.env }, detached: true, stdio: 'ignore' }).unref();
+    } catch (e) {
+      cliLog(`[Dashboard] Could not spawn the dashboard (${e.message}). Start it with: npm run dashboard`);
+    }
+    for (let i = 0; i < 16 && !up; i++) { await new Promise((r) => setTimeout(r, 500)); up = await probe(); }
+  }
+  if (up) {
+    const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+    try {
+      spawnSync(opener, [url], { stdio: 'ignore', shell: process.platform === 'win32' });
+      cliLog(`[Dashboard] Opened ${url} in your browser — review the app + build-qa frames there.`);
+    } catch (_) {
+      cliLog(`[Dashboard] Review at ${url}`);
+    }
+  } else {
+    cliLog(`[Dashboard] Dashboard not reachable on :${port} yet — run \`npm run dashboard\`, then open ${url}`);
+  }
+}
+
 async function main() {
   const {
     mode: cliMode,
@@ -5052,6 +5098,15 @@ async function main() {
     `totalSeconds=${total}`,
     `outputDir=${versionedDir}`,
   ], { runDir: versionedDir });
+
+  // Fresh build that stopped at build-qa (the review point) → auto-open the
+  // dashboard. Gated so full-render runs (toStage=render/null) and touchup/resume
+  // re-runs (--from / --run-id set) never pop a browser — only the initial
+  // `npm run demo` / `pipe new --to=build-qa` build does.
+  if (toStage === 'build-qa' && !fromStage && !explicitRunId) {
+    try { await autoOpenDashboardAfterBuild(path.basename(versionedDir)); }
+    catch (e) { cliLog(`[Dashboard] Auto-open skipped (${e.message}).`); }
+  }
 }
 
 // Only auto-run when invoked as a script (not when required by unit tests).
