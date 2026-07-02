@@ -220,8 +220,74 @@ normalize_mcp_json() {
   # cloned to this $HOME). Warn with a concrete pointer; never block.
   [ -d "${HOME}/.mcp-servers/mcp-moviepy" ] || \
     warn "moviepy MCP server missing at ${HOME}/.mcp-servers/mcp-moviepy — interactive moviepy tools won't load (render is unaffected)."
-  [ -d "${HOME}/plaid-mcp-servers/askbill-plaid" ] || \
-    warn "askbill MCP server missing at ${HOME}/plaid-mcp-servers/askbill-plaid — research (AskBill) tools won't load. Set it up per the askbill server README or ask the repo owner."
+  # AskBill: a dir-exists check isn't enough — verify the EXACT interpreter + script
+  # .mcp.json will launch, and that the venv can import the server's deps.
+  verify_askbill_mcp
+}
+
+# Verify the askbill-plaid MCP server is actually launchable, not just present.
+# Reads the server's `command` (venv python) + `args[0]` (server script) straight
+# from .mcp.json, confirms both exist, and runs an `import mcp, websockets` smoke
+# test against that interpreter (the server's only non-stdlib imports; there is no
+# requirements.txt). If the script exists but the venv is missing/incomplete, it
+# self-heals (create venv + pip install the two deps). The server SCRIPT itself is
+# provisioned out-of-band (internal), so a missing script only warns. Never blocks.
+verify_askbill_mcp() {
+  local mcp="${REPO_ROOT}/.mcp.json"
+  [ -f "${mcp}" ] || return 0
+  if ! command -v python3 >/dev/null 2>&1; then
+    [ -d "${HOME}/plaid-mcp-servers/askbill-plaid" ] \
+      && info "askbill MCP dir present (python3 unavailable — skipping deep verify)." \
+      || warn "askbill MCP server missing — research (AskBill) tools won't load."
+    return 0
+  fi
+  # Pull command + first arg for the askbill-plaid server out of .mcp.json.
+  local parsed cmd script srv_dir
+  parsed="$(python3 - "${mcp}" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+srv = (d.get('mcpServers') or d.get('servers') or {}).get('askbill-plaid') or {}
+args = srv.get('args') or []
+print(srv.get('command') or '')
+print(args[0] if args else '')
+PY
+)"
+  cmd="$(printf '%s\n' "${parsed}" | sed -n '1p')"
+  script="$(printf '%s\n' "${parsed}" | sed -n '2p')"
+  if [ -z "${cmd}${script}" ]; then
+    warn "askbill-plaid not found in .mcp.json — AskBill research tools won't load."
+    return 0
+  fi
+  # 1. Server script must exist (obtained out-of-band — not cloneable here).
+  if [ ! -f "${script}" ]; then
+    warn "askbill MCP server script missing at ${script:-<unset>} — research (AskBill) tools won't load. Obtain the askbill-plaid server from the repo owner into ${HOME}/plaid-mcp-servers/askbill-plaid/."
+    return 0
+  fi
+  srv_dir="$(dirname "${script}")"
+  # 2. Interpreter (venv python) must exist; create the venv if it's absent.
+  if [ ! -x "${cmd}" ]; then
+    warn "askbill venv python missing at ${cmd} — creating venv..."
+    python3 -m venv "${srv_dir}/venv" >/dev/null 2>&1 || true
+  fi
+  # 3. Smoke-test the EXACT interpreter .mcp.json launches against the server's deps.
+  if [ -x "${cmd}" ] && "${cmd}" -c "import mcp, websockets" >/dev/null 2>&1; then
+    ok "askbill MCP verified — server script + venv deps (mcp, websockets) load."
+    return 0
+  fi
+  # 4. Deps missing → install the server's two non-stdlib imports into the venv.
+  if [ -x "${cmd}" ]; then
+    info "askbill venv missing deps — installing mcp + websockets..."
+    "${cmd}" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+    "${cmd}" -m pip install --quiet mcp websockets >/dev/null 2>&1 || true
+    if "${cmd}" -c "import mcp, websockets" >/dev/null 2>&1; then
+      ok "askbill MCP verified — installed mcp + websockets into the venv."
+      return 0
+    fi
+  fi
+  warn "askbill MCP present but its venv can't import mcp/websockets (${cmd:-<unset>}). Recreate it: python3 -m venv \"${srv_dir}/venv\" && \"${srv_dir}/venv/bin/pip\" install mcp websockets. AskBill research tools won't load until this passes."
 }
 
 setup_render_engine() {
