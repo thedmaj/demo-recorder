@@ -5,21 +5,34 @@ description: ElevenLabs voice settings, SSML text pre-processing, sync-map speed
 
 # Audio Sync Mastery
 
-## ElevenLabs Voice Settings (do not change without documented reason)
+## ElevenLabs Voice Settings (env-overridable; defaults tuned for reliability)
+
+`voice_settings` in `generate-voiceover.js` are now **overridable per run** via env, each
+falling back to the pipeline default (floats clamped to [0,1]):
 
 ```javascript
 voice_settings: {
-  stability:         0.75,  // MUST stay at 0.75 — lower values cause stutter/freeze artifacts
-  similarity_boost:  0.90,  // high fidelity to reference voice
-  style:             0.2,
-  use_speaker_boost: true,
+  stability:         STABILITY,        // ELEVENLABS_STABILITY        default 0.75
+  similarity_boost:  SIMILARITY_BOOST, // ELEVENLABS_SIMILARITY_BOOST default 0.90
+  style:             STYLE,            // ELEVENLABS_STYLE            default 0.35  ← expressiveness knob
+  use_speaker_boost: SPEAKER_BOOST,    // ELEVENLABS_SPEAKER_BOOST    default true
 }
 ```
 
-**Critical**: `stability: 0.75` was chosen after experiencing stutter artifacts with lower values. The report-suggested value of 0.4 has been explicitly rejected. Do NOT lower stability.
+**Expressiveness vs. reliability:**
+- **`style`** (0–1) is the expressiveness toggle — higher = more emotive delivery (slightly
+  less stable, higher latency). Default bumped `0.2 → 0.35`. Raise toward `0.4–0.5` for a
+  more expressive read; try a warmer `ELEVENLABS_VOICE_ID` first for naturalness.
+- **`stability`** default stays **0.75** — it was raised after stutter/freeze artifacts at
+  lower values (the report-suggested 0.4 was rejected). You *can* lower it via
+  `ELEVENLABS_STABILITY` for more emotion, but the `audio-qa` stage deletes + regenerates
+  stuttered clips, so going much below ~0.6 risks a regeneration loop. Change deliberately.
 
-- Model: `eleven_multilingual_v2` (or `ELEVENLABS_MODEL_ID` env override)
-- Output format: `mp3_44100_192` — 192kbps 44.1kHz (highest MP3 quality ElevenLabs supports)
+- Model: `eleven_multilingual_v2` (or `ELEVENLABS_MODEL_ID` env override). The SSML `<break>`
+  injection below is tuned for v2; `eleven_v3` (audio tags `[excited]`/`[whispers]`) is more
+  expressive but handles settings/pauses differently — adapt before switching.
+- Output format: `mp3_44100_192` — 192kbps 44.1kHz (highest MP3 quality ElevenLabs supports;
+  `ELEVENLABS_OUTPUT_FORMAT` override)
 - Voice: `ELEVENLABS_VOICE_ID` env var (default: George / `JBFqnCBsd6RMkjVDRZzb`)
 
 ## Narration Pre-Processing (`normalizeNarration`)

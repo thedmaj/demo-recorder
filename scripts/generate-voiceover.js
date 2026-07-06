@@ -27,6 +27,20 @@ const MODEL_ID  = process.env.ELEVENLABS_MODEL_ID || 'eleven_multilingual_v2';
 // as a query param on the TTS endpoint. Falls back gracefully if not supported.
 const OUTPUT_FORMAT = process.env.ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_192';
 
+// Voice expressiveness / naturalness — overridable per run, defaulting to the
+// pipeline-tuned values. `style` (0–1) is the expressiveness knob: higher = more
+// emotive delivery (slightly less stable + higher latency). `stability` (0–1):
+// lower = more variation/emotion but risks stutter — the `audio-qa` stage deletes
+// and regenerates stuttered clips, so going much below ~0.6 can trigger a retry
+// loop. Floats are clamped to [0,1]; unset falls back to the defaults below.
+const _clamp01 = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : d; };
+const STABILITY        = _clamp01(process.env.ELEVENLABS_STABILITY, 0.75);
+const SIMILARITY_BOOST = _clamp01(process.env.ELEVENLABS_SIMILARITY_BOOST, 0.90);
+const STYLE            = _clamp01(process.env.ELEVENLABS_STYLE, 0.35); // ↑ from 0.2 — more expressive by default
+const SPEAKER_BOOST    = process.env.ELEVENLABS_SPEAKER_BOOST != null
+  ? /^(1|true|yes|on)$/i.test(String(process.env.ELEVENLABS_SPEAKER_BOOST).trim())
+  : true;
+
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const OUT_DIR      = process.env.PIPELINE_RUN_DIR || path.resolve(__dirname, '../out');
 const TIMING_FILE           = path.join(OUT_DIR, 'step-timing.json');
@@ -401,10 +415,10 @@ async function generateAudio(text, outputPath) {
         text,
         model_id: MODEL_ID,
         voice_settings: {
-          stability:         0.75,  // higher = more consistent, less variation/stutter
-          similarity_boost:  0.90,  // high fidelity to reference voice
-          style:             0.2,
-          use_speaker_boost: true,
+          stability:         STABILITY,        // ELEVENLABS_STABILITY (lower = more variation, risks stutter)
+          similarity_boost:  SIMILARITY_BOOST, // ELEVENLABS_SIMILARITY_BOOST (fidelity to reference voice)
+          style:             STYLE,            // ELEVENLABS_STYLE — expressiveness (0–1); default 0.35
+          use_speaker_boost: SPEAKER_BOOST,    // ELEVENLABS_SPEAKER_BOOST
         },
       }),
     }
