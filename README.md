@@ -41,8 +41,11 @@ cd plaid-demo-recorder
 # 5. Run the project installer
 bash scripts/setup/install.sh
 # Creates .env, runs `npm install`, prefetches MCP packages, clones ~/.plaid-demo-apps,
-# installs Playwright Chromium. Skip the "paste secrets" prompt — you will get real
-# values from the repo owner in step 2.
+# installs Playwright Chromium. Also GENERATES .mcp.json for this machine from the
+# tracked .mcp.json.template (per-machine, gitignored — never committed) and verifies
+# the AskBill MCP server can launch. Restart the agent afterward so it loads the MCP
+# servers. Skip the "paste secrets" prompt — you will get real values from the repo
+# owner in step 2.
 
 # 6. Verify
 npm run pipe -- whoami
@@ -102,10 +105,10 @@ The wizard asks for brand, industry, Plaid Link mode (modal / embedded), product
 npm run demo
 ```
 
-In a second terminal, open the dashboard for live visibility of stages and QA scores:
+When the build stops at build-qa, the **dashboard opens itself** — the pipeline starts it (if not already up) and opens `http://localhost:4040/?run=<run>` in your browser for review. (Full-render runs and touch-up re-runs don't auto-open; disable with `PIPELINE_NO_AUTO_OPEN=1`.) To open it yourself any time:
 
 ```bash
-npm run dashboard           # http://localhost:4040
+npm run dashboard           # http://localhost:4040  (or: npm run pipe -- open)
 ```
 
 The wizard defaults research to `gapfill` (targeted AskBill + 0–2 Glean calls). For broader research (full Glean/Gong pass), use `RESEARCH_MODE=broad npm run demo` or `npm run pipe -- new --research=broad`.

@@ -17,8 +17,12 @@ Do this in order:
    then `cd` into the unzipped folder.
 
 2. Run `bash scripts/setup/install.sh` and summarize what it did. (It installs Node
-   deps, Playwright Chromium, and the vidmagik render engine, and writes a TEMPLATE
-   `.env`. It is idempotent — safe to re-run.)
+   deps, Playwright Chromium, and the vidmagik render engine, writes a TEMPLATE
+   `.env`, and GENERATES `.mcp.json` for this machine from `.mcp.json.template`
+   [per-machine, gitignored] — then verifies the AskBill MCP server can launch. It
+   is idempotent — safe to re-run.) NOTE: `.mcp.json` is loaded at agent startup, so
+   after the first install tell me to restart Claude Code once for the MCP servers
+   (AskBill / moviepy / figma) to load.
 
 3. SECRETS — stop and tell me, verbatim:
    "Request the completed `.env` file from David Majetic (dmajetic@plaid.com). It is

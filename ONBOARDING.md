@@ -25,7 +25,9 @@ auth or secrets).
 1. Confirm we're inside the repo folder (ls shows package.json + ONBOARDING.md). If
    not, tell me to get the code first (§4): Option A `git clone` from GitHub Enterprise
    (preferred), or Option B download + unzip the ZIP if I lack GHE access.
-2. Run `bash scripts/setup/install.sh` and summarize what it did (it writes a TEMPLATE .env).
+2. Run `bash scripts/setup/install.sh` and summarize what it did (writes a TEMPLATE .env;
+   GENERATES per-machine `.mcp.json` from `.mcp.json.template` + verifies AskBill). Tell me
+   to restart Claude Code once after the first install so the MCP servers load.
 3. SECRETS — stop and tell me: "Request the completed `.env` from David Majetic
    (dmajetic@plaid.com)." Wait until I confirm I have it, then:
    - Ensure David's `.env` is at the REPO ROOT as `./.env`, replacing the template.
