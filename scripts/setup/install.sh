@@ -189,14 +189,63 @@ RENDER_MCP_DIR="${HOME}/.mcp-servers/mcp-moviepy"
 RENDER_MCP_REPO="https://github.com/vizionik25/vidmagik-mcp.git"   # NOT vizionik25/moviepy-mcp (different project)
 RENDER_MCP_BRANCH="pipeline-patches"
 
-# Rewrite committed ABSOLUTE MCP-server home paths in .mcp.json to THIS machine's
-# $HOME. .mcp.json ships with the committer's paths (e.g. /Users/<committer>/…);
-# a fresh clone otherwise points the askbill + moviepy MCP servers at a home dir
-# that doesn't exist here, and the agent CANNOT fix .mcp.json (the harness blocks
-# edits to its own startup config), so this user-run step is the fix. Targets only
-# the two known MCP parents (plaid-mcp-servers, .mcp-servers) so nothing else is
-# touched. Idempotent; backs up to .mcp.json.bak only when it actually changes.
-# (Astera 2026-06-30: the moviepy path was still /Users/<other>/… after clone.)
+# MCP config is PER-MACHINE — .mcp.json carries absolute home paths for the askbill
+# + moviepy stdio servers. It is no longer committed (gitignored); instead the repo
+# tracks .mcp.json.template with a __MCP_HOME__ placeholder, and this user-run step
+# renders it with THIS machine's $HOME. Rationale: a committed .mcp.json shipped one
+# committer's /Users/<name>/… paths to every clone (AskBill/moviepy failed to load
+# on other machines — Astera 2026-06-30), the agent CANNOT self-fix .mcp.json (the
+# harness blocks edits to its own startup config), and rewriting a *tracked* file
+# in place left the tree permanently dirty (degrading the pre-build auto-pull).
+# Generating a gitignored file from a template fixes all three.
+# PRIMARY: build .mcp.json for THIS machine from the tracked .mcp.json.template,
+# substituting the current $HOME for the __MCP_HOME__ placeholder. .mcp.json itself
+# is gitignored (per-machine), so no committer's absolute paths ever ship and an
+# install never leaves the tree dirty (which would otherwise degrade the pre-build
+# auto-pull). Regenerates when .mcp.json is missing, still holds the placeholder,
+# or points at a DIFFERENT user's home; a valid local file is left untouched so a
+# hand-customized config survives. Falls back to in-place normalize for a legacy
+# clone that predates the template. Always finishes by verifying the servers.
+generate_mcp_json() {
+  local tmpl="${REPO_ROOT}/.mcp.json.template"
+  local mcp="${REPO_ROOT}/.mcp.json"
+  if [ -f "${tmpl}" ]; then
+    local regen=0 reason=""
+    if [ ! -f "${mcp}" ]; then
+      regen=1; reason="missing"
+    elif grep -q "__MCP_HOME__" "${mcp}" 2>/dev/null; then
+      regen=1; reason="unrendered template placeholder"
+    else
+      # Any /Users/<x> or /home/<x> prefix in the file that isn't THIS $HOME means
+      # the config was authored on another machine (the committed-path problem).
+      local foreign
+      foreign="$(grep -oE "/(Users|home)/[^/\"]+" "${mcp}" 2>/dev/null | grep -vxF "${HOME}" | head -1)"
+      [ -n "${foreign}" ] && { regen=1; reason="points at another home (${foreign})"; }
+    fi
+    if [ "${regen}" -eq 1 ]; then
+      [ -f "${mcp}" ] && cp "${mcp}" "${mcp}.bak" 2>/dev/null || true
+      if sed "s#__MCP_HOME__#${HOME}#g" "${tmpl}" > "${mcp}.tmp" 2>/dev/null && mv "${mcp}.tmp" "${mcp}"; then
+        ok ".mcp.json generated from .mcp.json.template for ${HOME} (${reason}) — restart the agent to load MCP servers."
+      else
+        rm -f "${mcp}.tmp" 2>/dev/null || true
+        warn "Could not write .mcp.json — generate it manually: sed 's#__MCP_HOME__#\${HOME}#g' .mcp.json.template > .mcp.json"
+      fi
+    else
+      info ".mcp.json already points at ${HOME} — no regeneration needed."
+    fi
+  else
+    normalize_mcp_json   # legacy clone without the template — fix committed paths in place
+  fi
+  # Verify the referenced server dirs / launchers actually resolve on this machine.
+  [ -d "${HOME}/.mcp-servers/mcp-moviepy" ] || \
+    warn "moviepy MCP server missing at ${HOME}/.mcp-servers/mcp-moviepy — interactive moviepy tools won't load (render is unaffected)."
+  verify_askbill_mcp
+}
+
+# FALLBACK path-fixup for a .mcp.json that isn't template-generated (a legacy clone
+# or a hand-maintained file with no template present): rewrite a committer's
+# absolute home paths to THIS machine's $HOME in place. generate_mcp_json() is the
+# primary path and only calls this when .mcp.json.template is absent.
 normalize_mcp_json() {
   local mcp="${REPO_ROOT}/.mcp.json"
   [ -f "${mcp}" ] || return 0
@@ -215,14 +264,6 @@ normalize_mcp_json() {
     rm -f "${tmp}"
     info ".mcp.json MCP paths already match ${HOME}."
   fi
-  # Verify the referenced server dirs actually exist — a normalized path pointing
-  # at a missing dir is the other half of the Astera gap (the server was never
-  # cloned to this $HOME). Warn with a concrete pointer; never block.
-  [ -d "${HOME}/.mcp-servers/mcp-moviepy" ] || \
-    warn "moviepy MCP server missing at ${HOME}/.mcp-servers/mcp-moviepy — interactive moviepy tools won't load (render is unaffected)."
-  # AskBill: a dir-exists check isn't enough — verify the EXACT interpreter + script
-  # .mcp.json will launch, and that the venv can import the server's deps.
-  verify_askbill_mcp
 }
 
 # Verify the askbill-plaid MCP server is actually launchable, not just present.
@@ -322,11 +363,11 @@ setup_render_engine() {
   else
     warn "vidmagik-mcp present but main.py missing — verify the clone."
   fi
-  # Point .mcp.json's moviepy (and askbill) entries at THIS machine's $HOME. The
-  # render pipeline resolves ~/.mcp-servers/mcp-moviepy portably via os.homedir()
-  # regardless, but the INTERACTIVE agent MCP tools read .mcp.json literally — so
-  # normalize it here rather than only warning.
-  normalize_mcp_json
+  # Build .mcp.json for THIS machine from .mcp.json.template (gitignored, per-user).
+  # The render pipeline resolves ~/.mcp-servers/mcp-moviepy portably via os.homedir()
+  # regardless, but the INTERACTIVE agent MCP tools read .mcp.json literally — so we
+  # generate it here with the current $HOME (askbill + moviepy launcher paths).
+  generate_mcp_json
   return 0
 }
 

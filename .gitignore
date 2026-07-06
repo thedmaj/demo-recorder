@@ -1,6 +1,13 @@
 .env
 .env.local
 .env.*.local
+# .mcp.json is per-machine (absolute MCP server paths). It is GENERATED from the
+# tracked .mcp.json.template at install time (scripts/setup/install.sh →
+# generate_mcp_json), so it must never be committed — that's what shipped one
+# committer's /Users/<name>/ paths to every clone and broke AskBill. Edit the
+# template, not this file.
+/.mcp.json
+.mcp.json.bak
 node_modules/
 out/
 public/*.mp4

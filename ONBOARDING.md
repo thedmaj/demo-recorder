@@ -155,8 +155,10 @@ If `validate-env` flags a key, it's missing/blank in the `.env` — re-check you
 
 ## 6. MCP servers
 
+> **`.mcp.json` is generated per-machine, not committed.** It holds absolute paths to the stdio MCP servers (AskBill, moviepy) under *your* home dir, so committing it would ship one person's `/Users/<name>/…` paths to everyone (that's what broke AskBill on fresh clones). The repo tracks **`.mcp.json.template`** (with a `__MCP_HOME__` placeholder); `bash scripts/setup/install.sh` renders it to a gitignored `.mcp.json` for your `$HOME` and verifies the AskBill server can launch. **Restart the agent after install** so it loads the servers. To change server wiring, edit the **template** and re-run the installer — never hand-edit `.mcp.json` (the agent can't, and it's regenerated).
+
 **Research MCPs (optional — wired by the install + your `.env`; builds still complete without them, just with less customer color):**
-- **AskBill** — Plaid product/API documentation Q&A. Wired via `.mcp.json` / `ASKBILL_MCP_COMMAND` (the installer prefetches the bridge). Without it: `[AskBill unavailable]`.
+- **AskBill** — Plaid product/API documentation Q&A. Wired via `.mcp.json` (generated from the template at install; the installer also verifies the venv can import the server's deps). Without it: `[AskBill unavailable]`.
 - **Glean (pipeline research)** — `@gleanwork/local-mcp-server`, internal knowledge (Gong calls, collateral, customer stories) used by the pipeline's `research` stage. Enabled by `GLEAN_INSTANCE` + `GLEAN_API_TOKEN` in `.env`. Without it: `[Glean unavailable]`.
 - **Official Glean Claude connector (recommended for ad-hoc work)** — also connect the **official Glean MCP connector in Claude Code** (`/mcp` → add Glean) for *interactive* research and prompt building/enhancing — e.g. "pull the <Account> opportunity context from Glean and draft the prompt." It's richer than the local server (search + read-document + people) and uses managed OAuth (no token in `.env`). The pipeline's headless `research` stage keeps using the local Glean above; you use the official connector when chatting with the agent.
 
