@@ -612,6 +612,26 @@
     }
   }
 
+  // Serialize an element to HTML with the picker's TRANSIENT visual classes
+  // stripped. The captured markup feeds the AI-edit context; if the highlight/
+  // selected outline classes rode along they'd be echoed back by the model and
+  // baked into the saved index.html (a permanent green outline on the element).
+  const AI_TRANSIENT_CLASSES = ['__ai-pick-highlight', '__ai-pick-selected'];
+  function serializeClean(el) {
+    if (!el || !el.cloneNode) return '';
+    const clone = el.cloneNode(true);
+    const scrub = (node) => {
+      if (!node.classList) return;
+      AI_TRANSIENT_CLASSES.forEach((c) => node.classList.remove(c));
+      if (node.getAttribute && node.getAttribute('class') === '') node.removeAttribute('class');
+    };
+    scrub(clone);
+    if (clone.querySelectorAll) {
+      clone.querySelectorAll('.__ai-pick-highlight, .__ai-pick-selected').forEach(scrub);
+    }
+    return clone.outerHTML;
+  }
+
   pickBtn.addEventListener('click', () => {
     if (isPickMode) {
       exitPickMode();
@@ -647,11 +667,11 @@
     }
 
     pickedElement = e.target;
-    pickedHtml = clip(e.target.outerHTML, PICKED_HTML_MAX_CHARS);
+    pickedHtml = clip(serializeClean(e.target), PICKED_HTML_MAX_CHARS);
     pickedSelector = buildSelector(e.target);
-    pickedParentHtml = pickedElement.parentElement ? clip(pickedElement.parentElement.outerHTML, PICKED_HTML_MAX_CHARS) : null;
+    pickedParentHtml = pickedElement.parentElement ? clip(serializeClean(pickedElement.parentElement), PICKED_HTML_MAX_CHARS) : null;
     const bestContainer = pickBestContainer(pickedElement);
-    pickedContainerHtml = bestContainer ? clip(bestContainer.outerHTML, PICKED_HTML_MAX_CHARS) : null;
+    pickedContainerHtml = bestContainer ? clip(serializeClean(bestContainer), PICKED_HTML_MAX_CHARS) : null;
     pickedAttributes = {};
     if (pickedElement.attributes) {
       for (const attr of pickedElement.attributes) {
@@ -1141,6 +1161,8 @@
     if (clone.getAttribute('style') === '') clone.removeAttribute('style');
     clone.querySelectorAll('[contenteditable]').forEach((n) => n.removeAttribute('contenteditable'));
     clone.querySelectorAll('.sb-editing').forEach((n) => n.classList.remove('sb-editing'));
+    clone.classList.remove('__ai-pick-highlight', '__ai-pick-selected');
+    clone.querySelectorAll('.__ai-pick-highlight, .__ai-pick-selected').forEach((n) => n.classList.remove('__ai-pick-highlight', '__ai-pick-selected'));
     clone.querySelectorAll('#storyboard-narration-store, #storyboard-narration-runtime, [data-slide-preview-override], [data-slide-preview-reveal]').forEach((n) => n.remove());
     const stepHtml = clone.outerHTML;
     if (!window.parent || window.parent === window) return;

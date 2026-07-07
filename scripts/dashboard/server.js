@@ -2839,6 +2839,8 @@ function sanitizeSlideStepBlock(stepId, rawHtml) {
   // Remove edit-only attributes the contenteditable session may leave behind.
   html = html.replace(/\s+contenteditable(?:="[^"]*")?/gi, '');
   html = html.replace(/\s+spellcheck(?:="[^"]*")?/gi, '');
+  // Remove the AI-edit picker's transient outline classes if they rode along.
+  html = html.replace(/ ?__ai-pick-(?:highlight|selected)/g, '');
   // Must be the right step and a slide step.
   if (!html.includes(`data-testid="step-${stepId}"`)) {
     return { ok: false, reason: 'stepHtml does not match the target step id' };
@@ -6019,6 +6021,9 @@ app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
     // broadcast. Reused by both the single-edit path and the multi-instance
     // apply-to-all path so there's exactly ONE write + reload broadcast.
     const commitHtml = (newHtml, commitMode, extra = {}) => {
+      // Defense-in-depth: never persist the picker's transient outline classes,
+      // in case they rode in via the model's echoed element HTML.
+      newHtml = String(newHtml).replace(/ ?__ai-pick-(?:highlight|selected)/g, '');
       const validation = validateAiEditHtml(newHtml, currentHtml, commitMode, currentStepId);
       if (!validation.ok) {
         res.status(500).json({ error: `AI edit validation failed: ${validation.reason}`, mode: commitMode });
