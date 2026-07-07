@@ -84,40 +84,9 @@ Expect `[env-check] ✓ Required checks passed`.
 
 ---
 
-## 3. Quickstart — run the pipeline (Path A: terminal wizard)
+## 3. Quickstart — build from Agent mode (recommended)
 
-Easiest way to a first demo. Runs in any macOS terminal (macOS Terminal, iTerm, etc.).
-
-```bash
-npm run quickstart
-```
-
-The wizard asks for brand, industry, Plaid Link mode (modal / embedded), products, persona, and a one-sentence pitch. It writes three files into `inputs/`:
-
-- `inputs/prompt.txt` — draft prompt filled from [`inputs/prompt-template-app-only.txt`](inputs/prompt-template-app-only.txt).
-- `inputs/quickstart-research-task.md` — agent task that runs AskBill + Glean and refines the prompt.
-- `inputs/quickstart-agent-bootstrap.txt` — paste-first message for Claude Code / Cursor Agent mode.
-
-**Then kick off the build.** App-only is the only supported mode right now — full-pipeline (recording + MP4 + pptx) is being stabilized and intentionally not documented yet.
-
-```bash
-# App-only, stops at build-qa (fast iteration, no recording / render).
-npm run demo
-```
-
-When the build stops at build-qa, the **dashboard opens itself** — the pipeline starts it (if not already up) and opens `http://localhost:4040/?run=<run>` in your browser for review. (Full-render runs and touch-up re-runs don't auto-open; disable with `PIPELINE_NO_AUTO_OPEN=1`.) To open it yourself any time:
-
-```bash
-npm run dashboard           # http://localhost:4040  (or: npm run pipe -- open)
-```
-
-The wizard defaults research to `gapfill` (targeted AskBill + 0–2 Glean calls). For broader research (full Glean/Gong pass), use `RESEARCH_MODE=broad npm run demo` or `npm run pipe -- new --research=broad`.
-
----
-
-## 4. Alternative quickstart — run directly from Agent mode (Path B)
-
-Skip `npm run quickstart` and drive the whole build from **Claude Code in Agent mode**.
+This is the recommended path, and the one [`ONBOARDING.md`](ONBOARDING.md) walks through: you drive the whole build by chatting with **Claude Code in Agent mode**. You rarely type CLI commands yourself — you describe the demo and the agent runs the pipeline, posts status while it builds, and fixes failures.
 
 **"Agent mode" means you launch Claude Code from the folder where this app is installed.** From the same Terminal where you ran the installer:
 
@@ -149,6 +118,14 @@ Scenario (edit me):
 
 That's the minimum needed for a clean build: **brand, product, persona, story/use case, value prop**. A longer ready-to-paste version (Airbnb host scenario, dual value props) lives in [`inputs/agent-one-shot-app-only-message.example.txt`](inputs/agent-one-shot-app-only-message.example.txt).
 
+App-only is the default (fast iteration, stops at build-qa — no recording / render); full-pipeline video is advanced and being stabilized. When the build stops at build-qa, the **dashboard opens itself** — the pipeline starts it (if not already up) and opens `http://localhost:4040/?run=<run>` in your browser for review. (Full-render runs and touch-up re-runs don't auto-open; disable with `PIPELINE_NO_AUTO_OPEN=1`.) To open it yourself any time:
+
+```bash
+npm run dashboard           # http://localhost:4040  (or: npm run pipe -- open)
+```
+
+Research defaults to `gapfill` (targeted AskBill + 0–2 Glean calls). For broader research (full Glean/Gong pass), tell the agent "use broad research" or run `RESEARCH_MODE=broad npm run demo`.
+
 ### What your prompt must contain for a clean build
 
 | Requirement | Why it matters |
@@ -163,6 +140,24 @@ That's the minimum needed for a clean build: **brand, product, persona, story/us
 | Optional `Research depth:` line (`gapfill`, `broad`, `messaging`, `skip`) | Overrides the default. |
 
 Miss one and the pipeline will still run, but expect generic copy or a `continue-gate` pause from `prompt-fidelity-check`, `data-realism-check`, or `build-qa`.
+
+---
+
+## 4. Optional — prompt-builder wizard (`npm run quickstart`)
+
+Prefer guided Q&A over writing the first message yourself? The wizard **authors the prompt for** Agent mode — it doesn't build anything on its own. Runs in any macOS terminal (Terminal, iTerm, etc.).
+
+```bash
+npm run quickstart
+```
+
+The wizard asks for brand, industry, Plaid Link mode (modal / embedded), products, persona, and a one-sentence pitch, then writes three files into `inputs/`:
+
+- `inputs/prompt.txt` — draft prompt filled from [`inputs/prompt-template-app-only.txt`](inputs/prompt-template-app-only.txt).
+- `inputs/quickstart-research-task.md` — agent task that runs AskBill + Glean and refines the prompt.
+- `inputs/quickstart-agent-bootstrap.txt` — **paste-first message for Agent mode**.
+
+**Then build in Agent mode (§3):** open Claude Code and paste `inputs/quickstart-agent-bootstrap.txt` as your first message (or just say *"build the demo from inputs/prompt.txt"*). Behind the scenes that runs `npm run demo` — app-only, stopping at build-qa.
 
 ---
 
@@ -192,8 +187,8 @@ to release the orchestrator. Loop max **5 iterations** or until QA ≥ 88. The s
 
 ```bash
 npm run pipe -- pull                     # latest code + shared demos (~/.plaid-demo-apps)
-npm run quickstart                       # wizard-driven app-only build
-npm run demo                             # app-only, stop at build-qa (only supported mode today)
+npm run quickstart                       # optional: Q&A wizard that authors inputs/prompt.txt (then build in agent mode)
+npm run demo                             # app-only, stop at build-qa (recommended path: run via agent mode — §3)
 npm run pipe -- new --app-only           # alternative: build from a hand-written prompt.txt
 npm run pipe -- status                   # where is my run?
 npm run pipe -- resume <run-id> --from=<stage>
