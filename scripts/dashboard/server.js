@@ -2826,6 +2826,17 @@ app.post('/api/runs/:runId/reorder-steps', (req, res) => {
 // splice it into scratch-app/index.html (and the source slide-library file if
 // the step is library-backed), then flag staleness via recordEditorMutation.
 // No AI, no token cost — the text is persisted verbatim.
+// Models are instructed to return raw HTML, but occasionally wrap the output in
+// a markdown code block (```html … ```). When that leaks through it gets spliced
+// verbatim into scratch-app/index.html, leaving literal ``` fence lines in the
+// markup (and breaking div balance). Strip fence-only lines: a real HTML doc
+// never contains a bare ``` line, so this is safe. Used both on raw model text
+// (before splice) and on the final HTML (before write) as defense-in-depth.
+function stripMarkdownCodeFences(text) {
+  return String(text == null ? '' : text)
+    .replace(/^[ \t]*`{3,}[^\n`]*[ \t]*\r?\n?/gm, '');
+}
+
 function sanitizeSlideStepBlock(stepId, rawHtml) {
   if (typeof rawHtml !== 'string' || !rawHtml.trim()) {
     return { ok: false, reason: 'empty html' };
@@ -6024,6 +6035,8 @@ app.post('/api/demo-apps/:runId/ai-edit', async (req, res) => {
       // Defense-in-depth: never persist the picker's transient outline classes,
       // in case they rode in via the model's echoed element HTML.
       newHtml = String(newHtml).replace(/ ?__ai-pick-(?:highlight|selected)/g, '');
+      // …or stray markdown code-fence lines the model may have wrapped output in.
+      newHtml = stripMarkdownCodeFences(newHtml);
       const validation = validateAiEditHtml(newHtml, currentHtml, commitMode, currentStepId);
       if (!validation.ok) {
         res.status(500).json({ error: `AI edit validation failed: ${validation.reason}`, mode: commitMode });
@@ -6114,7 +6127,7 @@ Design system: background #0d1117, accent #00A67E (teal), text #ffffff.`;
           if (resp.stop_reason === 'max_tokens') {
             return res.status(500).json({ error: `Response was truncated (hit max_tokens). File not modified.` });
           }
-          const updated = String(resp.content[0].text || '').trim();
+          const updated = stripMarkdownCodeFences(String(resp.content[0].text || '')).trim();
           if (!updated) {
             return res.status(500).json({ error: 'AI returned an empty element.' });
           }
@@ -6343,7 +6356,7 @@ Preserve all data-testid attributes, goToStep, getCurrentStep, and step navigati
       return res.status(500).json({ error: `Response was truncated (hit max_tokens=${maxTokens}). File not modified. Try a more specific request or use element-pick to scope the change.` });
     }
 
-    const handled = responseHandler(response.content[0].text);
+    const handled = responseHandler(stripMarkdownCodeFences(response.content[0].text));
     const newHtml = handled.newHtml;
     const valid = !!handled.valid;
 
