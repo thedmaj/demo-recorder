@@ -14,15 +14,17 @@ falling back to the pipeline default (floats clamped to [0,1]):
 voice_settings: {
   stability:         STABILITY,        // ELEVENLABS_STABILITY        default 0.75
   similarity_boost:  SIMILARITY_BOOST, // ELEVENLABS_SIMILARITY_BOOST default 0.90
-  style:             STYLE,            // ELEVENLABS_STYLE            default 0.35  ← expressiveness knob
+  style:             STYLE,            // ELEVENLABS_STYLE            default 0.45  ← expressiveness knob
   use_speaker_boost: SPEAKER_BOOST,    // ELEVENLABS_SPEAKER_BOOST    default true
 }
 ```
 
 **Expressiveness vs. reliability:**
 - **`style`** (0–1) is the expressiveness toggle — higher = more emotive delivery (slightly
-  less stable, higher latency). Default bumped `0.2 → 0.35`. Raise toward `0.4–0.5` for a
-  more expressive read; try a warmer `ELEVENLABS_VOICE_ID` first for naturalness.
+  less stable, higher latency). Default is **`0.45`** (raised from 0.2 → 0.35 → 0.45 for a
+  livelier read); the `audio-qa` stage self-heals any stutter it introduces, and `stability`
+  stays 0.75 so there's no regeneration-loop risk at this level. Override per-run via
+  `ELEVENLABS_STYLE`; try a warmer `ELEVENLABS_VOICE_ID` first for naturalness.
 - **`stability`** default stays **0.75** — it was raised after stutter/freeze artifacts at
   lower values (the report-suggested 0.4 was rejected). You *can* lower it via
   `ELEVENLABS_STABILITY` for more emotion, but the `audio-qa` stage deletes + regenerates

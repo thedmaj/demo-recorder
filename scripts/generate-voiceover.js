@@ -36,7 +36,7 @@ const OUTPUT_FORMAT = process.env.ELEVENLABS_OUTPUT_FORMAT || 'mp3_44100_192';
 const _clamp01 = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : d; };
 const STABILITY        = _clamp01(process.env.ELEVENLABS_STABILITY, 0.75);
 const SIMILARITY_BOOST = _clamp01(process.env.ELEVENLABS_SIMILARITY_BOOST, 0.90);
-const STYLE            = _clamp01(process.env.ELEVENLABS_STYLE, 0.35); // ↑ from 0.2 — more expressive by default
+const STYLE            = _clamp01(process.env.ELEVENLABS_STYLE, 0.45); // 0.45 default — more expressive read; audio-qa self-heals any stutter (stability stays 0.75). Override per-run via ELEVENLABS_STYLE.
 const SPEAKER_BOOST    = process.env.ELEVENLABS_SPEAKER_BOOST != null
   ? /^(1|true|yes|on)$/i.test(String(process.env.ELEVENLABS_SPEAKER_BOOST).trim())
   : true;
@@ -417,7 +417,7 @@ async function generateAudio(text, outputPath) {
         voice_settings: {
           stability:         STABILITY,        // ELEVENLABS_STABILITY (lower = more variation, risks stutter)
           similarity_boost:  SIMILARITY_BOOST, // ELEVENLABS_SIMILARITY_BOOST (fidelity to reference voice)
-          style:             STYLE,            // ELEVENLABS_STYLE — expressiveness (0–1); default 0.35
+          style:             STYLE,            // ELEVENLABS_STYLE — expressiveness (0–1); default 0.45
           use_speaker_boost: SPEAKER_BOOST,    // ELEVENLABS_SPEAKER_BOOST
         },
       }),

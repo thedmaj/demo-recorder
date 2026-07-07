@@ -178,7 +178,7 @@ Changing any of these requires a documented reason. Deep guidance in the owning 
 - **Post-process encoding** (`post-process-recording.js`): VP8, `-b:v 8000k`, `-crf 10`.
 - **Voiceover** (`generate-voiceover.js`): `eleven_multilingual_v2`, `mp3_44100_192`.
   `voice_settings` are env-overridable (clamped 0–1): `ELEVENLABS_STABILITY` (0.75),
-  `ELEVENLABS_SIMILARITY_BOOST` (0.90), `ELEVENLABS_STYLE` (0.35 — expressiveness),
+  `ELEVENLABS_SIMILARITY_BOOST` (0.90), `ELEVENLABS_STYLE` (0.45 — expressiveness),
   `ELEVENLABS_SPEAKER_BOOST` (true). Raise `style` for expressiveness; lowering `stability`
   below ~0.6 risks stutter that `audio-qa` then regenerates — change deliberately. → [`audio-sync-mastery`](.claude/skills/audio-sync-mastery/SKILL.md)
 - **Audio QA:** per-clip `ffmpeg silencedetect noise=-40dB:d=0.15`; stutter (≥0.15s) / freeze
