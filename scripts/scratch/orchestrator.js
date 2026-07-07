@@ -595,16 +595,21 @@ function extractApiTokens(promptText) {
   }
   if (/\bauth\b|\binstant auth\b/.test(lower)) add('Auth');
   if (/\bidentity verification\b|\bidv\b|\bidentity\b/.test(lower)) add('Identity');
-  if (/\bsignal\b/.test(lower)) add('Signal');
-  if (/\bassets\b/.test(lower)) add('Assets');
-  if (/\bmonitor\b/.test(lower)) add('Monitor');
+  // Signal / Assets / Monitor / Protect are common English words ("a lower-risk
+  // signal", the "brand-assets/" path, "monitor the flow", "protect users") and a
+  // bare whole-prompt scan false-matches prose/paths (e.g. a CRA demo mislabeled
+  // "…-Signal-Assets"). Add them ONLY from an explicit "Plaid <name>" phrase or the
+  // declared product/API list — the same discipline Layer already uses below.
+  if (/\bplaid\s+signal\b/.test(lower) || /\bsignal\b/.test(declaredText)) add('Signal');
+  if (/\bplaid\s+assets\b/.test(lower) || /\bassets\b/.test(declaredText)) add('Assets');
+  if (/\bplaid\s+monitor\b/.test(lower) || /\bmonitor\b/.test(declaredText)) add('Monitor');
   // Do NOT add Layer from broad prompt keyword scans (too noisy / often incidental).
   // Only include Layer when explicitly declared in the product/API list.
   if (/\blayer\b/.test(declaredText)) add('Layer');
   if (/\btransfer\b/.test(lower)) add('Transfer');
   if (/\bincome\b/.test(lower) && !labels.includes('CRA')) add('Income');
   if (/\bstatements\b/.test(lower)) add('Statements');
-  if (/\bprotect\b/.test(lower)) add('Protect');
+  if (/\bplaid\s+protect\b/.test(lower) || /\bprotect\b/.test(declaredText)) add('Protect');
 
   return labels;
 }
@@ -5138,4 +5143,7 @@ module.exports = {
   isAgentContext,
   analyzeFixModeForQaIteration,
   VALID_BUILD_FIX_MODES,
+  // Exposed for unit tests of run-name derivation:
+  extractApiTokens,
+  buildRunNameStem,
 };
