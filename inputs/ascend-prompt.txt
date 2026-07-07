@@ -1,0 +1,85 @@
+================================================================================
+Ascend — Approve the thin file on cash flow (CRA Base Report + Income Insights + Network Insights + LendScore)
+================================================================================
+
+**Host:** **Ascend** — short-term, small-dollar consumer lender (fictional)
+
+**User journey (one sentence):**
+A thin-file applicant applies for a small short-term loan and connects their bank once through Plaid Link with FCRA-permissible consent, so Ascend can look beyond a thin bureau file and underwrite on cash flow — a Consumer Report's CRA Base Report, Income Insights, Network Insights, and a LendScore — to approve responsibly and reduce credit risk.
+
+**Story arc (short prose):**
+Maya Torres applies for a $600 short-term loan. Her credit bureau file is thin — no reliable score — so a bureau-only decision would decline her or price the risk blindly. Ascend asks Maya to connect her bank. One Plaid Link Consumer Report session collects FCRA consent and the connection; Plaid generates the report asynchronously. Ascend reads the CRA Base Report (365-day cash flow, low NSFs), Income Insights (a verified, recurring income stream), Network Insights (favorable cross-network behavior — a budgeting-app connection, no cash-advance stacking; illustrative), and a LendScore (a cash-flow-backed risk score with reason codes). Combined with the thin bureau file, the cash-flow evidence supports a confident approval that bureau data alone could not — Ascend serves a real borrower and reduces its risk and exposure. Compliance-safe language only; happy path only.
+
+-------------------------------------------------------------------------------
+PRODUCTS & FAMILY
+-------------------------------------------------------------------------------
+
+**Products featured (approved names only):**
+Plaid Link, CRA Base Report, CRA Income Insights, Network Insights, LendScore
+(canonical: Plaid Consumer Report / Plaid Check — use the contiguous phrases "CRA Base Report", "CRA Income Insights", "Network Insights", and "LendScore" verbatim in labels + narration. Network Insights + LendScore are modules of the same Consumer Report — one connection.)
+
+**Solutions supported:** Credit Scoring & Underwriting, Consumer Report Underwriting, Thin-file / No-file lending
+
+**Primary product family:** `cra_base_report`
+
+**Primary messaging file for this demo:** `inputs/products/plaid-cra-base-report.md` (pair with `inputs/products/plaid-income-insights.md` and `inputs/products/plaid-cra-lend-score.md`)
+
+**Research depth:** gapfill
+
+-------------------------------------------------------------------------------
+CONNECTION & RECORDING (checklist)
+-------------------------------------------------------------------------------
+
+  [x] **Live Plaid Link Consumer Report (CRA)** — real SDK, single `plaidPhase:"launch"` step.
+  [x] **CRA setup:** `POST /user/create` (PII -> `user_id`); then `POST /link/token/create` with `products: ["cra_base_report","cra_income_insights"]`, `consumer_report_permissible_purpose: "EXTENSION_OF_CREDIT"`, `cra_options: { days_requested: 365, cra_income_insights: { version: "II2" }, cra_lend_score: { version: "LS1" } }`, `webhook`. (Network Insights + LendScore are add-on modules of the same report - research resolves the exact option flags; do not invent extra `products[]` entries.)
+  [x] **CRA async:** report-ready beat keyed on the report-ready webhook before retrieving reports; CRA reports retrieved by `user_id`.
+  [x] **Sandbox / persona** — CRA persona `user_credit_profile_good` / `pass_good`, non-OAuth institution.
+
+Link narration boundary: pre-Link step ends on the tap ("...she taps Connect your bank."); the Link step narrates inside the modal only.
+
+Compliance UI rule (host/consumer screens): NEVER render the raw enum `EXTENSION_OF_CREDIT`, webhook/event names, raw endpoints, or raw report JSON on host screens - normalize the permissible purpose for humans (e.g. "to review your application for credit"). Raw technical detail belongs in the JSON `#api-response-panel` and the Plaid slides only.
+
+-------------------------------------------------------------------------------
+STORYBOARD BEATS (ORDER = SCRIPT ORDER)
+-------------------------------------------------------------------------------
+
+| # | Beat | What the viewer sees | API sequence | Reveal / CTA |
+|---|------|----------------------|--------------|--------------|
+| 1 | slide | Opening value slide: "Look beyond the bureau" - thin-file / no-file applicants are invisible to a bureau score; cash-flow data underwrites them responsibly. Plaid x Ascend. | - | - |
+| 2 | host | Ascend application - Maya applies for a **$600** short-term loan. Bureau panel shows a **thin file (no score)**. Pre-Link consent card: what's shared, permissible purpose (normalized "to review your application for credit"), FCRA consent. Ends on tap. | `POST /user/create`; `POST /link/token/create` (`cra_base_report, cra_income_insights`; permissible purpose; `cra_options.days_requested:365` + `II2` + `LS1`) | `Connect your bank` |
+| 3 | link | Live Plaid Link Consumer Report flow (consent -> OTP -> institution -> account select). | `onSuccess` -> `/item/public_token/exchange` | Connected |
+| 4 | host | "Generating your Consumer Report..." async state (no raw webhook name on screen). | (report-ready webhook) | Report ready |
+| 5 | insight | **CRA Base Report**: 365-day cash flow - inflow **$34,210.88**, outflow **$31,904.52**, **nsf_overdraft_transactions_count 0**, current balance **$486.19**, days_available 365. Example transactions (ALL CAPS merchants, posted dates): GIGWORK PAYOUTS DIR DEP 2026-06-05 +$742.18; H-E-B #218 2026-06-03 -$63.47; CITY OF SAN ANTONIO UTIL 2026-05-30 -$118.90. | `POST /cra/check_report/base_report/get` (`user_id`) | "A thin file, now visible: steady cash flow, zero NSFs" |
+| 6 | insight | **CRA Income Insights**: verified recurring stream, **BIWEEKLY**, monthly net **$2,850.74**, predicted next payday 2026-06-19, status ACTIVE. | `POST /cra/check_report/income_insights/get` (`user_id`) | "Verified income -> ability to repay" |
+| 7 | insight | **Network Insights**: favorable cross-network account behavior - a personal-finance / budgeting-app connection (a lower-risk signal) and **no recent cash-advance-app stacking**. Qualitative/illustrative only - do NOT assert specific app names, lists, or counts. | `POST /cra/check_report/*` Network Insights module (`user_id`) | "Network behavior corroborates lower risk" |
+| 8 | insight | **LendScore** (the reveal): a cash-flow-backed risk score with top **reason_codes** and its **score_range**. Show the score, score_range, and 2-3 reason codes. (API panel MUST declare `lend_score/get`, not `base_report/get`.) | `POST /cra/check_report/lend_score/get` (`user_id`) -> `report.lend_score.{score, score_range, reason_codes}` | "Cash-flow score -> confident decision" |
+| 9 | host | **Approved.** Maya's **$600** loan approved with a fair APR; the decision cites the CRA Base Report + Income Insights + Network Insights + LendScore **combined with the thin bureau file** - a confident approval bureau data alone could not support, reducing Ascend's risk and exposure. | (decision) | `Accept loan` |
+| 10 | slide | Value summary: **one** FCRA-permissioned bank connection -> CRA Base Report + Income Insights + Network Insights + LendScore, layered on the bureau file -> approve thin-/no-file applicants responsibly and reduce credit risk & exposure. Plaid x Ascend. | - | - |
+
+**Product-specific reminders:**
+- CRA reports retrieved by `user_id`; single Consumer Report - Base Report + Income Insights + Network Insights + LendScore ride ONE connection.
+- **LendScore != a bureau/mortgage score** - it is a cash-flow risk score; the exact scale, `score_range`, and `reason_codes` shape come from research / the KB (do not overclaim the scale). The LendScore step's API panel shows `lend_score/get`.
+- **Network Insights = network behavior, not cash flow** - illustrative framing only (PFM connection = lower risk, cash-advance stacking = higher risk). Do not assert specific app lists or counts.
+- Compliance-safe claims ("can help," "typically," "up to"); never "guarantee" / "eliminate." Happy path only.
+- Held customer stat NUMBERS (approval-lift %, $ figures) must NOT be asserted - qualitative framing only.
+
+**Compliance / user data:** FCRA consumer-report consent + permissible purpose (normalized for humans on host screens; raw enum only in JSON panel / slides); representative sandbox data.
+
+-------------------------------------------------------------------------------
+PERSONA & SAMPLE DATA
+-------------------------------------------------------------------------------
+
+**Name / role:** Maya Torres - thin-file applicant for a **$600** short-term loan.
+**Sample fields (use verbatim - non-round):**
+- loan $600 · applicant Maya Torres · bureau: thin file / no score
+- CRA Base Report: total_inflow $34,210.88 · total_outflow $31,904.52 · nsf_overdraft_transactions_count 0 · current balance $486.19 · days_available 365
+- Example transactions: GIGWORK PAYOUTS DIR DEP 2026-06-05 +$742.18 · H-E-B #218 2026-06-03 -$63.47 · CITY OF SAN ANTONIO UTIL 2026-05-30 -$118.90
+- CRA Income Insights: BIWEEKLY · monthly net $2,850.74 · predicted next payday 2026-06-19 · status ACTIVE
+- Network Insights: favorable - budgeting-app connection present; no recent cash-advance stacking (illustrative, no counts)
+- LendScore: a cash-flow risk score within its `score_range` + 2-3 `reason_codes` (exact scale from research; label the panel `lend_score/get`)
+
+-------------------------------------------------------------------------------
+BRAND / HOST CHROME
+-------------------------------------------------------------------------------
+
+Host: Ascend. Brand is defined by the explicit reference `inputs/brand-references/ascend.md` (fictional host - no Brandfetch): logo `inputs/brand-assets/ascend-logo.png`, palette derived from the logo with a **darker blue-violet (#3B3F9F) as the dominant theme** (nav + primary actions), **periwinkle accent (#5B71F0)**, on a **primarily white background**, deep-navy text (#191A3E), modern geometric sans, generous white space. Nav + entry screen + the CTA that opens Plaid Link. Viewport: 1440x900.
