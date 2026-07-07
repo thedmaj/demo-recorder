@@ -11,8 +11,9 @@ auth server.
 
 ## Goals
 
-1. Sales engineers run the pipeline locally (Playwright, Remotion Studio,
-   ElevenLabs — all require a local machine).
+1. Sales engineers run the pipeline locally (Playwright, MoviePy render via the
+   `vidmagik-mcp` server [Remotion is the fallback engine], ElevenLabs — all
+   require a local machine).
 2. Sales engineers can publish any of their local demos into a centralized
    repository other engineers can consume.
 3. Sales engineers can pull the latest code updates AND the latest published
