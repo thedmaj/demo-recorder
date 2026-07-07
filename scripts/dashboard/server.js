@@ -6934,12 +6934,40 @@ app.get('/demo-app-preview/:runId', (req, res) => {
     html = injectMissingStoryboardLibrarySteps(runDir, html, script);
     html = injectNarrationStoreIntoHtml(html, script.steps);
   }
+  // The built app references sibling assets by RELATIVE URL (brand-logo.png,
+  // assets/*, fonts/*). The preview page lives at /demo-app-preview/:runId, so
+  // those would resolve to /demo-app-preview/<asset> and 404. Inject a <base>
+  // so they resolve to the per-run asset route below. Absolute URLs (/static,
+  // /api, http(s)://…) are unaffected.
+  html = html.replace(/<head(\s[^>]*)?>/i,
+    (m) => `${m}\n<base href="/demo-app-preview/${encodeURIComponent(runId)}/">`);
   // Inject the variables ai-overlay.js expects, then load the script
   html = html.replace('</body>',
     `<script>window.__DEMO_RUN_ID__ = ${JSON.stringify(runId)}; window.__DASHBOARD_ORIGIN__ = 'http://localhost:${PORT}'; window.__AI_EDIT_CONFIG__ = ${JSON.stringify(getAiEditPublicConfig())};</script>\n` +
     `<script src="/static/ai-overlay.js"></script>\n</body>`);
   res.setHeader('Content-Type', 'text/html');
   res.send(html);
+});
+
+// Serve a run's scratch-app static assets (brand-logo.png, assets/*, fonts/*)
+// for the preview above. The injected <base href> makes the app's relative URLs
+// resolve here. Path-traversal is blocked to keep reads inside scratch-app.
+app.get('/demo-app-preview/:runId/*', (req, res) => {
+  let runDir;
+  try {
+    runDir = getRunDir(req.params.runId);
+  } catch (e) {
+    return res.status(400).end();
+  }
+  const scratchDir = path.join(runDir, 'scratch-app');
+  const abs = path.resolve(scratchDir, req.params[0] || '');
+  if (abs !== scratchDir && !abs.startsWith(scratchDir + path.sep)) {
+    return res.status(403).end();
+  }
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+    return res.status(404).end();
+  }
+  res.sendFile(abs);
 });
 
 // ── Start server ──────────────────────────────────────────────────────────────
