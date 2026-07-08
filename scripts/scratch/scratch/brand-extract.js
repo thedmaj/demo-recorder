@@ -989,6 +989,93 @@ function mergeFetchedLogoUrls(profile, rawData) {
   if (rawData.iconImageUrl && !profile.logo.iconUrl) profile.logo.iconUrl = rawData.iconImageUrl;
 }
 
+// ── Gingham default brand ───────────────────────────────────────────────────
+// Injected automatically when a prompt names NO company and NO website. This is
+// a self-contained "brand cartridge": it builds a normal brand-profile purely
+// from local assets (inputs/brand-references/gingham.md + inputs/brand-assets/
+// gingham-logo.png + assets/gingham-brand/*) and RETURNS before main() reaches
+// any Brandfetch / Playwright / Haiku code.
+//
+// WALL (critical): this function NEVER touches the network or real-brand data,
+// and the real path never reads assets/gingham-brand/*. A build is EITHER
+// gingham-default OR real — the two brand sources can never mix. Downstream
+// stages consume the profile identically, so Gingham has full pipeline parity.
+
+/** Compose the Gingham design-system build guidance from assets/gingham-brand
+ *  (single source of truth): CSS tokens + component recipes + voice, plus the
+ *  directive that nav/footer/hero/product copy adapt to the demo's use case. */
+function composeGinghamDesignSystemPrompt() {
+  const dir = path.resolve(PROJECT_ROOT, 'assets', 'gingham-brand');
+  let css = '';
+  let recipes = '';
+  try { css = fs.readFileSync(path.join(dir, 'gingham.css'), 'utf8'); } catch (_) {}
+  try {
+    const md = fs.readFileSync(path.join(dir, 'GINGHAM_BRAND.md'), 'utf8');
+    const i = md.indexOf('## Component recipes');
+    recipes = i >= 0 ? md.slice(i) : '';
+  } catch (_) {}
+  return [
+    'BRAND: Gingham — a generic, modern fintech brand used as the DEFAULT when the prompt names no company or website.',
+    'FIXED VISUAL IDENTITY, FLEXIBLE CONTENT: apply the Gingham design system exactly, but GENERATE the nav, footer, hero, and all product copy to fit THIS demo\'s use case and story. Gingham may front a bank, lender, payments app, marketplace, insurer, etc. — do NOT assume banking. Compliance rules still apply: no fabricated regulatory claims (FDIC / NMLS / Equal Housing) unless the scenario genuinely warrants it and it is accurate.',
+    'FONTS: load Space Grotesk (display, headlines, money figures — tight tracking) and Hanken Grotesk (body, UI) from Google Fonts:\n<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">',
+    'DESIGN TOKENS: inline this :root block verbatim into the app CSS and style everything with the variables (var(--gg-*)). Never hard-code hexes, radii, or shadows:',
+    css.trim() ? ('```css\n' + css.trim() + '\n```') : '',
+    recipes.trim() ? ('COMPONENT RECIPES + RULES (Gingham brand system):\n' + recipes.trim()) : '',
+    'GOLDEN RULES: white-first surfaces with blue accents; ONE dominant primary action per screen; the Weave gradient and the mark are flourishes used sparingly (never as wallpaper); sentence case everywhere except the "Gingham" wordmark.',
+  ].filter(Boolean).join('\n\n');
+}
+
+/** Build + write the Gingham brand profile from local assets only. */
+function buildGinghamDefaultProfile() {
+  const slug = 'gingham';
+  const ref = loadBrandReferenceFile(slug);
+  if (!ref) {
+    console.warn('[BrandExtract] gingham-default: inputs/brand-references/gingham.md missing — cannot inject the default brand.');
+    writeRunMeta({ ok: false, skipped: true, slug, reason: 'gingham-ref-missing' });
+    return null;
+  }
+  fs.mkdirSync(BRAND_DIR, { recursive: true });
+
+  const profile = {
+    $schema: 'brand-profile/v1',
+    name: 'Gingham',
+    slug,
+    mode: ref.mode || 'light',
+    colors: { ...(ref.brandColors || {}) },
+    typography: { fontDisplay: 'Space Grotesk', fontText: 'Hanken Grotesk' },
+    logo: {},
+    motifs: (ref.motifs && ref.motifs.length) ? ref.motifs : [],
+    promptInstructions: composeGinghamDesignSystemPrompt(),
+    _source: 'gingham-default',
+    _brandSource: 'gingham-default',   // provenance — the isolation check reads this
+    _colorsSource: 'brand-references',
+    _extractedAt: new Date().toISOString(),
+  };
+
+  // Local logo → build-app copies logo._localSource to scratch-app/brand-logo.png.
+  if (ref.logoFile) {
+    const absLogo = path.resolve(PROJECT_ROOT, 'inputs', 'brand-assets', ref.logoFile);
+    if (fs.existsSync(absLogo)) {
+      profile.logo = {
+        imageUrl: 'brand-logo.png',
+        iconUrl: 'brand-logo.png',
+        wordmark: 'Gingham',
+        _localSource: absLogo,
+        _kind: 'icon',
+      };
+      profile._logoSource = 'gingham-default';
+    } else {
+      console.warn(`[BrandExtract] gingham-default: logo not found at ${absLogo}`);
+    }
+  }
+
+  const profilePath = path.join(BRAND_DIR, `${slug}.json`);
+  fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2));
+  console.log(`[BrandExtract] gingham-default: wrote ${path.relative(PROJECT_ROOT, profilePath)} — Gingham generic brand, local assets only, NO Brandfetch.`);
+  writeRunMeta({ ok: true, slug, source: 'gingham-default', brandSource: 'gingham-default', profileFile: path.relative(OUT_DIR, profilePath) });
+  return profile;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -996,6 +1083,17 @@ async function main() {
   const { company, brandUrl } = loadContext();
 
   const url         = forcedUrl  || brandUrl;
+
+  // ── Gingham default brand injection ────────────────────────────────────────
+  // Trigger when there is NO website AND (no company at all, or the company is
+  // explicitly "Gingham"). This short-circuits BEFORE any Brandfetch/Playwright/
+  // Haiku/URL-gate code runs — the hard wall between the two brand sources.
+  const companySlug = toSlug(company || forcedSlug || '');
+  const isGinghamDefault = !url && ((!company && !forcedSlug) || companySlug === 'gingham');
+  if (isGinghamDefault) {
+    console.log('[BrandExtract] No company/website provided (or company is "Gingham") — using the default Gingham brand (walled: local assets only, never Brandfetch).');
+    return buildGinghamDefaultProfile();
+  }
 
   // Derive company name: prefer demo-script, then URL hostname, then forced slug
   let derivedCompany = company || forcedSlug;
@@ -1374,6 +1472,9 @@ module.exports = {
   localizeLogoFromUrl,
   extractLogoCropFromSite,
   classifyLogoKind,
+  // Exported for unit tests of the Gingham default brand:
+  buildGinghamDefaultProfile,
+  composeGinghamDesignSystemPrompt,
 };
 
 if (require.main === module) {

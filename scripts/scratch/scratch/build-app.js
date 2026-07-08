@@ -4110,6 +4110,26 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // Mirror root logo assets (brand-logo.png, plaid-logo-*.png) into the served
   // run-root scratch-app so the host nav logo actually renders during recording.
   mirrorRootAssetsToLegacyScratchApp();
+
+  // ── Brand isolation wall ─────────────────────────────────────────────────
+  // The Gingham default design system must never leak into a real-brand build
+  // (and vice versa). Fail the build on a breach unless explicitly overridden.
+  try {
+    const { checkBrandIsolation } = require('../utils/brand-isolation-check');
+    const iso = checkBrandIsolation(html, brand);
+    if (!iso.ok) {
+      const strict = String(process.env.BRAND_ISOLATION_STRICT || 'true').toLowerCase() !== 'false';
+      const msg = `[Build] BRAND ISOLATION BREACH (source=${iso.brandSource}): ${iso.violations.join(' | ')}`;
+      if (strict) { const e = new Error(msg); e.isBrandIsolationBreach = true; throw e; }
+      console.warn(`${msg}  (BRAND_ISOLATION_STRICT=false — warning only)`);
+    } else {
+      console.log(`[Build] Brand isolation OK (source: ${iso.brandSource}).`);
+    }
+  } catch (e) {
+    if (e && e.isBrandIsolationBreach) throw e;
+    console.warn(`[Build] brand-isolation-check skipped: ${e.message}`);
+  }
+
   writeBuildMetadata({
     runId: (runManifest?.runId || RUN_LAYOUT.runId),
     scriptSignature,

@@ -242,6 +242,33 @@ and advances by default (pauses for the supervising agent in interactive agent m
 - Brand URL: explicit `Brand URL: https://…` in the prompt, else the first plausible `https` URL
   (skips Plaid/docs/CDN hosts). `BRANDFETCH_API_KEY` / `BRANDFETCH_CLIENT_ID` are already in `.env`.
 
+### Default brand — Gingham (when no company/website is given)
+
+- **When a prompt names NO company AND NO website, the pipeline uses the generic
+  **Gingham** brand** — a fixed visual identity (logo, colors, fonts, design system,
+  voice) whose **content (nav/footer/hero/product copy) is generated to fit the demo's
+  use case & story** (Gingham may front a bank, lender, payments app, marketplace,
+  insurer — never assume banking). Source of truth: [`assets/gingham-brand/`](assets/gingham-brand/)
+  (`gingham.css` tokens + `GINGHAM_BRAND.md` recipes/voice), the reference
+  [`inputs/brand-references/gingham.md`](inputs/brand-references/gingham.md) (identity only),
+  and `inputs/brand-assets/gingham-logo.png`.
+- **AGENT — confirm before building.** If the user starts a build (app-only *or* full)
+  without a company name or website, **confirm first**: *"You didn't specify a company or
+  website — I'll use the generic **Gingham** brand for this demo. Want that, or name a
+  company/URL?"* On confirm, proceed (optionally write `Host: Gingham` into
+  `inputs/prompt.txt` so narration/copy stay coherent). Only override with a real company
+  when the user provides one.
+- **WALL (critical — do not weaken).** A build uses **EITHER** the Gingham default **OR** a
+  real brand (Brandfetch/crawl/reference) — never both. `brand-extract.js` routes Gingham
+  to a walled `gingham-default` branch that **never calls Brandfetch** (so the common word
+  "gingham" can't pull a real brand) and never reads real-brand data; the real path never
+  reads `assets/gingham-brand/*`. Enforced at build time by
+  `scripts/scratch/utils/brand-isolation-check.js` (Gingham's `var(--gg-*)` tokens must
+  never appear in a real build) — a breach **fails the build** (override
+  `BRAND_ISOLATION_STRICT=false`). Gingham has **full pipeline parity** — all products,
+  stages, and features behave identically to a real-brand build; only the brand-identity
+  source differs.
+
 ## Output Versioning
 Every run writes to `out/demos/{YYYY-MM-DD}-{product-slug}-v{N}/`. `out/latest/` symlinks to the
 most recent run.

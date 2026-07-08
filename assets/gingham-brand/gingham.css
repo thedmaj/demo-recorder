@@ -1,0 +1,111 @@
+/* ============================================================
+   Gingham Brand System — design tokens
+   Drop this file in your repo and import it once at the root.
+   Reference everything via var(--gg-*). Do not hard-code hexes.
+   ============================================================ */
+:root {
+  /* ---- Primary · Gingham Blue (trust, structure, primary action) ---- */
+  --gg-blue-50:  #EFF4FE;
+  --gg-blue-100: #DCE8FC;
+  --gg-blue-200: #B4CBF7;
+  --gg-blue-300: #7FA6EE;
+  --gg-blue-400: #3B78E0;
+  --gg-blue-500: #0A54C4; /* base / brand primary */
+  --gg-blue-600: #0847A6;
+  --gg-blue-700: #073A86;
+  --gg-blue-800: #052B63;
+  --gg-blue-900: #041E45;
+
+  /* ---- Accent · Sky (energy, highlights, links, focus) ---- */
+  --gg-sky-50:  #EBFAFF;
+  --gg-sky-100: #D0F3FE;
+  --gg-sky-200: #A6E8FC;
+  --gg-sky-300: #74DBFB;
+  --gg-sky-400: #51D2FB; /* base accent */
+  --gg-sky-500: #1FB8EC;
+  --gg-sky-600: #1494C4;
+  --gg-sky-700: #10739A;
+
+  /* ---- Neutrals (cool-tinted) ---- */
+  --gg-white:    #FFFFFF;
+  --gg-gray-50:  #F7F9FC;
+  --gg-gray-100: #F1F5F9;
+  --gg-gray-200: #E5EAF1;
+  --gg-gray-300: #CBD5E1;
+  --gg-gray-400: #94A3B8;
+  --gg-gray-500: #64748B;
+  --gg-gray-600: #475569;
+  --gg-gray-700: #334155;
+  --gg-ink:      #0B1B33; /* primary text */
+
+  /* ---- Signal (finance semantics) ---- */
+  --gg-positive:     #12A150;
+  --gg-positive-fg:  #0E8A45;
+  --gg-positive-bg:  #EAFBF1;
+  --gg-warning:      #E8A317;
+  --gg-warning-fg:   #B4790C;
+  --gg-warning-bg:   #FFF6E5;
+  --gg-negative:     #E5484D;
+  --gg-negative-bg:  #FDECEC;
+
+  /* ---- Semantic aliases (use these in UI) ---- */
+  --gg-bg:            var(--gg-white);
+  --gg-bg-subtle:     var(--gg-gray-50);
+  --gg-surface:       var(--gg-white);
+  --gg-border:        var(--gg-gray-200);
+  --gg-text:          var(--gg-ink);
+  --gg-text-muted:    var(--gg-gray-500);
+  --gg-text-subtle:   var(--gg-gray-400);
+  --gg-primary:       var(--gg-blue-500);
+  --gg-primary-hover: var(--gg-blue-600);
+  --gg-primary-tint:  var(--gg-blue-50);
+  --gg-accent:        var(--gg-sky-400);
+  --gg-link:          var(--gg-blue-500);
+
+  /* ---- Gradients ---- */
+  --gg-grad-weave:      linear-gradient(135deg, #0A54C4, #51D2FB); /* hero / primary flourish */
+  --gg-grad-deep-weave: linear-gradient(135deg, #041E45, #0847A6); /* dark surfaces, cards */
+  --gg-grad-mist:       radial-gradient(120% 120% at 50% 0%, #EEF5FF, #E4ECF7); /* app backdrop */
+
+  /* ---- Typography ---- */
+  --gg-font-display: "Space Grotesk", system-ui, sans-serif; /* wordmark, headlines, balances */
+  --gg-font-text:    "Hanken Grotesk", system-ui, sans-serif; /* body, UI, labels */
+
+  /* type scale — font-size / line-height / tracking */
+  --gg-display-size: 52px; --gg-display-line: 1.0;  --gg-display-track: -0.03em;
+  --gg-h1-size: 36px;      --gg-h1-line: 1.1;        --gg-h1-track: -0.02em;
+  --gg-h2-size: 30px;      --gg-h2-line: 1.15;       --gg-h2-track: -0.02em;
+  --gg-h3-size: 24px;      --gg-h3-line: 1.25;       --gg-h3-track: -0.01em;
+  --gg-subhead-size: 18px; --gg-subhead-line: 1.4;
+  --gg-body-size: 16px;    --gg-body-line: 1.6;
+  --gg-small-size: 14px;   --gg-small-line: 1.5;
+  --gg-eyebrow-size: 12px; --gg-eyebrow-track: 0.12em;
+
+  --gg-weight-regular: 400;
+  --gg-weight-medium: 500;
+  --gg-weight-semibold: 600;
+  --gg-weight-bold: 700;
+
+  /* ---- Radius ---- */
+  --gg-radius-sm: 8px;
+  --gg-radius-md: 12px;   /* default controls */
+  --gg-radius-lg: 16px;   /* cards */
+  --gg-radius-xl: 24px;   /* feature panels */
+  --gg-radius-pill: 999px;
+
+  /* ---- Shadow (cool-tinted, from Blue 500) ---- */
+  --gg-shadow-sm: 0 1px 2px rgba(10,84,196,0.06);
+  --gg-shadow-md: 0 8px 24px -12px rgba(10,84,196,0.14);
+  --gg-shadow-lg: 0 20px 48px -16px rgba(10,84,196,0.24);
+  --gg-shadow-primary: 0 12px 24px -10px rgba(10,84,196,0.60); /* on primary buttons */
+  --gg-focus-ring: 0 0 0 4px rgba(81,210,251,0.28);
+
+  /* ---- Spacing (4px grid) ---- */
+  --gg-space-1: 4px;  --gg-space-2: 8px;  --gg-space-3: 12px; --gg-space-4: 16px;
+  --gg-space-5: 20px; --gg-space-6: 24px; --gg-space-8: 32px; --gg-space-10: 40px;
+  --gg-space-12: 48px; --gg-space-16: 64px;
+
+  /* ---- Motion ---- */
+  --gg-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --gg-duration: 200ms;
+}

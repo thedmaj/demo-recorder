@@ -1,0 +1,15 @@
+<svg width="512" height="512" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Gingham">
+  <defs>
+    <clipPath id="gm-inner"><rect x="0" y="0" width="100" height="100" rx="9"></rect></clipPath>
+  </defs>
+  <rect x="0" y="0" width="100" height="100" rx="21" fill="#0A54C4"></rect>
+  <svg x="18.42" y="18.42" width="63.16" height="63.16" viewBox="0 0 100 100">
+    <g clip-path="url(#gm-inner)">
+      <rect x="0" y="0" width="100" height="100" fill="#51D2FB"></rect>
+      <rect x="24" y="0" width="26" height="100" fill="#FFFFFF" opacity="0.55"></rect>
+      <rect x="48" y="0" width="26" height="100" fill="#FFFFFF" opacity="0.55"></rect>
+      <rect x="0" y="24" width="100" height="26" fill="#FFFFFF" opacity="0.55"></rect>
+      <rect x="0" y="48" width="100" height="26" fill="#FFFFFF" opacity="0.55"></rect>
+    </g>
+  </svg>
+</svg>
