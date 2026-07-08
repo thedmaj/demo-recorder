@@ -211,6 +211,8 @@ const STAGES = [
   'api-panel-audit',         // Validate apiResponse JSON vs Plaid contracts (live-capture +
                              //   AskBill + deterministic rules). Flag-only; agent fixes via
                              //   api-panel-audit-task.md. API_PANEL_AUDIT_STRICT=true hard-fails.
+  'api-panel-complete',      // OPT-IN (API_PANEL_COMPLETE=true): deterministically complete
+                             //   canonical JSON panels to the full Plaid shape + re-inject.
   'app-touchup',             // Tier-scoped app recovery lane — patches + post-panels +
                              //   app-scoped build-qa + agent qa-app-touchup-task.md. No build-app.
   'slide-fix',               // Tier-scoped slide recovery lane — patches + strip + post-slides
@@ -3266,6 +3268,19 @@ async function runScratchPipeline({
       } else {
         cliWarn(`${msg} Advancing (SCRATCH_AUTO_APPROVE). Fix checklist: ${taskRel}.`);
       }
+    }, timer).catch(() => {});
+  }
+
+  // ── API panel completion (api-panel-complete) — OPT-IN, off by default ────
+  // Deterministically completes each canonical (AskBill-ground-truth) JSON panel
+  // toward the full Plaid response shape (missing fields → typed placeholders,
+  // curated values preserved) + narrow verified corrections, then re-injects via
+  // post-panels. Self-gates on API_PANEL_COMPLETE=true; a no-op otherwise. Skips
+  // live-captured + no-ground-truth steps; reverts panels over the size ceiling.
+  if (shouldRun('api-panel-complete') && isPanelsEnabled(versionedDir)) {
+    await runStage('api-panel-complete', async () => {
+      delete require.cache[require.resolve('./scratch/api-panel-complete')];
+      await require('./scratch/api-panel-complete').main();
     }, timer).catch(() => {});
   }
 

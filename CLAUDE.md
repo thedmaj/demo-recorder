@@ -219,7 +219,7 @@ counts, the exit threshold, or explicitly request recording/render (e.g. "render
 
 Canonical stages: `research`, `ingest`, `script`, `brand-extract`, `script-critique`,
 `embed-script-validate`, `build`, `build-qa`, `post-slides`, `post-panels`, `api-panel-audit`,
-`app-touchup`, `slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`,
+`api-panel-complete`, `app-touchup`, `slide-fix`, `record`, `qa`, `figma-review`, `post-process`, `voiceover`,
 `coverage-check`, `auto-gap`, `resync-audio`, `embed-sync`, `audio-qa`, `ai-suggest-overlays`,
 `render`, `ppt`, `touchup`.
 
@@ -230,6 +230,16 @@ writes `api-panel-audit.json` + an agent-ready `api-panel-audit-task.md` (correc
 and advances by default (pauses for the supervising agent in interactive agent mode).
 `API_PANEL_AUDIT_STRICT=true` hard-fails on HIGH. Fix by editing `demo-script.json` `apiResponse`
 (copied verbatim into the app) then `pipe stage post-panels`. → [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md)
+
+**`api-panel-complete`** (after `api-panel-audit`; **OPT-IN — `API_PANEL_COMPLETE=true`, off by
+default**): the auto-fix counterpart to the flag-only audit. Deterministically completes each
+**canonical** (AskBill-ground-truth) `apiResponse.response` toward the full Plaid response shape —
+adds only the MISSING fields as neutral typed placeholders (numbers→0, strings→"", currency→USD),
+**never overwriting curated values**; completes every array element; idempotent — then re-injects
+via `post-panels`. Plus a narrow, AskBill-verified **corrections** pass (e.g. LendScore: drop the
+non-canonical `score_range`, make `reason_codes` the opaque codes). **Hard-skips** live-captured +
+no-ground-truth steps; reverts any panel over `API_PANEL_COMPLETE_MAX_CHARS` (8000) to stay
+readable. Report: `api-panel-complete.json`. → [`plaid-demo-app-build`](.claude/skills/plaid-demo-app-build/SKILL.md)
 
 ---
 

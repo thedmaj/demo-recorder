@@ -35,6 +35,7 @@ const STAGES = [
   'post-slides',
   'post-panels',
   'api-panel-audit',
+  'api-panel-complete',
   'app-touchup',
   'slide-fix',
   'record',
