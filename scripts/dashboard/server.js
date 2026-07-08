@@ -5020,6 +5020,10 @@ app.get('/api/demo-apps', (req, res) => {
         fs.existsSync(path.join(dir, 'recording.webm'));
       const hasFinalMp4 = fs.existsSync(path.join(dir, 'demo-scratch.mp4'));
       const hasFinalVideo = hasFinalMp4 || fs.existsSync(path.join(dir, 'demo-mcp-edit.mp4'));
+      // If this demo has also been synced (published), the video icon should
+      // reflect the SHARED copy (videos aren't published → none), not the local
+      // build. syncedHasVideo drives the client's effective icon state.
+      const synced = syncedVideoState(runId);
       const tierDetail = qaTierDetailForRun(runId);   // tierSummary + sceneMatch for the score popover
       const recovery = recoveryForRun(runId);         // recommendedRecovery + nextRecoveryCommand (cached behind this scan)
       return {
@@ -5034,6 +5038,8 @@ app.get('/api/demo-apps', (req, res) => {
         hasRecording,
         hasFinalMp4,
         hasFinalVideo,
+        isSynced: synced.isSynced,
+        syncedHasVideo: synced.syncedHasVideo,
         ...qaScores,
         qaPassed: (() => {
           const qa = getLatestQaReport(runId);
@@ -6440,6 +6446,30 @@ function stageRemoteRunLocally(runId, remoteRunDir) {
   return destDir;
 }
 
+// For a LOCAL runId, report whether it has also been published (synced) and
+// whether the SYNCED bundle carries a video. Videos are no longer published, so
+// a synced demo's video icon must reflect the shared copy (no video) rather than
+// the local build of the same runId.
+function syncedVideoState(runId) {
+  try {
+    const base = resolveArtifactDirForDashboard();
+    const demosRoot = path.join(base, 'demos');
+    if (!fs.existsSync(demosRoot)) return { isSynced: false, syncedHasVideo: false };
+    for (const userLogin of fs.readdirSync(demosRoot)) {
+      const runPath = path.join(demosRoot, userLogin, runId);
+      if (fs.existsSync(path.join(runPath, 'PUBLISH_MANIFEST.json'))) {
+        return {
+          isSynced: true,
+          syncedHasVideo:
+            fs.existsSync(path.join(runPath, 'demo-scratch.mp4')) ||
+            fs.existsSync(path.join(runPath, 'demo-mcp-edit.mp4')),
+        };
+      }
+    }
+  } catch (_) {}
+  return { isSynced: false, syncedHasVideo: false };
+}
+
 function readRemotePublishedApps() {
   const base = resolveArtifactDirForDashboard();
   const demosRoot = path.join(base, 'demos');
@@ -6460,6 +6490,13 @@ function readRemotePublishedApps() {
       if (!fs.existsSync(manifestPath)) continue;
       const manifest = safeReadJson(manifestPath);
       if (!manifest) continue;
+      // Video presence is derived from the SYNCED bundle only — videos are no
+      // longer published (GHE 25 MB limit), so this is normally false. Never
+      // fall back to a local copy: a synced demo's video icon must reflect what
+      // was actually shared, not a local build of the same runId.
+      const syncedHasVideo =
+        fs.existsSync(path.join(runPath, 'demo-scratch.mp4')) ||
+        fs.existsSync(path.join(runPath, 'demo-mcp-edit.mp4'));
       out.push({
         runId,
         displayName: manifest.runId || runId,
@@ -6470,6 +6507,9 @@ function readRemotePublishedApps() {
         qaScore: manifest.qaScore != null ? manifest.qaScore : null,
         publishedAt: manifest.publishedAt || null,
         localPath: runPath,
+        isSynced: true,
+        syncedHasVideo,
+        hasFinalVideo: syncedHasVideo,
       });
     }
   }

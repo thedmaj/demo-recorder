@@ -38,9 +38,10 @@ const PUBLISH_ALLOW = [
   { kind: 'file', rel: 'demo-script.json' },
   { kind: 'file', rel: 'pipeline-run-context.json' },
   { kind: 'file', rel: 'playwright/playwright-script.json' },
-  { kind: 'file', rel: 'recording.mp4' },
-  { kind: 'file', rel: 'recording-processed.mp4' },
-  { kind: 'file', rel: 'demo-scratch.mp4' },
+  // NOTE: videos (demo-scratch.mp4 / recording*.mp4 / *.webm) are intentionally
+  // NOT published — they routinely exceed GitHub Enterprise's 25 MB per-file
+  // limit (no LFS on the artifact repo) and the shared bundle is the interactive
+  // app, not the rendered video. The video stays local; see PUBLISH_DENY below.
   { kind: 'file', rel: 'brand-extract.json' },
   { kind: 'file', rel: 'voiceover-manifest.json' },
   { kind: 'file', rel: 'sync-map.json' },
@@ -64,6 +65,11 @@ const PUBLISH_DENY_SUBSTRINGS = [
   '/qa-frames/',
   'qa-report-',
   'build-qa-diagnostics.json',
+  // Never publish video files — GHE's 25 MB per-file limit rejects them and the
+  // published demo is the interactive app, not the render. (Audio .mp3 is kept.)
+  '.mp4',
+  '.webm',
+  '.mov',
 ];
 
 function matchesDeny(rel) {

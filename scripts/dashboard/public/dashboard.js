@@ -5671,11 +5671,26 @@
       // Final-video badge — shown ONLY when a NARRATED render exists
       // (demo-scratch.mp4 / demo-mcp-edit.mp4). Raw/processed captures are
       // silent and are deliberately not surfaced as openable videos.
-      const recBadge = app.hasFinalVideo
+      // Effective video availability is SOURCE-AWARE: a synced demo's icon must
+      // reflect the shared copy (videos aren't published → none), never a local
+      // build of the same runId. Remote cards use the synced bundle; local cards
+      // that are also synced use the synced state; purely-local cards use local.
+      const effectiveHasVideo = app.isSynced
+        ? !!app.syncedHasVideo
+        : !!app.hasFinalVideo;
+      // A synced demo whose shared copy has no video: show the icon DEACTIVATED
+      // (greyed, non-clickable) so it reads as "no shareable video" rather than
+      // vanishing — even when a local build of the same demo has one.
+      const syncedNoVideo = !!app.isSynced && !app.syncedHasVideo && !!app.hasFinalVideo;
+      const recBadge = effectiveHasVideo
         ? `<span class="demo-video-open-badge" data-run="${esc(app.runId)}" role="button"
                  title="Final narrated video ready — click to open in your video player"
                  style="font-size:11px;padding:1px 6px;background:rgba(0,166,126,0.18);border-radius:3px;flex-shrink:0;cursor:pointer">🎥</span>`
-        : '';
+        : (syncedNoVideo
+          ? `<span aria-disabled="true"
+                   title="This demo is synced to the shared repo, which doesn't include videos. Open the local build to view the recording."
+                   style="font-size:11px;padding:1px 6px;background:rgba(255,255,255,0.05);border-radius:3px;flex-shrink:0;opacity:0.35;cursor:default;filter:grayscale(1)">🎥</span>`
+          : '');
       const ownerBadge = app.owner && app.owner.login
         ? `<span title="Owner" style="font-size:10px;color:rgba(255,255,255,0.45);padding:2px 6px;background:rgba(255,255,255,0.05);border-radius:999px;border:1px solid rgba(255,255,255,0.1);flex-shrink:0">@${esc(app.owner.login)}</span>`
         : '';
