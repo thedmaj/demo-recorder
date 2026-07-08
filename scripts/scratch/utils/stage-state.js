@@ -240,6 +240,8 @@ function readContinueSignal(runDir) {
 const CONDITIONAL_STAGES = {
   'app-touchup': (tierSummary) => tierSummary && tierSummary.app && tierSummary.app.passed,
   'slide-fix':   (tierSummary) => tierSummary && tierSummary.slide && (tierSummary.slide.passed || tierSummary.slide.skipped),
+  // Opt-in, off by default — render as "skipped" (not perpetually pending) unless enabled.
+  'api-panel-complete': () => String(process.env.API_PANEL_COMPLETE || '').toLowerCase() !== 'true',
 };
 
 /**

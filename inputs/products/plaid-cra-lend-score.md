@@ -94,7 +94,7 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 
 1. **Link:** CRA Check flow — `products` includes `cra_base_report` (+ `cra_income_insights` / `auth` / `signal` only when research resolves them). Single `plaidPhase: "launch"`.
 2. **Hero host step** (e.g. `lendscore-reveal`): white/light Zip chrome; visible **LendScore score**, **APPROVE** (or review) outcome, **2–3 reason code chips**, **LendScore — beta** badge.
-3. **API panel:** `apiResponse.endpoint` must be `POST /cra/check_report/lend_score/get` with `report.lend_score.score`, `reason_codes`, `score_range`, `request_id`.
+3. **API panel:** `apiResponse.endpoint` must be `POST /cra/check_report/lend_score/get` with `report.lend_score.score`, `reason_codes` (opaque codes, e.g. `PCS0221`), `report.lend_score.error`, and top-level `request_id`. **`score_range` is NOT a response field** (AskBill-confirmed) — do NOT put it in the JSON panel; the 1–99 scale belongs on the *slide* (e.g. "82 / 99"), humanized. `api-panel-complete` strips it if present.
 4. **Layout:** Reserve **~520px** right margin for `#api-response-panel` on LendScore host steps — main column must not sit under the JSON rail; primary CTA `data-testid="approve-plan-cta"` fully visible.
 5. **Slides:** Plaid deck only for explainer beats; raw LendScore JSON stays in the global panel on the host reveal step.
 

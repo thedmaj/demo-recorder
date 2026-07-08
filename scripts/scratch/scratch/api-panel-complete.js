@@ -48,23 +48,30 @@ function readJsonSafe(p) {
 
 // ── #1 structure-only completion ─────────────────────────────────────────────
 
-const STRUCTURAL_ADDED = []; // (unused sentinel — kept for clarity)
+// A missing NUMERIC leaf is OMITTED, never fabricated: a `0` on an on-screen
+// panel reads as a real (often alarming) value — e.g. `days_available: 0`,
+// `average_balance: 0`, `score: 0` (code review #1). Strings/currency/null/bool
+// are visibly-empty or structural, so they're safe to add.
+const OMIT = Symbol('omit-field');
 
 /** Neutral placeholder for a field the demo is MISSING, matching the ref type.
  *  We deliberately do NOT copy the reference's persona-specific value (a sample
- *  `average_balance: 4956.12` would contradict the demo persona). Structural,
- *  persona-neutral scalars (currency codes) are safe to set canonically. */
+ *  `average_balance: 4956.12` would contradict the demo persona), and we OMIT
+ *  numeric leaves entirely rather than fabricate a misleading number. */
 function placeholderFromRef(refVal, key) {
   if (Array.isArray(refVal)) return []; // never fabricate list items
   if (refVal && typeof refVal === 'object') {
     const o = {};
-    for (const k of Object.keys(refVal)) o[k] = placeholderFromRef(refVal[k], k);
+    for (const k of Object.keys(refVal)) {
+      const v = placeholderFromRef(refVal[k], k);
+      if (v !== OMIT) o[k] = v;
+    }
     return o;
   }
   if (/(^|_)iso_currency_code$/i.test(key)) return 'USD';
   if (/(^|_)unofficial_currency_code$/i.test(key)) return null;
   if (refVal === null) return null;
-  if (typeof refVal === 'number') return 0;
+  if (typeof refVal === 'number') return OMIT; // never fabricate a numeric value
   if (typeof refVal === 'boolean') return false;
   return ''; // string placeholder — do not fabricate ids/dates/descriptions
 }
@@ -87,7 +94,9 @@ function completeToRef(demo, ref, added, pathPrefix) {
       if (Object.prototype.hasOwnProperty.call(out, k)) {
         out[k] = completeToRef(out[k], ref[k], added, childPath); // recurse; keep curated leaves
       } else {
-        out[k] = placeholderFromRef(ref[k], k);
+        const v = placeholderFromRef(ref[k], k);
+        if (v === OMIT) continue; // omit fabricated numeric leaves (review #1)
+        out[k] = v;
         added.push(childPath);
       }
     }
@@ -114,9 +123,14 @@ function applyKnownCorrections(endpoint, resp, refTree, corrected) {
       const refCodes = refTree && refTree.report && refTree.report.lend_score &&
         refTree.report.lend_score.reason_codes;
       const opaque = (c) => /^[A-Z]{2,5}\d{2,6}$/.test(String(c));
-      if (Array.isArray(ls.reason_codes) && ls.reason_codes.some((c) => !opaque(c)) &&
+      // Only remap when EVERY element is a string (don't flatten object-shaped
+      // codes into "[object Object]"), and TRUNCATE to the canonical list rather
+      // than cycling (cycling emits duplicate adverse-action codes — review #2).
+      if (Array.isArray(ls.reason_codes) &&
+          ls.reason_codes.every((c) => typeof c === 'string') &&
+          ls.reason_codes.some((c) => !opaque(c)) &&
           Array.isArray(refCodes) && refCodes.length) {
-        ls.reason_codes = ls.reason_codes.map((_, i) => refCodes[i % refCodes.length]);
+        ls.reason_codes = refCodes.slice(0, ls.reason_codes.length);
         corrected.push('replaced humanized lend_score.reason_codes with canonical opaque codes');
       }
     }
@@ -129,7 +143,9 @@ function applyKnownCorrections(endpoint, resp, refTree, corrected) {
 /** Ground truth for a step: 'live' (skip), 'canonical' (complete), or 'none'. */
 function groundTruthFor(step, liveResponses, contractSamples) {
   const live = liveResponses && liveResponses.responses && liveResponses.responses[step.id];
-  if (live && live.live === true && live.response) return { kind: 'live' };
+  // Live-captured steps are authoritative — HARD-SKIP even if the capture body is
+  // empty (completing a `live:true` step would then read as fabricated). review #6
+  if (live && live.live === true) return { kind: 'live' };
   const ep = normalizeEndpoint(step.apiResponse && step.apiResponse.endpoint || '');
   const sample = contractSamples && contractSamples[ep];
   if (sample && typeof sample === 'object') return { kind: 'canonical', ref: sample };
@@ -187,7 +203,8 @@ async function main() {
     if (sample && typeof sample === 'object') contractSamples[normalizeEndpoint(ep)] = sample;
   }
 
-  const maxChars = parseInt(process.env.API_PANEL_COMPLETE_MAX_CHARS || '8000', 10);
+  const _mc = parseInt(process.env.API_PANEL_COMPLETE_MAX_CHARS || '8000', 10);
+  const maxChars = Number.isFinite(_mc) ? _mc : 8000; // a typo'd env must not disable the ceiling (review #5)
   const corrections = String(process.env.API_PANEL_COMPLETE_NO_CORRECTIONS || '').toLowerCase() !== 'true';
   const { report } = completeApiPanels({ demoScript, liveResponses, contractSamples, maxChars, corrections });
 
@@ -203,13 +220,21 @@ async function main() {
   for (const c of report.completed) {
     console.log(`[api-panel-complete] ${c.id} (${c.endpoint}): +${c.addedFields.length} field(s)${c.corrections.length ? `, ${c.corrections.length} correction(s)` : ''}`);
   }
-  try {
-    delete require.cache[require.resolve('./post-panels.js')];
-    const pp = require('./post-panels.js');
-    if (typeof pp.main === 'function') { await pp.main(); console.log('[api-panel-complete] re-injected panels via post-panels.'); }
-    else console.warn('[api-panel-complete] post-panels has no main() — run `pipe stage post-panels` to re-inject.');
-  } catch (e) {
-    console.warn(`[api-panel-complete] post-panels re-inject failed (${e.message}) — run \`pipe stage post-panels\` manually.`);
+  // Pre-check inputs post-panels needs: its main() calls process.exit(1) on a
+  // missing app/script, which is NOT catchable and would hard-kill the pipeline
+  // (review #3). Only invoke it when both files exist.
+  const htmlPath = path.join(runDir, 'scratch-app', 'index.html');
+  if (!fs.existsSync(htmlPath) || !fs.existsSync(scriptPath)) {
+    console.warn('[api-panel-complete] scratch-app/index.html or demo-script.json missing — updated demo-script only; run `pipe stage post-panels` to re-inject.');
+  } else {
+    try {
+      delete require.cache[require.resolve('./post-panels.js')];
+      const pp = require('./post-panels.js');
+      if (typeof pp.main === 'function') { await pp.main(); console.log('[api-panel-complete] re-injected panels via post-panels.'); }
+      else console.warn('[api-panel-complete] post-panels has no main() — run `pipe stage post-panels` to re-inject.');
+    } catch (e) {
+      console.warn(`[api-panel-complete] post-panels re-inject failed (${e.message}) — run \`pipe stage post-panels\` manually.`);
+    }
   }
   fs.writeFileSync(path.join(runDir, 'api-panel-complete.json'), JSON.stringify(report, null, 2));
   return { passed: true, report };
