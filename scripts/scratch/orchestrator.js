@@ -566,7 +566,10 @@ function extractCompanyToken(promptText) {
       if (token && token !== 'Demo') return token;
     } catch (_) {}
   }
-  return 'Demo';
+  // No Host / Company line and no Brand URL — this is exactly the condition under
+  // which brand-extract applies the default Gingham brand, so name the run for it
+  // (e.g. "Gingham-CRA-…") instead of the generic "Demo-…".
+  return 'Gingham';
 }
 
 function extractApiTokens(promptText) {

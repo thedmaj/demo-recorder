@@ -975,10 +975,14 @@ function injectLocalBrandLogo(html, brand) {
       /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
       (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
     );
-    // 2) Else inject before a nav wordmark text node (.logo-text / .brand-name).
+    // 2) Else inject the logo image BEFORE an existing nav wordmark text node —
+    //    the brand name the template/LLM already rendered. Recognize the common
+    //    template classes AND design-system wordmarks (brand-wm, wordmark,
+    //    gg-wordmark) so we place the logo next to the existing name instead of
+    //    printing a second one (the "Gingham Gingham" duplicate).
     if (swapped === 0 && !/brand-logo\.png/.test(out)) {
       out = out.replace(
-        /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text)\b[^"]*"[^>]*>)/i,
+        /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text|brand-wm|gg-wordmark)\b[^"]*"[^>]*>)/i,
         (m) => { swapped++; return `${img}${m}`; }
       );
     }
@@ -990,9 +994,21 @@ function injectLocalBrandLogo(html, brand) {
     //    each → duplicate logos (Ascend 2026-06-30). The first match is the
     //    top-level nav/header, which is the correct single home for the logo.
     if (swapped === 0 && !/brand-logo\.png/.test(out)) {
-      // A wordmark logo already contains the brand name — don't append a text span
-      // next to it (that double-prints the brand). Only icons/unknown get the text.
-      const textSpan = isWordmark
+      // Don't append a text wordmark when the brand name is ALREADY shown in the
+      // NAV — a wordmark logo contains it, or the nav renders it in its own
+      // wordmark element (e.g. the LLM's .gg-wordmark) or as bare text. Appending
+      // again double-prints the brand ("Gingham Gingham"). Scope the check to the
+      // first nav/header block ONLY — testing the whole document would false-match
+      // a `.brand-name{}` CSS rule in <style> or the brand name in <title>/<h1>/
+      // footer and wrongly drop the name from an icon-only nav (reviewer 1A).
+      const navMatch = out.match(/<(nav|header)\b[^>]*>[\s\S]*?<\/\1>/i);
+      const navRegion = navMatch ? navMatch[0] : '';
+      const altEsc = alt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const brandAlreadyShown = !!navRegion && (
+        /\bclass="[^"]*\b(?:gg-wordmark|brand-wm|brand-name|brand-text|logo-text)\b/i.test(navRegion) ||
+        new RegExp('>\\s*' + altEsc + '\\s*<').test(navRegion)
+      );
+      const textSpan = (isWordmark || brandAlreadyShown)
         ? ''
         : `<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span>`;
       const lockup =
