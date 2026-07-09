@@ -965,14 +965,21 @@ function injectLocalBrandLogo(html, brand) {
   //    "host-bank-logo-img" src="https://cdn.brandfetch.io/…" onerror=…>).
   //    Repoint that existing <img> at the local asset and drop its remote
   //    onerror fallback — do NOT add a second lockup.
-  out = out.replace(/<img\b[^>]*>/gi, (tag) => {
+  // Quote-aware <img> matcher: an attribute value may legitimately contain '>'
+  // — a self-drawn `data:image/svg+xml` URI (observed with claude-opus-4-8, which
+  // kept the template's data-testid="host-bank-logo-img" but set src to an inline
+  // SVG grid instead of brand-logo.png). A naive /<img[^>]*>/ truncates at the
+  // first '>' inside that data URI, so the surgical src-swap silently fails — yet
+  // repointed++ still ran, suppressing strategies 1–3 and shipping the fabricated
+  // logo. Consume quoted runs so the whole element is captured, then REPLACE it
+  // wholesale with the canonical <img src="brand-logo.png"> (also drops any
+  // remote onerror fallback). Only count a repoint when the local asset is placed.
+  out = out.replace(/<img\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) => {
     const isHostLogo = /data-testid=["']host-bank-logo-img["']/i.test(tag)
       || /\bsrc=["'][^"']*cdn\.brandfetch\.io[^"']*["']/i.test(tag);
     if (!isHostLogo || /\bsrc=["']brand-logo\.png["']/i.test(tag)) return tag;
-    let t = tag.replace(/\s+onerror=("[^"]*"|'[^']*')/i, '');
-    t = t.replace(/(\bsrc=)("[^"]*"|'[^']*')/i, '$1"brand-logo.png"');
     repointed++;
-    return t;
+    return img;
   });
   if (repointed > 0) console.log(`[Build] Repointed ${repointed} existing host-bank logo <img> to local brand-logo.png (no duplicate lockup).`);
 
@@ -982,7 +989,7 @@ function injectLocalBrandLogo(html, brand) {
   if (repointed === 0) {
     // 1) Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
     out = out.replace(
-      /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
+      /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|logo-shell|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
       (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
     );
     // 2) Else inject the logo image BEFORE an existing nav wordmark text node —
@@ -1034,6 +1041,28 @@ function injectLocalBrandLogo(html, brand) {
   if (swapped > 0) console.log(`[Build] Injected local brand logo into ${swapped} host nav/mark slot(s).`);
   else if (repointed === 0) console.warn('[Build] Local brand logo: no nav/header or logo slot found to inject into.');
   return out;
+}
+
+// Post-build contract check: when a local brand asset exists, the host nav MUST
+// render the official <img src="brand-logo.png"> — never a model-fabricated logo
+// (inline SVG, data: URI, CSS-drawn glyph). Verifies the served markup and
+// auto-heals by re-running the injector (whose strategy 3 guarantees a lockup
+// when no logo slot is found). Runs AFTER injectLocalBrandLogo as a belt-and-
+// suspenders guarantee; a persistent miss is logged for the QA/agent loop.
+function verifyLocalBrandLogoUsed(html, brand) {
+  if (!html || typeof html !== 'string') return html;
+  if (!(brand && brand.logo && brand.logo._localSource)) return html;
+  const firstNav = (h) => { const m = h.match(/<(nav|header)\b[\s\S]*?<\/\1>/i); return m ? m[0] : h; };
+  const hasLocal = (region) => /\bsrc=["']brand-logo\.png["']/i.test(region);
+  if (hasLocal(firstNav(html))) return html;   // contract satisfied
+  console.warn('[Build] BRAND LOGO CONTRACT: host nav is missing <img src="brand-logo.png"> (model likely drew its own logo) — auto-healing.');
+  const healed = injectLocalBrandLogo(html, brand);
+  if (hasLocal(firstNav(healed))) {
+    console.log('[Build] BRAND LOGO CONTRACT: auto-heal wired in the official brand asset.');
+  } else {
+    console.warn('[Build] BRAND LOGO CONTRACT: auto-heal could NOT place brand-logo.png in the nav — check host nav markup.');
+  }
+  return healed;
 }
 
 // Backstop for the CRA "Demo UI Guidance": raw permissible-purpose enums must not
@@ -4082,6 +4111,9 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // Local host-brand logo: guarantee the supplied logo image is used in the nav
   // even if the build agent drew its own placeholder glyph.
   html = injectLocalBrandLogo(html, brand);
+  // Contract check: verify the official brand asset actually landed in the nav
+  // (auto-heals if a fabricated logo slipped past the injector).
+  html = verifyLocalBrandLogoUsed(html, brand);
 
   // CRA Demo UI Guidance backstop: strip raw permissible-purpose enums from
   // consumer copy (the JSON panel keeps the raw value).

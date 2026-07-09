@@ -383,7 +383,12 @@ function renderBrandBlock(brand) {
       `      <div data-testid="host-bank-logo-shell" style="display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;border-radius:10px;background:${logoShellBg};border:1px solid ${logoShellBorder}">\n` +
       `        <img src="${primaryLogo}" alt="${(brand.name || 'Bank').replace(/"/g, '')}" data-testid="host-bank-logo-img" height="28" style="object-fit:contain;max-height:32px;" onerror="${fallbackCode.trim()}">\n` +
       `      </div>\n` +
-      `      exactly ONE bank mark in the header/nav per step. Do NOT add a second Brandfetch <img> beside it.`
+      `      exactly ONE bank mark in the header/nav per step. Do NOT add a second Brandfetch <img> beside it.\n` +
+      `      USE THE PROVIDED ASSET (HARD): the nav logo MUST be <img src="${primaryLogo}"> — the real supplied logo file.\n` +
+      `      Do NOT redraw or substitute the logo as an inline <svg>, a data: URI (e.g. data:image/svg+xml), a CSS-drawn\n` +
+      `      glyph, or an icon-font mark. A self-drawn logo is a build defect; the pipeline supplies the official asset\n` +
+      `      and will overwrite a fabricated one. The decorative logo "shell"/"mark" container may stay, but its inner\n` +
+      `      content must be this <img>, not a hand-drawn shape.`
     );
   }
   if (logo.wordmark) {
