@@ -530,7 +530,16 @@ function compareEntitiesToScript(entities, demoScript) {
     const expected = normalizeBrandName(entities.brand);
     const actualCompany = persona.company || persona.organization || persona.brand || null;
     const actualNorm = normalizeBrandName(actualCompany || '');
-    if (!actualCompany) {
+    // Skip brand drift when the prompt declared NO real brand (e.g. "Brand: NONE
+    // specified…", a default-brand marker) or the company was intentionally
+    // defaulted (Gingham, flagged by generate-script). Otherwise the default trips
+    // a false brand-mismatch/brand-missing against the literal "none" text.
+    const noBrandDeclared =
+      !!persona._companyIsDefault ||
+      /\b(none|not\s+specified|no\s+company|no\s+website|unspecified|default(?:\s+brand)?|generic|gingham|mythos)\b/i.test(String(entities.brand));
+    if (noBrandDeclared) {
+      // no real brand to compare — the default brand path owns this
+    } else if (!actualCompany) {
       drifts.push({
         field: 'persona.company',
         kind: 'brand-missing',

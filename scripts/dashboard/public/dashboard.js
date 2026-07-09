@@ -5726,6 +5726,8 @@
             ${recBadge}
             ${scoreChip}
             ${buildBadge}
+            ${app.buildModelLabel ? `<span title="Model used to build this demo (from build-model.json)${app.costUsd!=null?` · est. Claude cost ~$${Number(app.costUsd).toFixed(2)}`:''}" style="font-size:10px;font-weight:700;color:#0b1b33;background:${/fable|mythos/i.test(app.buildAppModel||'')?'#b8f0d8':'#d7e3fb'};border-radius:999px;padding:3px 9px;flex-shrink:0">${esc(app.buildModelLabel)}</span>` : ''}
+            ${app.costUsd != null ? `<span title="Estimated Claude token cost for this build (sum of usage.json)" style="font-size:10px;color:rgba(255,255,255,0.62);padding:3px 8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.12);border-radius:999px;flex-shrink:0">~$${Number(app.costUsd).toFixed(2)}</span>` : ''}
             ${ownerBadge}
             <button class="demo-app-rename-edit-btn" data-run="${esc(app.runId)}" type="button"
               title="Rename the friendly display name shown on this card. The underlying run ID (the directory name on disk) does not change."

@@ -64,6 +64,7 @@ const {
   appendPipelineLogJson,
 } = require('./utils/pipeline-logger');
 const { shouldIncludeCraRunNameToken } = require('./utils/prompt-scope');
+const usageTracker = require('./utils/usage-tracker'); usageTracker.install(); // per-run Claude token+cost accounting → <runDir>/usage.json
 const { resolveSlideQaMaxIterations } = require('./utils/slide-qa-config');
 
 // ── CLI timestamps (orchestrator + stage boundaries; child scripts keep plain console) ──
@@ -1180,6 +1181,7 @@ function writePipelineProgress(stageName) {
 
 async function runStage(stageName, fn, timer) {
   timer.startStage(stageName);
+  try { require('./utils/usage-tracker').setStage(stageName); } catch (_) {}
   const t0 = Date.now();
 
   try {
@@ -4876,6 +4878,7 @@ async function main() {
   } else {
     versionedDir = resolveVersionedDir(runNameStem);
   }
+  try { usageTracker.setContext({ runDir: versionedDir }); } catch (_) {}
 
   // ── PIPELINE_RUN_DIR: all scripts write artifacts here instead of shared out/ ──
   process.env.PIPELINE_RUN_DIR = versionedDir;

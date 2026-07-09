@@ -723,10 +723,17 @@ const { OPUS_PRIMARY, OPUS_FALLBACK, OPUS_PRIMARY_BETAS } = require('../utils/an
 // Route Opus calls through the beta Messages endpoint when betas are enabled
 // (e.g. the 1M-context window). Falls back to the standard endpoint otherwise.
 const OPUS_BETAS = Array.isArray(OPUS_PRIMARY_BETAS) && OPUS_PRIMARY_BETAS.length ? OPUS_PRIMARY_BETAS : null;
+// The 1M-context beta (OPUS_BETAS) is Opus-specific; Fable/Mythos have 1M
+// natively and REJECT the Opus beta header. Route Fable through the standard
+// endpoint with no Opus betas. (Server-side refusal→Opus fallback is a possible
+// follow-up if adopting Fable, but is kept out here to avoid SDK-version risk.)
+function isFableModel(m) { return /fable|mythos/i.test(String(m || '')); }
 function opusMessagesCreate(client, args) {
+  if (isFableModel(args.model)) return client.messages.create(args);
   return OPUS_BETAS ? client.beta.messages.create({ ...args, betas: OPUS_BETAS }) : client.messages.create(args);
 }
 function opusMessagesStream(client, args) {
+  if (isFableModel(args.model)) return client.messages.stream(args);
   return OPUS_BETAS ? client.beta.messages.stream({ ...args, betas: OPUS_BETAS }) : client.messages.stream(args);
 }
 const ARCH_MODEL         = process.env.BUILD_APP_MODEL || OPUS_PRIMARY;
@@ -4126,6 +4133,17 @@ body.mobile-shell-enabled .step.mobile-shell-target [data-testid="mobile-simulat
   // Mirror root logo assets (brand-logo.png, plaid-logo-*.png) into the served
   // run-root scratch-app so the host nav logo actually renders during recording.
   mirrorRootAssetsToLegacyScratchApp();
+
+  // Stamp which model built this app so the dashboard can label the demo (and
+  // the A/B test can be inspected). BUILD_MODEL = BUILD_APP_MODEL || Opus 4.8.
+  try {
+    const label = isFableModel(BUILD_MODEL) ? 'Fable 5 (build-app)'
+      : /opus-4-8/.test(BUILD_MODEL) ? 'Opus 4.8 (build-app)'
+      : `${BUILD_MODEL} (build-app)`;
+    fs.writeFileSync(path.join(OUT_DIR, 'build-model.json'),
+      JSON.stringify({ buildAppModel: BUILD_MODEL, label, stampedAt: new Date().toISOString() }, null, 2), 'utf8');
+    console.log(`[Build] Model: ${BUILD_MODEL} (${label}) — stamped build-model.json`);
+  } catch (_) {}
 
   // ── Brand isolation wall ─────────────────────────────────────────────────
   // The Gingham default design system must never leak into a real-brand build

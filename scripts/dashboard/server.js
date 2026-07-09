@@ -5024,6 +5024,9 @@ app.get('/api/demo-apps', (req, res) => {
       // reflect the SHARED copy (videos aren't published → none), not the local
       // build. syncedHasVideo drives the client's effective icon state.
       const synced = syncedVideoState(runId);
+      // Per-run Claude token/cost accounting + which model built the app (label).
+      const usage = safeReadJson(path.join(dir, 'usage.json'));
+      const buildModel = safeReadJson(path.join(dir, 'build-model.json'));
       const tierDetail = qaTierDetailForRun(runId);   // tierSummary + sceneMatch for the score popover
       const recovery = recoveryForRun(runId);         // recommendedRecovery + nextRecoveryCommand (cached behind this scan)
       return {
@@ -5040,6 +5043,11 @@ app.get('/api/demo-apps', (req, res) => {
         hasFinalVideo,
         isSynced: synced.isSynced,
         syncedHasVideo: synced.syncedHasVideo,
+        buildModelLabel: buildModel ? buildModel.label : null,
+        buildAppModel: buildModel ? buildModel.buildAppModel : null,
+        costUsd: usage && usage.totals ? usage.totals.costUsd : null,
+        usageByStage: usage && usage.totals ? usage.totals.byStage : null,
+        usageByModel: usage && usage.totals ? usage.totals.byModel : null,
         ...qaScores,
         qaPassed: (() => {
           const qa = getLatestQaReport(runId);
