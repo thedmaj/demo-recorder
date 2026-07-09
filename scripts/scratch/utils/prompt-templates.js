@@ -1200,7 +1200,8 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `      ],\n` +
       `      "apiResponse": {},\n` +
       `      "visualState": "<brief description of what the screen shows at this step>",\n` +
-      `      "plaidPhase": "<launch — use ONLY this value, see rule below>"\n` +
+      `      "plaidPhase": "<launch — use ONLY this value, see rule below>",\n` +
+      `      "stepless": <true ONLY for a resting interstitial with NO clickable next-step control — a spinner / "reviewing" / processing screen the demo simply moves past. Omit for every step that has a button/CTA the user clicks. Never on a plaidPhase:"launch" step.>\n` +
       `    }\n` +
       `  ],\n` +
       `  "ctaText": "<string>",\n` +
@@ -1826,7 +1827,7 @@ contract that the next stage knows how to fill.\n` +
     `- Global functions:\n` +
     `    window.goToStep(id)       — activate a step by id, fire its link events and API panel\n` +
     `    window.getCurrentStep()   — return the data-testid of the currently active step\n` +
-    `- NO AUTO-ADVANCE (HARD): a step must NEVER auto-advance to another step via setTimeout / setInterval / requestAnimationFrame calling goToStep. Every transition is driven ONLY by explicit user action (button click, keyboard nav) or by goToStep invoked externally (QA/recorder). "Loading" / "processing" / "verifying" / "generating report" screens must be the resting state of their OWN step (show a spinner/progress bar that stays) — do NOT schedule a timer that moves to the next step. Auto-advancing makes the expected step inactive at capture time → build-qa "navigation-mismatch" deterministic failure.\n` +
+    `- NO AUTO-ADVANCE (HARD): a step must NEVER auto-advance to another step via setTimeout / setInterval / requestAnimationFrame calling goToStep. Every transition is driven ONLY by explicit user action (button click, keyboard nav) or by goToStep invoked externally (QA/recorder). "Loading" / "processing" / "verifying" / "generating report" screens must be the resting state of their OWN step (show a spinner/progress bar that stays) — do NOT schedule a timer that moves to the next step. Auto-advancing makes the expected step inactive at capture time → build-qa "navigation-mismatch" deterministic failure. In playwright-script.json such resting steps use action:"goToStep" (their own id) — never a "click" row (see STEPLESS / INTERSTITIAL ROW RULE).\n` +
     `- Manual navigation (REQUIRED — add immediately after goToStep/getCurrentStep definitions):\n` +
     `    ArrowRight/ArrowDown = next step. ArrowLeft/ArrowUp = previous step.\n` +
     `    Clicking any non-interactive area of a step also advances to the next step.\n` +
@@ -1971,6 +1972,12 @@ contract that the next stage knows how to fill.\n` +
     `    }\n` +
     `  ]\n` +
     `}\n\n` +
+    `STEPLESS / INTERSTITIAL ROW RULE (HARD): a step with NO clickable next-step control — a spinner,\n` +
+    `"reviewing…", processing, or report-generating resting screen (demo-script "stepless": true) —\n` +
+    `MUST use action:"goToStep" with its OWN step id. NEVER author a "click" row for such a step and\n` +
+    `NEVER target the NEXT step's button from it (observed failure: a "signal-reviewing" spinner step\n` +
+    `authored as click "review-transfer-btn" — a button that exists on no step — fails QA critically\n` +
+    `and stalls the recording ~15s). Steps WITH a real CTA keep "click" rows as usual.\n\n` +
     `REQUIRED: Every step "id" in playwright-script.json MUST exactly match one of these step IDs\n` +
     `from demo-script.json (copy-paste exactly, no modifications):\n` +
     demoScript.steps.map(s => `  "${s.id}"`).join('\n') + '\n' +

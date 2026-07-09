@@ -1214,6 +1214,49 @@ function repairPlaywrightInsightNavigation(playwrightScript, demoScript) {
   }
 }
 
+/**
+ * Stepless host steps (constraint-balance plan R3): a step explicitly declared
+ * stepless in demo-script.json (`stepless: true` or `advance: "auto"`) is a
+ * resting interstitial (spinner / "reviewing" / processing screen) with NO
+ * clickable next-step control. When the build model still authors its
+ * playwright row as a `click` (observed: Fable 5 `signal-reviewing` →
+ * click "review-transfer-btn", a button that never existed → critical
+ * selector-missing, score 45 + ~15s dead stall at record time), convert the
+ * ROW ITSELF to `goToStep` so build-qa, record-local, and Remotion all agree.
+ *
+ * Deliberately narrow (masking guard): only steps EXPLICITLY declared stepless
+ * are converted — a click row on any other step keeps the critical
+ * selector-missing gate, so a genuinely forgotten CTA still fails loudly.
+ * NEVER converts launch rows (plaidPhase:"launch" or a launch-CTA target) —
+ * that click opens the real Plaid modal on camera and is load-bearing.
+ */
+function repairSteplessPlaywrightRows(playwrightScript, demoScript) {
+  const rows = playwrightScript?.steps;
+  if (!Array.isArray(rows)) return;
+  const { PLAID_LAUNCH_CTA_TARGET_RE } = require('../utils/plaid-launch-cta');
+  const steplessIds = new Set(
+    (demoScript.steps || [])
+      .filter((s) => s && (s.stepless === true || String(s.advance || '').toLowerCase() === 'auto'))
+      .filter((s) => String(s.plaidPhase || '').toLowerCase() !== 'launch')
+      .map((s) => s.id)
+  );
+  if (steplessIds.size === 0) return;
+  let fixed = 0;
+  for (const row of rows) {
+    const id = row.stepId || row.id;
+    if (!id || !steplessIds.has(id)) continue;
+    if (row.action !== 'click' && row.action !== 'fill') continue;
+    if (PLAID_LAUNCH_CTA_TARGET_RE.test(String(row.target || ''))) continue; // load-bearing launch click — never convert
+    row.action = 'goToStep';
+    row.target = id;
+    delete row.value;
+    fixed++;
+  }
+  if (fixed > 0) {
+    console.log(`[Build] Converted ${fixed} playwright row(s) to goToStep for explicitly stepless step(s) (no clickable control by design)`);
+  }
+}
+
 function normalizeLaunchPlaywrightRow(playwrightScript, demoScript) {
   const rows = playwrightScript?.steps;
   if (!Array.isArray(rows)) return;
@@ -1566,7 +1609,12 @@ function ensureCanonicalLaunchCtaInHtml(html, demoScript) {
     }
     return `${pre}${tagOpen} data-testid="link-external-account-btn">`;
   });
-  return { html: patched, injected: patched !== html };
+  // Latent-gap fix (constraint-balance plan R3): when the launch step has NO
+  // <button>/<a> at all, the retag above silently no-ops and the miss used to
+  // surface only at the expensive post-record plaid-modal-missing halt. Report
+  // it so the caller can fail the build cheaply at build time instead.
+  const missingCta = patched === html;
+  return { html: patched, injected: patched !== html, missingCta, launchStepId: launch.id };
 }
 
 function ensureEmbeddedContainerInLaunchStep(html, demoScript, linkModeAdapter) {
@@ -3174,6 +3222,7 @@ async function main(opts = {}) {
   }
 
   repairPlaywrightInsightNavigation(playwrightScript, demoScript);
+  repairSteplessPlaywrightRows(playwrightScript, demoScript);
   normalizeLaunchPlaywrightRow(playwrightScript, demoScript);
   normalizeFinalSlidePlaywrightRow(playwrightScript, demoScript);
   dedupePlaywrightRowsByStepId(playwrightScript, demoScript);
@@ -3548,6 +3597,15 @@ async function main(opts = {}) {
       html = ctaPatch.html;
       if (ctaPatch.injected) {
         console.log('[Build] Injected canonical launch CTA data-testid="link-external-account-btn"');
+      }
+      if (ctaPatch.missingCta) {
+        // Cheap build-time failure instead of the expensive post-record
+        // plaid-modal-missing halt: a live-Link launch step with no button/anchor
+        // can never open the Plaid modal on camera.
+        domErrors.push(
+          `Launch step "${ctaPatch.launchStepId}" contains NO <button> or <a> — the Plaid Link modal can never open. ` +
+          `Add the launch CTA (data-testid="link-external-account-btn") to that step.`
+        );
       }
       const launchIconPatch = enforceCanonicalLaunchButtonIcon(html);
       html = launchIconPatch.html;
