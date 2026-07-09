@@ -1682,6 +1682,30 @@ async function main() {
     `[Script] stepKind annotated: ${stepKindCounts.app} app / ${stepKindCounts.slide} slide`
   );
 
+  // Default brand (Gingham): when the prompt specifies NO company and NO website,
+  // force persona.company to "Gingham" so the script content and the brand agree.
+  // brand-extract then routes to the walled `gingham-default` path (local assets,
+  // no Brandfetch). Conservative: only defaults when there is no `Host:` line, no
+  // `Brand URL:` line, and no non-Plaid website URL — real branded prompts always
+  // carry one of those, so this never hijacks a real build.
+  try {
+    const p = String(promptText || '');
+    const hasHost = /^[ \t>*_]*Host\b[ \t]*:/im.test(p);
+    const hasBrandUrl = /Brand\s+URL\s*:\s*https?:\/\//i.test(p);
+    const nonPlaidUrl = (p.match(/https?:\/\/[^\s)"'<>]+/gi) || []).some(
+      (u) => !/(?:plaid\.com|localhost|127\.0\.0\.1|github\.|googleapis|gstatic|youtube|youtu\.be|example\.com)/i.test(u)
+    );
+    if (!hasHost && !hasBrandUrl && !nonPlaidUrl) {
+      demoScript.persona = demoScript.persona || {};
+      const prev = demoScript.persona.company;
+      demoScript.persona.company = 'Gingham';
+      demoScript.persona._companyIsDefault = true;
+      console.log(`[Script] No company/website in the prompt — defaulting persona.company to "Gingham" (was ${prev ? `"${prev}"` : 'unset'}). Brand-extract will apply the walled Gingham default brand.`);
+    }
+  } catch (e) {
+    console.warn(`[Script] default-brand check skipped: ${e.message}`);
+  }
+
   fs.writeFileSync(OUT_FILE, JSON.stringify(demoScript, null, 2));
 
   try {
