@@ -393,6 +393,31 @@ function renderBrandBlock(brand) {
       (logo.imageUrl ? ` (use only if images fail to load)` : ''));
   }
 
+  // Nav consistency is scoped PER SURFACE, not globally. Within one host surface the nav should stay
+  // identical (fixes the "logo disappears past page 1" / stranded-wordmark bugs); but a story may
+  // deliberately navigate to a DIFFERENT surface (partner / referral / co-branded / marketplace /
+  // third-party page) that legitimately has its own brand + chrome — do not force this lockup there.
+  lines.push(
+    `    HOST NAV — CONSISTENT WITHIN A SURFACE (default, not a blanket rule):\n` +
+    `      - Treat the top-nav as ONE reusable component PER SURFACE. For every step that stays on the SAME\n` +
+    `        ${brand.name || 'host'} surface, emit the SAME nav markup — the brand logo image AND the wordmark on each\n` +
+    `        of those steps. Within one surface, do NOT drop the logo image or shrink the nav to a wordmark-only header\n` +
+    `        on later steps — a real product keeps its header identical page to page.\n` +
+    `      - GROUP the logo image and the wordmark inside ONE lockup container, e.g.\n` +
+    `          <div style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto"><img …><span class="wordmark">${brand.name || 'Brand'}</span></div>\n` +
+    `        Do NOT place the logo and the wordmark as SEPARATE flex children of a justify-content:space-between nav —\n` +
+    `        that strands the wordmark in the CENTER of the bar. Layout is: logo+wordmark lockup = LEFT group; nav\n` +
+    `        links / account chip = RIGHT. (This grouping rule applies to whatever nav a surface uses.)\n` +
+    `      - EXCEPTION — deliberate surface change: when the story/visualState moves to a DISTINCT surface (a lending\n` +
+    `        referral or partner page, a co-branded handoff, a marketplace, or any explicitly different brand/site),\n` +
+    `        that step SHOULD get its own appropriate nav, brand mark, and styling — do NOT force ${brand.name || 'the primary'}'s\n` +
+    `        lockup onto it. Consistency is per-surface; a new surface is a new (internally-consistent) nav. When in\n` +
+    `        doubt, follow the step's visualState: same app → same nav; new destination → its own chrome.\n` +
+    `      - Keep data-testid="host-bank-logo-shell"/"host-bank-logo-img" on the FIRST step of the primary surface ONLY\n` +
+    `        (testids stay unique); repeat the identical visual lockup (img + wordmark) on that surface's other steps\n` +
+    `        WITHOUT those testids.`
+  );
+
   // Frontend-design quality principles — scoped to host app chrome only
   lines.push(`    FRONTEND DESIGN PRINCIPLES (host app chrome only):`);
   lines.push(`      - Make the app unmistakably feel like ${brand.name}'s product — not a generic SaaS template.`);

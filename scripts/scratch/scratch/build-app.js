@@ -793,7 +793,10 @@ function isTransientApiError(err) {
   const status = Number(err?.status);
   if ([408, 429, 500, 502, 503, 529].includes(status)) return true;
   const msg = String(err?.message || err?.error?.message || err?.code || '');
-  return /connection error|connection reset|connection refused|timed out|timeout|rate.?limit|too many requests|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|network|fetch failed/i.test(msg);
+  // "terminated" / "premature close" = undici stream dropped mid-response (observed
+  // with claude-fable-5 streaming Call 2 — the connection is severed after the stream
+  // opens); treat as transient so the build retries instead of shipping no index.html.
+  return /connection error|connection reset|connection refused|timed out|timeout|rate.?limit|too many requests|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|network|fetch failed|terminated|premature close|other side closed|stream (?:error|terminated|disconnected)/i.test(msg);
 }
 
 /**
