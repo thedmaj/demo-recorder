@@ -826,7 +826,10 @@ const PATCHES = [
     matchCategories: [
       'slide-template-misuse',
       'panel-visibility',
-      'slide-mint-overuse',
+      // 'slide-mint-overuse' removed 2026-07-09 (constraint-balance plan R4):
+      // mint budget is a default the model may exceed deliberately; the scanner
+      // warning is feedback, not an auto-rewrite trigger. Re-add only if the
+      // hard cap returns (SLIDE_MINT_CAP_ENFORCE).
     ],
     matchIssuePatterns: [
       /clipped.*API/i,

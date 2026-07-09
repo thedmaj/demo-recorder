@@ -1020,16 +1020,26 @@ async function main() {
 
     // Final typography normalize + injectSlideTypographyOverrides removed
     // 2026-05-27 — templates own sizing, no pipeline-side floor/ceiling.
-    const mintCap = capSlideMint(html);
-    if (mintCap.demoted > 0) {
-      html = mintCap.html;
-      report.mintCap = {
-        demoted: mintCap.demoted,
-        perSlide: mintCap.perSlide.filter((s) => s.before !== s.after),
-      };
-      console.log(
-        `[post-slides] Mint cap: demoted ${mintCap.demoted} reference(s) across ${report.mintCap.perSlide.length} slide(s) (keeping <=3 per slide).`
-      );
+    //
+    // Mint cap rewriter is OPT-IN since 2026-07-09 (constraint-balance plan R4):
+    // the prompt now states the budget as a default the model may exceed for a
+    // stated reason, and silently repainting reference #4+ white contradicted
+    // that (and made any A/B of the budget measure the rewriter, not the model).
+    // scanSlideMintOveruse still WARNS past the budget (shared MINT_MAX_REFS).
+    // Re-enable hard demotion with SLIDE_MINT_CAP_ENFORCE=true.
+    if (process.env.SLIDE_MINT_CAP_ENFORCE === 'true') {
+      const { MINT_MAX_REFS } = require('../utils/slide-mint-cap');
+      const mintCap = capSlideMint(html);
+      if (mintCap.demoted > 0) {
+        html = mintCap.html;
+        report.mintCap = {
+          demoted: mintCap.demoted,
+          perSlide: mintCap.perSlide.filter((s) => s.before !== s.after),
+        };
+        console.log(
+          `[post-slides] Mint cap (SLIDE_MINT_CAP_ENFORCE): demoted ${mintCap.demoted} reference(s) across ${report.mintCap.perSlide.length} slide(s) (keeping <=${MINT_MAX_REFS} per slide).`
+        );
+      }
     }
     fs.writeFileSync(htmlPath, html, 'utf8');
     console.log(`[post-slides] Wrote updated HTML with ${report.slidesProcessed.length} slide(s).`);
