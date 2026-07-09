@@ -70,6 +70,8 @@ const TARGET_FPS = parseInt(process.env.RECORDING_FPS || '30', 10);
 
 // ── Live Plaid Link config ──────────────────────────────────────────────────
 
+// Canonical launch-CTA click-target pattern (single owner — was inlined ×4 here).
+const { PLAID_LAUNCH_CTA_TARGET_RE } = require('../utils/plaid-launch-cta');
 const PLAID_LINK_LIVE  = process.env.PLAID_LINK_LIVE  === 'true';
 const MANUAL_RECORD   = process.env.MANUAL_RECORD    === 'true';
 const PLAID_LINK_RECORDING_PROFILE = (process.env.PLAID_LINK_RECORDING_PROFILE || '').toLowerCase();
@@ -3561,7 +3563,7 @@ async function main(opts = {}) {
     if (
       entry &&
       entry.action === 'click' &&
-      (entry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)
+      (entry.target || '').match(PLAID_LAUNCH_CTA_TARGET_RE)
     ) {
       return true;
     }
@@ -3569,7 +3571,7 @@ async function main(opts = {}) {
     return !!(
       prev &&
       prev.action === 'click' &&
-      (prev.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)
+      (prev.target || '').match(PLAID_LAUNCH_CTA_TARGET_RE)
     );
   }
 
@@ -3593,7 +3595,7 @@ async function main(opts = {}) {
     const _clickIsLaunch = PLAID_LINK_LIVE && !hasExplicitPlaidPhases &&
       !plaidPhaseMap[stepId] && !matchPlaidLinkPhase(stepId) &&
       stepEntry.action === 'click' &&
-      (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i);
+      (stepEntry.target || '').match(PLAID_LAUNCH_CTA_TARGET_RE);
     const _isLaunch = PLAID_LINK_LIVE && (
       phaseForStep(stepId) === 'launch' ||
       !!_clickIsLaunch
@@ -3628,7 +3630,7 @@ async function main(opts = {}) {
       // demo-script carries explicit plaidPhase metadata (authoritative).
       let plaidLaunchStepId = null; // step ID to goToStep before executing launch
       if (!plaidPhase && !hasExplicitPlaidPhases && stepEntry.action === 'click' &&
-          (stepEntry.target || '').match(/link[-_]external[-_]account|connect[-_]bank|open[-_]link|link[-_]account[-_]btn|btn[-_]link|link[-_]bank|start[-_]link|initiate[-_]link|plaid[-_]link[-_]btn/i)) {
+          (stepEntry.target || '').match(PLAID_LAUNCH_CTA_TARGET_RE)) {
         plaidPhase = 'launch';
         // For synthetic click steps (e.g. "wf-link-initiate-click"), there's no corresponding
         // HTML div. Prefer:

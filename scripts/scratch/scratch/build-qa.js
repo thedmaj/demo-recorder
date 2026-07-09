@@ -977,14 +977,18 @@ function scanSlideHeadlineItalicAccent(html, slideStepIds) {
 function scanSlideMintOveruse(html, slideStepIds) {
   const blocks = extractSlideStepHtmlBlocks(html, slideStepIds);
   const out = [];
-  const mintRe = /(--plaid-teal-500|#42F0CD)/gi;
+  // Canonical token pattern + budget live in slide-mint-cap.js (single owner —
+  // constraint-balance plan R2); the scanner, the cap rewriter, and the prompt
+  // guidance all read the same values so they cannot drift.
+  const { MINT_TOKEN_RE, MINT_MAX_REFS } = require('../utils/slide-mint-cap');
+  const mintRe = new RegExp(MINT_TOKEN_RE.source, 'gi');
   for (const [stepId, block] of blocks) {
     const hits = block.match(mintRe) || [];
-    if (hits.length > 3) {
+    if (hits.length > MINT_MAX_REFS) {
       out.push(slideDesignWarning(
         stepId,
         'slide-mint-overuse',
-        `Slide uses mint (${hits.length} references); limit to one primary mint moment.`,
+        `Slide uses mint (${hits.length} references, budget ${MINT_MAX_REFS}); limit to one primary mint moment.`,
         'Reserve --plaid-teal-500 / #42F0CD for a single eye-draw per slide.'
       ));
     }

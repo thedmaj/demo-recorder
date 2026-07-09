@@ -18,11 +18,15 @@
  * runs outside a `.slide-root` block.
  */
 
-// Match the exact tokens that build-qa's scanSlideMintOveruse counts:
-// `--plaid-teal-500` (in `var(...)` wrappers and rare bare references) and the
-// underlying hex value `#42F0CD`. Keeping these in sync avoids a scanner/cap
-// gap where the cap leaves trailing references the scanner still complains about.
+// CANONICAL mint-rule constants (constraint-balance plan R2, 2026-07-09).
+// This file is the single owner of the mint token pattern AND the per-slide
+// reference budget. build-qa's scanSlideMintOveruse imports BOTH so the
+// scanner, the cap rewriter, and the prompt guidance can never drift apart
+// (previously the regex + ">3" threshold were restated in three code sites).
 const MINT_TOKEN_RE = /(?:--plaid-teal-500|#42F0CD|#42f0cd)/g;
+// Per-slide mint reference budget. Env-overridable for A/B experiments
+// (SLIDE_MINT_MAX_REFS=5 npm run demo ...).
+const MINT_MAX_REFS = Math.max(1, Number(process.env.SLIDE_MINT_MAX_REFS) || 3);
 
 /**
  * @param {string} html
@@ -30,7 +34,7 @@ const MINT_TOKEN_RE = /(?:--plaid-teal-500|#42F0CD|#42f0cd)/g;
  * @returns {{ html: string, demoted: number, perSlide: Array<{stepId: string|null, before: number, after: number}> }}
  */
 function capSlideMint(html, opts = {}) {
-  const maxRefs = Math.max(1, Number(opts.maxRefs) || 3);
+  const maxRefs = Math.max(1, Number(opts.maxRefs) || MINT_MAX_REFS);
   if (!html || !/\bslide-root\b/.test(html)) {
     return { html, demoted: 0, perSlide: [] };
   }
@@ -100,4 +104,6 @@ function capSlideMint(html, opts = {}) {
 
 module.exports = {
   capSlideMint,
+  MINT_TOKEN_RE,
+  MINT_MAX_REFS,
 };
