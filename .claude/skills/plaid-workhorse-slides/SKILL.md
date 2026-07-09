@@ -115,8 +115,8 @@ Use `var(--plaid-teal-500)` not `#42F0CD` literals when possible. No customer/ho
 | **Scope** | Pipeline slides + optional standalone export |
 | **Motion** | **None** in pipeline — no `data-anim`, no `data-fx`, no canvas FX |
 | **Charts** | **SVG/CSS only** — do not use Chart.js; rebuild `chart-*` layouts as inline SVG |
-| **Canvas** | 1280×800 via `pipeline-slide-contract.css` — not 100vw Workhorse deck |
-| **Typography** | Plaid ceilings in `pipeline-slide-contract.css`; body **≥ 24px** |
+| **Canvas** | Fluid ≈1400×875 via `pipeline-slide-contract.css` (`max-width: min(1400px, calc(100vw − 24px))`, 16/10) at the 1440×900 recording viewport — not 100vw Workhorse deck, and NOT the old 1280×800 letterbox (retired 2026-05-29). 1280×800 survives only as the **standalone-export** default profile. |
+| **Typography** | Templates own sizing (`slide.css` + `pipeline-slide-contract.css` canonical classes). No 24px floor / per-template ceiling enforcement — reduce a specific element deliberately if content demands it, and stay readable. (Canonical rule: `plaid-slide-design` § Typography.) |
 | **Host bleed** | Slides Plaid-only; customer name is partnership copy only |
 | **Sales CTAs** | **Forbidden** on pipeline slides — no contact Plaid / Account Manager / free trial / Start a POC / retro-analysis buttons or faux CTAs (see plaid-slide-design SKILL) |
 
@@ -172,7 +172,7 @@ Rules:
 
 1. Reuse the same `.slide-stack` inner markup and Plaid tokens
 2. **Static by default** (`--nav static`); pass `--nav keyboard` only if explicitly requested
-3. **`--canvas pipeline`** (1280x800) is the default; use `--canvas authoring` (1920x1080) for browser/PDF presentations
+3. **`--canvas pipeline`** (1280x800) is the default **for standalone exports only** — despite the flag name, this is NOT the recorded pipeline canvas (that is fluid ≈1400×875 via the contract CSS); use `--canvas authoring` (1920x1080) for browser/PDF presentations
 4. Do **not** import Workhorse themes; Plaid palette only
 
 ## Authoring workflow

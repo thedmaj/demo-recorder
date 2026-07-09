@@ -231,9 +231,10 @@ compositor, so the **real** Plaid Link modal (`cdn.plaid.com`) **IS visible** in
 `"plaidPhase":"launch"`); narration covers the entire flow in ≤35 words
 (consent → OTP → institution → account → success); duration 18–22s.
 
-**Narration boundary (REQUIRED):** the step BEFORE the Link step ends with the trigger action
-("…she taps Link Your Bank."); the Link step narration begins describing content VISIBLE INSIDE
-the modal — never the act of opening it. Full rule + examples: `saas-demo-design-principles`.
+**Narration boundary (REQUIRED, updated 2026-06-24):** the step BEFORE the Link step ends with the
+trigger action ("…she taps Link Your Bank."); the Link step narration OPENS with a short bridge
+naming the ACTUAL on-screen button and that it brings up Plaid Link (covers the ~2–3s modal load),
+then describes the modal content. Full rule + examples: `saas-demo-design-principles` (authoritative).
 
 **Recording behavior:** defaults to First Platypus Bank / Remember Me (non-OAuth); the "Save with
 Plaid" phone screen is auto-dismissed. Saved-institution-list dwell + selection: see

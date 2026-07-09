@@ -872,7 +872,7 @@ function scanSlideCanvasSize(state, step, opts = {}) {
         `(viewport ${viewportWidth}×${viewportHeight}). Slides must occupy at least ${Math.round(widthFraction * 100)}% of viewport width.`,
       suggestion:
         'Apply the pipeline-slide-contract.css rules so `.step.active .slide-root` ' +
-        'uses `max-width: min(1280px, calc(100vw - 80px))`. The JSON panel is a fixed overlay and must not shrink slides.',
+        'uses `max-width: min(1400px, calc(100vw - 24px))` + `aspect-ratio: 16/10`. The JSON panel is a fixed overlay and must not shrink slides.',
     });
   }
   if (renderedHeight > 0 && renderedHeight < minHeight) {

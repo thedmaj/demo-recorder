@@ -30,8 +30,12 @@ const path = require('path');
 const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const SLIDE_TEMPLATE_DIR = path.join(PROJECT_ROOT, 'templates', 'slide-template');
 
+// NOTE: the `pipeline` profile name is historical — it is the STANDALONE-EXPORT
+// default, NOT the recorded pipeline canvas (which is fluid ≈1400×875 via
+// pipeline-slide-contract.css at the 1440×900 recording viewport). The key is
+// kept for CLI compat (`--canvas pipeline`).
 const CANVAS_PROFILES = {
-  pipeline: { width: 1280, height: 800, label: '1280×800 (pipeline)' },
+  pipeline: { width: 1280, height: 800, label: '1280×800 (standalone-export default)' },
   authoring: { width: 1920, height: 1080, label: '1920×1080 (authoring)' },
 };
 

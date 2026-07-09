@@ -712,8 +712,9 @@ const PATCHES = [
     tierScope: 'slide',
     description:
       'Dynamic font reduction for slide headlines / short labels that wrap to ' +
-      'a 2nd+ line when they would fit on a single line at a smaller (≥24px) ' +
-      'font-size. Reads scanSlideTextWrap diagnostics (slide-text-wrap meta) and ' +
+      'a 2nd+ line when they would fit on a single line at a smaller ' +
+      'font-size (templates own sizing — no fixed floor since 2026-05-27). ' +
+      'Reads scanSlideTextWrap diagnostics (slide-text-wrap meta) and ' +
       'injects a scoped CSS rule that downshifts font-size to the measured ' +
       'recommendation. Composes with slide-text-overlap-autofix — wrap-fit runs ' +
       'on warnings (no overlap yet, just multi-line wrap), overlap-autofix runs ' +
@@ -781,7 +782,7 @@ const PATCHES = [
         return {
           applied: false,
           summary:
-            'all slide-text-wrap diagnostics already at the 24px floor — slide-fix LLM should widen container width / shorten copy instead',
+            'no slide-text-wrap diagnostic recommends a smaller size — slide-fix LLM should widen container width / shorten copy instead',
         };
       }
 
@@ -812,7 +813,7 @@ const PATCHES = [
       fs.writeFileSync(htmlPath, html, 'utf8');
       return {
         applied: true,
-        summary: `Applied text-wrap autofix on ${byStep.size} slide step(s); ${rules.length} CSS rule(s) injected (24px floor).`,
+        summary: `Applied text-wrap autofix on ${byStep.size} slide step(s); ${rules.length} CSS rule(s) injected (measured recommendation; no fixed floor).`,
       };
     },
   },
@@ -875,21 +876,12 @@ const PATCHES = [
         changed += 1;
       }
 
-      // Sub-24px floor inside slides (including json-snippet / pre)
-      html = html.replace(
-        /(<div[^>]*\bslide-root\b[^>]*>)([\s\S]*?)(?=<div[^>]*\bslide-root\b|$)/gi,
-        (full, open, body) => {
-          const next = body.replace(/font-size\s*:\s*(\d+(?:\.\d+)?)\s*px/gi, (decl, n) => {
-            const px = parseFloat(n);
-            if (px > 0 && px < 24) {
-              changed += 1;
-              return 'font-size:24px';
-            }
-            return decl;
-          });
-          return open + next;
-        }
-      );
+      // Sub-24px floor rewrite REMOVED 2026-07-09 (constraint-balance plan R1):
+      // templates own sizing (2026-05-27) — the LLM may deliberately reduce a
+      // font-size to fit content, and this unconditional bump silently overrode
+      // that judgment (prompt said "may reduce", this patch un-reduced it). The
+      // overlap autofix keeps its own ≥24px bound on the reductions IT makes —
+      // that is a bound on the fixer, not a rewrite of authored sizes.
 
       html = html.replace(/font-family:\s*"JetBrains Mono'/gi, () => {
         changed += 1;

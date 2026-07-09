@@ -55,7 +55,12 @@ function getSlideDesignBriefPaths(projectRoot = PROJECT_ROOT) {
 function loadSlideDesignSkill(opts = {}) {
   const projectRoot = opts.projectRoot || PROJECT_ROOT;
   const paths = getSlideDesignBriefPaths(projectRoot);
-  const hybridMax = Number(opts.workhorseHybridMaxChars || process.env.PLAID_WORKHORSE_SKILL_MAX_CHARS || 8000);
+  // Caps raised 2026-07-09 (constraint-balance plan R1): the old 8,000-char
+  // hybrid cap silently dropped the tail of plaid-workhorse-slides (10,155
+  // chars) — incl. its canvas + export rules — from EVERY post-slides prompt,
+  // and the 28,000 total clipped the merged text (~34.7k). Truncation is now
+  // loudly logged so a growing skill can never silently lose canonical rules.
+  const hybridMax = Number(opts.workhorseHybridMaxChars || process.env.PLAID_WORKHORSE_SKILL_MAX_CHARS || 12000);
   const catalogMax = Number(opts.workhorseCatalogMaxChars || process.env.PLAID_WORKHORSE_CATALOG_MAX_CHARS || 5000);
   let text = readUtf8(paths.skillMarkdown).trim();
   const hybrid = readUtf8(paths.workhorseHybridMarkdown).trim();
@@ -66,12 +71,19 @@ function loadSlideDesignSkill(opts = {}) {
       // Headroom so the primary plaid-slide-design skill (now carries the
       // authoritative intent→template map) does not truncate the secondary
       // workhorse hybrid + catalog off the end of the merged text.
-      (hybrid.length > 0 ? 28000 : 12000)
+      (hybrid.length > 0 ? 38000 : 24000)
   );
+  const warnTruncated = (label, fullLen, cap) => {
+    console.warn(
+      `[slide-design-skill] TRUNCATION: ${label} is ${fullLen} chars but the cap is ${cap} — ` +
+      `its tail will NOT reach the slide model. Trim the file or raise the cap.`
+    );
+  };
   const skillLoaded = text.length > 0;
   if (hybrid) {
     let hybridBlock = hybrid;
     if (hybridBlock.length > hybridMax) {
+      warnTruncated('plaid-workhorse-slides SKILL.md', hybridBlock.length, hybridMax);
       hybridBlock = `${hybridBlock.slice(0, Math.max(0, hybridMax - 80))}\n\n… [plaid-workhorse-slides SKILL.md truncated]\n`;
     }
     text = text ? `${text}\n\n---\n\n${hybridBlock}` : hybridBlock;
@@ -79,11 +91,13 @@ function loadSlideDesignSkill(opts = {}) {
   if (catalog) {
     let catalogBlock = catalog;
     if (catalogBlock.length > catalogMax) {
+      warnTruncated('WORKHORSE_TEMPLATE_CATALOG.md', catalogBlock.length, catalogMax);
       catalogBlock = `${catalogBlock.slice(0, Math.max(0, catalogMax - 80))}\n\n… [WORKHORSE_TEMPLATE_CATALOG.md truncated]\n`;
     }
     text = text ? `${text}\n\n---\n\n## Workhorse template catalog\n${catalogBlock}` : catalogBlock;
   }
   if (text.length > maxChars) {
+    warnTruncated('merged slide design skill text', text.length, maxChars);
     text = `${text.slice(0, Math.max(0, maxChars - 80))}\n\n… [slide design skills truncated]\n`;
   }
   return {

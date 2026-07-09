@@ -96,9 +96,11 @@ catches that. Any `> 6px` canvas overflow now fails the slide.
 **Comparison / bullet-list card rule (prevents the above clip):** in `.sc-row` / `.sc-card` (or any
 multi-line list card), content MUST fit the canvas — `align-items: stretch` sizes both cards to the
 tallest, so the densest card is the binding constraint. Keep bullets **short enough to sit on one
-line** at the 24px body floor, cap list **`line-height` at ~1.4–1.5** (NOT 1.7 — loose leading on a
-5+ line mono block is exactly what overflowed here), and prefer ≤5 short bullets per card. Never drop
-body text below the **24px floor** to fit — shorten wording or tighten line-height/padding instead.
+line** at the template's default body size, cap list **`line-height` at ~1.4–1.5** (NOT 1.7 — loose
+leading on a 5+ line mono block is exactly what overflowed here), and prefer ≤5 short bullets per
+card. Prefer shortening wording or tightening line-height/padding over shrinking body text to fit —
+if you do reduce a font-size, do it deliberately and stay readable (templates own sizing; there is
+no enforced floor — see Typography below).
 `slide-fix` must re-check `.frame` scroll-overflow after editing any list/comparison slide.
 
 `scanSlideCanvasSize` (critical blocker, `app+slides` only) measures the rendered `.slide-root`
@@ -170,12 +172,15 @@ These patterns caused the most **deterministic** failures in showcase-router rer
 
 ## Template selection
 
-**The script tags intent; the router maps it to a template.** You normally do **not** hand-pick a
-template. The script-gen LLM sets a `slideRole` on each slide step (its narrative job), and
-`slide-template-router.js` deterministically maps the role to the right Plaid template/layout. Prefer
-setting `slideRole` over `slideTemplate`/`workhorseLayout`/`showcaseTemplateId` — the latter are hard
-overrides that bypass routing. Insight/API steps (`sceneType: "insight"`, `stepKind: "slide"`) use the
-same deck system — not host insight chrome.
+**The script tags intent; the router maps it to a DEFAULT template.** At script time, prefer setting
+`slideRole` over `slideTemplate`/`workhorseLayout`/`showcaseTemplateId` — the latter are hard
+overrides that bypass routing. The script-gen LLM sets a `slideRole` on each slide step (its
+narrative job), and `slide-template-router.js` deterministically maps the role to a Plaid
+template/layout. **At slide-authoring time the routed template is a strong default, not a mandate**
+(LAYOUT AUTONOMY, 2026-07-01): the authoring model may deliberately choose a different T1–T11 /
+workhorse layout when it fits the slide's content better — set `data-slide-template` /
+`data-workhorse-layout` to what it actually used. Insight/API steps (`sceneType: "insight"`,
+`stepKind: "slide"`) use the same deck system — not host insight chrome.
 
 ### Slide intent → template (authoritative)
 
