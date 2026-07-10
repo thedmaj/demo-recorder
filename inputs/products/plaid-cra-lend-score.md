@@ -108,6 +108,7 @@ BNPL, personal lending, and near-prime **second-look** flows where the host alre
 
 ## Do Not
 
+- Reveal LendScore before the report modules it synthesizes — in multi-module Consumer Report demos LendScore is the CLOSING reveal (canonical order, 2026-07-10 directive: Base Report → Income Insights → Network Insights → LendScore; see `plaid-cra-base-report.md`)
 - Invent `reason_codes[]` at the Signal `/signal/evaluate` shape
 - Label the API panel as Base Report when the step endpoint is `lend_score/get`
 - Present LendScore as GA without beta callout
