@@ -983,63 +983,67 @@ function injectLocalBrandLogo(html, brand) {
   });
   if (repointed > 0) console.log(`[Build] Repointed ${repointed} existing host-bank logo <img> to local brand-logo.png (no duplicate lockup).`);
 
-  // Strategies 1–3 run ONLY when strategy 0 did not already place the local logo
-  // on an existing template host-bank logo. Otherwise an app that carries both a
-  // template logo AND a separate logo-mark glyph would get a SECOND logo.
-  if (repointed === 0) {
-    // 1) Replace the inner content of nav logo-mark/logo-icon/brand-mark spans/divs.
-    out = out.replace(
-      /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|logo-shell|brand-mark|logo-glyph)\b[^"]*"[^>]*>)([\s\S]*?)(<\/(?:span|div)>)/gi,
-      (m, open, _inner, close) => { swapped++; return `${open}${img}${close}`; }
-    );
-    // 2) Else inject the logo image BEFORE an existing nav wordmark text node —
-    //    the brand name the template/LLM already rendered. Recognize the common
-    //    template classes AND design-system wordmarks (brand-wm, wordmark,
-    //    gg-wordmark) so we place the logo next to the existing name instead of
-    //    printing a second one (the "Gingham Gingham" duplicate).
-    if (swapped === 0 && !/brand-logo\.png/.test(out)) {
-      out = out.replace(
-        /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text|brand-wm|gg-wordmark)\b[^"]*"[^>]*>)/i,
-        (m) => { swapped++; return `${img}${m}`; }
-      );
+  // PER-NAV-BLOCK pass (2026-07-10 rewrite): the old code ran the glyph/wordmark/
+  // lockup strategies only when strategy 0 repointed NOTHING — document-wide. A
+  // single repointed logo on the FIRST page then suppressed every fix on later
+  // pages, and a model glyph coexisting with the repointed logo was never removed.
+  // Observed (Gingham mortgage): page 1 showed the official logo AND a self-drawn
+  // <svg> house glyph (duplicate); pages 2–6 showed ONLY the glyph. The contract
+  // is per nav: EVERY host nav/header carries exactly ONE official brand logo.
+  //   - nav already has brand-logo.png → REMOVE any self-drawn glyph beside it
+  //   - nav lacks it → swap the first glyph's content, else prepend to the
+  //     wordmark, else inject a lockup after the nav open tag
+  // Skips non-brand chrome (API/link-events panel headers, slide chrome-logo).
+  let deduped = 0;
+  const altEsc = alt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Glyph containers: span/div whose class marks it as a logo glyph (incl. the
+  // bare `mark` class models favor) containing ONLY an inline svg / tiny glyph.
+  // \bmark\b does NOT match inside "wordmark" (no word boundary between d and m).
+  const GLYPH_RE = /<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-mark|logo-icon|logo-shell|brand-mark|logo-glyph|mark)\b[^"]*"[^>]*>\s*(?:<svg[\s\S]*?<\/svg>|[^<>]{0,4})\s*<\/(?:span|div)>/gi;
+  out = out.replace(/<(nav|header)\b[^>]*>[\s\S]*?<\/\1>/gi, (block) => {
+    // Not host brand chrome: panel heads, slide plaid chrome, nested nav-link lists.
+    if (/panel-head|api-response-panel|link-events-panel|chrome-logo/i.test(block)) return block;
+    if (/\bsrc=["']brand-logo\.png["']/i.test(block)) {
+      // Official logo present — remove self-drawn glyphs riding beside it.
+      const before = block;
+      block = block.replace(GLYPH_RE, () => { deduped++; return ''; });
+      return before === block ? before : block;
     }
-    // 3) Last-resort guarantee: the LLM produced a nav with NO brand/logo slot at
-    //    all. Inject a brand lockup (logo + wordmark) right after the FIRST <nav> /
-    //    <header> opening tag. Use a non-global regex (first match only): a host
-    //    layout commonly has BOTH `<header class="nav">` AND a nested
-    //    `<nav class="nav-links">`, and a global replace injected the lockup into
-    //    each → duplicate logos (Ascend 2026-06-30). The first match is the
-    //    top-level nav/header, which is the correct single home for the logo.
-    if (swapped === 0 && !/brand-logo\.png/.test(out)) {
-      // Don't append a text wordmark when the brand name is ALREADY shown in the
-      // NAV — a wordmark logo contains it, or the nav renders it in its own
-      // wordmark element (e.g. the LLM's .gg-wordmark) or as bare text. Appending
-      // again double-prints the brand ("Gingham Gingham"). Scope the check to the
-      // first nav/header block ONLY — testing the whole document would false-match
-      // a `.brand-name{}` CSS rule in <style> or the brand name in <title>/<h1>/
-      // footer and wrongly drop the name from an icon-only nav (reviewer 1A).
-      const navMatch = out.match(/<(nav|header)\b[^>]*>[\s\S]*?<\/\1>/i);
-      const navRegion = navMatch ? navMatch[0] : '';
-      const altEsc = alt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const brandAlreadyShown = !!navRegion && (
-        /\bclass="[^"]*\b(?:gg-wordmark|brand-wm|brand-name|brand-text|logo-text)\b/i.test(navRegion) ||
-        new RegExp('>\\s*' + altEsc + '\\s*<').test(navRegion)
-      );
+    // No official logo in this nav — place it.
+    let placed = false;
+    block = block.replace(GLYPH_RE, (g) => {
+      if (placed) { deduped++; return ''; }           // extra glyphs go away too
+      placed = true; swapped++;
+      const open = (g.match(/^<(?:span|div)\b[^>]*>/i) || [''])[0];
+      const close = (g.match(/<\/(?:span|div)>\s*$/i) || [''])[0];
+      return open && close ? `${open}${img}${close}` : img;
+    });
+    if (!placed) {
+      const wmRe = /(<(?:span|div)\b[^>]*\bclass="[^"]*\b(?:logo-text|brand-name|brand-text|brand-wm|gg-wordmark|wordmark)\b[^"]*"[^>]*>)/i;
+      if (wmRe.test(block)) {
+        block = block.replace(wmRe, (m2) => { placed = true; swapped++; return `${img}${m2}`; });
+      }
+    }
+    if (!placed) {
+      // Last resort: lockup right after the nav/header open tag. Suppress the
+      // text wordmark when the brand name is already rendered in this nav.
+      const brandAlreadyShown =
+        /\bclass="[^"]*\b(?:gg-wordmark|brand-wm|brand-name|brand-text|logo-text|wordmark)\b/i.test(block) ||
+        new RegExp('>\\s*' + altEsc + '\\s*<').test(block);
       const textSpan = (isWordmark || brandAlreadyShown)
         ? ''
         : `<span style="font-weight:700;font-size:16px;color:${textColor};white-space:nowrap">${alt}</span>`;
       const lockup =
-        `<div class="brand-logo-lockup" data-testid="host-bank-logo-shell" ` +
+        `<div class="brand-logo-lockup" ` +
         `style="display:inline-flex;align-items:center;gap:10px;flex:0 0 auto">` +
         `${img}${textSpan}</div>`;
-      out = out.replace(/(<(?:nav|header)\b[^>]*>)/i, (openTag) => {
-        swapped++;
-        return `${openTag}${lockup}`;
-      });
+      block = block.replace(/(<(?:nav|header)\b[^>]*>)/i, (openTag) => { swapped++; return `${openTag}${lockup}`; });
     }
-  }
-  if (swapped > 0) console.log(`[Build] Injected local brand logo into ${swapped} host nav/mark slot(s).`);
-  else if (repointed === 0) console.warn('[Build] Local brand logo: no nav/header or logo slot found to inject into.');
+    return block;
+  });
+  if (swapped > 0) console.log(`[Build] Placed the official brand logo in ${swapped} host nav(s).`);
+  if (deduped > 0) console.log(`[Build] Removed ${deduped} self-drawn logo glyph(s) coexisting with the official logo.`);
+  if (swapped === 0 && repointed === 0 && deduped === 0) console.warn('[Build] Local brand logo: no nav/header or logo slot found to inject into.');
   return out;
 }
 
@@ -1052,15 +1056,24 @@ function injectLocalBrandLogo(html, brand) {
 function verifyLocalBrandLogoUsed(html, brand) {
   if (!html || typeof html !== 'string') return html;
   if (!(brand && brand.logo && brand.logo._localSource)) return html;
-  const firstNav = (h) => { const m = h.match(/<(nav|header)\b[\s\S]*?<\/\1>/i); return m ? m[0] : h; };
-  const hasLocal = (region) => /\bsrc=["']brand-logo\.png["']/i.test(region);
-  if (hasLocal(firstNav(html))) return html;   // contract satisfied
-  console.warn('[Build] BRAND LOGO CONTRACT: host nav is missing <img src="brand-logo.png"> (model likely drew its own logo) — auto-healing.');
+  // Check EVERY host nav/header (the old first-nav-only check let pages 2+ ship
+  // self-drawn logos — Gingham mortgage 2026-07-10). Same chrome filter as the
+  // injector's per-block pass.
+  const missingNavs = (h) => {
+    const blocks = h.match(/<(nav|header)\b[^>]*>[\s\S]*?<\/\1>/gi) || [];
+    return blocks.filter((b) =>
+      !/panel-head|api-response-panel|link-events-panel|chrome-logo/i.test(b) &&
+      !/\bsrc=["']brand-logo\.png["']/i.test(b)
+    ).length;
+  };
+  const hasLocal = (h) => missingNavs(h) === 0 && /\bsrc=["']brand-logo\.png["']/i.test(h);
+  if (hasLocal(html)) return html;   // contract satisfied on every host nav
+  console.warn(`[Build] BRAND LOGO CONTRACT: ${missingNavs(html)} host nav(s) missing <img src="brand-logo.png"> (model likely drew its own logo) — auto-healing.`);
   const healed = injectLocalBrandLogo(html, brand);
-  if (hasLocal(firstNav(healed))) {
-    console.log('[Build] BRAND LOGO CONTRACT: auto-heal wired in the official brand asset.');
+  if (hasLocal(healed)) {
+    console.log('[Build] BRAND LOGO CONTRACT: auto-heal wired the official brand asset into every host nav.');
   } else {
-    console.warn('[Build] BRAND LOGO CONTRACT: auto-heal could NOT place brand-logo.png in the nav — check host nav markup.');
+    console.warn(`[Build] BRAND LOGO CONTRACT: auto-heal could NOT cover ${missingNavs(healed)} host nav(s) — check host nav markup.`);
   }
   return healed;
 }
