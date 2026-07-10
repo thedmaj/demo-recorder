@@ -16,15 +16,26 @@ Do this in order:
    (https://drive.google.com/file/d/1_WPeeNoGNIxK3Q4t4q8h2xONR3ZwJpYd/view?usp=sharing),
    then `cd` into the unzipped folder.
 
-2. Run `bash scripts/setup/install.sh` and summarize what it did. (It installs Node
-   deps, Playwright Chromium, and the vidmagik render engine, writes a TEMPLATE
-   `.env`, and GENERATES `.mcp.json` for this machine from `.mcp.json.template`
-   [per-machine, gitignored] — then verifies the AskBill MCP server can launch. It
-   is idempotent — safe to re-run.) If I used Option B (ZIP, no GHE), the installer
-   detects the missing `.git` and AUTO-SKIPS the GitHub steps (gh CLI, GHE auth,
-   identity cache, artifact-repo clone) — that is expected, not an error. NOTE:
-   `.mcp.json` is loaded at agent startup, so after the first install tell me to
-   restart Claude Code once for the MCP servers (AskBill / moviepy / figma) to load.
+2. Run `bash scripts/setup/install.sh` and summarize what it did. (It bootstraps
+   missing dev tools on a fresh Mac — Homebrew [also installs Xcode Command Line
+   Tools], Node 20+, git, ffmpeg, Python 3.10+ [AskBill needs >=3.10; stock macOS
+   3.9 is too old] — then installs Node deps and the Playwright browsers [two
+   separate downloads, large, can look idle], the vidmagik render engine, writes
+   a TEMPLATE `.env`, GENERATES `.mcp.json` for this machine from
+   `.mcp.json.template` [per-machine, gitignored], PROVISIONS the AskBill MCP
+   server from the repo's vendored copy [scripts/setup/mcp-servers/] and verifies
+   it can launch, and prefetches Playwright MCP. GitHub steps run LAST so none of
+   the above can be blocked by them. It is idempotent — safe to re-run.)
+   If I used Option B (ZIP, no GHE), the installer detects the missing `.git` and
+   AUTO-SKIPS the GitHub steps (gh CLI, GHE auth, identity cache, artifact-repo
+   clone) — that is expected, not an error.
+   IMPORTANT — if dev tools are missing, the Homebrew step asks for my macOS
+   password (interactive): have ME run it with `! bash scripts/setup/install.sh`
+   instead of running it yourself. The installer may also offer to register the
+   Glean Enterprise connector — saying yes there is the same as step 4b below.
+   NOTE: `.mcp.json` is loaded at agent startup, so after the first install tell
+   me to restart Claude Code once for the MCP servers (AskBill / playwright /
+   moviepy / figma) to load.
 
 3. SECRETS — stop and tell me, verbatim:
    "Request the completed `.env` file from David Majetic (dmajetic@plaid.com). It is

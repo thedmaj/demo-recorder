@@ -25,21 +25,33 @@ auth or secrets).
 1. Confirm we're inside the repo folder (ls shows package.json + ONBOARDING.md). If
    not, tell me to get the code first (§4): Option A `git clone` from GitHub Enterprise
    (preferred), or Option B download + unzip the ZIP if I lack GHE access.
-2. Run `bash scripts/setup/install.sh` and summarize what it did (writes a TEMPLATE .env;
-   GENERATES per-machine `.mcp.json` from `.mcp.json.template` + verifies AskBill). Tell me
-   to restart Claude Code once after the first install so the MCP servers load.
+2. Run `bash scripts/setup/install.sh` and summarize what it did (bootstraps missing
+   dev tools on a fresh Mac — Homebrew/Xcode CLT, Node 20+, git, ffmpeg, Python 3.10+;
+   installs Node deps + Playwright browsers; writes a TEMPLATE .env; GENERATES
+   per-machine `.mcp.json` from `.mcp.json.template`; PROVISIONS the AskBill MCP
+   server from the repo's vendored copy and verifies it; prefetches Playwright MCP;
+   GitHub steps run LAST). Tell me to restart Claude Code once after the first
+   install so the MCP servers (AskBill / playwright / moviepy / figma) load.
    (Option B ZIP installs have no `.git` — the installer detects that and auto-skips
    the GitHub steps: gh CLI, GHE auth, identity cache, artifact-repo clone. Expected,
-   not an error.)
+   not an error.) If dev tools are missing, Homebrew asks for my macOS password —
+   have ME run `! bash scripts/setup/install.sh` instead of running it yourself.
 3. SECRETS — stop and tell me: "Request the completed `.env` from David Majetic
    (dmajetic@plaid.com)." Wait until I confirm I have it, then:
-   - Ensure David's `.env` is at the REPO ROOT as `./.env`, replacing the template.
-     Verify without printing the key:
-       test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or key empty"
+   - Ensure David's `.env` is at the REPO ROOT as `./.env`, replacing the template —
+     named EXACTLY `.env` (macOS/browsers often save it as `env` or `.env.txt`, and
+     the template silently wins). Verify without printing the key:
+       test -f ./.env && ! cmp -s ./.env ./.env.example && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && ! grep -q '^ANTHROPIC_API_KEY=sk-ant\.\.\.' ./.env && echo ".env OK" || echo ".env missing, still the template, or key empty/placeholder"
    (No GCP service-account JSON needed — embeddings use the GOOGLE_API_KEY in `.env`.)
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do not
    continue until validate-env prints "✓ Required checks passed". (Option B / no-GHE
    installs: skip `whoami` — it needs GitHub auth; validate-env is the gate.)
+4b. GLEAN ENTERPRISE (optional, recommended): if `claude mcp list` has no glean entry
+   pointing at plaid-be.glean.com/mcp, offer to run
+   `scripts/setup/connect-glean-enterprise.sh`, then I finish sign-in myself in
+   Claude Code (`/mcp` → Glean → Authenticate, Plaid SSO). It powers upfront
+   research while drafting inputs/prompt.txt and is SEPARATE from the pipeline's
+   GLEAN_API_TOKEN in .env — don't conflate them; don't block if I decline.
 5. Setup is complete — FIRST orient me. Show me a few **natural-language sample
    prompts** that illustrate how to opt in/out of the two build toggles, and call
    out the defaults: **a build includes the app + the Plaid API/JSON side panels,
@@ -60,7 +72,8 @@ auth or secrets).
    STOP: "Want any changes, or should I build it?" If I ask for edits, update and
    re-show the summary; loop until I approve. Only after I approve, build per §10
    (default app-only `npm run demo`; full video only if I ask).
-Note: `gh auth login --hostname github.plaid.com` is interactive — I run it, not you.
+Note: `gh auth login --hostname github.plaid.com` is interactive — I run it, not you,
+and it only applies to Option A (GHE clone); Option B installs skip GitHub entirely.
 Never commit `.env`.
 ```
 
