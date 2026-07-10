@@ -28,6 +28,9 @@ auth or secrets).
 2. Run `bash scripts/setup/install.sh` and summarize what it did (writes a TEMPLATE .env;
    GENERATES per-machine `.mcp.json` from `.mcp.json.template` + verifies AskBill). Tell me
    to restart Claude Code once after the first install so the MCP servers load.
+   (Option B ZIP installs have no `.git` — the installer detects that and auto-skips
+   the GitHub steps: gh CLI, GHE auth, identity cache, artifact-repo clone. Expected,
+   not an error.)
 3. SECRETS — stop and tell me: "Request the completed `.env` from David Majetic
    (dmajetic@plaid.com)." Wait until I confirm I have it, then:
    - Ensure David's `.env` is at the REPO ROOT as `./.env`, replacing the template.
@@ -35,7 +38,8 @@ auth or secrets).
        test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or key empty"
    (No GCP service-account JSON needed — embeddings use the GOOGLE_API_KEY in `.env`.)
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do not
-   continue until validate-env prints "✓ Required checks passed".
+   continue until validate-env prints "✓ Required checks passed". (Option B / no-GHE
+   installs: skip `whoami` — it needs GitHub auth; validate-env is the gate.)
 5. Setup is complete — FIRST orient me. Show me a few **natural-language sample
    prompts** that illustrate how to opt in/out of the two build toggles, and call
    out the defaults: **a build includes the app + the Plaid API/JSON side panels,
@@ -70,10 +74,16 @@ You operate in **agent mode**: you run **Claude Code** inside the repo folder an
 
 ## 2. Prerequisites (macOS)
 
+> **Fresh Mac with no dev tools?** You can skip this section — `install.sh` (§5)
+> detects what's missing and offers to bootstrap Homebrew (whose installer also
+> sets up the Xcode Command Line Tools) and install everything below through it.
+> To do it by hand instead, the prescriptive list is:
+
 ```bash
 # Homebrew (if `brew --version` fails): https://brew.sh
-node -v                      # need 20+ ; if missing: `nvm install 20 && nvm use 20`
-brew install git gh ffmpeg   # git, GitHub CLI, ffmpeg
+brew install node git ffmpeg python@3.12   # node 20+, git, ffmpeg, python 3.10+ (AskBill needs ≥3.10 — stock macOS 3.9 is too old)
+brew install gh                            # GitHub CLI — Option A (GHE) only; skip for ZIP installs
+node -v                      # verify 20+ (nvm users: `nvm install 20 && nvm use 20`)
 ```
 
 ## 3. Install & update Claude Code
@@ -129,6 +139,9 @@ Download the source as a ZIP, unzip it, and `cd` into the folder:
 > **ZIP caveats (it's a snapshot, not a git clone):**
 > - **No auto-update.** Builds normally fast-forward the clone to the latest templates/fixes before running; a ZIP has no `git` history, so that's skipped. To get a newer version, **re-download the ZIP** (or switch to Option A).
 > - **You can't contribute PRs from a ZIP** — submitting enhancements (§13) requires the GitHub Enterprise clone (Option A). Ask the owner for access when you're ready to contribute.
+> - **`install.sh` auto-skips the GitHub steps.** With no `.git` directory it detects a manual install and skips the gh CLI requirement, GHE auth, identity cache (`pipe whoami`), and the shared demo-catalog clone — no GHE account needed to install and build. If you later get GHE access, re-run with `SKIP_GITHUB=false bash scripts/setup/install.sh`.
+> - **No dev tools required.** On a fresh Mac the installer offers to bootstrap Homebrew (the official installer also sets up the Xcode Command Line Tools) and installs node, git, python3, and ffmpeg through it. Nothing on GHE is needed for tools — git only pulls the public `vidmagik-mcp` render engine from github.com.
+> - **All MCP servers work from the ZIP.** The AskBill server is vendored in the repo (`scripts/setup/mcp-servers/askbill-plaid/`) and auto-provisioned to `~/plaid-mcp-servers/`; Playwright MCP (`@playwright/mcp`) is prefetched from npm; moviepy (vidmagik-mcp) clones from public github.com; figma MCP is remote HTTP. None of them need GHE.
 > - Everything else (setup, secrets, building demos) works identically.
 
 ## 5. One-command install + secrets
@@ -136,16 +149,19 @@ Download the source as a ZIP, unzip it, and `cd` into the folder:
 ```bash
 bash scripts/setup/install.sh
 ```
-This idempotent installer (safe to re-run anytime to update) does it all: verifies prerequisites, `npm install`, creates `.env` from the template, prefetches MCP packages, sets up the vidmagik render engine, confirms `gh` auth, caches your identity, clones the shared demo catalog (`~/.plaid-demo-apps`), and installs the Playwright browser.
+This idempotent installer (safe to re-run anytime to update) does it all: verifies prerequisites (bootstrapping Homebrew + node/git/python3/ffmpeg on a fresh Mac with no dev tools), `npm install`, creates `.env` from the template, prefetches MCP packages, sets up the vidmagik render engine, generates the per-machine `.mcp.json` and provisions the AskBill MCP server from the repo's vendored copy, prefetches Playwright MCP, confirms `gh` auth, caches your identity, clones the shared demo catalog (`~/.plaid-demo-apps`), and installs the Playwright browser. On a manual/ZIP install (no `.git`, no GHE — Option B) the GitHub-dependent steps are auto-skipped; force either way with `--skip-github` or `SKIP_GITHUB=false`.
 
 **Secrets come from David Majetic — not self-provisioned.** Message **David Majetic (dmajetic@plaid.com)** and request **the completed `.env`** (Anthropic, Plaid sandbox, ElevenLabs, Glean/AskBill, GOOGLE_API_KEY, etc.). There is **no GCP service-account JSON** — Google embeddings use the `GOOGLE_API_KEY` in `.env`.
 
 **Place it correctly (the relative path matters):**
-- **`.env` → the repo root**, i.e. `plaid-demo-recorder/.env` (replace the template `install.sh` wrote). The pipeline only reads `.env` from the repo root — a `.env` left in `~/Downloads` or a subfolder will not be found. **Never commit `.env`** (it's gitignored).
+- **`.env` → the repo root**, i.e. `plaid-demo-recorder/.env` (replace the template `install.sh` wrote). The pipeline only reads `.env` from the repo root — a `.env` left in `~/Downloads` or a subfolder will not be found. **The name must be exactly `.env` (leading dot)** — macOS/browsers often save it as `env`, `env.txt`, or `.env.txt`, and then the installer's template silently wins and every key looks "set" but is a placeholder. **Never commit `.env`** (it's gitignored).
   ```bash
   mv ~/Downloads/plaid-demo-recorder.env ./.env      # run from the repo root
-  test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env \
-    && echo ".env OK at repo root" || echo ".env missing or ANTHROPIC_API_KEY empty"
+  # Verify: file present, NOT still the template, and the key isn't the placeholder
+  test -f ./.env && ! cmp -s ./.env ./.env.example \
+    && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env \
+    && ! grep -q '^ANTHROPIC_API_KEY=sk-ant\.\.\.' ./.env \
+    && echo ".env OK at repo root" || echo ".env missing, still the template, or key empty/placeholder"
   ```
 
 **Validate before going further — do not proceed until this passes:**
@@ -159,10 +175,20 @@ If `validate-env` flags a key, it's missing/blank in the `.env` — re-check you
 
 > **`.mcp.json` is generated per-machine, not committed.** It holds absolute paths to the stdio MCP servers (AskBill, moviepy) under *your* home dir, so committing it would ship one person's `/Users/<name>/…` paths to everyone (that's what broke AskBill on fresh clones). The repo tracks **`.mcp.json.template`** (with a `__MCP_HOME__` placeholder); `bash scripts/setup/install.sh` renders it to a gitignored `.mcp.json` for your `$HOME` and verifies the AskBill server can launch. **Restart the agent after install** so it loads the servers. To change server wiring, edit the **template** and re-run the installer — never hand-edit `.mcp.json` (the agent can't, and it's regenerated).
 
+**What each server is (plainly):** **AskBill** = a local Python bridge (venv, Python **3.10+**) to Plaid's docs service — provisioned by `install.sh` from the repo's vendored copy, wired in `.mcp.json`; never point `ASKBILL_API_URL` at the raw `wss://hello-finn…` endpoint (it doesn't speak MCP — the mcp-remote bridge hangs). **Pipeline Glean / Solutions Master** = env-driven npm packages used by the headless `research` stage (no local server to install). **Glean Enterprise connector** = Glean's remote MCP server (`https://plaid-be.glean.com/mcp/all-data`, SSO/OAuth, user-scoped in Claude Code) for *interactive* prompt research — separate from pipeline Glean. **moviepy** = render-only (full-pipeline video). **playwright** = browser automation via `npx @playwright/mcp`. **figma** = remote HTTP (nothing local).
+
 **Research MCPs (optional — wired by the install + your `.env`; builds still complete without them, just with less customer color):**
-- **AskBill** — Plaid product/API documentation Q&A. Wired via `.mcp.json` (generated from the template at install; the installer also verifies the venv can import the server's deps). Without it: `[AskBill unavailable]`.
+- **AskBill** — Plaid product/API documentation Q&A. Wired via `.mcp.json` (generated from the template at install; the installer provisions the server from `scripts/setup/mcp-servers/askbill-plaid/` and verifies the venv can import its deps). Without it: `[AskBill unavailable]`.
 - **Glean (pipeline research)** — `@gleanwork/local-mcp-server`, internal knowledge (Gong calls, collateral, customer stories) used by the pipeline's `research` stage. Enabled by `GLEAN_INSTANCE` + `GLEAN_API_TOKEN` in `.env`. Without it: `[Glean unavailable]`.
-- **Official Glean Claude connector (recommended for ad-hoc work)** — also connect the **official Glean MCP connector in Claude Code** (`/mcp` → add Glean) for *interactive* research and prompt building/enhancing — e.g. "pull the <Account> opportunity context from Glean and draft the prompt." It's richer than the local server (search + read-document + people) and uses managed OAuth (no token in `.env`). The pipeline's headless `research` stage keeps using the local Glean above; you use the official connector when chatting with the agent.
+- **Glean ENTERPRISE connector (recommended — set this up):** connect Claude Code to **Plaid's Glean Enterprise instance** so the agent has real account context (opportunities, Gong calls, collateral, Slack) *while you draft `inputs/prompt.txt`* — better prompts in, better demos out. **This is a completely separate integration from the pipeline Glean above:** it's Glean's official remote MCP server with managed **SSO/OAuth — no API token, nothing in `.env`** — and it does not touch or replace the pipeline's `GLEAN_API_TOKEN`. Setup (one time):
+  ```bash
+  ./scripts/setup/connect-glean-enterprise.sh     # registers the server user-scoped (skips if already connected)
+  # …or by hand:
+  claude mcp add --transport http --scope user glean https://plaid-be.glean.com/mcp/all-data
+  # …or via Glean's configurator:
+  npx -y @gleanwork/configure-mcp-server remote --url https://plaid-be.glean.com/mcp/all-data --client claude-code
+  ```
+  Then inside Claude Code: **`/mcp` → `glean` → Authenticate → sign in with Plaid SSO.** (`install.sh` also offers this step interactively.) Try: *"Search Glean for the `<Account>` opportunity and recent Gong calls, then draft `inputs/prompt.txt` for a demo of their use case."*
 
 **Render engine — vidmagik-mcp (required for video render; app-only builds skip it):**
 The final video render uses the **MoviePy MCP server `vidmagik-mcp`**. Default app-only builds (`npm run demo`, stop at build-qa) **don't render**, so you don't need it to start. For full-pipeline video you must install it:

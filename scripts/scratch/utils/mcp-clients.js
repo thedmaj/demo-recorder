@@ -217,10 +217,22 @@ function buildAskBillMcpCommand() {
     // Best effort only.
   }
 
-  // Optional convenience: websocket URL -> generic MCP remote bridge.
-  // Example: ASKBILL_API_URL=wss://askbill.example.com/mcp
+  // Optional convenience: websocket URL -> generic MCP remote bridge — ONLY
+  // for a URL that actually speaks MCP over websocket (e.g.
+  // ASKBILL_API_URL=wss://askbill.example.com/mcp). The NATIVE AskBill
+  // endpoint (wss://hello-finn.herokuapp.com/) speaks AskBill's own protocol,
+  // NOT MCP — mcp-remote can never complete a handshake with it and hangs
+  // silently for minutes (observed on a fresh install, 2026-07-09). Refuse it
+  // explicitly rather than hang.
   const maybeWsUrl = firstNonEmpty(process.env.ASKBILL_API_URL, process.env.ASKBILL_MCP_URL);
   if (/^wss?:\/\//i.test(maybeWsUrl)) {
+    if (/hello-finn\.herokuapp\.com/i.test(maybeWsUrl)) {
+      console.warn(
+        '[mcp-clients] ASKBILL_API_URL points at the native AskBill websocket (hello-finn.herokuapp.com), which does NOT speak MCP — mcp-remote cannot bridge it and would hang. ' +
+          'Leave ASKBILL_API_URL unset: AskBill runs as the local askbill-plaid MCP server wired in .mcp.json (provisioned by scripts/setup/install.sh).'
+      );
+      return '';
+    }
     return `npx -y mcp-remote "${maybeWsUrl}"`;
   }
   return '';

@@ -20,24 +20,41 @@ Do this in order:
    deps, Playwright Chromium, and the vidmagik render engine, writes a TEMPLATE
    `.env`, and GENERATES `.mcp.json` for this machine from `.mcp.json.template`
    [per-machine, gitignored] — then verifies the AskBill MCP server can launch. It
-   is idempotent — safe to re-run.) NOTE: `.mcp.json` is loaded at agent startup, so
-   after the first install tell me to restart Claude Code once for the MCP servers
-   (AskBill / moviepy / figma) to load.
+   is idempotent — safe to re-run.) If I used Option B (ZIP, no GHE), the installer
+   detects the missing `.git` and AUTO-SKIPS the GitHub steps (gh CLI, GHE auth,
+   identity cache, artifact-repo clone) — that is expected, not an error. NOTE:
+   `.mcp.json` is loaded at agent startup, so after the first install tell me to
+   restart Claude Code once for the MCP servers (AskBill / moviepy / figma) to load.
 
 3. SECRETS — stop and tell me, verbatim:
    "Request the completed `.env` file from David Majetic (dmajetic@plaid.com). It is
     never self-provisioned or committed." Wait until I confirm I have it, then:
    - Ensure David's `.env` is at the REPO ROOT as `./.env` (relative to this repo),
-     REPLACING the template install.sh wrote. Verify placement and that it carries a
-     non-empty `ANTHROPIC_API_KEY` WITHOUT printing the key, e.g.:
-       `test -f ./.env && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && echo ".env OK at repo root" || echo ".env missing or ANTHROPIC_API_KEY empty"`
-     If it reports missing/empty, stop and tell me to (re)place David's `.env` at the
-     repo root. Never commit `.env` (it is gitignored). (No GCP service-account JSON
-     is needed — embeddings use the GOOGLE_API_KEY already in `.env`.)
+     REPLACING the template install.sh wrote. The name must be EXACTLY `.env`
+     (leading dot) — macOS/browsers often save it as `env` or `.env.txt`, and then
+     the installer's template silently wins. Verify placement, that it is NOT still
+     the template, and that the key isn't a placeholder — WITHOUT printing the key:
+       `test -f ./.env && ! cmp -s ./.env ./.env.example && grep -q '^ANTHROPIC_API_KEY=.\+' ./.env && ! grep -q '^ANTHROPIC_API_KEY=sk-ant\.\.\.' ./.env && echo ".env OK at repo root" || echo ".env missing, still the template, or key empty/placeholder"`
+     If it fails, also check for a mis-named file (`ls -la env .env.txt env.txt`
+     at the repo root) and `mv` it to `.env`. Stop and tell me to (re)place David's
+     `.env` if it's absent. Never commit `.env` (it is gitignored). (No GCP
+     service-account JSON is needed — embeddings use the GOOGLE_API_KEY already
+     in `.env`.)
 
 4. VALIDATE — run `npm run pipe -- validate-env` then `npm run pipe -- whoami`. Do NOT
    continue until validate-env prints "✓ Required checks passed". If it flags a key,
-   tell me which one and that I need David Majetic's value for it.
+   tell me which one and that I need David Majetic's value for it. (Option B / no-GHE
+   installs: skip `whoami` — it needs GitHub auth; validate-env is the gate.)
+
+4b. GLEAN ENTERPRISE (optional but recommended — better prompts): check whether a
+   Glean connector for Plaid is registered (`claude mcp list` contains a glean
+   entry pointing at plaid-be.glean.com/mcp). If not, offer to run
+   `scripts/setup/connect-glean-enterprise.sh`, then tell me to finish sign-in
+   myself inside Claude Code: `/mcp` → the Glean entry → Authenticate (Plaid SSO —
+   interactive, I do it, not you). This connector is for UPFRONT research while
+   drafting inputs/prompt.txt (opportunities, Gong calls, collateral). It is
+   SEPARATE from the pipeline's GLEAN_API_TOKEN in .env — do not conflate them,
+   and do not block on it if I decline.
 
 5. Once validated (setup complete), FIRST orient me before asking for a scenario:
    show me ~4-5 NATURAL-LANGUAGE sample prompts illustrating how to opt in/out of
@@ -77,5 +94,6 @@ Do this in order:
    Monitor the build and report status.
 
 Notes: `gh auth login --hostname github.plaid.com` (ONBOARDING §4) is interactive — I
-run that, not you. Optional Glean/AskBill creds live in David's `.env`; without them
+run that, not you; it only applies to Option A (GHE clone) — Option B installs skip
+GitHub entirely. Optional Glean/AskBill creds live in David's `.env`; without them
 research still works, just with less customer color.

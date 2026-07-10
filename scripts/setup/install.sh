@@ -5,11 +5,24 @@
 # Usage:
 #   bash scripts/setup/install.sh                  # interactive
 #   bash scripts/setup/install.sh --non-interactive
+#   bash scripts/setup/install.sh --skip-github    # manual/ZIP install, no GHE
+#
+# GitHub Enterprise is OPTIONAL: users who received this repo as a manual
+# download (ONBOARDING Option B — ZIP, no GHE access) have no `.git` directory,
+# and the GitHub steps (gh CLI requirement, GHE auth, identity cache, artifact
+# repo clone — steps 7d/7e/7f below) are AUTO-SKIPPED for them. Those steps
+# also run LAST, after Playwright + MCP setup, so a GHE hiccup can never block
+# the core install. A GHE `git clone` runs every step as before. Force either
+# way with --skip-github / SKIP_GITHUB=true or SKIP_GITHUB=false.
 #
 # What this script does (all optional prompts when anything is missing):
-#   1. Verifies prerequisites (node >= 20, npm, git, gh CLI, ffmpeg). If gh or
-#      ffmpeg is missing and Homebrew is available, offers (or in --non-interactive
-#      mode runs) brew install; otherwise prints manual install URLs.
+#   1. Verifies prerequisites (node >= 20, npm, git, python3 3.10+, gh CLI,
+#      ffmpeg). On a fresh Mac with NO dev tools (typical for manual/ZIP
+#      downloads) it bootstraps Homebrew once (the official installer also sets
+#      up the Xcode Command Line Tools) and installs whatever is missing through
+#      it — offered interactively, or run automatically in --non-interactive
+#      mode; otherwise prints manual install URLs. Machines that already have
+#      the tools are untouched.
 #   2. Runs `npm install` to fetch Node dependencies.
 #   3. Creates a local `.env` from `.env.example` if one doesn't exist; optionally
 #      prompts to paste secrets (default: skip). If you skip, reach out to the
@@ -18,20 +31,28 @@
 #      service-account JSON / ADC; nothing to set up here.)
 #   3b. When .env lists Glean (token + instance) and/or AskBill mcp-remote settings,
 #      prefetches @gleanwork/local-mcp-server and/or mcp-remote into the npm cache.
-#   4. Runs `gh auth status` to confirm the user is signed in to their
-#      GitHub Enterprise host; offers to run `gh auth login` if not.
-#      When auth is missing, prints step-by-step hints for users who have
-#      never used `gh` or signed in to GitHub before.
-#   5. Resolves and caches the user's GHE identity
-#      (~/.plaid-demo-recorder/identity.json) via `npm run pipe -- whoami`.
-#   6. Clones (or refreshes) the artifact repo `plaid-demo-apps` at
-#      `~/.plaid-demo-apps` so shared demos are immediately available.
-#   7. Installs a Playwright browser for the recorder (`npx playwright install chromium`).
+#   7. Installs the Playwright browsers for the recorder — chromium and
+#      chromium-headless-shell in SEPARATE invocations (the combined install
+#      can hang between artifacts).
 #   7b. Sets up the render engine: ensures `uv` and clones the canonical
 #      vidmagik-mcp MoviePy server (github.com/vizionik25/vidmagik-mcp, branch
-#      pipeline-patches) to ~/.mcp-servers/mcp-moviepy. Optional + graceful —
-#      app-only builds skip it; a failure only falls render back to Remotion.
-#      Skip with --skip-render-engine or SKIP_RENDER_ENGINE=true.
+#      pipeline-patches) to ~/.mcp-servers/mcp-moviepy — public github.com, no
+#      GHE needed. Optional + graceful — app-only builds skip it; a failure only
+#      falls render back to Remotion. Skip with --skip-render-engine or
+#      SKIP_RENDER_ENGINE=true.
+#   7c. MCP servers (always runs, even with --skip-render-engine): generates the
+#      per-machine .mcp.json from .mcp.json.template, verifies the AskBill MCP
+#      server — PROVISIONING it from the vendored copy in
+#      scripts/setup/mcp-servers/askbill-plaid/ when ~/plaid-mcp-servers is
+#      empty (so manual/ZIP downloads get AskBill with no out-of-band step) —
+#      and prefetches the Playwright MCP package (@playwright/mcp).
+#   7d. GitHub Enterprise auth (LAST, optional; auto-skipped on manual installs):
+#      `gh auth status`, offering `gh auth login` — interactive prompts only,
+#      never in --non-interactive mode.
+#   7e. Resolves and caches the user's GHE identity
+#      (~/.plaid-demo-recorder/identity.json) via `npm run pipe -- whoami`.
+#   7f. Clones (or refreshes) the artifact repo `plaid-demo-apps` at
+#      `~/.plaid-demo-apps` so shared demos are immediately available.
 #   8. Prints the quick-start commands for building a first demo.
 #
 # This script is INTENTIONALLY idempotent — re-running it on an already-set-up
@@ -47,10 +68,13 @@ cd "${REPO_ROOT}"
 
 NON_INTERACTIVE=false
 SKIP_RENDER_ENGINE="${SKIP_RENDER_ENGINE:-false}"
+# auto = skip GitHub steps when this is not a git clone (manual/ZIP download).
+SKIP_GITHUB="${SKIP_GITHUB:-auto}"
 for arg in "$@"; do
   case "$arg" in
     --non-interactive|--ci) NON_INTERACTIVE=true ;;
     --skip-render-engine) SKIP_RENDER_ENGINE=true ;;
+    --skip-github) SKIP_GITHUB=true ;;
     -h|--help)
       sed -n '2,/^#\ ──/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -101,6 +125,135 @@ require_cmd() {
     return 0
   fi
   err "${name} not found. ${hint}"
+  return 1
+}
+
+# ── Dev-tools bootstrap (least friction for manual/ZIP installs) ────────────
+# Manual-download users are often non-engineers with NO dev tools at all: no
+# Homebrew, no Xcode Command Line Tools, no node/npm, wrong python3. Each
+# ensure_* below only acts when something is MISSING, so a fully-provisioned
+# machine (the typical GHE clone) runs exactly as before. Strategy: bootstrap
+# Homebrew once (its installer also installs the Xcode Command Line Tools,
+# which provide git + python3), then install everything else through it.
+
+# Make a just-installed Homebrew usable in THIS shell session (the installer
+# only adds it to future shells' rc files).
+refresh_brew_env() {
+  local p
+  for p in /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+    [ -x "$p" ] && { eval "$("$p" shellenv)"; return 0; }
+  done
+  return 1
+}
+
+ensure_homebrew() {
+  have_cmd brew && return 0
+  refresh_brew_env && have_cmd brew && return 0
+  [ "$(uname -s)" = "Darwin" ] || return 1
+  warn "Homebrew not found — it's the least-friction way to install the missing tools (node, git, python3, ffmpeg, gh)."
+  info "The official installer will ask for your macOS password and also sets up the Xcode Command Line Tools if needed (can take several minutes)."
+  if [ "${NON_INTERACTIVE}" = true ] || confirm "Install Homebrew now (official installer from https://brew.sh)?" y; then
+    if [ "${NON_INTERACTIVE}" = true ]; then
+      NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+        || { err "Homebrew install failed — install manually from https://brew.sh, then re-run this script."; return 1; }
+    else
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+        || { err "Homebrew install failed — install manually from https://brew.sh, then re-run this script."; return 1; }
+    fi
+    refresh_brew_env || true
+    have_cmd brew && { ok "Homebrew installed ($(command -v brew))"; return 0; }
+    err "brew still not on PATH — open a NEW terminal and re-run this script."
+    return 1
+  fi
+  info "Skipped. Manual install: https://brew.sh — then re-run this script."
+  return 1
+}
+
+# brew_install_pkg <formula> <verify-cmd> — install a formula (bootstrapping
+# Homebrew first if needed) and confirm the command it provides appears.
+brew_install_pkg() {
+  local formula="$1" cmd="$2"
+  ensure_homebrew || return 1
+  info "Running \`brew install ${formula}\` …"
+  brew install "${formula}" || { err "\`brew install ${formula}\` failed."; return 1; }
+  have_cmd "${cmd}"
+}
+
+ensure_node20() {
+  if have_cmd node; then
+    local major
+    major="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))' 2>/dev/null || echo 0)"
+    if [ "${major}" -ge 20 ] 2>/dev/null; then
+      ok "node $(node -v) (>=20 required)"
+      return 0
+    fi
+    warn "node $(node -v) is too old (>=20 required)."
+  else
+    warn "node not found (Node.js 20+ required)."
+  fi
+  if [ "${NON_INTERACTIVE}" = true ] || confirm "Install Node.js with Homebrew (\`brew install node\`)?" y; then
+    if brew_install_pkg node node; then
+      ok "node $(node -v) installed"
+      return 0
+    fi
+  fi
+  err "Install Node.js 20+ from https://nodejs.org (or nvm: \`nvm install 20 && nvm use 20\`), then re-run this script."
+  return 1
+}
+
+# Newest python3 interpreter that can run the AskBill MCP server: the `mcp`
+# pip package requires Python >= 3.10, and STOCK macOS python3 (Xcode CLT) is
+# 3.9.6 — building the venv with bare `python3` fails there with "No matching
+# distribution found for mcp" (observed on a fresh Mac, 2026-07-09). Echoes the
+# best interpreter path, or fails when none satisfies 3.10+.
+pick_python3() {
+  local cand
+  for cand in python3.13 python3.12 python3.11 python3.10 python3; do
+    have_cmd "${cand}" || continue
+    "${cand}" -c 'import sys, venv, ensurepip; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1 \
+      && { command -v "${cand}"; return 0; }
+  done
+  return 1
+}
+
+# python3 3.10+ with a working venv module — needed by the AskBill MCP research
+# server (`mcp` package floor). Warn-level: the pipeline builds without it
+# (research tools degrade).
+ensure_python3() {
+  local py
+  if py="$(pick_python3)"; then
+    ok "python3 $("${py}" -V 2>&1 | awk '{print $2}') at ${py} (>=3.10 with venv — AskBill MCP requirement)"
+    return 0
+  fi
+  if have_cmd python3; then
+    warn "python3 $(python3 -V 2>&1 | awk '{print $2}') is too old for the AskBill MCP server — the \`mcp\` package needs 3.10+ (stock macOS python3 is 3.9)."
+  else
+    warn "python3 not found — the AskBill MCP research server needs Python 3.10+."
+  fi
+  if [ "${NON_INTERACTIVE}" = true ] || confirm "Install Python 3.12 with Homebrew (\`brew install python@3.12\`)?" y; then
+    brew_install_pkg "python@3.12" python3.12 || brew_install_pkg python python3 || true
+    if py="$(pick_python3)"; then
+      ok "python3 $("${py}" -V 2>&1 | awk '{print $2}') installed at ${py}"
+      return 0
+    fi
+  fi
+  warn "Continuing without Python 3.10+ — AskBill research tools won't load. Install later (\`brew install python@3.12\`) and re-run this script."
+  return 1
+}
+
+ensure_git_bin() {
+  if have_cmd git; then
+    ok "git found ($(command -v git))"
+    return 0
+  fi
+  warn "git not found."
+  if [ "${NON_INTERACTIVE}" = true ] || confirm "Install git with Homebrew (\`brew install git\`)?" y; then
+    if brew_install_pkg git git; then
+      ok "git installed ($(command -v git))"
+      return 0
+    fi
+  fi
+  err "Install git: https://git-scm.com (macOS: \`xcode-select --install\` or \`brew install git\`)."
   return 1
 }
 
@@ -218,8 +371,11 @@ generate_mcp_json() {
     else
       # Any /Users/<x> or /home/<x> prefix in the file that isn't THIS $HOME means
       # the config was authored on another machine (the committed-path problem).
+      # `|| true` is load-bearing: with set -e + pipefail, grep exiting 1 on
+      # "no foreign paths" (the healthy case) would otherwise kill the script
+      # now that this function runs outside a `|| true` call site.
       local foreign
-      foreign="$(grep -oE "/(Users|home)/[^/\"]+" "${mcp}" 2>/dev/null | grep -vxF "${HOME}" | head -1)"
+      foreign="$(grep -oE "/(Users|home)/[^/\"]+" "${mcp}" 2>/dev/null | grep -vxF "${HOME}" | head -1 || true)"
       [ -n "${foreign}" ] && { regen=1; reason="points at another home (${foreign})"; }
     fi
     if [ "${regen}" -eq 1 ]; then
@@ -270,9 +426,10 @@ normalize_mcp_json() {
 # Reads the server's `command` (venv python) + `args[0]` (server script) straight
 # from .mcp.json, confirms both exist, and runs an `import mcp, websockets` smoke
 # test against that interpreter (the server's only non-stdlib imports; there is no
-# requirements.txt). If the script exists but the venv is missing/incomplete, it
-# self-heals (create venv + pip install the two deps). The server SCRIPT itself is
-# provisioned out-of-band (internal), so a missing script only warns. Never blocks.
+# requirements.txt). Self-provisions a missing server script from the VENDORED
+# copy at scripts/setup/mcp-servers/askbill-plaid/ (shipped in the repo, so ZIP
+# downloads work with no out-of-band step); if the venv is missing/incomplete,
+# it self-heals (create venv + pip install the two deps). Never blocks.
 verify_askbill_mcp() {
   local mcp="${REPO_ROOT}/.mcp.json"
   [ -f "${mcp}" ] || return 0
@@ -302,16 +459,35 @@ PY
     warn "askbill-plaid not found in .mcp.json — AskBill research tools won't load."
     return 0
   fi
-  # 1. Server script must exist (obtained out-of-band — not cloneable here).
+  # 1. Server script must exist — provision it from the vendored copy shipped
+  #    in the repo (scripts/setup/mcp-servers/) when missing, so manual/ZIP
+  #    installs get AskBill with no out-of-band step.
+  local vendored="${REPO_ROOT}/scripts/setup/mcp-servers/askbill-plaid/askbill_mcp_server.py"
+  if [ ! -f "${script}" ] && [ -n "${script}" ] && [ -f "${vendored}" ]; then
+    info "askbill MCP server missing at ${script} — provisioning from the repo's vendored copy."
+    mkdir -p "$(dirname "${script}")" 2>/dev/null || true
+    cp "${vendored}" "${script}" 2>/dev/null && chmod +x "${script}" 2>/dev/null \
+      && ok "askbill server script installed at ${script}" \
+      || warn "could not copy the vendored askbill server to ${script}."
+  fi
   if [ ! -f "${script}" ]; then
     warn "askbill MCP server script missing at ${script:-<unset>} — research (AskBill) tools won't load. Obtain the askbill-plaid server from the repo owner into ${HOME}/plaid-mcp-servers/askbill-plaid/."
     return 0
   fi
   srv_dir="$(dirname "${script}")"
-  # 2. Interpreter (venv python) must exist; create the venv if it's absent.
+  # 2. Interpreter (venv python) must exist AND be 3.10+ (the `mcp` package
+  #    floor — a venv built from stock macOS python3 3.9 can never install it).
+  #    Create the venv with the best available interpreter; REBUILD it when an
+  #    existing one is too old.
+  local basepy
+  basepy="$(pick_python3 2>/dev/null || echo python3)"
+  if [ -x "${cmd}" ] && ! "${cmd}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+    warn "askbill venv python is $("${cmd}" -V 2>&1 | awk '{print $2}') — too old for the \`mcp\` package (needs 3.10+). Rebuilding the venv with ${basepy}..."
+    rm -rf "${srv_dir}/venv" 2>/dev/null || true
+  fi
   if [ ! -x "${cmd}" ]; then
-    warn "askbill venv python missing at ${cmd} — creating venv..."
-    python3 -m venv "${srv_dir}/venv" >/dev/null 2>&1 || true
+    warn "askbill venv python missing at ${cmd} — creating venv with ${basepy}..."
+    "${basepy}" -m venv "${srv_dir}/venv" >/dev/null 2>&1 || true
   fi
   # 3. Smoke-test the EXACT interpreter .mcp.json launches against the server's deps.
   if [ -x "${cmd}" ] && "${cmd}" -c "import mcp, websockets" >/dev/null 2>&1; then
@@ -328,7 +504,7 @@ PY
       return 0
     fi
   fi
-  warn "askbill MCP present but its venv can't import mcp/websockets (${cmd:-<unset>}). Recreate it: python3 -m venv \"${srv_dir}/venv\" && \"${srv_dir}/venv/bin/pip\" install mcp websockets. AskBill research tools won't load until this passes."
+  warn "askbill MCP present but its venv can't import mcp/websockets (${cmd:-<unset>}). Recreate it with Python 3.10+: rm -rf \"${srv_dir}/venv\" && ${basepy} -m venv \"${srv_dir}/venv\" && \"${srv_dir}/venv/bin/pip\" install mcp websockets. AskBill research tools won't load until this passes."
 }
 
 setup_render_engine() {
@@ -363,11 +539,6 @@ setup_render_engine() {
   else
     warn "vidmagik-mcp present but main.py missing — verify the clone."
   fi
-  # Build .mcp.json for THIS machine from .mcp.json.template (gitignored, per-user).
-  # The render pipeline resolves ~/.mcp-servers/mcp-moviepy portably via os.homedir()
-  # regardless, but the INTERACTIVE agent MCP tools read .mcp.json literally — so we
-  # generate it here with the current $HOME (askbill + moviepy launcher paths).
-  generate_mcp_json
   return 0
 }
 
@@ -378,23 +549,42 @@ heading "Checking prerequisites"
 
 FAIL=0
 
-if command -v node >/dev/null 2>&1; then
-  NODE_MAJOR="$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')"
-  if [ "${NODE_MAJOR}" -ge 20 ] 2>/dev/null; then
-    ok "node $(node -v) (>=20 required)"
+# Resolve SKIP_GITHUB=auto: a manual/ZIP download (ONBOARDING Option B) has no
+# .git directory and no GHE access — skip the GitHub steps for it. A GHE clone
+# keeps today's behavior. --skip-github / SKIP_GITHUB=true|false overrides.
+if [ "${SKIP_GITHUB}" = "auto" ]; then
+  if [ -e "${REPO_ROOT}/.git" ]; then
+    SKIP_GITHUB=false
   else
-    err "node $(node -v) is too old. Install Node.js 20+ from https://nodejs.org or via nvm: \`nvm install 20 && nvm use 20\`"
-    FAIL=1
+    SKIP_GITHUB=true
+    info "No .git directory — manual/ZIP install detected. GitHub steps (gh CLI, GHE auth, identity, artifact repo) will be skipped. Force them with SKIP_GITHUB=false."
   fi
-else
-  err "node not found. Install Node.js 20+ from https://nodejs.org or via nvm: \`nvm install 20\`"
-  FAIL=1
 fi
 
-require_cmd npm  "Bundled with Node.js — reinstall Node.js." || FAIL=1
-require_cmd git  "Install from https://git-scm.com or via \`brew install git\`." || FAIL=1
+# Fresh machine with no dev tools (typical manual/ZIP download): offer the
+# one-time Homebrew bootstrap up front — it also installs the Xcode Command
+# Line Tools, and every remaining tool installs through it. No-op when brew
+# or all the tools are already present.
+if [ "$(uname -s)" = "Darwin" ] && ! have_cmd brew; then
+  if ! have_cmd node || ! have_cmd git || ! have_cmd ffmpeg || ! have_cmd python3; then
+    ensure_homebrew || true
+  fi
+fi
 
-ensure_github_cli || FAIL=1
+ensure_node20 || FAIL=1
+require_cmd npm  "Bundled with Node.js — reinstall Node.js." || FAIL=1
+ensure_python3 || true   # warn-only: research (AskBill MCP) degrades gracefully
+
+if [ "${SKIP_GITHUB}" = true ]; then
+  # git stays useful (render-engine clone from public github.com) but is not
+  # required for a manual install — warn instead of failing.
+  ensure_git_bin \
+    || warn "Continuing without git — render engine setup and \`pipe pull\` won't work, but the core pipeline will."
+  info "Skipping gh (GitHub CLI) requirement — \`pipe publish\` / \`pipe pull\` need it later; install via https://cli.github.com when you get GHE access."
+else
+  ensure_git_bin || FAIL=1
+  ensure_github_cli || FAIL=1
+fi
 ensure_ffmpeg_bin || FAIL=1
 
 if [ "${FAIL}" -ne 0 ]; then
@@ -500,6 +690,21 @@ if [ "${NEW_ENV_CREATED}" -eq 1 ]; then
   fi
 fi
 
+# Guard against the two ways a real .env silently loses to the template we
+# just wrote (cost a fresh install real time, 2026-07-09):
+#  a. the owner's file was saved WITHOUT the leading dot (`env`, `env.txt`,
+#     `.env.txt` — macOS/browsers strip or append) so the template still wins;
+#  b. .env exists but is byte-identical to .env.example — placeholder keys like
+#     `sk-ant...` pass a naive non-empty check and fail later with HTTP 401.
+if [ -f ".env" ] && [ -f ".env.example" ] && cmp -s ".env" ".env.example"; then
+  for stray in env env.txt .env.txt; do
+    if [ -f "${stray}" ]; then
+      warn "Found ./${stray} while .env is still the untouched template — a real .env saved without the exact name? Fix: mv \"${stray}\" .env"
+    fi
+  done
+  warn ".env is still IDENTICAL to .env.example (template/placeholder values). Replace it with the real .env from the repo owner — the file must be named exactly \`.env\` (leading dot) at the repo root. \`npm run pipe -- validate-env\` before building."
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3b. MCP npm packages (Glean + AskBill bridge)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -511,10 +716,90 @@ else
   warn "MCP prefetch script exited unexpectedly — first research run may download packages."
 fi
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. GitHub Enterprise authentication
+# 7. Playwright browser (needed for recording)
+# ─────────────────────────────────────────────────────────────────────────────
+heading "Playwright browser"
+
+if node -e "require.resolve('playwright')" >/dev/null 2>&1; then
+  # BOTH variants: `chromium` (record) and `chromium-headless-shell` (build-qa's
+  # headless visual capture + plaid-link-qa + brand screenshots). Without the
+  # headless-shell, build-qa silently degrades to token-only — no visual score
+  # (observed on a first-time build, Astera 2026-06-30).
+  # SEPARATE invocations, one browser each: the combined two-browser install
+  # has been observed to hang indefinitely between artifacts on fresh machines
+  # (0% CPU after the first download — 2026-07-09); installed separately each
+  # completes in ~20s. Prefer the repo's pinned playwright over npx.
+  PLAYWRIGHT_BIN="./node_modules/.bin/playwright"
+  [ -x "${PLAYWRIGHT_BIN}" ] || PLAYWRIGHT_BIN="npx --yes playwright"
+  info "Downloading Playwright browsers (idempotent; large download — a few hundred MB the first time, and it can look idle for a minute between progress lines)."
+  ${PLAYWRIGHT_BIN} install chromium \
+    || warn "chromium install failed — rerun \`${PLAYWRIGHT_BIN} install chromium\` later."
+  ${PLAYWRIGHT_BIN} install chromium-headless-shell \
+    || warn "chromium-headless-shell install failed — rerun \`${PLAYWRIGHT_BIN} install chromium-headless-shell\` later (build-qa's visual score needs it)."
+  ok "Playwright Chromium + headless-shell ready"
+else
+  warn "playwright package not found — this should have been installed by \`npm install\`. build-qa's visual score and \`record\` need it: run \`npm install\`, then \`npx playwright install chromium\` and \`npx playwright install chromium-headless-shell\` (separately — the combined install can hang)."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7b. Render engine — vidmagik-mcp (MoviePy MCP server) for full-pipeline video.
+#     Optional + graceful: app-only builds (`npm run demo`) don't render, and a
+#     failed setup only means render falls back to Remotion. --skip-render-engine
+#     (or SKIP_RENDER_ENGINE=true) to skip.
+# ─────────────────────────────────────────────────────────────────────────────
+heading "Render engine (vidmagik-mcp — for full-pipeline video)"
+setup_render_engine || true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7c. MCP servers config (.mcp.json) — ALWAYS runs, independent of the render
+#     engine (it used to run inside setup_render_engine, so --skip-render-engine
+#     silently skipped .mcp.json generation and the AskBill verify/provision).
+#     Builds .mcp.json for THIS machine from .mcp.json.template (gitignored,
+#     per-user; askbill + moviepy launcher paths use $HOME), verifies/provisions
+#     the AskBill server, and prefetches the Playwright MCP npm package so the
+#     agent's first launch doesn't stall on a download.
+# ─────────────────────────────────────────────────────────────────────────────
+heading "MCP servers (.mcp.json + AskBill + Playwright MCP)"
+generate_mcp_json
+
+info "Prefetching Playwright MCP package (@playwright/mcp) into the npx cache…"
+if npx --yes @playwright/mcp@latest --version >/dev/null 2>&1; then
+  ok "Playwright MCP package cached (browsers were installed in step 7)."
+else
+  warn "Could not prefetch @playwright/mcp — the agent will download it on first MCP launch instead."
+fi
+
+# Glean ENTERPRISE connector (official remote MCP, OAuth/SSO — user-scoped in
+# Claude Code) for upfront interactive research while drafting inputs/prompt.txt.
+# SEPARATE from the pipeline's Glean (.env GLEAN_API_TOKEN, headless research
+# stage) — neither replaces the other. Registration is safe (auth happens later
+# via /mcp), but it edits USER-level Claude config, so it's offered, never forced.
+if command -v claude >/dev/null 2>&1; then
+  if claude mcp list 2>/dev/null | grep -qiE 'glean.*-be\.glean\.com/mcp'; then
+    ok "Glean Enterprise MCP already registered in Claude Code (finish auth via /mcp if you haven't)."
+  elif [ "${NON_INTERACTIVE}" = true ]; then
+    info "Optional: connect Claude Code to Plaid's Glean Enterprise for prompt research — run scripts/setup/connect-glean-enterprise.sh, then /mcp → glean → sign in with SSO."
+  elif confirm "Register Plaid's Glean Enterprise MCP in Claude Code (user-scoped; for prompt research — SSO auth via /mcp afterwards)?" y; then
+    bash "${REPO_ROOT}/scripts/setup/connect-glean-enterprise.sh" || warn "Glean Enterprise registration failed — run scripts/setup/connect-glean-enterprise.sh manually."
+  else
+    info "Skipped. Later: scripts/setup/connect-glean-enterprise.sh (then /mcp → glean → SSO)."
+  fi
+else
+  info "Optional: after installing Claude Code, run scripts/setup/connect-glean-enterprise.sh to connect Plaid's Glean Enterprise for prompt research."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7d. GitHub Enterprise authentication (optional — runs LAST, after Playwright
+#     and MCP setup, so those always complete; skipped on manual installs)
 # ─────────────────────────────────────────────────────────────────────────────
 heading "GitHub Enterprise authentication"
+
+if [ "${SKIP_GITHUB}" = true ]; then
+info "Skipped (manual install without GitHub Enterprise access)."
+info "To enable later: install gh (https://cli.github.com), run \`gh auth login --hostname <your-GHE-host>\`, then re-run this script with SKIP_GITHUB=false."
+else
 
 # Printed when `gh auth status` fails — helps first-time `gh` users who have
 # never run `gh auth login` (or never authenticated against this host).
@@ -582,7 +867,11 @@ if gh auth status --hostname "${GHE_HOST}" >/dev/null 2>&1; then
 else
   warn "Not signed in to ${GHE_HOST}."
   print_gh_first_time_help "${GHE_HOST}"
-  if confirm "Run \`gh auth login --hostname ${GHE_HOST}\` now?" y; then
+  # `gh auth login` is INTERACTIVE (browser/device flow) — never launch it in
+  # --non-interactive mode, where it would stall the run (observed 2026-07-09).
+  if [ "${NON_INTERACTIVE}" = true ]; then
+    warn "Non-interactive mode — skipping \`gh auth login\`. Run it yourself: gh auth login --hostname ${GHE_HOST}"
+  elif confirm "Run \`gh auth login --hostname ${GHE_HOST}\` now?" y; then
     gh auth login --hostname "${GHE_HOST}" || {
       err "\`gh auth login\` exited with an error."
       warn "Fix auth (browser or PAT), then run: gh auth status --hostname ${GHE_HOST}"
@@ -599,12 +888,16 @@ info "  · SSH: add your public key to GHE → Settings → SSH keys; test: ${CY
 info "  · HTTPS: set ${CYAN}PLAID_DEMO_APPS_REPO${RESET} to an https:// URL in .env and use a PAT when Git prompts."
 info "  See README: GitHub authentication — pull updated code + shared demo repo."
 
+fi  # end SKIP_GITHUB gate (section 4)
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Identity cache
+# 7e. Identity cache
 # ─────────────────────────────────────────────────────────────────────────────
 heading "Resolving and caching identity"
 
-if npm run --silent pipe -- whoami >/dev/null 2>&1; then
+if [ "${SKIP_GITHUB}" = true ]; then
+info "Skipped — identity resolution uses gh. After GHE auth is set up, run: npm run pipe -- whoami"
+elif npm run --silent pipe -- whoami >/dev/null 2>&1; then
   WHO_OUT="$(npm run --silent pipe -- whoami 2>/dev/null || true)"
   GH_LOGIN_FROM_PIPE="$(printf "%s" "${WHO_OUT}" | awk -F: '/Login:/{gsub(/[[:space:]]*/,"",$2); print $2; exit}')"
   if [ -n "${GH_LOGIN_FROM_PIPE}" ]; then
@@ -617,9 +910,13 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. Artifact repo clone
+# 7f. Artifact repo clone
 # ─────────────────────────────────────────────────────────────────────────────
 heading "Artifact repo (published demo apps)"
+
+if [ "${SKIP_GITHUB}" = true ]; then
+info "Skipped — the shared plaid-demo-apps repo lives on GitHub Enterprise. Set up gh + GHE auth, then run: npm run pipe -- pull"
+else
 
 ARTIFACT_DIR="${PLAID_DEMO_APPS_DIR:-${HOME}/.plaid-demo-apps}"
 ARTIFACT_REPO="${PLAID_DEMO_APPS_REPO:-}"
@@ -640,37 +937,15 @@ else
     ( cd "${ARTIFACT_DIR}" && git pull --ff-only ) || warn "Pull failed — resolve manually or re-clone."
   else
     info "Cloning ${ARTIFACT_REPO} → ${ARTIFACT_DIR}"
-    git clone "${ARTIFACT_REPO}" "${ARTIFACT_DIR}"
+    # Guarded: under `set -e` an unguarded clone failure (no access/VPN) used
+    # to abort the whole installer here.
+    git clone "${ARTIFACT_REPO}" "${ARTIFACT_DIR}" \
+      || warn "Clone failed (access/VPN?) — continuing. Later: npm run pipe -- pull"
   fi
-  ok "Artifact repo ready at ${ARTIFACT_DIR}"
+  [ -d "${ARTIFACT_DIR}/.git" ] && ok "Artifact repo ready at ${ARTIFACT_DIR}"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 7. Playwright browser (needed for recording)
-# ─────────────────────────────────────────────────────────────────────────────
-heading "Playwright browser"
-
-if node -e "require.resolve('playwright')" >/dev/null 2>&1; then
-  info "Ensuring Chromium is installed for Playwright (idempotent)."
-  # BOTH variants: `chromium` (record) and `chromium-headless-shell` (build-qa's
-  # headless visual capture + plaid-link-qa + brand screenshots). Without the
-  # headless-shell, build-qa silently degrades to token-only — no visual score
-  # (observed on a first-time build, Astera 2026-06-30).
-  npx --yes playwright install chromium chromium-headless-shell \
-    || warn "playwright install failed — rerun \`npx playwright install chromium chromium-headless-shell\` later."
-  ok "Playwright Chromium + headless-shell ready"
-else
-  warn "playwright package not found — this should have been installed by \`npm install\`. build-qa's visual score and \`record\` need it: run \`npm install\` then \`npx playwright install chromium chromium-headless-shell\`."
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 7b. Render engine — vidmagik-mcp (MoviePy MCP server) for full-pipeline video.
-#     Optional + graceful: app-only builds (`npm run demo`) don't render, and a
-#     failed setup only means render falls back to Remotion. --skip-render-engine
-#     (or SKIP_RENDER_ENGINE=true) to skip.
-# ─────────────────────────────────────────────────────────────────────────────
-heading "Render engine (vidmagik-mcp — for full-pipeline video)"
-setup_render_engine || true
+fi  # end SKIP_GITHUB gate (section 6)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. First-run quick start
