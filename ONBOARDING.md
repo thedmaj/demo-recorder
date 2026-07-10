@@ -87,7 +87,17 @@ You operate in **agent mode**: you run **Claude Code** inside the repo folder an
 
 ## 2. Prerequisites (macOS)
 
-> **Fresh Mac with no dev tools?** You can skip this section — `install.sh` (§5)
+**Start a terminal session first — every command in this guide runs in one:**
+
+1. Open **Terminal**: press `⌘ Space` (Spotlight), type `terminal`, press Enter.
+   (Or Finder → Applications → Utilities → Terminal. iTerm2 works too.)
+2. Create a working folder for the repo and move into it — §4 clones/unzips the
+   repo **inside** this folder:
+   ```bash
+   mkdir -p ~/plaid-demos && cd ~/plaid-demos
+   ```
+
+> **Fresh Mac with no dev tools?** You can skip the rest of this section — `install.sh` (§5)
 > detects what's missing and offers to bootstrap Homebrew (whose installer also
 > sets up the Xcode Command Line Tools) and install everything below through it.
 > To do it by hand instead, the prescriptive list is:
@@ -102,12 +112,18 @@ node -v                      # verify 20+ (nvm users: `nvm install 20 && nvm use
 ## 3. Install & update Claude Code
 
 ```bash
-# Install (either works):
-curl -fsSL https://claude.ai/install.sh | bash      # native installer
+# 1. Check whether Claude Code is already installed:
+command -v claude && echo "claude is installed and executable" || echo "claude NOT found — run the install below"
+
+# 2. Install only if missing (either works):
+curl -fsSL https://claude.ai/install.sh | bash      # standard native installer
 #   …or…
 npm install -g @anthropic-ai/claude-code
 
-claude --version             # verify
+# 3. Verify the `claude` command is executable (if you JUST installed it,
+#    open a NEW terminal tab/window first so PATH picks it up):
+command -v claude && claude --version && echo "claude OK" || echo "claude not on PATH — open a new terminal and re-run this check"
+
 claude update                # keep it current (run this whenever you start work)
 ```
 You'll log in to Claude on first launch. Tip: `/fast` inside Claude Code enables Fast mode (Opus, faster output).
