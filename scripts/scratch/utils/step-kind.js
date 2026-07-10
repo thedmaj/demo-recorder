@@ -83,7 +83,44 @@ function annotateScriptWithStepKinds(demoScript) {
       step.stepKind = kind;
       mutated += 1;
     }
-    counts[kind] = (counts[kind] || 0) + 1;
+  }
+
+  // Paired-insight demotion (duplicate-API-surface fix, 2026-07-10): when an
+  // insight step sits ADJACENT to a slide step covering the same API (id stems
+  // `X-insight` / `X-slide`, e.g. base-report-insight + base-report-slide), the
+  // blanket insight→slide classification above renders BOTH as Plaid deck
+  // shells — two near-identical dark slides listing the same fields (observed:
+  // Ascend income/base pairs, Spring EQ base/lend pairs; both scored fine in
+  // per-slide vision QA because nothing compares adjacent slides). Demote the
+  // INSIGHT member of such a pair to stepKind 'app' so it renders as the
+  // host-side reveal (host card + global #api-response-panel hydrated by
+  // post-panels) and the slide member stays the single deck surface — the
+  // contrast the pairing idiom intends. Solo insight steps (no adjacent
+  // same-stem slide) keep the deck-shell classification unchanged.
+  const steps = demoScript.steps;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step || step.stepKind !== 'slide') continue;
+    if (String(step.sceneType || '').toLowerCase() !== 'insight') continue;
+    const stem = String(step.id || '').replace(/-insight$/i, '');
+    if (!stem || stem === String(step.id || '')) continue;
+    const neighbors = [steps[i - 1], steps[i + 1]].filter(Boolean);
+    const pairedSlide = neighbors.find(
+      (n) => String(n.id || '').toLowerCase() === `${stem.toLowerCase()}-slide` && deriveStepKind(n) === 'slide'
+    );
+    if (pairedSlide) {
+      step.stepKind = 'app';
+      mutated += 1;
+      console.log(
+        `[step-kind] Demoted paired insight "${step.id}" to stepKind:app (adjacent slide "${pairedSlide.id}" ` +
+        `covers the same API — the insight renders host-side to avoid duplicate deck screens).`
+      );
+    }
+  }
+
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    counts[step.stepKind] = (counts[step.stepKind] || 0) + 1;
   }
 
   return { script: demoScript, counts, mutated };

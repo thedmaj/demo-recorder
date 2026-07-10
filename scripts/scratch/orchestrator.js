@@ -1048,7 +1048,10 @@ async function runScriptCritique() {
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1024,
+    // 1024 truncated the issues[] JSON once the critique rubric grew
+    // (duplicate-api-surface rule, 2026-07-10) → "Could not parse critique
+    // response" on every run. 2048 gives the full issue list headroom.
+    max_tokens: 2048,
     system,
     messages: userMessages,
   });

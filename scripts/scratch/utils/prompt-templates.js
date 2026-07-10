@@ -1315,6 +1315,19 @@ function buildScriptGenerationPrompt(ingestedInputs, productResearch, opts = {})
       `- code-proof (one API call/snippet) · customer-proof (testimonial + stat)\n` +
       `Use api-field-reveal — NOT kpi-dashboard/hero-metrics — when the slide shows the fields an API response\n` +
       `returns alongside sample values (e.g. CRA Income Insights / Cash Flow Insights / Base Report read-outs).\n\n` +
+      `ONE REVEAL SURFACE PER API (CRITICAL):\n` +
+      `Each API reveal gets EXACTLY ONE surface — a sceneType:"insight" step OR a sceneType:"slide" step,\n` +
+      `never both — unless the ingested prompt EXPLICITLY requests an adjacent pair for that API (numbered\n` +
+      `beats like "5 insight / 5a technical slide", or "place each technical slide adjacent to its matching\n` +
+      `insight beat"). Do NOT invent a "-slide" companion for an insight step: an observed failure emitted\n` +
+      `base-report-insight + base-report-slide AND lend-score-insight + lend-score-slide when the prompt asked\n` +
+      `for 3 slides total — producing adjacent near-duplicate deck screens showing the same fields.\n` +
+      `When the prompt DOES request a pair, the two members MUST CONTRAST: the insight member is the HOST-side\n` +
+      `reveal (host-branded card per the prompt's host-chrome description, values as styled host UI, JSON in the\n` +
+      `collapsed global panel — do NOT render it as a .slide-root deck shell), and the slide member is the Plaid\n` +
+      `deck surface (sceneType:"slide", slideRole "api-field-reveal"). Never two deck slides for one API.\n` +
+      `SLIDE COUNT IS BINDING: when the ingested prompt specifies a slide count or an explicit slide list\n` +
+      `("3 slides: …", "up to 5 slides: …"), emit exactly those sceneType:"slide" steps — no extras.\n\n` +
       `HOST VS SLIDE — ZERO COMPONENT CROSS-REUSE (CRITICAL):\n` +
       `Do not describe or require host demo UI (nav, banners, account cards, dashboard modules) inside slide visualState or slide copy — slides are Plaid-only deck surfaces.\n` +
       `Do not describe or require slide deck shell (.slide-root regions, slide header/footer strips, slide panel grid) inside host, link, or insight visualState.\n` +
@@ -1741,7 +1754,7 @@ function buildAppGenerationPrompt(demoScript, architectureBrief, qaReport = null
     (includeFullSlideTemplate && slideTemplateCss
       ? `SLIDE TEMPLATE CSS (scoped — embed verbatim in <style>):\n${slideTemplateCss}\n\n` +
         `SLIDE VS HOST APP (critical):\n` +
-        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\`. Do not put host/link flows inside slide shells. **Plaid insight** steps may reuse the **pipeline slide shell regions** (\`.slide-root\`, \`.slide-header\`, \`.slide-body\`, \`.slide-footer\` from pipeline-slide-shell.html) for deck-style API reveals—especially Plaid Signal / ACH return risk (\`/signal/evaluate\`): use a scoped modifier on \`.slide-root\` (e.g. \`slide-root--signal-insight\`). Give header/footer testids a **step-unique suffix** (e.g. \`-signal-risk\`) so they never duplicate \`value-summary-slide\` testids. Raw JSON only in \`#api-response-panel\`. JSON panel is a fixed overlay (z-index 2100) — slides and host steps must NOT reserve space for it.\n` +
+        `- **ZERO COMPONENT CROSS-REUSE (hard rule):** Do not embed host demo UI (nav, banners, account/overview cards, transfer chrome, host data-testid blocks) inside \`.slide-root\`. Do not put host/link flows inside slide shells. **Plaid insight** steps may reuse the **pipeline slide shell regions** (\`.slide-root\`, \`.slide-header\`, \`.slide-body\`, \`.slide-footer\` from pipeline-slide-shell.html) for deck-style API reveals—especially Plaid Signal / ACH return risk (\`/signal/evaluate\`): use a scoped modifier on \`.slide-root\` (e.g. \`slide-root--signal-insight\`). Give header/footer testids a **step-unique suffix** (e.g. \`-signal-risk\`) so they never duplicate \`value-summary-slide\` testids. Raw JSON only in \`#api-response-panel\` — with ONE exception: a technical slide the ingested prompt EXPLICITLY requests with a "Sample API response" JSON rail (slideRole "api-field-reveal") MAY include one compact styled sample block (~8–12 pretty-printed lines, mono, mirroring that step's \`apiResponse.response\` fields) — that rail is the slide's PPT-export differentiator; the global panel remains the only surface for full raw payloads. JSON panel is a fixed overlay (z-index 2100) — slides and host steps must NOT reserve space for it.\n` +
         `- **SLIDE FULL-SCREEN ISOLATION (hard rule):** Wrap ALL host-only chrome in elements with class \`host-app-chrome\` — this includes the FDIC bar, top nav, sub-nav, footer, any left/right sidebar, AND any **step/progress tracker or indicator** (a stepper, progress bar, or "Send → Verify → … → Sent" breadcrumb the host app shows across the top). If (and ONLY if) this build uses such a tracker, implement it as ONE reusable host-chrome component and give its ROOT element the \`host-app-chrome\` class so it is automatically hidden whenever a slide step is active — a tracker is host chrome, never slide content, and must NEVER bleed onto a full-bleed slide (observed: a \`.progress\` stepper strip showing on the value-summary slide). Slide steps (\`.slide-root\` inside \`data-testid="step-*"\`) must NEVER show host chrome — post-panels toggles \`body.pipeline-slide-active\` to hide \`.host-app-chrome\` and reset the canvas to Plaid navy. Do NOT nest slides inside \`.page-inner\`, sidebars, or host cards.\n` +
         `- Host global CSS (\`html, body, h1–h4\`) uses customer tokens ONLY. Slide typography/colors come from \`.slide-root\` + pipeline-slide-contract.css — never inherit Huntington serif or host hex inside slides.\n` +
         `- The slide CSS above applies ONLY inside a step div that contains \`.slide-root\` (marketing \`sceneType:slide\` steps **or** Plaid insight steps that adopt the shell).\n` +
@@ -3285,7 +3298,13 @@ function buildScriptCritiquePrompt(demoScript, productResearch) {
     `- 8–14 steps total\n` +
     `- Must follow narrative arc: Problem → Solution entry → Frictionless experience → Key reveal → Outcome\n` +
     `- A climactic reveal moment with a specific score or metric must be present\n` +
-    `- Final step must include a clear CTA or outcome\n\n` +
+    `- Final step must include a clear CTA or outcome\n` +
+    `- DUPLICATE API SURFACE (rule "duplicate-api-surface", severity "critical"): flag ADJACENT steps that\n` +
+    `  reveal the SAME API/product read-out on two deck surfaces — e.g. an "<api>-insight" step whose\n` +
+    `  visualState describes a Plaid deck/slide treatment AND an "<api>-slide" step showing the same fields.\n` +
+    `  One API reveal = one surface; recommend merging into a single step. A pair is acceptable ONLY when the\n` +
+    `  two members clearly contrast: a host-branded card (host chrome, values in host UI) followed by a Plaid\n` +
+    `  technical slide — never two Plaid deck screens listing the same fields.\n\n` +
     `Accuracy:\n` +
     `- Product names must match approved list: "Plaid Identity Verification (IDV)", ` +
     `"Plaid Instant Auth", "Plaid Layer", "Plaid Monitor", "Plaid Signal", "Plaid Assets"\n` +
