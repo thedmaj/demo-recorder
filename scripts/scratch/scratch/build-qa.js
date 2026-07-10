@@ -2543,7 +2543,14 @@ async function evaluateStepState(page, stepId) {
         const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
         const blend = (fg, bg) => ({ r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1 });
         const WHITE = { r: 255, g: 255, b: 255, a: 1 };
-        const bgOf = (el) => { let n = el; while (n && n !== document.documentElement) { const cs2 = getComputedStyle(n); const c = parse(cs2.backgroundColor); if (c && c.a >= 0.9) return c; if (cs2.backgroundImage && cs2.backgroundImage !== 'none') return WHITE; n = n.parentElement; } return WHITE; };
+        // Gradient-aware bg walk (2026-07-10): a gradient background reports
+        // backgroundColor transparent, and the old `return WHITE` false-failed
+        // WHITE text on DARK gradient cards (Gingham --gg-grad-deep-weave hero
+        // cards scored 45 as "white on white"; the slide scanner had the same
+        // bug fixed earlier via variant fallback). Computed backgroundImage
+        // resolves gradient stops to rgb(...) — use the FIRST stop as the
+        // effective tone; fall back to WHITE only when nothing is parseable.
+        const bgOf = (el) => { let n = el; while (n && n !== document.documentElement) { const cs2 = getComputedStyle(n); const c = parse(cs2.backgroundColor); if (c && c.a >= 0.9) return c; if (cs2.backgroundImage && cs2.backgroundImage !== 'none') { const stop = parse(cs2.backgroundImage); return stop || WHITE; } n = n.parentElement; } return WHITE; };
         const found = [];
         for (const el of Array.from(active.querySelectorAll('*'))) {
           if (found.length >= 6) break;
